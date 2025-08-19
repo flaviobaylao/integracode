@@ -299,6 +299,115 @@ export class OmieService {
       omieId: omieClient.codigo_cliente_omie,
     };
   }
+
+  // Sincronizar todos os clientes do Omie
+  async syncAllClients(): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    errors: string[];
+  }> {
+    try {
+      const result = {
+        totalProcessed: 0,
+        imported: 0,
+        updated: 0,
+        errors: []
+      };
+
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await this.getAllClients(currentPage, 100);
+        
+        for (const client of pageData.clients) {
+          result.totalProcessed++;
+          // Este método retorna apenas os dados formatados
+          // A lógica de salvamento será feita na rota
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Erro ao sincronizar clientes do Omie:', error);
+      throw error;
+    }
+  }
+
+  // Buscar débitos em atraso
+  async getOverdueDebts(): Promise<{
+    debts: any[];
+    totalAmount: number;
+    totalClients: number;
+  }> {
+    try {
+      const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_pendentes: 'S',
+        ordenar_por: 'DATA_VENCIMENTO'
+      });
+
+      const contas = response.conta_receber_cadastro || [];
+      const hoje = new Date();
+      const debtorsMap = new Map();
+      let totalAmount = 0;
+
+      for (const conta of contas) {
+        if (!conta.data_vencimento) continue;
+
+        const vencimento = new Date(conta.data_vencimento);
+        const diffTime = hoje.getTime() - vencimento.getTime();
+        const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diasAtraso > 0) {
+          const clientId = conta.codigo_cliente_omie;
+          const valor = conta.valor_documento || 0;
+          totalAmount += valor;
+
+          if (!debtorsMap.has(clientId)) {
+            // Buscar dados do cliente
+            try {
+              const cliente = await this.getClientByCode(clientId);
+              debtorsMap.set(clientId, {
+                cliente,
+                debitos: [],
+                valorTotal: 0,
+                diasMaximoAtraso: 0
+              });
+            } catch (error) {
+              console.error(`Erro ao buscar cliente ${clientId}:`, error);
+              continue;
+            }
+          }
+
+          const debtor = debtorsMap.get(clientId);
+          debtor.debitos.push({
+            numero_documento: conta.numero_documento,
+            valor: valor,
+            data_vencimento: conta.data_vencimento,
+            dias_atraso: diasAtraso,
+            observacao: conta.observacao
+          });
+          debtor.valorTotal += valor;
+          debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
+        }
+      }
+
+      return {
+        debts: Array.from(debtorsMap.values()),
+        totalAmount,
+        totalClients: debtorsMap.size
+      };
+    } catch (error) {
+      console.error('Erro ao buscar débitos em atraso no Omie:', error);
+      throw error;
+    }
+  }
 }
 
 // Singleton instance - configuração será feita via variáveis de ambiente

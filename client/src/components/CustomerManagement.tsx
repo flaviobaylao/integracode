@@ -9,11 +9,14 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import CustomerModal from "./CustomerModal";
 import OmieClientImport from "./OmieClientImport";
+import OmieSyncManager from "./OmieSyncManager";
 import type { Customer, User } from "@shared/schema";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle } from "lucide-react";
 
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
   const [showOmieImport, setShowOmieImport] = useState(false);
+  const [showOmieSync, setShowOmieSync] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [routeFilter, setRouteFilter] = useState('all');
@@ -121,6 +124,14 @@ export default function CustomerManagement() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Gestão de Clientes</h2>
         <div className="flex space-x-2">
+          <Button
+            variant="outline"
+            className="border-orange-500 text-orange-600 hover:bg-orange-500 hover:text-white"
+            onClick={() => setShowOmieSync(true)}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Sincronizar Omie
+          </Button>
           <Button
             variant="outline"
             className="border-honest-blue text-honest-blue hover:bg-honest-blue hover:text-white"
@@ -296,6 +307,12 @@ export default function CustomerManagement() {
       <OmieClientImport
         isOpen={showOmieImport}
         onClose={() => setShowOmieImport(false)}
+      />
+
+      {/* Omie Sync Manager Modal */}
+      <OmieSyncManager
+        isOpen={showOmieSync}
+        onClose={() => setShowOmieSync(false)}
       />
     </div>
   );

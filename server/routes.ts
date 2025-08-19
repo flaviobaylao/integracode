@@ -612,6 +612,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para sincronizar todos os clientes do Omie
+  app.post('/api/omie/sync-all-clients', authenticateUser, async (req: any, res) => {
+    try {
+      const { defaultSellerId } = req.body;
+      
+      if (!defaultSellerId) {
+        return res.status(400).json({ 
+          message: "ID do vendedor padrão é obrigatório" 
+        });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = {
+        totalProcessed: 0,
+        imported: 0,
+        updated: 0,
+        errors: [] as string[]
+      };
+
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await omieService.getAllClients(currentPage, 100);
+        
+        for (const omieClient of pageData.clients) {
+          result.totalProcessed++;
+          
+          try {
+            // Converter para formato do sistema
+            const baseClient = omieService.convertClientToSystemFormat(omieClient);
+            const systemClient = {
+              ...baseClient,
+              sellerId: defaultSellerId,
+              weekdays: JSON.stringify(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
+              customerType: baseClient.customerType as 'pessoa_fisica' | 'pessoa_juridica'
+            };
+
+            // Verificar se cliente já existe
+            const document = systemClient.cpf || systemClient.cnpj;
+            let existingCustomer = null;
+            
+            if (document) {
+              const existingCustomers = await storage.getCustomers();
+              existingCustomer = existingCustomers.find(customer => 
+                (customer as any).cpf === systemClient.cpf || 
+                (customer as any).cnpj === systemClient.cnpj
+              );
+            }
+
+            if (existingCustomer) {
+              // Atualizar cliente existente
+              await storage.updateCustomer(existingCustomer.id, systemClient);
+              result.updated++;
+            } else {
+              // Criar novo cliente
+              await storage.createCustomer(systemClient);
+              result.imported++;
+            }
+
+          } catch (error: any) {
+            console.error(`Erro ao processar cliente ${omieClient.codigo_cliente_omie}:`, error);
+            result.errors.push(`Erro ao processar cliente ${omieClient.razao_social}: ${error?.message || 'Erro desconhecido'}`);
+          }
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      res.json(result);
+
+    } catch (error) {
+      console.error("Error syncing all clients from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao sincronizar clientes do Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Rota para buscar débitos em atraso do Omie
+  app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const overdueData = await omieService.getOverdueDebts();
+      res.json(overdueData);
+
+    } catch (error) {
+      console.error("Error fetching overdue debts from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar débitos em atraso no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Receita Federal Integration routes
   app.post('/api/receita/cnpj', authenticateUser, async (req: any, res) => {
     try {
