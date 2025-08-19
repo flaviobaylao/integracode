@@ -449,17 +449,24 @@ export class OmieService {
         apenas_importado_api: 'N'
       });
 
-      const vendors = response.vendedores_cadastro || [];
+      console.log('Resposta da API Omie vendedores:', JSON.stringify(response, null, 2));
+
+      const vendors = response.cadastro || response.vendedores_cadastro || [];
+      console.log(`Encontrados ${vendors.length} vendedores na página ${page}`);
+      
+      const mappedVendors = vendors.map((vendor: any) => ({
+        codigo: vendor.codigo,
+        nome: vendor.nome,
+        email: vendor.email,
+        telefone: vendor.telefone,
+        inativo: vendor.inativo,
+        comissao: vendor.comissao
+      }));
+
+      console.log('Vendedores mapeados:', mappedVendors);
       
       return {
-        vendors: vendors.map((vendor: any) => ({
-          codigo: vendor.codigo,
-          nome: vendor.nome,
-          email: vendor.email,
-          telefone: vendor.telefone,
-          inativo: vendor.inativo,
-          comissao: vendor.comissao
-        })).filter((vendor: any) => vendor.inativo !== 'S'), // Apenas ativos
+        vendors: mappedVendors,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page
@@ -484,23 +491,30 @@ export class OmieService {
         apenas_importado_api: 'N'
       });
 
+      console.log('Resposta da API Omie produtos:', JSON.stringify(response, null, 2));
+
       const products = response.produto_servico_cadastro || [];
+      console.log(`Encontrados ${products.length} produtos na página ${page}`);
+      
+      const mappedProducts = products.map((product: any) => ({
+        codigo_produto: product.codigo_produto,
+        codigo: product.codigo,
+        descricao: product.descricao,
+        unidade: product.unidade,
+        valor_unitario: product.valor_unitario,
+        inativo: product.inativo,
+        ncm: product.ncm,
+        ean: product.ean,
+        peso_liq: product.peso_liq,
+        altura: product.altura,
+        largura: product.largura,
+        profundidade: product.profundidade
+      }));
+
+      console.log('Produtos mapeados:', mappedProducts);
       
       return {
-        products: products.map((product: any) => ({
-          codigo_produto: product.codigo_produto,
-          codigo: product.codigo,
-          descricao: product.descricao,
-          unidade: product.unidade,
-          valor_unitario: product.valor_unitario,
-          inativo: product.inativo,
-          ncm: product.ncm,
-          ean: product.ean,
-          peso_liq: product.peso_liq,
-          altura: product.altura,
-          largura: product.largura,
-          profundidade: product.profundidade
-        })).filter((product: any) => product.inativo !== 'S'), // Apenas ativos
+        products: mappedProducts,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page
