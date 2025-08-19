@@ -386,16 +386,16 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                             <p className="text-sm text-gray-600">Atualizados</p>
                           </div>
                           <div>
-                            <p className="text-2xl font-bold text-red-600">{syncResult.errors.length}</p>
+                            <p className="text-2xl font-bold text-red-600">{syncResult.errors?.length || 0}</p>
                             <p className="text-sm text-gray-600">Erros</p>
                           </div>
                         </div>
                         
-                        {syncResult.errors.length > 0 && (
+                        {syncResult?.errors && syncResult.errors.length > 0 && (
                           <div className="mt-4">
                             <p className="font-medium text-red-600 mb-2">Erros encontrados:</p>
                             <div className="max-h-32 overflow-y-auto space-y-1">
-                              {syncResult.errors.map((error, index) => (
+                              {syncResult?.errors?.map((error, index) => (
                                 <p key={index} className="text-sm text-red-600 bg-red-50 p-2 rounded">
                                   {error}
                                 </p>
@@ -472,16 +472,16 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                             <p className="text-sm text-gray-600">Atualizados</p>
                           </div>
                           <div>
-                            <p className="text-2xl font-bold text-red-600">{syncResult.errors.length}</p>
+                            <p className="text-2xl font-bold text-red-600">{syncResult.errors?.length || 0}</p>
                             <p className="text-sm text-gray-600">Erros</p>
                           </div>
                         </div>
                         
-                        {syncResult.errors.length > 0 && (
+                        {syncResult?.errors && syncResult.errors.length > 0 && (
                           <div className="mt-4">
                             <p className="font-medium text-red-600 mb-2">Erros encontrados:</p>
                             <div className="max-h-32 overflow-y-auto space-y-1">
-                              {syncResult.errors.map((error, index) => (
+                              {syncResult?.errors?.map((error, index) => (
                                 <p key={index} className="text-sm text-red-600 bg-red-50 p-2 rounded">
                                   {error}
                                 </p>
@@ -558,16 +558,16 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                             <p className="text-sm text-gray-600">Atualizados</p>
                           </div>
                           <div>
-                            <p className="text-2xl font-bold text-red-600">{syncResult.errors.length}</p>
+                            <p className="text-2xl font-bold text-red-600">{syncResult.errors?.length || 0}</p>
                             <p className="text-sm text-gray-600">Erros</p>
                           </div>
                         </div>
                         
-                        {syncResult.errors.length > 0 && (
+                        {syncResult?.errors && syncResult.errors.length > 0 && (
                           <div className="mt-4">
                             <p className="font-medium text-red-600 mb-2">Erros encontrados:</p>
                             <div className="max-h-32 overflow-y-auto space-y-1">
-                              {syncResult.errors.map((error, index) => (
+                              {syncResult?.errors?.map((error, index) => (
                                 <p key={index} className="text-sm text-red-600 bg-red-50 p-2 rounded">
                                   {error}
                                 </p>
