@@ -534,7 +534,7 @@ export class OmieService {
   }
 
   // Converter vendedor do Omie para formato do sistema
-  convertVendorToSystemFormat(omieVendor: OmieVendor): UpsertUser {
+  convertVendorToSystemFormat(omieVendor: OmieVendor) {
     return {
       id: `omie-vendor-${omieVendor.codigo}`, // ID único baseado no código do Omie
       firstName: omieVendor.nome.split(' ')[0] || '',

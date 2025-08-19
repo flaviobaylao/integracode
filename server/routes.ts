@@ -568,8 +568,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Converter para formato do sistema
-          const systemClient = omieService.convertClientToSystemFormat(omieClient);
-          systemClient.sellerId = sellerId;
+          const systemClient = {
+            ...omieService.convertClientToSystemFormat(omieClient),
+            sellerId: sellerId,
+            weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão
+          };
 
           // Verificar se cliente já existe (por CPF/CNPJ)
           const document = systemClient.cpf || systemClient.cnpj;
@@ -592,7 +595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         } catch (error) {
           console.error(`Erro ao importar cliente ${clientId}:`, error);
-          errors.push(`Erro ao importar cliente ${clientId}: ${error.message}`);
+          errors.push(`Erro ao importar cliente ${clientId}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
         }
       }
 
@@ -817,18 +820,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           try {
             // Converter para formato do sistema
-            const systemProduct = omieService.convertProductToSystemFormat(omieProduct);
+            const systemProduct = {
+              name: omieProduct.descricao || '',
+              description: omieProduct.descricao || '',
+              price: omieProduct.valor_unitario?.toString() || '0',
+              stock: 0,
+              isActive: true
+            };
 
-            // Verificar se produto já existe
+            // Verificar se produto já existe pelo nome
             const existingProducts = await storage.getProducts();
             const existingProduct = existingProducts.find(product => 
-              (product as any).omieId === systemProduct.omieId ||
-              (product as any).code === systemProduct.code
+              product.name === systemProduct.name
             );
 
             if (existingProduct) {
               // Atualizar produto existente
-              await storage.updateProduct(existingProduct.id, systemProduct);
+              await storage.updateProduct(existingProduct.id, {
+                price: systemProduct.price,
+                isActive: systemProduct.isActive
+              });
               result.updated++;
             } else {
               // Criar novo produto

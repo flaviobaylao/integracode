@@ -119,16 +119,17 @@ export class DatabaseStorage implements IStorage {
 
   // Customer operations
   async getCustomers(sellerId?: string): Promise<CustomerWithSeller[]> {
-    let query = db
+    const baseQuery = db
       .select()
       .from(customers)
       .leftJoin(users, eq(customers.sellerId, users.id));
     
+    const whereConditions = [eq(customers.isActive, true)];
     if (sellerId) {
-      query = query.where(and(eq(customers.isActive, true), eq(customers.sellerId, sellerId)));
-    } else {
-      query = query.where(eq(customers.isActive, true));
+      whereConditions.push(eq(customers.sellerId, sellerId));
     }
+    
+    const query = baseQuery.where(and(...whereConditions));
     
     const result = await query;
     return result.map(row => ({
