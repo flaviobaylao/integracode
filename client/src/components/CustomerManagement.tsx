@@ -8,10 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import CustomerModal from "./CustomerModal";
+import OmieClientImport from "./OmieClientImport";
 import type { Customer, User } from "@shared/schema";
 
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
+  const [showOmieImport, setShowOmieImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [routeFilter, setRouteFilter] = useState('all');
@@ -118,12 +120,23 @@ export default function CustomerManagement() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Gestão de Clientes</h2>
-        <Button
-          className="bg-honest-blue hover:bg-blue-700"
-          onClick={() => setShowModal(true)}
-        >
-          <i className="fas fa-plus mr-2"></i>Novo Cliente
-        </Button>
+        <div className="flex space-x-2">
+          <Button
+            variant="outline"
+            className="border-honest-blue text-honest-blue hover:bg-honest-blue hover:text-white"
+            onClick={() => setShowOmieImport(true)}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Importar do Omie
+          </Button>
+          <Button
+            className="bg-honest-blue hover:bg-blue-700"
+            onClick={() => setShowModal(true)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Cliente
+          </Button>
+        </div>
       </div>
 
       {/* Filters and Search */}
@@ -278,6 +291,12 @@ export default function CustomerManagement() {
           editingCustomer={editingCustomer}
         />
       )}
+
+      {/* Omie Import Modal */}
+      <OmieClientImport
+        isOpen={showOmieImport}
+        onClose={() => setShowOmieImport(false)}
+      />
     </div>
   );
 }

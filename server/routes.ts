@@ -506,6 +506,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para listar clientes do Omie
+  app.get('/api/omie/clients', authenticateUser, async (req: any, res) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const pageSize = parseInt(req.query.pageSize as string) || 50;
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = await omieService.getAllClients(page, pageSize);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching Omie clients:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar clientes no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Rota para importar clientes do Omie
+  app.post('/api/omie/import-clients', authenticateUser, async (req: any, res) => {
+    try {
+      const { clientIds, sellerId } = req.body;
+      
+      if (!clientIds || !Array.isArray(clientIds) || clientIds.length === 0) {
+        return res.status(400).json({ 
+          message: "Lista de IDs de clientes é obrigatória" 
+        });
+      }
+
+      if (!sellerId) {
+        return res.status(400).json({ 
+          message: "ID do vendedor é obrigatório" 
+        });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const importedClients = [];
+      const errors = [];
+
+      for (const clientId of clientIds) {
+        try {
+          // Buscar cliente no Omie
+          const omieClient = await omieService.getClientByCode(clientId);
+          
+          if (!omieClient) {
+            errors.push(`Cliente ${clientId} não encontrado no Omie`);
+            continue;
+          }
+
+          // Converter para formato do sistema
+          const systemClient = omieService.convertClientToSystemFormat(omieClient);
+          systemClient.sellerId = sellerId;
+
+          // Verificar se cliente já existe (por CPF/CNPJ)
+          const document = systemClient.cpf || systemClient.cnpj;
+          if (document) {
+            const existingCustomers = await storage.getCustomers();
+            const existingCustomer = existingCustomers.find(customer => 
+              (customer as any).cpf === systemClient.cpf || 
+              (customer as any).cnpj === systemClient.cnpj
+            );
+
+            if (existingCustomer) {
+              errors.push(`Cliente ${omieClient.razao_social} já existe no sistema`);
+              continue;
+            }
+          }
+
+          // Criar cliente no sistema
+          const newCustomer = await storage.createCustomer(systemClient);
+          importedClients.push(newCustomer);
+
+        } catch (error) {
+          console.error(`Erro ao importar cliente ${clientId}:`, error);
+          errors.push(`Erro ao importar cliente ${clientId}: ${error.message}`);
+        }
+      }
+
+      res.json({
+        imported: importedClients.length,
+        errors: errors.length,
+        clients: importedClients,
+        errorDetails: errors
+      });
+
+    } catch (error) {
+      console.error("Error importing clients from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao importar clientes do Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Receita Federal Integration routes
   app.post('/api/receita/cnpj', authenticateUser, async (req: any, res) => {
     try {

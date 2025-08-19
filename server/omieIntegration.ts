@@ -222,6 +222,83 @@ export class OmieService {
       };
     }
   }
+
+  // Listar todos os clientes do Omie
+  async getAllClients(page = 1, pageSize = 50): Promise<{
+    clients: OmieClient[];
+    totalPages: number;
+    totalRecords: number;
+    currentPage: number;
+  }> {
+    try {
+      const response = await this.makeRequest('/geral/clientes/', 'ListarClientes', {
+        pagina: page,
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'N'
+      });
+
+      const clients = response.clientes_cadastro || [];
+      
+      return {
+        clients: clients.map((client: any) => {
+          // Garantir que todos os campos obrigatórios estão presentes
+          return {
+            codigo_cliente_omie: client.codigo_cliente_omie,
+            cnpj_cpf: client.cnpj_cpf || '',
+            razao_social: client.razao_social || '',
+            nome_fantasia: client.nome_fantasia,
+            email: client.email,
+            telefone1_ddd: client.telefone1_ddd,
+            telefone1_numero: client.telefone1_numero,
+            endereco: client.endereco,
+            endereco_numero: client.endereco_numero,
+            bairro: client.bairro,
+            cidade: client.cidade,
+            estado: client.estado,
+            cep: client.cep,
+            bloqueado: client.bloqueado,
+            inativo: client.inativo,
+            limite_credito: client.limite_credito
+          };
+        }),
+        totalPages: response.total_de_paginas || 1,
+        totalRecords: response.total_de_registros || 0,
+        currentPage: page
+      };
+    } catch (error) {
+      console.error('Erro ao listar clientes no Omie:', error);
+      throw error;
+    }
+  }
+
+  // Converter cliente do Omie para formato do sistema
+  convertClientToSystemFormat(omieClient: OmieClient) {
+    const isCompany = omieClient.cnpj_cpf && omieClient.cnpj_cpf.length === 18;
+    
+    return {
+      name: omieClient.razao_social || omieClient.nome_fantasia || '',
+      customerType: isCompany ? 'pessoa_juridica' : 'pessoa_fisica',
+      cpf: !isCompany ? omieClient.cnpj_cpf : '',
+      cnpj: isCompany ? omieClient.cnpj_cpf : '',
+      companyName: omieClient.razao_social || '',
+      fantasyName: omieClient.nome_fantasia || '',
+      phone: omieClient.telefone1_ddd && omieClient.telefone1_numero 
+        ? `(${omieClient.telefone1_ddd}) ${omieClient.telefone1_numero}`
+        : '',
+      email: omieClient.email || '',
+      address: [
+        omieClient.endereco,
+        omieClient.endereco_numero && `nº ${omieClient.endereco_numero}`,
+      ].filter(Boolean).join(', '),
+      city: omieClient.cidade || '',
+      state: omieClient.estado || '',
+      zipCode: omieClient.cep || '',
+      route: omieClient.bairro || '',
+      isActive: omieClient.inativo !== 'S',
+      // Campos específicos do Omie para referência
+      omieId: omieClient.codigo_cliente_omie,
+    };
+  }
 }
 
 // Singleton instance - configuração será feita via variáveis de ambiente
