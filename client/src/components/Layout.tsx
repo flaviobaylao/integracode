@@ -1,0 +1,123 @@
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import type { User } from "@shared/schema";
+
+interface LayoutProps {
+  children: React.ReactNode;
+  activeView: string;
+  setActiveView: (view: string) => void;
+  user?: User;
+}
+
+export default function Layout({ children, activeView, setActiveView, user }: LayoutProps) {
+  const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canAccessUsers = user?.role === 'admin';
+
+  const menuItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
+    { id: 'sales-cards', label: 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true },
+    { id: 'customers', label: 'Clientes', icon: 'fas fa-users', available: true },
+    { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: true },
+    { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
+    { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: true },
+  ];
+
+  const getRoleLabel = (role: string) => {
+    const roleLabels = {
+      admin: 'Administrador',
+      coordinator: 'Coordenador',
+      administrative: 'Administrativo',
+      vendedor: 'Vendedor',
+    };
+    return roleLabels[role as keyof typeof roleLabels] || role;
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <div className="w-10 h-10 bg-honest-orange rounded-full flex items-center justify-center">
+            <i className="fas fa-glass-whiskey text-white"></i>
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Honest Sucos CRM</h1>
+            {user?.route && (
+              <p className="text-sm text-gray-600">Rota: {user.route}</p>
+            )}
+          </div>
+        </div>
+        
+        <div className="flex items-center space-x-4">
+          {/* Notifications */}
+          <Button variant="ghost" size="sm" className="relative">
+            <i className="fas fa-bell text-lg"></i>
+            <Badge className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+              3
+            </Badge>
+          </Button>
+          
+          {/* User Menu */}
+          <div className="flex items-center space-x-3">
+            <div className="text-right">
+              <p className="text-sm font-medium text-gray-800">
+                {user?.firstName} {user?.lastName}
+              </p>
+              <p className="text-xs text-gray-600">
+                {user?.role && getRoleLabel(user.role)}
+              </p>
+            </div>
+            <Avatar>
+              <AvatarImage src={user?.profileImageUrl || ''} />
+              <AvatarFallback>
+                <i className="fas fa-user text-gray-600"></i>
+              </AvatarFallback>
+            </Avatar>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.location.href = '/api/logout'}
+            >
+              <i className="fas fa-chevron-down"></i>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <div className="flex">
+        {/* Sidebar Navigation */}
+        <nav className="w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200">
+          <div className="p-4">
+            <ul className="space-y-2">
+              {menuItems
+                .filter(item => item.available)
+                .map(item => (
+                  <li key={item.id}>
+                    <Button
+                      variant="ghost"
+                      className={`w-full justify-start space-x-3 ${
+                        activeView === item.id
+                          ? 'text-honest-blue bg-blue-50'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                      onClick={() => setActiveView(item.id)}
+                    >
+                      <i className={item.icon}></i>
+                      <span className="font-medium">{item.label}</span>
+                    </Button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </nav>
+
+        {/* Main Content Area */}
+        <main className="flex-1 p-6">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
