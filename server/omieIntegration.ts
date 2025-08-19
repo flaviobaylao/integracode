@@ -465,8 +465,12 @@ export class OmieService {
 
       console.log('Vendedores mapeados:', mappedVendors);
       
+      // Filtrar apenas vendedores ativos
+      const activeVendors = mappedVendors.filter((vendor: any) => vendor.inativo !== 'S');
+      console.log(`Vendedores ativos filtrados: ${activeVendors.length} de ${mappedVendors.length}`);
+      
       return {
-        vendors: mappedVendors,
+        vendors: activeVendors,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page
@@ -513,8 +517,12 @@ export class OmieService {
 
       console.log('Produtos mapeados:', mappedProducts);
       
+      // Filtrar apenas produtos ativos
+      const activeProducts = mappedProducts.filter((product: any) => product.inativo !== 'S');
+      console.log(`Produtos ativos filtrados: ${activeProducts.length} de ${mappedProducts.length}`);
+      
       return {
-        products: mappedProducts,
+        products: activeProducts,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page
