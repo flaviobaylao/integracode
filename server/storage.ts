@@ -26,7 +26,10 @@ import { eq, and, desc, gte, lte, sql, inArray } from "drizzle-orm";
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   upsertUser(user: UpsertUser): Promise<User>;
+  createUser(user: UpsertUser): Promise<User>;
+  updateUser(id: string, user: Partial<UpsertUser>): Promise<User>;
   
   // Customer operations
   getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
@@ -78,6 +81,24 @@ export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
+
+  async createUser(userData: UpsertUser): Promise<User> {
+    const [user] = await db.insert(users).values(userData).returning();
+    return user;
+  }
+
+  async updateUser(id: string, userData: Partial<UpsertUser>): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ ...userData, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
     return user;
   }
 

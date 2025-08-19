@@ -517,12 +517,12 @@ export class OmieService {
 
       console.log('Produtos mapeados:', mappedProducts);
       
-      // Filtrar apenas produtos ativos
-      const activeProducts = mappedProducts.filter((product: any) => product.inativo !== 'S');
-      console.log(`Produtos ativos filtrados: ${activeProducts.length} de ${mappedProducts.length}`);
+      // Como todos os produtos no Omie estão marcados como inativos, vamos importar todos
+      // e marcar como ativos no sistema (podem ser desativados manualmente depois)
+      console.log(`Produtos encontrados: ${mappedProducts.length} (todos serão importados como ativos)`);
       
       return {
-        products: activeProducts,
+        products: mappedProducts, // Importar todos os produtos
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page
@@ -534,17 +534,15 @@ export class OmieService {
   }
 
   // Converter vendedor do Omie para formato do sistema
-  convertVendorToSystemFormat(omieVendor: OmieVendor) {
+  convertVendorToSystemFormat(omieVendor: OmieVendor): UpsertUser {
     return {
+      id: `omie-vendor-${omieVendor.codigo}`, // ID único baseado no código do Omie
       firstName: omieVendor.nome.split(' ')[0] || '',
       lastName: omieVendor.nome.split(' ').slice(1).join(' ') || '',
       email: omieVendor.email || `vendedor${omieVendor.codigo}@honest.com`,
-      phone: omieVendor.telefone || '',
       role: 'vendedor' as const,
-      isActive: true, // Importar todos como ativos
-      omieId: omieVendor.codigo,
-      commission: omieVendor.comissao || 0,
-      inactiveInOmie: omieVendor.inativo === 'S' // Guardar status do Omie separadamente
+      route: 'geral',
+      isActive: omieVendor.inativo !== 'S' // Respeitar status do Omie
     };
   }
 
