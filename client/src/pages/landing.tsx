@@ -20,12 +20,22 @@ export default function Landing() {
               Acesse sua conta para gerenciar vendas, clientes e produtos.
             </p>
             
-            <Button 
-              className="w-full bg-honest-blue hover:bg-blue-700"
-              onClick={() => window.location.href = '/api/login'}
-            >
-              Entrar no Sistema
-            </Button>
+            <div className="space-y-2">
+              <Button 
+                className="w-full bg-honest-blue hover:bg-blue-700"
+                onClick={() => window.location.href = '/api/login'}
+              >
+                Entrar com Replit
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                className="w-full border-honest-orange text-honest-orange hover:bg-honest-orange hover:text-white"
+                onClick={() => window.location.href = '/admin-login'}
+              >
+                Acesso Administrativo
+              </Button>
+            </div>
             
             <div className="text-center text-sm text-gray-500">
               <p>Sistema de gestão completo para equipes de vendas</p>

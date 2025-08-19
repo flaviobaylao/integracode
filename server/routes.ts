@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { validateLocalAdmin, createLocalSession } from "./localAuth";
 import {
   insertCustomerSchema,
   insertProductSchema,
@@ -15,9 +16,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  // Local login route for admin
+  app.post('/api/auth/local-login', async (req, res) => {
     try {
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password required" });
+      }
+      
+      const user = await validateLocalAdmin(username, password);
+      
+      if (!user) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+      
+      // Create session for local admin
+      const sessionData = createLocalSession(user);
+      (req.session as any).user = sessionData;
+      
+      res.json({ success: true, user });
+    } catch (error) {
+      console.error("Error in local login:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Auth routes
+  app.get('/api/auth/user', async (req: any, res) => {
+    try {
+      // Check for local admin session first
+      if (req.session?.user?.claims?.sub) {
+        const userId = req.session.user.claims.sub;
+        const user = await storage.getUser(userId);
+        if (user) {
+          return res.json(user);
+        }
+      }
+      
+      // Fall back to Replit auth
+      if (!req.isAuthenticated() || !req.user?.claims?.sub) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
       res.json(user);

@@ -98,14 +98,15 @@ export class DatabaseStorage implements IStorage {
 
   // Customer operations
   async getCustomers(sellerId?: string): Promise<CustomerWithSeller[]> {
-    const query = db
+    let query = db
       .select()
       .from(customers)
-      .leftJoin(users, eq(customers.sellerId, users.id))
-      .where(eq(customers.isActive, true));
+      .leftJoin(users, eq(customers.sellerId, users.id));
     
     if (sellerId) {
-      query.where(and(eq(customers.isActive, true), eq(customers.sellerId, sellerId)));
+      query = query.where(and(eq(customers.isActive, true), eq(customers.sellerId, sellerId)));
+    } else {
+      query = query.where(eq(customers.isActive, true));
     }
     
     const result = await query;
@@ -156,27 +157,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
-    let query = db
-      .select()
-      .from(customers)
-      .where(
-        and(
-          eq(customers.isActive, true),
-          sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
-        )
-      );
+    let whereConditions = and(
+      eq(customers.isActive, true),
+      sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
+    );
     
     if (sellerId) {
-      query = query.where(
-        and(
-          eq(customers.isActive, true),
-          eq(customers.sellerId, sellerId),
-          sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
-        )
+      whereConditions = and(
+        eq(customers.isActive, true),
+        eq(customers.sellerId, sellerId),
+        sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
       );
     }
     
-    return await query;
+    return await db
+      .select()
+      .from(customers)
+      .where(whereConditions);
   }
 
   // Product operations
@@ -269,29 +266,27 @@ export class DatabaseStorage implements IStorage {
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
     
-    let query = db
+    let whereConditions = and(
+      gte(salesCards.scheduledDate, startOfDay),
+      lte(salesCards.scheduledDate, endOfDay)
+    );
+    
+    if (sellerId) {
+      whereConditions = and(
+        gte(salesCards.scheduledDate, startOfDay),
+        lte(salesCards.scheduledDate, endOfDay),
+        eq(salesCards.sellerId, sellerId)
+      );
+    }
+    
+    const result = await db
       .select()
       .from(salesCards)
       .leftJoin(customers, eq(salesCards.customerId, customers.id))
       .leftJoin(users, eq(salesCards.sellerId, users.id))
-      .where(
-        and(
-          gte(salesCards.scheduledDate, startOfDay),
-          lte(salesCards.scheduledDate, endOfDay)
-        )
-      );
+      .where(whereConditions)
+      .orderBy(desc(salesCards.scheduledDate));
     
-    if (sellerId) {
-      query = query.where(
-        and(
-          gte(salesCards.scheduledDate, startOfDay),
-          lte(salesCards.scheduledDate, endOfDay),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
-    }
-    
-    const result = await query;
     return result.map(row => ({
       ...row.sales_cards,
       customer: row.customers!,
@@ -302,29 +297,27 @@ export class DatabaseStorage implements IStorage {
   async getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
     const now = new Date();
     
-    let query = db
+    let whereConditions = and(
+      lte(salesCards.scheduledDate, now),
+      inArray(salesCards.status, ['pending', 'in_progress'])
+    );
+    
+    if (sellerId) {
+      whereConditions = and(
+        lte(salesCards.scheduledDate, now),
+        inArray(salesCards.status, ['pending', 'in_progress']),
+        eq(salesCards.sellerId, sellerId)
+      );
+    }
+    
+    const result = await db
       .select()
       .from(salesCards)
       .leftJoin(customers, eq(salesCards.customerId, customers.id))
       .leftJoin(users, eq(salesCards.sellerId, users.id))
-      .where(
-        and(
-          lte(salesCards.scheduledDate, now),
-          inArray(salesCards.status, ['pending', 'in_progress'])
-        )
-      );
+      .where(whereConditions)
+      .orderBy(desc(salesCards.scheduledDate));
     
-    if (sellerId) {
-      query = query.where(
-        and(
-          lte(salesCards.scheduledDate, now),
-          inArray(salesCards.status, ['pending', 'in_progress']),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
-    }
-    
-    const result = await query;
     return result.map(row => ({
       ...row.sales_cards,
       customer: row.customers!,
@@ -422,14 +415,17 @@ export class DatabaseStorage implements IStorage {
       );
     
     if (sellerId) {
-      todaySalesQuery = todaySalesQuery.where(
-        and(
-          gte(salesCards.completedDate, today),
-          lte(salesCards.completedDate, tomorrow),
-          eq(salesCards.status, 'completed'),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
+      todaySalesQuery = db
+        .select({ value: sql<number>`COALESCE(SUM(${salesCards.saleValue}), 0)` })
+        .from(salesCards)
+        .where(
+          and(
+            gte(salesCards.completedDate, today),
+            lte(salesCards.completedDate, tomorrow),
+            eq(salesCards.status, 'completed'),
+            eq(salesCards.sellerId, sellerId)
+          )
+        );
     }
     
     const [todaySalesResult] = await todaySalesQuery;
@@ -446,13 +442,16 @@ export class DatabaseStorage implements IStorage {
       );
     
     if (sellerId) {
-      todayClientsQuery = todayClientsQuery.where(
-        and(
-          gte(salesCards.scheduledDate, today),
-          lte(salesCards.scheduledDate, tomorrow),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
+      todayClientsQuery = db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(salesCards)
+        .where(
+          and(
+            gte(salesCards.scheduledDate, today),
+            lte(salesCards.scheduledDate, tomorrow),
+            eq(salesCards.sellerId, sellerId)
+          )
+        );
     }
     
     const [todayClientsResult] = await todayClientsQuery;
@@ -480,20 +479,26 @@ export class DatabaseStorage implements IStorage {
       );
     
     if (sellerId) {
-      totalCardsQuery = totalCardsQuery.where(
-        and(
-          gte(salesCards.completedDate, thirtyDaysAgo),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
+      totalCardsQuery = db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(salesCards)
+        .where(
+          and(
+            gte(salesCards.completedDate, thirtyDaysAgo),
+            eq(salesCards.sellerId, sellerId)
+          )
+        );
       
-      completedCardsQuery = completedCardsQuery.where(
-        and(
-          gte(salesCards.completedDate, thirtyDaysAgo),
-          eq(salesCards.status, 'completed'),
-          eq(salesCards.sellerId, sellerId)
-        )
-      );
+      completedCardsQuery = db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(salesCards)
+        .where(
+          and(
+            gte(salesCards.completedDate, thirtyDaysAgo),
+            eq(salesCards.status, 'completed'),
+            eq(salesCards.sellerId, sellerId)
+          )
+        );
     }
     
     const [totalCardsResult] = await totalCardsQuery;
