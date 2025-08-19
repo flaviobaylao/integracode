@@ -302,8 +302,9 @@ export class OmieService {
     const isCompany = omieClient.cnpj_cpf && omieClient.cnpj_cpf.length === 18;
     
     return {
+      id: `omie-client-${omieClient.codigo_cliente_omie}`, // ID único baseado no código do Omie
       name: omieClient.razao_social || omieClient.nome_fantasia || '',
-      customerType: isCompany ? 'pessoa_juridica' : 'pessoa_fisica',
+      customerType: isCompany ? 'pessoa_juridica' as const : 'pessoa_fisica' as const,
       cpf: !isCompany ? omieClient.cnpj_cpf : '',
       cnpj: isCompany ? omieClient.cnpj_cpf : '',
       companyName: omieClient.razao_social || '',
@@ -321,8 +322,6 @@ export class OmieService {
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
       isActive: omieClient.inativo !== 'S',
-      // Campos específicos do Omie para referência
-      omieId: omieClient.codigo_cliente_omie,
     };
   }
 

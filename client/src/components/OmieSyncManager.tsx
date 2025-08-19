@@ -78,8 +78,9 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('POST', '/api/omie/sync-all-clients', { 
-          defaultSellerId: sellerId 
+        const result = await apiRequest('/api/omie/sync-all-clients', {
+          method: 'POST',
+          body: JSON.stringify({ defaultSellerId: sellerId })
         }) as SyncResult;
         
         clearInterval(progressInterval);
@@ -122,7 +123,9 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('POST', '/api/omie/sync-vendors') as SyncResult;
+        const result = await apiRequest('/api/omie/sync-vendors', {
+          method: 'POST'
+        }) as SyncResult;
         
         clearInterval(progressInterval);
         setSyncProgress(100);
@@ -164,7 +167,9 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('POST', '/api/omie/sync-products') as SyncResult;
+        const result = await apiRequest('/api/omie/sync-products', {
+          method: 'POST'
+        }) as SyncResult;
         
         clearInterval(progressInterval);
         setSyncProgress(100);
@@ -325,9 +330,9 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                           <SelectValue placeholder="Selecione o vendedor" />
                         </SelectTrigger>
                         <SelectContent>
-                          {users && Array.isArray(users) && (users as User[])
-                            .filter((user: User) => user.role === 'vendedor')
-                            .map((user: User) => (
+                          {users && Array.isArray(users) && (users as any[])
+                            .filter((user: any) => user.role === 'vendedor')
+                            .map((user: any) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName}
                               </SelectItem>

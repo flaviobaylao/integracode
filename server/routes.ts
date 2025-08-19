@@ -662,29 +662,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           try {
             // Converter para formato do sistema
-            const baseClient = omieService.convertClientToSystemFormat(omieClient);
             const systemClient = {
-              ...baseClient,
+              ...omieService.convertClientToSystemFormat(omieClient),
               sellerId: defaultSellerId,
-              weekdays: JSON.stringify(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']),
-              customerType: baseClient.customerType as 'pessoa_fisica' | 'pessoa_juridica'
+              weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão para todos
             };
 
-            // Verificar se cliente já existe
-            const document = systemClient.cpf || systemClient.cnpj;
-            let existingCustomer = null;
-            
-            if (document) {
-              const existingCustomers = await storage.getCustomers();
-              existingCustomer = existingCustomers.find(customer => 
-                (customer as any).cpf === systemClient.cpf || 
-                (customer as any).cnpj === systemClient.cnpj
-              );
-            }
+            // Verificar se cliente já existe pelo documento (CPF/CNPJ) ou código do Omie
+            const existingCustomers = await storage.getCustomers();
+            const existingCustomer = existingCustomers.find(customer => {
+              // Verificar por documento
+              if (systemClient.cpf && (customer as any).cpf === systemClient.cpf) return true;
+              if (systemClient.cnpj && (customer as any).cnpj === systemClient.cnpj) return true;
+              // Verificar por código do Omie se disponível
+              if ((customer as any).omieId === omieClient.codigo_cliente_omie) return true;
+              return false;
+            });
 
             if (existingCustomer) {
               // Atualizar cliente existente
-              await storage.updateCustomer(existingCustomer.id, systemClient);
+              await storage.updateCustomer(existingCustomer.id, {
+                name: systemClient.name,
+                phone: systemClient.phone,
+                email: systemClient.email,
+                address: systemClient.address,
+                city: systemClient.city,
+                state: systemClient.state,
+                isActive: systemClient.isActive
+              });
               result.updated++;
             } else {
               // Criar novo cliente
@@ -694,7 +699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           } catch (error: any) {
             console.error(`Erro ao processar cliente ${omieClient.codigo_cliente_omie}:`, error);
-            result.errors.push(`Erro ao processar cliente ${omieClient.razao_social}: ${error?.message || 'Erro desconhecido'}`);
+            result.errors.push(`Erro ao processar cliente ${omieClient.razao_social || omieClient.nome_fantasia}: ${error?.message || 'Erro desconhecido'}`);
           }
         }
 
