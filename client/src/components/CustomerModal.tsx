@@ -218,12 +218,19 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const formatCPF = (value: string) => {
     const cpf = value.replace(/\D/g, '');
-    return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    if (cpf.length <= 3) return cpf;
+    if (cpf.length <= 6) return cpf.replace(/(\d{3})(\d{0,3})/, '$1.$2');
+    if (cpf.length <= 9) return cpf.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3');
+    return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
   };
 
   const formatCNPJ = (value: string) => {
     const cnpj = value.replace(/\D/g, '');
-    return cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    if (cnpj.length <= 2) return cnpj;
+    if (cnpj.length <= 5) return cnpj.replace(/(\d{2})(\d{0,3})/, '$1.$2');
+    if (cnpj.length <= 8) return cnpj.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+    if (cnpj.length <= 12) return cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+    return cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
   };
 
   const formatPhone = (value: string) => {
@@ -296,13 +303,15 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <FormLabel>CPF *</FormLabel>
                           <FormControl>
                             <Input
-                              {...field}
+                              value={field.value || ''}
                               placeholder="000.000.000-00"
                               maxLength={14}
                               onChange={(e) => {
                                 const formatted = formatCPF(e.target.value);
                                 field.onChange(formatted);
                               }}
+                              onBlur={field.onBlur}
+                              name={field.name}
                             />
                           </FormControl>
                           <FormMessage />
@@ -320,13 +329,15 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input
-                                  {...field}
+                                  value={field.value || ''}
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
                                   onChange={(e) => {
                                     const formatted = formatCNPJ(e.target.value);
                                     field.onChange(formatted);
                                   }}
+                                  onBlur={field.onBlur}
+                                  name={field.name}
                                 />
                               </FormControl>
                               <Button
@@ -574,7 +585,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {users && users.filter((user: User) => user.role === 'vendedor').map((user: User) => (
+                            {Array.isArray(users) && users.filter((user: User) => user.role === 'vendedor').map((user: User) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName} {user.route && `(${user.route})`}
                               </SelectItem>
