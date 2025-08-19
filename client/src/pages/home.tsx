@@ -5,6 +5,7 @@ import SalesCards from "@/components/SalesCards";
 import CustomerManagement from "@/components/CustomerManagement";
 import ProductManagement from "@/components/ProductManagement";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
+import OmieIntegration from "@/components/OmieIntegration";
 import { useState } from "react";
 
 export default function Home() {
@@ -31,6 +32,8 @@ export default function Home() {
         return <ProductManagement />;
       case 'whatsapp':
         return <WhatsAppIntegration />;
+      case 'omie':
+        return <OmieIntegration />;
       default:
         return <Dashboard />;
     }

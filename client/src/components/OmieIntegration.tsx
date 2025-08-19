@@ -55,6 +55,11 @@ interface CreditApproval {
   diasEmAtraso?: number;
 }
 
+interface OmieStatus {
+  configured: boolean;
+  message: string;
+}
+
 export default function OmieIntegration() {
   const [cnpjCpf, setCnpjCpf] = useState('');
   const [valorVenda, setValorVenda] = useState('');
@@ -63,15 +68,20 @@ export default function OmieIntegration() {
   const queryClient = useQueryClient();
 
   // Verificar status da integração Omie
-  const { data: omieStatus, isLoading: statusLoading } = useQuery({
+  const { data: omieStatus, isLoading: statusLoading } = useQuery<OmieStatus>({
     queryKey: ['/api/omie/status'],
   });
 
   // Buscar cliente no Omie
   const searchClientMutation = useMutation({
     mutationFn: async (cnpjCpf: string) => {
-      const response = await apiRequest(`/api/omie/client/${cnpjCpf}`);
-      return response;
+      const response = await fetch(`/api/omie/client/${cnpjCpf}`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error('Cliente não encontrado');
+      }
+      return response.json();
     },
     onSuccess: (client: OmieClient) => {
       setSelectedClient(client);
@@ -94,14 +104,18 @@ export default function OmieIntegration() {
   // Verificar crédito
   const checkCreditMutation = useMutation({
     mutationFn: async ({ cnpjCpf, valorVenda }: { cnpjCpf: string; valorVenda: number }) => {
-      const response = await apiRequest('/api/omie/check-credit', {
+      const response = await fetch('/api/omie/check-credit', {
         method: 'POST',
         body: JSON.stringify({ cnpjCpf, valorVenda }),
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'same-origin',
       });
-      return response;
+      if (!response.ok) {
+        throw new Error('Erro na verificação de crédito');
+      }
+      return response.json();
     },
     onSuccess: (result: CreditApproval) => {
       toast({
@@ -121,10 +135,18 @@ export default function OmieIntegration() {
   });
 
   // Buscar informações de crédito
-  const { data: creditInfo, isLoading: creditLoading } = useQuery({
+  const { data: creditInfo, isLoading: creditLoading } = useQuery<OmieCreditInfo>({
     queryKey: ['/api/omie/client', cnpjCpf, 'credit'],
-    enabled: !!cnpjCpf && cnpjCpf.length >= 11,
-    queryFn: () => apiRequest(`/api/omie/client/${cnpjCpf}/credit`),
+    enabled: !!cnpjCpf && cnpjCpf.replace(/\D/g, '').length >= 11,
+    queryFn: async () => {
+      const response = await fetch(`/api/omie/client/${cnpjCpf.replace(/\D/g, '')}/credit`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error('Informações de crédito não encontradas');
+      }
+      return response.json();
+    },
   });
 
   const handleSearchClient = (e: React.FormEvent) => {

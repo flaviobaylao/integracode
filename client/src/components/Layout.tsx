@@ -19,6 +19,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'sales-cards', label: 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true },
     { id: 'customers', label: 'Clientes', icon: 'fas fa-users', available: true },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: true },
+    { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: true },
