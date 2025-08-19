@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession } from "./localAuth";
+import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
+import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import {
   insertCustomerSchema,
   insertProductSchema,
@@ -69,17 +71,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Customer routes
-  app.get('/api/customers', isAuthenticated, async (req: any, res) => {
+  app.get('/api/customers', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
+      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      
-      // Vendedores only see their own customers
-      const sellerId = user.role === 'vendedor' ? userId : undefined;
       const customers = await storage.getCustomers(sellerId);
       res.json(customers);
     } catch (error) {
@@ -88,7 +84,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/customers/:id', isAuthenticated, async (req: any, res) => {
+  app.get('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const customer = await storage.getCustomer(id);
@@ -98,10 +94,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Check if vendedor can access this customer
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
       
-      if (user?.role === 'vendedor' && customer.sellerId !== userId) {
+      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -112,7 +107,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/customers', isAuthenticated, async (req: any, res) => {
+  app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
       const data = insertCustomerSchema.parse(req.body);
       const customer = await storage.createCustomer(data);
@@ -162,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Product routes
-  app.get('/api/products', isAuthenticated, async (req, res) => {
+  app.get('/api/products', authenticateUser, async (req, res) => {
     try {
       const products = await storage.getProducts();
       res.json(products);
@@ -232,13 +227,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sales card routes
-  app.get('/api/sales-cards', isAuthenticated, async (req: any, res) => {
+  app.get('/api/sales-cards', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      // Vendedores only see their own sales cards
-      const sellerId = user?.role === 'vendedor' ? userId : undefined;
+      const sellerId = req.sellerId;
       const salesCards = await storage.getSalesCards(sellerId);
       res.json(salesCards);
     } catch (error) {
@@ -247,7 +238,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/sales-cards', isAuthenticated, async (req: any, res) => {
+  app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
     try {
       const data = insertSalesCardSchema.parse(req.body);
       const salesCard = await storage.createSalesCard(data);
@@ -326,12 +317,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/dashboard/today-clients', isAuthenticated, async (req: any, res) => {
+  app.get('/api/dashboard/today-clients', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      const sellerId = user?.role === 'vendedor' ? userId : undefined;
+      const sellerId = req.sellerId;
       const todayClients = await storage.getSalesCardsByDate(new Date(), sellerId);
       res.json(todayClients);
     } catch (error) {
@@ -340,12 +328,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/dashboard/overdue-clients', isAuthenticated, async (req: any, res) => {
+  app.get('/api/dashboard/overdue-clients', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      const sellerId = user?.role === 'vendedor' ? userId : undefined;
+      const sellerId = req.sellerId;
       const overdueClients = await storage.getOverdueSalesCards(sellerId);
       res.json(overdueClients);
     } catch (error) {
@@ -355,7 +340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Message template routes
-  app.get('/api/message-templates', isAuthenticated, async (req, res) => {
+  app.get('/api/message-templates', authenticateUser, async (req, res) => {
     try {
       const templates = await storage.getMessageTemplates();
       res.json(templates);
@@ -417,6 +402,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching message history:", error);
       res.status(500).json({ message: "Failed to fetch message history" });
+    }
+  });
+
+  // Omie Integration routes
+  app.get('/api/omie/status', authenticateUser, async (req, res) => {
+    try {
+      const configured = isOmieConfigured();
+      res.json({ 
+        configured,
+        message: configured 
+          ? 'Integração Omie configurada e ativa' 
+          : 'Integração Omie não configurada. Adicione OMIE_APP_KEY e OMIE_APP_SECRET nas variáveis de ambiente.'
+      });
+    } catch (error) {
+      console.error("Error checking Omie status:", error);
+      res.status(500).json({ message: "Erro ao verificar status da integração Omie" });
+    }
+  });
+
+  app.post('/api/omie/check-credit', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpjCpf, valorVenda } = req.body;
+      
+      if (!cnpjCpf || !valorVenda) {
+        return res.status(400).json({ 
+          message: "CNPJ/CPF e valor da venda são obrigatórios" 
+        });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const creditCheck = await omieService.checkCreditApproval(cnpjCpf, valorVenda);
+      res.json(creditCheck);
+    } catch (error) {
+      console.error("Error checking credit with Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao consultar crédito no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  app.get('/api/omie/client/:cnpjCpf', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpjCpf } = req.params;
+      
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const client = await omieService.getClientByCnpjCpf(cnpjCpf);
+      if (!client) {
+        return res.status(404).json({ 
+          message: "Cliente não encontrado no Omie" 
+        });
+      }
+
+      res.json(client);
+    } catch (error) {
+      console.error("Error fetching client from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar cliente no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  app.get('/api/omie/client/:cnpjCpf/credit', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpjCpf } = req.params;
+      
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const creditInfo = await omieService.getClientCreditInfo(cnpjCpf);
+      if (!creditInfo) {
+        return res.status(404).json({ 
+          message: "Informações de crédito não encontradas" 
+        });
+      }
+
+      res.json(creditInfo);
+    } catch (error) {
+      console.error("Error fetching credit info from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar informações de crédito no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
     }
   });
 
