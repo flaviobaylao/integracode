@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { RefreshCw as Sync, Users, AlertTriangle, DollarSign, Calendar, Check, X, Loader2, RefreshCw } from "lucide-react";
 import type { User } from "@shared/schema";
 
@@ -78,10 +78,19 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('/api/omie/sync-all-clients', {
+        const response = await fetch('/api/omie/sync-all-clients', {
           method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ defaultSellerId: sellerId })
-        }) as SyncResult;
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json() as SyncResult;
         
         clearInterval(progressInterval);
         setSyncProgress(100);
@@ -123,9 +132,18 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('/api/omie/sync-vendors', {
-          method: 'POST'
-        }) as SyncResult;
+        const response = await fetch('/api/omie/sync-vendors', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json() as SyncResult;
         
         clearInterval(progressInterval);
         setSyncProgress(100);
@@ -167,9 +185,18 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 1000);
 
       try {
-        const result = await apiRequest('/api/omie/sync-products', {
-          method: 'POST'
-        }) as SyncResult;
+        const response = await fetch('/api/omie/sync-products', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json() as SyncResult;
         
         clearInterval(progressInterval);
         setSyncProgress(100);
