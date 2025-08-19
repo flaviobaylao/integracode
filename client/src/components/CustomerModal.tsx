@@ -303,15 +303,24 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <FormLabel>CPF *</FormLabel>
                           <FormControl>
                             <Input
-                              value={field.value || ''}
+                              {...field}
                               placeholder="000.000.000-00"
                               maxLength={14}
                               onChange={(e) => {
-                                const formatted = formatCPF(e.target.value);
-                                field.onChange(formatted);
+                                let value = e.target.value;
+                                // Remove tudo que não é número
+                                value = value.replace(/\D/g, '');
+                                // Aplica formatação conforme digita
+                                if (value.length <= 3) {
+                                  field.onChange(value);
+                                } else if (value.length <= 6) {
+                                  field.onChange(value.replace(/(\d{3})(\d{0,3})/, '$1.$2'));
+                                } else if (value.length <= 9) {
+                                  field.onChange(value.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3'));
+                                } else {
+                                  field.onChange(value.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4'));
+                                }
                               }}
-                              onBlur={field.onBlur}
-                              name={field.name}
                             />
                           </FormControl>
                           <FormMessage />
@@ -329,15 +338,26 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input
-                                  value={field.value || ''}
+                                  {...field}
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
                                   onChange={(e) => {
-                                    const formatted = formatCNPJ(e.target.value);
-                                    field.onChange(formatted);
+                                    let value = e.target.value;
+                                    // Remove tudo que não é número
+                                    value = value.replace(/\D/g, '');
+                                    // Aplica formatação conforme digita
+                                    if (value.length <= 2) {
+                                      field.onChange(value);
+                                    } else if (value.length <= 5) {
+                                      field.onChange(value.replace(/(\d{2})(\d{0,3})/, '$1.$2'));
+                                    } else if (value.length <= 8) {
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3'));
+                                    } else if (value.length <= 12) {
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4'));
+                                    } else {
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5'));
+                                    }
                                   }}
-                                  onBlur={field.onBlur}
-                                  name={field.name}
                                 />
                               </FormControl>
                               <Button
