@@ -58,3 +58,36 @@ export const checkSellerAccess = (req: Request, res: Response, next: NextFunctio
   
   next();
 };
+
+// Middleware específico para autenticação de admin
+export const authenticateAdmin = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let userId: string | null = null;
+    
+    // Verificar sessão local primeiro (para admin Flavio)
+    if ((req.session as any)?.user?.claims?.sub) {
+      userId = (req.session as any).user.claims.sub;
+    }
+    // Verificar autenticação Replit
+    else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
+      userId = (req.user as any).claims.sub;
+    }
+    
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    // Verificar se o usuário existe no banco e é admin
+    const user = await storage.getUser(userId);
+    if (!user || !user.isActive || user.role !== 'admin') {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    
+    // Adicionar usuário ao objeto request
+    (req as any).currentUser = user;
+    next();
+  } catch (error) {
+    console.error("Admin authentication error:", error);
+    res.status(500).json({ message: "Authentication error" });
+  }
+};

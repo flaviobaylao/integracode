@@ -530,12 +530,13 @@ export class OmieService {
     return {
       firstName: omieVendor.nome.split(' ')[0] || '',
       lastName: omieVendor.nome.split(' ').slice(1).join(' ') || '',
-      email: omieVendor.email || '',
+      email: omieVendor.email || `vendedor${omieVendor.codigo}@honest.com`,
       phone: omieVendor.telefone || '',
       role: 'vendedor' as const,
-      isActive: omieVendor.inativo !== 'S',
+      isActive: true, // Importar todos como ativos
       omieId: omieVendor.codigo,
-      commission: omieVendor.comissao || 0
+      commission: omieVendor.comissao || 0,
+      inactiveInOmie: omieVendor.inativo === 'S' // Guardar status do Omie separadamente
     };
   }
 
@@ -545,11 +546,12 @@ export class OmieService {
       name: omieProduct.descricao,
       code: omieProduct.codigo || omieProduct.codigo_produto.toString(),
       price: omieProduct.valor_unitario || 0,
-      unit: omieProduct.unidade || 'UN',
-      isActive: omieProduct.inativo !== 'S',
+      stock: 0, // Sempre iniciar com estoque 0
+      isActive: true, // Importar todos como ativos (pode ser editado depois)
       omieId: omieProduct.codigo_produto,
       ncm: omieProduct.ncm || '',
       ean: omieProduct.ean || '',
+      inactiveInOmie: omieProduct.inativo === 'S', // Guardar status do Omie separadamente
       weight: omieProduct.peso_liq || 0,
       dimensions: {
         height: omieProduct.altura || 0,
