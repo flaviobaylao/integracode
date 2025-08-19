@@ -46,6 +46,9 @@ Preferred communication style: Simple, everyday language.
 - **Product Catalog**: Inventory and pricing management
 - **WhatsApp Integration**: Template-based messaging system
 - **Route Management**: Geographic organization of customers and sellers
+- **Omie ERP Integration**: Complete synchronization of clients, vendors, products and overdue debts
+- **Bulk Import Operations**: Individual and bulk client import from Omie with seller assignment
+- **Financial Tracking**: Real-time overdue debt monitoring and credit analysis
 
 # External Dependencies
 

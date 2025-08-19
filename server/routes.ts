@@ -721,6 +721,142 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para sincronizar todos os vendedores do Omie
+  app.post('/api/omie/sync-vendors', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = {
+        totalProcessed: 0,
+        imported: 0,
+        updated: 0,
+        errors: [] as string[]
+      };
+
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await omieService.getAllVendors(currentPage, 100);
+        
+        for (const omieVendor of pageData.vendors) {
+          result.totalProcessed++;
+          
+          try {
+            // Converter para formato do sistema
+            const systemVendor = omieService.convertVendorToSystemFormat(omieVendor);
+
+            // Verificar se vendedor já existe
+            const existingUsers = await storage.getUsers();
+            const existingVendor = existingUsers.find(user => 
+              user.role === 'vendedor' && 
+              (user as any).omieId === systemVendor.omieId
+            );
+
+            if (existingVendor) {
+              // Atualizar vendedor existente
+              await storage.updateUser(existingVendor.id, systemVendor);
+              result.updated++;
+            } else {
+              // Criar novo vendedor
+              await storage.createUser(systemVendor);
+              result.imported++;
+            }
+
+          } catch (error: any) {
+            console.error(`Erro ao processar vendedor ${omieVendor.codigo}:`, error);
+            result.errors.push(`Erro ao processar vendedor ${omieVendor.nome}: ${error?.message || 'Erro desconhecido'}`);
+          }
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      res.json(result);
+
+    } catch (error) {
+      console.error("Error syncing vendors from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao sincronizar vendedores do Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Rota para sincronizar todos os produtos do Omie
+  app.post('/api/omie/sync-products', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = {
+        totalProcessed: 0,
+        imported: 0,
+        updated: 0,
+        errors: [] as string[]
+      };
+
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await omieService.getAllProducts(currentPage, 100);
+        
+        for (const omieProduct of pageData.products) {
+          result.totalProcessed++;
+          
+          try {
+            // Converter para formato do sistema
+            const systemProduct = omieService.convertProductToSystemFormat(omieProduct);
+
+            // Verificar se produto já existe
+            const existingProducts = await storage.getProducts();
+            const existingProduct = existingProducts.find(product => 
+              (product as any).omieId === systemProduct.omieId ||
+              (product as any).code === systemProduct.code
+            );
+
+            if (existingProduct) {
+              // Atualizar produto existente
+              await storage.updateProduct(existingProduct.id, systemProduct);
+              result.updated++;
+            } else {
+              // Criar novo produto
+              await storage.createProduct(systemProduct);
+              result.imported++;
+            }
+
+          } catch (error: any) {
+            console.error(`Erro ao processar produto ${omieProduct.codigo_produto}:`, error);
+            result.errors.push(`Erro ao processar produto ${omieProduct.descricao}: ${error?.message || 'Erro desconhecido'}`);
+          }
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      res.json(result);
+
+    } catch (error) {
+      console.error("Error syncing products from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao sincronizar produtos do Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Receita Federal Integration routes
   app.post('/api/receita/cnpj', authenticateUser, async (req: any, res) => {
     try {

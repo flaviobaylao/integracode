@@ -27,7 +27,33 @@ const OmieCreditInfoSchema = z.object({
   bloqueado_financeiro: z.string().optional(),
 });
 
+const OmieVendorSchema = z.object({
+  codigo: z.number(),
+  nome: z.string(),
+  email: z.string().optional(),
+  telefone: z.string().optional(),
+  inativo: z.string().optional(),
+  comissao: z.number().optional()
+});
+
+const OmieProductSchema = z.object({
+  codigo_produto: z.number(),
+  codigo: z.string().optional(),
+  descricao: z.string(),
+  unidade: z.string().optional(),
+  valor_unitario: z.number().optional(),
+  inativo: z.string().optional(),
+  ncm: z.string().optional(),
+  ean: z.string().optional(),
+  peso_liq: z.number().optional(),
+  altura: z.number().optional(),
+  largura: z.number().optional(),
+  profundidade: z.number().optional()
+});
+
 export type OmieClient = z.infer<typeof OmieClientSchema>;
+export type OmieVendor = z.infer<typeof OmieVendorSchema>;
+export type OmieProduct = z.infer<typeof OmieProductSchema>;
 export type OmieCreditInfo = z.infer<typeof OmieCreditInfoSchema>;
 
 export interface OmieConfig {
@@ -407,6 +433,116 @@ export class OmieService {
       console.error('Erro ao buscar débitos em atraso no Omie:', error);
       throw error;
     }
+  }
+
+  // Listar todos os vendedores ativos do Omie
+  async getAllVendors(page = 1, pageSize = 50): Promise<{
+    vendors: OmieVendor[];
+    totalPages: number;
+    totalRecords: number;
+    currentPage: number;
+  }> {
+    try {
+      const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
+        pagina: page,
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'N'
+      });
+
+      const vendors = response.vendedores_cadastro || [];
+      
+      return {
+        vendors: vendors.map((vendor: any) => ({
+          codigo: vendor.codigo,
+          nome: vendor.nome,
+          email: vendor.email,
+          telefone: vendor.telefone,
+          inativo: vendor.inativo,
+          comissao: vendor.comissao
+        })).filter((vendor: any) => vendor.inativo !== 'S'), // Apenas ativos
+        totalPages: response.total_de_paginas || 1,
+        totalRecords: response.total_de_registros || 0,
+        currentPage: page
+      };
+    } catch (error) {
+      console.error('Erro ao listar vendedores no Omie:', error);
+      throw error;
+    }
+  }
+
+  // Listar todos os produtos ativos do Omie
+  async getAllProducts(page = 1, pageSize = 50): Promise<{
+    products: OmieProduct[];
+    totalPages: number;
+    totalRecords: number;
+    currentPage: number;
+  }> {
+    try {
+      const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
+        pagina: page,
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'N'
+      });
+
+      const products = response.produto_servico_cadastro || [];
+      
+      return {
+        products: products.map((product: any) => ({
+          codigo_produto: product.codigo_produto,
+          codigo: product.codigo,
+          descricao: product.descricao,
+          unidade: product.unidade,
+          valor_unitario: product.valor_unitario,
+          inativo: product.inativo,
+          ncm: product.ncm,
+          ean: product.ean,
+          peso_liq: product.peso_liq,
+          altura: product.altura,
+          largura: product.largura,
+          profundidade: product.profundidade
+        })).filter((product: any) => product.inativo !== 'S'), // Apenas ativos
+        totalPages: response.total_de_paginas || 1,
+        totalRecords: response.total_de_registros || 0,
+        currentPage: page
+      };
+    } catch (error) {
+      console.error('Erro ao listar produtos no Omie:', error);
+      throw error;
+    }
+  }
+
+  // Converter vendedor do Omie para formato do sistema
+  convertVendorToSystemFormat(omieVendor: OmieVendor) {
+    return {
+      firstName: omieVendor.nome.split(' ')[0] || '',
+      lastName: omieVendor.nome.split(' ').slice(1).join(' ') || '',
+      email: omieVendor.email || '',
+      phone: omieVendor.telefone || '',
+      role: 'vendedor' as const,
+      isActive: omieVendor.inativo !== 'S',
+      omieId: omieVendor.codigo,
+      commission: omieVendor.comissao || 0
+    };
+  }
+
+  // Converter produto do Omie para formato do sistema
+  convertProductToSystemFormat(omieProduct: OmieProduct) {
+    return {
+      name: omieProduct.descricao,
+      code: omieProduct.codigo || omieProduct.codigo_produto.toString(),
+      price: omieProduct.valor_unitario || 0,
+      unit: omieProduct.unidade || 'UN',
+      isActive: omieProduct.inativo !== 'S',
+      omieId: omieProduct.codigo_produto,
+      ncm: omieProduct.ncm || '',
+      ean: omieProduct.ean || '',
+      weight: omieProduct.peso_liq || 0,
+      dimensions: {
+        height: omieProduct.altura || 0,
+        width: omieProduct.largura || 0,
+        depth: omieProduct.profundidade || 0
+      }
+    };
   }
 }
 

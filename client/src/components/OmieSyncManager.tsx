@@ -40,7 +40,7 @@ interface SyncResult {
 
 export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProps) {
   const [selectedSeller, setSelectedSeller] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'clients' | 'debts'>('clients');
+  const [activeTab, setActiveTab] = useState<'clients' | 'vendors' | 'products' | 'debts'>('clients');
   const [syncProgress, setSyncProgress] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
@@ -73,7 +73,6 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       setIsSyncing(true);
       setSyncProgress(0);
       
-      // Simular progresso (em uma implementação real, você pode usar WebSockets ou polling)
       const progressInterval = setInterval(() => {
         setSyncProgress(prev => Math.min(prev + 10, 90));
       }, 1000);
@@ -112,6 +111,90 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     },
   });
 
+  // Mutation para sincronizar vendedores
+  const syncVendorsMutation = useMutation({
+    mutationFn: async (): Promise<SyncResult> => {
+      setIsSyncing(true);
+      setSyncProgress(0);
+      
+      const progressInterval = setInterval(() => {
+        setSyncProgress(prev => Math.min(prev + 10, 90));
+      }, 1000);
+
+      try {
+        const result = await apiRequest('POST', '/api/omie/sync-vendors') as SyncResult;
+        
+        clearInterval(progressInterval);
+        setSyncProgress(100);
+        
+        return result;
+      } catch (error) {
+        clearInterval(progressInterval);
+        throw error;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    onSuccess: (data: SyncResult) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      setSyncResult(data);
+      toast({
+        title: "Sincronização de vendedores concluída",
+        description: `${data.imported} novos vendedores importados, ${data.updated} atualizados.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro na sincronização de vendedores",
+        description: error.message,
+        variant: "destructive",
+      });
+      setSyncResult(null);
+    },
+  });
+
+  // Mutation para sincronizar produtos
+  const syncProductsMutation = useMutation({
+    mutationFn: async (): Promise<SyncResult> => {
+      setIsSyncing(true);
+      setSyncProgress(0);
+      
+      const progressInterval = setInterval(() => {
+        setSyncProgress(prev => Math.min(prev + 10, 90));
+      }, 1000);
+
+      try {
+        const result = await apiRequest('POST', '/api/omie/sync-products') as SyncResult;
+        
+        clearInterval(progressInterval);
+        setSyncProgress(100);
+        
+        return result;
+      } catch (error) {
+        clearInterval(progressInterval);
+        throw error;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    onSuccess: (data: SyncResult) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      setSyncResult(data);
+      toast({
+        title: "Sincronização de produtos concluída",
+        description: `${data.imported} novos produtos importados, ${data.updated} atualizados.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro na sincronização de produtos",
+        description: error.message,
+        variant: "destructive",
+      });
+      setSyncResult(null);
+    },
+  });
+
   const handleSyncAllClients = () => {
     if (!selectedSeller) {
       toast({
@@ -123,6 +206,14 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     }
 
     syncAllClientsMutation.mutate(selectedSeller);
+  };
+
+  const handleSyncVendors = () => {
+    syncVendorsMutation.mutate();
+  };
+
+  const handleSyncProducts = () => {
+    syncProductsMutation.mutate();
   };
 
   const formatCurrency = (value: number) => {
@@ -175,22 +266,38 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
 
         <div className="space-y-6">
           {/* Tabs */}
-          <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-1 bg-gray-100 p-1 rounded-lg">
             <Button
               variant={activeTab === 'clients' ? 'default' : 'ghost'}
-              className={`flex-1 ${activeTab === 'clients' ? 'bg-honest-blue text-white' : ''}`}
+              className={`${activeTab === 'clients' ? 'bg-honest-blue text-white' : ''}`}
               onClick={() => setActiveTab('clients')}
             >
               <Users className="h-4 w-4 mr-2" />
-              Sincronizar Clientes
+              Clientes
+            </Button>
+            <Button
+              variant={activeTab === 'vendors' ? 'default' : 'ghost'}
+              className={`${activeTab === 'vendors' ? 'bg-honest-blue text-white' : ''}`}
+              onClick={() => setActiveTab('vendors')}
+            >
+              <Users className="h-4 w-4 mr-2" />
+              Vendedores
+            </Button>
+            <Button
+              variant={activeTab === 'products' ? 'default' : 'ghost'}
+              className={`${activeTab === 'products' ? 'bg-honest-blue text-white' : ''}`}
+              onClick={() => setActiveTab('products')}
+            >
+              <DollarSign className="h-4 w-4 mr-2" />
+              Produtos
             </Button>
             <Button
               variant={activeTab === 'debts' ? 'default' : 'ghost'}
-              className={`flex-1 ${activeTab === 'debts' ? 'bg-honest-blue text-white' : ''}`}
+              className={`${activeTab === 'debts' ? 'bg-honest-blue text-white' : ''}`}
               onClick={() => setActiveTab('debts')}
             >
               <AlertTriangle className="h-4 w-4 mr-2" />
-              Débitos em Atraso
+              Débitos
             </Button>
           </div>
 
@@ -248,6 +355,178 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                         )}
                       </Button>
                     </div>
+                  </div>
+
+                  {/* Progresso */}
+                  {isSyncing && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Progresso da sincronização</span>
+                        <span>{syncProgress}%</span>
+                      </div>
+                      <Progress value={syncProgress} className="w-full" />
+                    </div>
+                  )}
+
+                  {/* Resultado */}
+                  {syncResult && (
+                    <Card className="bg-green-50 border-green-200">
+                      <CardContent className="pt-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                          <div>
+                            <p className="text-2xl font-bold text-honest-blue">{syncResult.totalProcessed}</p>
+                            <p className="text-sm text-gray-600">Processados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-green-600">{syncResult.imported}</p>
+                            <p className="text-sm text-gray-600">Importados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-blue-600">{syncResult.updated}</p>
+                            <p className="text-sm text-gray-600">Atualizados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-red-600">{syncResult.errors.length}</p>
+                            <p className="text-sm text-gray-600">Erros</p>
+                          </div>
+                        </div>
+                        
+                        {syncResult.errors.length > 0 && (
+                          <div className="mt-4">
+                            <p className="font-medium text-red-600 mb-2">Erros encontrados:</p>
+                            <div className="max-h-32 overflow-y-auto space-y-1">
+                              {syncResult.errors.map((error, index) => (
+                                <p key={index} className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                                  {error}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Tab: Sincronizar Vendedores */}
+          {activeTab === 'vendors' && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sincronização de Vendedores</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-gray-600">
+                    Esta operação irá buscar todos os vendedores ativos do Omie e importar/atualizar no sistema.
+                  </p>
+                  
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={handleSyncVendors}
+                      disabled={isSyncing}
+                      className="bg-honest-blue hover:bg-honest-blue/90"
+                    >
+                      {isSyncing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Sincronizar Vendedores
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Progresso */}
+                  {isSyncing && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Progresso da sincronização</span>
+                        <span>{syncProgress}%</span>
+                      </div>
+                      <Progress value={syncProgress} className="w-full" />
+                    </div>
+                  )}
+
+                  {/* Resultado */}
+                  {syncResult && (
+                    <Card className="bg-green-50 border-green-200">
+                      <CardContent className="pt-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                          <div>
+                            <p className="text-2xl font-bold text-honest-blue">{syncResult.totalProcessed}</p>
+                            <p className="text-sm text-gray-600">Processados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-green-600">{syncResult.imported}</p>
+                            <p className="text-sm text-gray-600">Importados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-blue-600">{syncResult.updated}</p>
+                            <p className="text-sm text-gray-600">Atualizados</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-red-600">{syncResult.errors.length}</p>
+                            <p className="text-sm text-gray-600">Erros</p>
+                          </div>
+                        </div>
+                        
+                        {syncResult.errors.length > 0 && (
+                          <div className="mt-4">
+                            <p className="font-medium text-red-600 mb-2">Erros encontrados:</p>
+                            <div className="max-h-32 overflow-y-auto space-y-1">
+                              {syncResult.errors.map((error, index) => (
+                                <p key={index} className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                                  {error}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Tab: Sincronizar Produtos */}
+          {activeTab === 'products' && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sincronização de Produtos</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-gray-600">
+                    Esta operação irá buscar todos os produtos ativos do Omie e importar/atualizar no sistema.
+                  </p>
+                  
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={handleSyncProducts}
+                      disabled={isSyncing}
+                      className="bg-honest-blue hover:bg-honest-blue/90"
+                    >
+                      {isSyncing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Sincronizar Produtos
+                        </>
+                      )}
+                    </Button>
                   </div>
 
                   {/* Progresso */}
