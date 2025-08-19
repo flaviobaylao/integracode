@@ -539,7 +539,7 @@ export class OmieService {
       id: `omie-vendor-${omieVendor.codigo}`, // ID único baseado no código do Omie
       firstName: omieVendor.nome.split(' ')[0] || '',
       lastName: omieVendor.nome.split(' ').slice(1).join(' ') || '',
-      email: omieVendor.email || `vendedor${omieVendor.codigo}@honest.com`,
+      email: omieVendor.email || '',
       role: 'vendedor' as const,
       route: 'geral',
       isActive: omieVendor.inativo !== 'S' // Respeitar status do Omie

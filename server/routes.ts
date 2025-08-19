@@ -765,16 +765,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Converter para formato do sistema
             const systemVendor = omieService.convertVendorToSystemFormat(omieVendor);
 
-            // Verificar se vendedor já existe
+            // Verificar se vendedor já existe pelo ID do Omie ou email
             const existingUsers = await storage.getUsers();
             const existingVendor = existingUsers.find(user => 
               user.role === 'vendedor' && 
-              (user as any).omieId === systemVendor.omieId
+              (user.id === `omie-vendor-${omieVendor.codigo}` || 
+               (user.email && user.email === systemVendor.email))
             );
 
             if (existingVendor) {
               // Atualizar vendedor existente
-              await storage.updateUser(existingVendor.id, systemVendor);
+              await storage.updateUser(existingVendor.id, {
+                firstName: systemVendor.firstName,
+                lastName: systemVendor.lastName,
+                email: systemVendor.email,
+                isActive: systemVendor.isActive
+              });
               result.updated++;
             } else {
               // Criar novo vendedor
