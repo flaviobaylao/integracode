@@ -299,20 +299,33 @@ export class OmieService {
 
   // Converter cliente do Omie para formato do sistema
   convertClientToSystemFormat(omieClient: OmieClient) {
-    const isCompany = omieClient.cnpj_cpf && omieClient.cnpj_cpf.length === 18;
+    // Limpar e validar documento
+    const documento = omieClient.cnpj_cpf || '';
+    const docLimpo = documento.replace(/\D/g, '');
+    const isCompany = docLimpo.length === 14;
+    
+    // Só incluir CPF/CNPJ se houver um documento válido
+    let cpf = null;
+    let cnpj = null;
+    
+    if (docLimpo.length === 11) {
+      cpf = docLimpo;
+    } else if (docLimpo.length === 14) {
+      cnpj = docLimpo;
+    }
     
     return {
       id: `omie-client-${omieClient.codigo_cliente_omie}`, // ID único baseado no código do Omie
-      name: omieClient.razao_social || omieClient.nome_fantasia || '',
+      name: omieClient.razao_social || omieClient.nome_fantasia || 'Cliente sem nome',
       customerType: isCompany ? 'pessoa_juridica' as const : 'pessoa_fisica' as const,
-      cpf: !isCompany ? omieClient.cnpj_cpf : '',
-      cnpj: isCompany ? omieClient.cnpj_cpf : '',
-      companyName: omieClient.razao_social || '',
-      fantasyName: omieClient.nome_fantasia || '',
+      cpf,
+      cnpj,
+      companyName: omieClient.razao_social || null,
+      fantasyName: omieClient.nome_fantasia || null,
       phone: omieClient.telefone1_ddd && omieClient.telefone1_numero 
         ? `(${omieClient.telefone1_ddd}) ${omieClient.telefone1_numero}`
-        : '',
-      email: omieClient.email || '',
+        : '(00) 00000-0000',
+      email: omieClient.email || 'sempreenchimento@omie.com.br',
       address: [
         omieClient.endereco,
         omieClient.endereco_numero && `nº ${omieClient.endereco_numero}`,
@@ -322,6 +335,7 @@ export class OmieService {
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
       isActive: omieClient.inativo !== 'S',
+      document: documento || null // Documento original apenas se houver
     };
   }
 
