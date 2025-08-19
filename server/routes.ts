@@ -5,6 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
+import { receitaService } from "./receitaIntegration";
 import {
   insertCustomerSchema,
   insertProductSchema,
@@ -501,6 +502,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         message: "Erro ao buscar informações de crédito no Omie",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Receita Federal Integration routes
+  app.post('/api/receita/cnpj', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpj } = req.body;
+      
+      if (!cnpj) {
+        return res.status(400).json({ 
+          message: "CNPJ é obrigatório" 
+        });
+      }
+
+      // Valida formato do CNPJ
+      if (!receitaService.validarCNPJ(cnpj)) {
+        return res.status(400).json({ 
+          message: "CNPJ inválido" 
+        });
+      }
+
+      const dadosCNPJ = await receitaService.consultarCNPJ(cnpj);
+      
+      if (!dadosCNPJ) {
+        return res.status(404).json({ 
+          message: "CNPJ não encontrado" 
+        });
+      }
+
+      // Formatar dados para retorno
+      const dadosFormatados = {
+        cnpj: receitaService.formatarCNPJ(dadosCNPJ.cnpj),
+        razaoSocial: dadosCNPJ.razao_social,
+        nomeFantasia: dadosCNPJ.nome_fantasia || '',
+        endereco: receitaService.formatarEndereco(dadosCNPJ),
+        cidade: dadosCNPJ.municipio,
+        estado: dadosCNPJ.uf,
+        cep: dadosCNPJ.cep,
+        telefone: dadosCNPJ.telefone || '',
+        email: dadosCNPJ.email || '',
+        situacao: dadosCNPJ.situacao,
+        atividadePrincipal: dadosCNPJ.atividade_principal?.[0]?.text || '',
+        capitalSocial: dadosCNPJ.capital_social || '',
+        porte: dadosCNPJ.porte || '',
+        naturezaJuridica: dadosCNPJ.natureza_juridica || ''
+      };
+
+      res.json(dadosFormatados);
+    } catch (error) {
+      console.error("Error fetching CNPJ from Receita Federal:", error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Erro ao consultar CNPJ",
+      });
+    }
+  });
+
+  app.post('/api/receita/validate-cpf', authenticateUser, async (req: any, res) => {
+    try {
+      const { cpf } = req.body;
+      
+      if (!cpf) {
+        return res.status(400).json({ 
+          message: "CPF é obrigatório" 
+        });
+      }
+
+      const isValid = receitaService.validarCPF(cpf);
+      
+      res.json({ 
+        valid: isValid,
+        formatted: isValid ? receitaService.formatarCPF(cpf) : null
+      });
+    } catch (error) {
+      console.error("Error validating CPF:", error);
+      res.status(500).json({ 
+        message: "Erro ao validar CPF",
+      });
+    }
+  });
+
+  app.post('/api/receita/validate-cnpj', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpj } = req.body;
+      
+      if (!cnpj) {
+        return res.status(400).json({ 
+          message: "CNPJ é obrigatório" 
+        });
+      }
+
+      const isValid = receitaService.validarCNPJ(cnpj);
+      
+      res.json({ 
+        valid: isValid,
+        formatted: isValid ? receitaService.formatarCNPJ(cnpj) : null
+      });
+    } catch (error) {
+      console.error("Error validating CNPJ:", error);
+      res.status(500).json({ 
+        message: "Erro ao validar CNPJ",
       });
     }
   });

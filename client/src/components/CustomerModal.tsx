@@ -1,104 +1,201 @@
 import { useState, useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { insertCustomerSchema, type CustomerWithSeller } from "@shared/schema";
-import { z } from "zod";
+import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
+import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar } from "lucide-react";
 
 interface CustomerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  editingCustomer: CustomerWithSeller | null;
+  customer?: Customer | null;
 }
 
-export default function CustomerModal({ isOpen, onClose, editingCustomer }: CustomerModalProps) {
-  const [formData, setFormData] = useState({
-    name: '',
-    document: '',
-    phone: '',
-    email: '',
-    address: '',
-    route: '',
-    sellerId: '',
-    weekdays: [] as string[],
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
+interface CNPJData {
+  cnpj: string;
+  razaoSocial: string;
+  nomeFantasia: string;
+  endereco: string;
+  cidade: string;
+  estado: string;
+  cep: string;
+  telefone: string;
+  email: string;
+  situacao: string;
+}
+
+const weekdayOptions = [
+  { value: 'monday', label: 'Segunda-feira' },
+  { value: 'tuesday', label: 'Terça-feira' },
+  { value: 'wednesday', label: 'Quarta-feira' },
+  { value: 'thursday', label: 'Quinta-feira' },
+  { value: 'friday', label: 'Sexta-feira' },
+  { value: 'saturday', label: 'Sábado' },
+  { value: 'sunday', label: 'Domingo' },
+];
+
+export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
+  const [cnpjLoading, setCnpjLoading] = useState(false);
+  const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Get users for seller selection (only for non-vendedor roles)
   const { data: users } = useQuery({
-    queryKey: ['/api/auth/user'],
+    queryKey: ['/api/users'],
     retry: false,
   });
 
+  const form = useForm<InsertCustomer>({
+    resolver: zodResolver(insertCustomerSchema),
+    defaultValues: {
+      customerType: 'pessoa_fisica',
+      name: '',
+      cpf: '',
+      cnpj: '',
+      companyName: '',
+      fantasyName: '',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      route: '',
+      sellerId: '',
+      weekdays: '[]',
+      isActive: true,
+    },
+  });
+
+  const customerType = form.watch('customerType');
+
   useEffect(() => {
-    if (editingCustomer) {
-      try {
-        const weekdays = JSON.parse(editingCustomer.weekdays);
-        setFormData({
-          name: editingCustomer.name,
-          document: editingCustomer.document,
-          phone: editingCustomer.phone,
-          email: editingCustomer.email || '',
-          address: editingCustomer.address,
-          route: editingCustomer.route,
-          sellerId: editingCustomer.sellerId,
-          weekdays: Array.isArray(weekdays) ? weekdays : [],
-        });
-      } catch {
-        setFormData({
-          name: editingCustomer.name,
-          document: editingCustomer.document,
-          phone: editingCustomer.phone,
-          email: editingCustomer.email || '',
-          address: editingCustomer.address,
-          route: editingCustomer.route,
-          sellerId: editingCustomer.sellerId,
-          weekdays: [],
-        });
-      }
+    if (customer) {
+      form.reset({
+        customerType: (customer as any).customerType || 'pessoa_fisica',
+        name: customer.name || '',
+        cpf: (customer as any).cpf || '',
+        cnpj: (customer as any).cnpj || '',
+        companyName: (customer as any).companyName || '',
+        fantasyName: (customer as any).fantasyName || '',
+        phone: customer.phone || '',
+        email: customer.email || '',
+        address: customer.address || '',
+        city: (customer as any).city || '',
+        state: (customer as any).state || '',
+        zipCode: (customer as any).zipCode || '',
+        route: customer.route || '',
+        sellerId: customer.sellerId || '',
+        weekdays: customer.weekdays || '[]',
+        isActive: customer.isActive !== undefined ? customer.isActive : true,
+      });
     } else {
-      setFormData({
+      form.reset({
+        customerType: 'pessoa_fisica',
         name: '',
-        document: '',
+        cpf: '',
+        cnpj: '',
+        companyName: '',
+        fantasyName: '',
         phone: '',
         email: '',
         address: '',
+        city: '',
+        state: '',
+        zipCode: '',
         route: '',
-        sellerId: users?.id || '',
-        weekdays: [],
+        sellerId: '',
+        weekdays: '[]',
+        isActive: true,
       });
     }
-    setErrors({});
-  }, [editingCustomer, users, isOpen]);
+  }, [customer, form]);
 
-  const createCustomerMutation = useMutation({
-    mutationFn: async (data: any) => {
-      if (editingCustomer) {
-        await apiRequest('PUT', `/api/customers/${editingCustomer.id}`, data);
-      } else {
-        await apiRequest('POST', '/api/customers', data);
+  const searchCNPJ = async (cnpj: string) => {
+    if (!cnpj || cnpj.replace(/\D/g, '').length !== 14) {
+      toast({
+        title: "Erro",
+        description: "CNPJ deve conter 14 dígitos",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCnpjLoading(true);
+    try {
+      const response = await fetch('/api/receita/cnpj', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ cnpj }),
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao consultar CNPJ');
       }
+
+      const data: CNPJData = await response.json();
+      setCnpjData(data);
+
+      // Preencher automaticamente os campos
+      form.setValue('companyName', data.razaoSocial);
+      form.setValue('fantasyName', data.nomeFantasia);
+      form.setValue('name', data.nomeFantasia || data.razaoSocial);
+      form.setValue('address', data.endereco);
+      form.setValue('city', data.cidade);
+      form.setValue('state', data.estado);
+      form.setValue('zipCode', data.cep);
+      
+      if (data.telefone) {
+        form.setValue('phone', data.telefone);
+      }
+      if (data.email) {
+        form.setValue('email', data.email);
+      }
+
+      toast({
+        title: "Sucesso",
+        description: "Dados do CNPJ carregados com sucesso!",
+      });
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Erro ao consultar CNPJ",
+        variant: "destructive",
+      });
+    } finally {
+      setCnpjLoading(false);
+    }
+  };
+
+  const customerMutation = useMutation({
+    mutationFn: async (data: InsertCustomer) => {
+      const method = customer ? 'PUT' : 'POST';
+      const url = customer ? `/api/customers/${customer.id}` : '/api/customers';
+      return await apiRequest(method, url, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
-      onClose();
       toast({
         title: "Sucesso",
-        description: editingCustomer 
-          ? "Cliente atualizado com sucesso!" 
-          : "Cliente criado com sucesso!",
+        description: customer ? "Cliente atualizado com sucesso!" : "Cliente criado com sucesso!",
       });
+      onClose();
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast({
         title: "Erro",
         description: error.message,
@@ -107,194 +204,439 @@ export default function CustomerModal({ isOpen, onClose, editingCustomer }: Cust
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrors({});
+  const onSubmit = (data: InsertCustomer) => {
+    customerMutation.mutate(data);
+  };
 
-    try {
-      const dataToValidate = {
-        ...formData,
-        weekdays: JSON.stringify(formData.weekdays),
-      };
+  const handleWeekdayToggle = (weekday: string) => {
+    const currentWeekdays = JSON.parse(form.getValues('weekdays') || '[]');
+    const newWeekdays = currentWeekdays.includes(weekday)
+      ? currentWeekdays.filter((w: string) => w !== weekday)
+      : [...currentWeekdays, weekday];
+    form.setValue('weekdays', JSON.stringify(newWeekdays));
+  };
 
-      const validatedData = insertCustomerSchema.parse(dataToValidate);
-      createCustomerMutation.mutate(validatedData);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const fieldErrors: Record<string, string> = {};
-        error.errors.forEach((err) => {
-          if (err.path[0]) {
-            fieldErrors[err.path[0] as string] = err.message;
-          }
-        });
-        setErrors(fieldErrors);
-      }
+  const formatCPF = (value: string) => {
+    const cpf = value.replace(/\D/g, '');
+    return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  };
+
+  const formatCNPJ = (value: string) => {
+    const cnpj = value.replace(/\D/g, '');
+    return cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  };
+
+  const formatPhone = (value: string) => {
+    const phone = value.replace(/\D/g, '');
+    if (phone.length <= 10) {
+      return phone.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
     }
+    return phone.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
   };
-
-  const handleWeekdayChange = (day: string, checked: boolean) => {
-    setFormData(prev => ({
-      ...prev,
-      weekdays: checked 
-        ? [...prev.weekdays, day]
-        : prev.weekdays.filter(d => d !== day)
-    }));
-  };
-
-  const weekdayOptions = [
-    { value: 'monday', label: 'Segunda' },
-    { value: 'tuesday', label: 'Terça' },
-    { value: 'wednesday', label: 'Quarta' },
-    { value: 'thursday', label: 'Quinta' },
-    { value: 'friday', label: 'Sexta' },
-    { value: 'saturday', label: 'Sábado' },
-    { value: 'sunday', label: 'Domingo' },
-  ];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
-            {editingCustomer ? 'Editar Cliente' : 'Novo Cliente'}
+          <DialogTitle className="flex items-center space-x-2">
+            <UserIcon className="h-5 w-5 text-honest-blue" />
+            <span>{customer ? 'Editar Cliente' : 'Novo Cliente'}</span>
           </DialogTitle>
         </DialogHeader>
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <Label htmlFor="name">Nome da Empresa/Cliente *</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                className={errors.name ? "border-red-500" : ""}
-              />
-              {errors.name && <p className="text-sm text-red-500 mt-1">{errors.name}</p>}
-            </div>
-            
-            <div>
-              <Label htmlFor="document">CNPJ/CPF *</Label>
-              <Input
-                id="document"
-                value={formData.document}
-                onChange={(e) => setFormData(prev => ({ ...prev, document: e.target.value }))}
-                className={errors.document ? "border-red-500" : ""}
-                placeholder="00.000.000/0000-00"
-              />
-              {errors.document && <p className="text-sm text-red-500 mt-1">{errors.document}</p>}
-            </div>
-            
-            <div>
-              <Label htmlFor="phone">Telefone *</Label>
-              <Input
-                id="phone"
-                value={formData.phone}
-                onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                className={errors.phone ? "border-red-500" : ""}
-                placeholder="(11) 99999-9999"
-              />
-              {errors.phone && <p className="text-sm text-red-500 mt-1">{errors.phone}</p>}
-            </div>
-            
-            <div className="md:col-span-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                className={errors.email ? "border-red-500" : ""}
-                placeholder="contato@empresa.com"
-              />
-              {errors.email && <p className="text-sm text-red-500 mt-1">{errors.email}</p>}
-            </div>
-            
-            <div className="md:col-span-2">
-              <Label htmlFor="address">Endereço Completo *</Label>
-              <Textarea
-                id="address"
-                rows={3}
-                value={formData.address}
-                onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
-                className={errors.address ? "border-red-500" : ""}
-                placeholder="Rua, número, bairro, cidade, CEP"
-              />
-              {errors.address && <p className="text-sm text-red-500 mt-1">{errors.address}</p>}
-            </div>
-            
-            <div>
-              <Label htmlFor="route">Rota *</Label>
-              <Select 
-                value={formData.route} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, route: value }))}
-              >
-                <SelectTrigger className={errors.route ? "border-red-500" : ""}>
-                  <SelectValue placeholder="Selecione uma rota" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="centro">Centro</SelectItem>
-                  <SelectItem value="norte">Norte</SelectItem>
-                  <SelectItem value="sul">Sul</SelectItem>
-                  <SelectItem value="leste">Leste</SelectItem>
-                  <SelectItem value="oeste">Oeste</SelectItem>
-                </SelectContent>
-              </Select>
-              {errors.route && <p className="text-sm text-red-500 mt-1">{errors.route}</p>}
-            </div>
-            
-            {users?.role !== 'vendedor' && (
-              <div>
-                <Label htmlFor="sellerId">Vendedor Responsável *</Label>
-                <Select 
-                  value={formData.sellerId} 
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, sellerId: value }))}
-                >
-                  <SelectTrigger className={errors.sellerId ? "border-red-500" : ""}>
-                    <SelectValue placeholder="Selecione um vendedor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={users?.id || ''}>{users?.firstName} {users?.lastName}</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.sellerId && <p className="text-sm text-red-500 mt-1">{errors.sellerId}</p>}
-              </div>
-            )}
-            
-            <div className="md:col-span-2">
-              <Label>Periodicidade de Visitas *</Label>
-              <div className="grid grid-cols-7 gap-2 mt-2">
-                {weekdayOptions.map((day) => (
-                  <div key={day.value} className="flex flex-col items-center space-y-2">
-                    <Label htmlFor={day.value} className="text-sm">{day.label}</Label>
-                    <Checkbox
-                      id={day.value}
-                      checked={formData.weekdays.includes(day.value)}
-                      onCheckedChange={(checked) => handleWeekdayChange(day.value, checked as boolean)}
+
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            {/* Tipo de Cliente */}
+            <Card>
+              <CardContent className="pt-6">
+                <FormField
+                  control={form.control}
+                  name="customerType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tipo de Cliente</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o tipo" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="pessoa_fisica">
+                            <div className="flex items-center space-x-2">
+                              <UserIcon className="h-4 w-4" />
+                              <span>Pessoa Física</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="pessoa_juridica">
+                            <div className="flex items-center space-x-2">
+                              <Building2 className="h-4 w-4" />
+                              <span>Pessoa Jurídica</span>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Documentos */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {customerType === 'pessoa_fisica' ? (
+                    <FormField
+                      control={form.control}
+                      name="cpf"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>CPF *</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="000.000.000-00"
+                              maxLength={14}
+                              onChange={(e) => {
+                                const formatted = formatCPF(e.target.value);
+                                field.onChange(formatted);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                ))}
-              </div>
-              {errors.weekdays && <p className="text-sm text-red-500 mt-1">{errors.weekdays}</p>}
+                  ) : (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="cnpj"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>CNPJ *</FormLabel>
+                            <div className="flex space-x-2">
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="00.000.000/0000-00"
+                                  maxLength={18}
+                                  onChange={(e) => {
+                                    const formatted = formatCNPJ(e.target.value);
+                                    field.onChange(formatted);
+                                  }}
+                                />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => searchCNPJ(field.value || '')}
+                                disabled={cnpjLoading}
+                                className="px-3"
+                              >
+                                {cnpjLoading ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-honest-blue"></div>
+                                ) : (
+                                  <Search className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      {cnpjData && (
+                        <div className="col-span-2">
+                          <Card className="bg-green-50 border-green-200">
+                            <CardContent className="pt-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <Badge variant="secondary" className="bg-green-100 text-green-800">
+                                  Dados da Receita Federal
+                                </Badge>
+                                <Badge 
+                                  variant={cnpjData.situacao === 'ATIVA' ? 'default' : 'destructive'}
+                                  className={cnpjData.situacao === 'ATIVA' ? 'bg-green-600' : ''}
+                                >
+                                  {cnpjData.situacao}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-green-700">
+                                <p><strong>Razão Social:</strong> {cnpjData.razaoSocial}</p>
+                                {cnpjData.nomeFantasia && (
+                                  <p><strong>Nome Fantasia:</strong> {cnpjData.nomeFantasia}</p>
+                                )}
+                                <p><strong>Endereço:</strong> {cnpjData.endereco}</p>
+                                <p><strong>Cidade:</strong> {cnpjData.cidade} - {cnpjData.estado}</p>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Dados Básicos */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {customerType === 'pessoa_juridica' ? 'Nome Fantasia / Razão Social *' : 'Nome Completo *'}
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Digite o nome" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {customerType === 'pessoa_juridica' && (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="companyName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Razão Social</FormLabel>
+                            <FormControl>
+                              <Input {...field} value={field.value || ''} placeholder="Razão social da empresa" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="fantasyName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nome Fantasia</FormLabel>
+                            <FormControl>
+                              <Input {...field} value={field.value || ''} placeholder="Nome fantasia da empresa" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  <FormField
+                    control={form.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Phone className="h-4 w-4" />
+                          <span>Telefone *</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder="(11) 99999-9999"
+                            maxLength={15}
+                            onChange={(e) => {
+                              const formatted = formatPhone(e.target.value);
+                              field.onChange(formatted);
+                            }}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Mail className="h-4 w-4" />
+                          <span>E-mail</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ''} type="email" placeholder="email@exemplo.com" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Endereço */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="address"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel className="flex items-center space-x-1">
+                          <MapPin className="h-4 w-4" />
+                          <span>Endereço *</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Textarea {...field} placeholder="Rua, número, complemento" rows={2} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="zipCode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>CEP</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ''} placeholder="00000-000" maxLength={9} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="city"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cidade</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ''} placeholder="Nome da cidade" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="state"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Estado</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value || ''} placeholder="UF" maxLength={2} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Configurações de Venda */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="route"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Rota *</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Ex: Centro, Zona Norte" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="sellerId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Vendedor Responsável *</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione um vendedor" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {users && users.filter((user: User) => user.role === 'vendedor').map((user: User) => (
+                              <SelectItem key={user.id} value={user.id}>
+                                {user.firstName} {user.lastName} {user.route && `(${user.route})`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="weekdays"
+                    render={() => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Calendar className="h-4 w-4" />
+                          <span>Dias de Visita</span>
+                        </FormLabel>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {weekdayOptions.map((option) => {
+                            const isSelected = JSON.parse(form.getValues('weekdays') || '[]').includes(option.value);
+                            return (
+                              <Button
+                                key={option.value}
+                                type="button"
+                                variant={isSelected ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => handleWeekdayToggle(option.value)}
+                                className={isSelected ? "bg-honest-blue hover:bg-honest-blue/90" : ""}
+                              >
+                                {option.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Botões */}
+            <div className="flex justify-end space-x-2">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancelar
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={customerMutation.isPending}
+                className="bg-honest-blue hover:bg-honest-blue/90"
+              >
+                {customerMutation.isPending ? 'Salvando...' : customer ? 'Atualizar' : 'Criar'}
+              </Button>
             </div>
-          </div>
-          
-          <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancelar
-            </Button>
-            <Button 
-              type="submit" 
-              className="bg-honest-blue hover:bg-blue-700"
-              disabled={createCustomerMutation.isPending}
-            >
-              {createCustomerMutation.isPending 
-                ? 'Salvando...' 
-                : editingCustomer ? 'Atualizar Cliente' : 'Salvar Cliente'
-              }
-            </Button>
-          </div>
-        </form>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

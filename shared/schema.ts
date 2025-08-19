@@ -43,14 +43,24 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Customer type enum  
+export const customerTypeEnum = pgEnum('customer_type', ['pessoa_fisica', 'pessoa_juridica']);
+
 // Customers table
 export const customers = pgTable("customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
-  document: varchar("document").notNull().unique(),
+  customerType: customerTypeEnum("customer_type").notNull(),
+  cpf: varchar("cpf").unique(),
+  cnpj: varchar("cnpj").unique(),
+  companyName: varchar("company_name"), // Razão social para PJ
+  fantasyName: varchar("fantasy_name"), // Nome fantasia para PJ
   phone: varchar("phone").notNull(),
   email: varchar("email"),
   address: text("address").notNull(),
+  city: varchar("city"),
+  state: varchar("state"),
+  zipCode: varchar("zip_code"),
   route: varchar("route").notNull(),
   sellerId: varchar("seller_id").notNull(),
   weekdays: varchar("weekdays").notNull(), // JSON string of selected days
@@ -171,7 +181,19 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
-});
+  lastSaleDate: true,
+  lastSaleValue: true,
+}).extend({
+  // Validação customizada para CPF ou CNPJ obrigatório
+  cpf: z.string().optional(),
+  cnpj: z.string().optional(),
+}).refine(
+  (data) => data.cpf || data.cnpj,
+  {
+    message: "CPF ou CNPJ é obrigatório",
+    path: ["cpf"],
+  }
+);
 
 export const insertProductSchema = createInsertSchema(products).omit({
   id: true,

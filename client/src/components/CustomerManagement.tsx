@@ -8,11 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import CustomerModal from "./CustomerModal";
-import type { CustomerWithSeller } from "@shared/schema";
+import type { Customer, User } from "@shared/schema";
 
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<CustomerWithSeller | null>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [routeFilter, setRouteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -52,9 +52,10 @@ export default function CustomerManagement() {
     window.open(whatsappUrl, '_blank');
   };
 
-  const filteredCustomers = customers?.filter((customer: CustomerWithSeller) => {
+  const filteredCustomers = customers?.filter((customer: any) => {
+    const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         customer.document.includes(searchTerm) ||
+                         documentSearch.includes(searchTerm) ||
                          customer.phone.includes(searchTerm);
     const matchesRoute = routeFilter === 'all' || customer.route === routeFilter;
     const matchesStatus = statusFilter === 'all' || 
