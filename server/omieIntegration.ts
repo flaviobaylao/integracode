@@ -790,13 +790,17 @@ export async function createOmieOrder(orderData: {
     // 1. Buscar ou criar cliente no Omie
     let omieCustomerId;
     try {
-      const existingCustomer = await omieService.getClientByDocument(orderData.customer.document);
-      omieCustomerId = existingCustomer.codigo_cliente_omie;
-      console.log('Cliente encontrado no Omie:', omieCustomerId);
+      const existingCustomer = await omieService.getClientByCnpjCpf(orderData.customer.document);
+      if (existingCustomer) {
+        omieCustomerId = existingCustomer.codigo_cliente_omie;
+        console.log('Cliente encontrado no Omie:', omieCustomerId);
+      } else {
+        throw new Error('Cliente não encontrado');
+      }
     } catch (error) {
       // Cliente não existe, criar novo
       console.log('Criando novo cliente no Omie...');
-      const newCustomer = await omieService.createClient({
+      const newCustomer = await omieService.incluirCliente({
         cnpj_cpf: orderData.customer.document,
         razao_social: orderData.customer.name,
         nome_fantasia: orderData.customer.name,
@@ -835,11 +839,31 @@ export async function createOmieOrder(orderData: {
 
     console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
 
-    const omieOrder = await omieService.makeRequest(
-      '/produtos/pedidovendas/',
-      'IncluirPedido',
-      omieOrderPayload
-    );
+    // Fazer chamada direta para API Omie
+    const payload = {
+      call: 'IncluirPedido',
+      app_key: process.env.OMIE_APP_KEY,
+      app_secret: process.env.OMIE_APP_SECRET,
+      param: [omieOrderPayload]
+    };
+
+    const response = await fetch('https://app.omie.com.br/api/v1/produtos/pedidovendas/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Omie API error: ${response.status} ${response.statusText}`);
+    }
+
+    const omieOrder = await response.json();
+    
+    if (omieOrder.faultstring) {
+      throw new Error(`Omie API fault: ${omieOrder.faultstring}`);
+    }
 
     console.log('Pedido criado no Omie com sucesso:', omieOrder);
 
