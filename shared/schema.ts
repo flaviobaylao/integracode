@@ -26,6 +26,17 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)],
 );
 
+// System settings table for admin configurations
+export const systemSettings = pgTable("system_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: varchar("key").notNull().unique(),
+  value: text("value").notNull(),
+  description: text("description"),
+  updatedBy: varchar("updated_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // User roles enum
 export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor']);
 
@@ -348,6 +359,12 @@ export const insertMessageTemplateSchema = createInsertSchema(messageTemplates).
 
 export const insertMessageHistorySchema = createInsertSchema(messageHistory).omit({
   id: true,
+});
+
+export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
 });
 
 // Types

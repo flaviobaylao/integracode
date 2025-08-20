@@ -43,13 +43,36 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     return saleItems.reduce((sum, item) => sum + item.totalPrice, 0);
   }, [saleItems]);
 
+  // Query para buscar configurações do sistema (valor mínimo)
+  const { data: systemSettings } = useQuery({
+    queryKey: ['/api/system-settings'],
+    retry: false,
+  });
+
+  // Buscar valor mínimo de pedido
+  const minimumOrderValue = useMemo(() => {
+    const setting = systemSettings?.find((s: any) => s.key === 'minimum_order_value');
+    return setting ? parseFloat(setting.value) : 0;
+  }, [systemSettings]);
+
   // Mutation para finalizar venda
   const finalizeSaleMutation = useMutation({
     mutationFn: async (saleData: any) => {
-      return await apiRequest(`/api/sales-cards/${salesCard?.id}/finalize-sale`, {
+      const response = await fetch(`/api/sales-cards/${salesCard?.id}/finalize-sale`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
         body: JSON.stringify(saleData),
       });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${response.status}: ${errorText}`);
+      }
+      
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
@@ -135,6 +158,16 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Confirmar e enviar para Omie
   const confirmSale = () => {
+    // Verificar valor mínimo do pedido
+    if (minimumOrderValue > 0 && totalSale < minimumOrderValue) {
+      toast({
+        title: "Valor Mínimo não Atingido",
+        description: `O valor mínimo do pedido é R$ ${minimumOrderValue.toFixed(2)}. Valor atual: R$ ${totalSale.toFixed(2)}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     const saleData = {
       products: saleItems,
       totalValue: totalSale,
@@ -350,6 +383,11 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   <span>Total da Venda:</span>
                   <span>R$ {totalSale.toFixed(2)}</span>
                 </div>
+                {minimumOrderValue > 0 && (
+                  <div className="text-sm text-gray-500 text-right">
+                    Valor mínimo: R$ {minimumOrderValue.toFixed(2)}
+                  </div>
+                )}
                 
                 <div className="flex flex-col gap-2">
                   <Button 

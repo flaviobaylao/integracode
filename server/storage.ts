@@ -5,6 +5,7 @@ import {
   salesCards,
   messageTemplates,
   messageHistory,
+  systemSettings,
   type User,
   type UpsertUser,
   type InsertCustomer,
@@ -19,6 +20,7 @@ import {
   type MessageTemplate,
   type InsertMessageHistory,
   type MessageHistory,
+  insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, gte, lte, sql, inArray, or } from "drizzle-orm";
@@ -926,6 +928,46 @@ export class DatabaseStorage implements IStorage {
       completedCard,
       nextCard
     };
+  }
+
+  // System settings methods
+  async getSystemSettings(): Promise<any[]> {
+    return await db.select().from(systemSettings);
+  }
+
+  async upsertSystemSetting(setting: any): Promise<any> {
+    const [result] = await db
+      .insert(systemSettings)
+      .values(setting)
+      .onConflictDoUpdate({
+        target: systemSettings.key,
+        set: {
+          value: setting.value,
+          description: setting.description,
+          updatedBy: setting.updatedBy,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async getSalesCardById(id: string): Promise<SalesCardWithRelations | undefined> {
+    const result = await db
+      .select()
+      .from(salesCards)
+      .leftJoin(customers, eq(salesCards.customerId, customers.id))
+      .leftJoin(users, eq(salesCards.sellerId, users.id))
+      .where(eq(salesCards.id, id));
+
+    if (result.length === 0) return undefined;
+
+    const row = result[0];
+    return {
+      ...row.sales_cards,
+      customer: row.customers,
+      seller: row.users,
+    } as SalesCardWithRelations;
   }
 }
 

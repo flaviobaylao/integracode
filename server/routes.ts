@@ -1459,6 +1459,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // System settings routes
+  app.get('/api/system-settings', authenticateUser, async (req: any, res) => {
+    try {
+      const settings = await storage.getSystemSettings();
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching system settings:", error);
+      res.status(500).json({ message: "Failed to fetch system settings" });
+    }
+  });
+
+  app.put('/api/system-settings/:key', authenticateUser, async (req: any, res) => {
+    try {
+      const { key } = req.params;
+      const { value, description } = req.body;
+      const userId = req.userId;
+      
+      // Only admin can update system settings
+      const user = await storage.getUser(userId);
+      if (user?.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const setting = await storage.upsertSystemSetting({
+        key,
+        value,
+        description,
+        updatedBy: userId,
+      });
+
+      res.json(setting);
+    } catch (error) {
+      console.error("Error updating system setting:", error);
+      res.status(500).json({ message: "Failed to update system setting" });
+    }
+  });
+
   // Route to finalize sale with Omie integration
   app.post('/api/sales-cards/:id/finalize-sale', authenticateUser, async (req: any, res) => {
     try {
