@@ -21,7 +21,7 @@ export default function SalesCardFilters({
 }: SalesCardFiltersProps) {
   
   const routeOptions = [
-    { value: '', label: 'Todas as Rotas' },
+    { value: 'all', label: 'Todas as Rotas' },
     { value: 'segunda', label: 'Segunda-feira' },
     { value: 'terca', label: 'Terça-feira' },
     { value: 'quarta', label: 'Quarta-feira' },
@@ -32,7 +32,7 @@ export default function SalesCardFilters({
   ];
 
   const statusOptions = [
-    { value: '', label: 'Todos os Status' },
+    { value: 'all', label: 'Todos os Status' },
     { value: 'pending', label: 'Pendente' },
     { value: 'completed', label: 'Finalizado' },
     { value: 'telemarketing', label: 'Telemarketing' },
@@ -41,7 +41,7 @@ export default function SalesCardFilters({
     { value: 'cancelled', label: 'Cancelado' }
   ];
 
-  const hasActiveFilters = routeDay || status;
+  const hasActiveFilters = (routeDay && routeDay !== 'all') || (status && status !== 'all');
 
   const getRouteLabel = (route: string) => {
     return routeOptions.find(r => r.value === route)?.label || route;
@@ -114,22 +114,22 @@ export default function SalesCardFilters({
       {hasActiveFilters && (
         <div className="flex flex-wrap gap-2 pt-2 border-t">
           <span className="text-sm text-gray-600">Filtros ativos:</span>
-          {routeDay && (
+          {routeDay && routeDay !== 'all' && (
             <Badge variant="secondary" className="flex items-center gap-1">
               {getRouteLabel(routeDay)}
               <button
-                onClick={() => onRouteChange('')}
+                onClick={() => onRouteChange('all')}
                 className="ml-1 hover:bg-gray-300 rounded-full p-0.5"
               >
                 <X className="h-3 w-3" />
               </button>
             </Badge>
           )}
-          {status && (
+          {status && status !== 'all' && (
             <Badge variant="secondary" className="flex items-center gap-1">
               {getStatusLabel(status)}
               <button
-                onClick={() => onStatusChange('')}
+                onClick={() => onStatusChange('all')}
                 className="ml-1 hover:bg-gray-300 rounded-full p-0.5"
               >
                 <X className="h-3 w-3" />

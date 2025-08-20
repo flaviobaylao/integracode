@@ -16,7 +16,7 @@ import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
   const [statusFilter, setStatusFilter] = useState('all');
-  const [routeFilter, setRouteFilter] = useState('');
+  const [routeFilter, setRouteFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
   const [actionDialog, setActionDialog] = useState<{
@@ -29,7 +29,7 @@ export default function SalesCards() {
   // Construir query string para filtros
   const buildQueryString = () => {
     const params = new URLSearchParams();
-    if (routeFilter) params.append('route_day', routeFilter);
+    if (routeFilter && routeFilter !== 'all') params.append('route_day', routeFilter);
     if (statusFilter && statusFilter !== 'all') params.append('status', statusFilter);
     return params.toString() ? `?${params.toString()}` : '';
   };
@@ -199,7 +199,7 @@ export default function SalesCards() {
   }
 
   const clearAllFilters = () => {
-    setRouteFilter('');
+    setRouteFilter('all');
     setStatusFilter('all');
   };
 
