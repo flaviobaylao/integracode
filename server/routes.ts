@@ -1538,23 +1538,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderDate: new Date().toISOString(),
           };
 
-          // Here we would integrate with Omie API
-          // For now, just simulate success and update order ID
-          const omieOrderId = `OMIE-${orderNumber}`;
+          // Integração real com Omie API
+          const { createOmieOrder } = await import('./omieIntegration');
           
-          await storage.updateSalesCard(id, { 
-            omieOrderId,
-            status: 'invoiced'
-          });
+          try {
+            const omieResult = await createOmieOrder({
+              customer: {
+                document: fullCard.customer.cnpj || fullCard.customer.cpf || '',
+                name: fullCard.customer.fantasyName || fullCard.customer.name,
+                email: fullCard.customer.email || '',
+                phone: fullCard.customer.phone || '',
+                address: fullCard.customer.address || ''
+              },
+              products: products.map((p: any) => ({
+                description: p.name,
+                quantity: p.quantity,
+                unitPrice: p.unitPrice,
+                totalPrice: p.totalPrice
+              })),
+              totalValue,
+              orderNumber,
+              sellerId: fullCard.sellerId
+            });
 
-          console.log('Order sent to Omie successfully:', omieOrderId);
+            const omieOrderId = omieResult.numero_pedido || `OMIE-${orderNumber}`;
+            
+            await storage.updateSalesCard(id, { 
+              omieOrderId,
+              status: 'invoiced'
+            });
 
-          res.json({
-            success: true,
-            orderNumber,
-            omieOrderId,
-            salesCard
-          });
+            console.log('Order sent to Omie successfully:', omieOrderId);
+
+            res.json({
+              success: true,
+              orderNumber,
+              omieOrderId,
+              salesCard,
+              omieData: omieResult
+            });
+
+          } catch (omieApiError) {
+            console.error('Omie API Error:', omieApiError);
+            
+            // Marcar como completed mesmo com erro no Omie
+            const fallbackOrderId = `FALLBACK-${orderNumber}`;
+            await storage.updateSalesCard(id, { 
+              omieOrderId: fallbackOrderId,
+              status: 'completed'
+            });
+
+            res.json({
+              success: true,
+              orderNumber,
+              omieOrderId: fallbackOrderId,
+              salesCard,
+              warning: `Venda registrada localmente. Erro na integração Omie: ${omieApiError.message}`
+            });
+          }
 
         } catch (omieError) {
           console.error('Error sending to Omie:', omieError);

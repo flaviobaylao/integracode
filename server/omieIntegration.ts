@@ -71,6 +71,20 @@ export class OmieService {
     this.baseUrl = config.baseUrl || 'https://app.omie.com.br/api/v1';
   }
 
+  static createFromEnv(): OmieService {
+    const appKey = process.env.OMIE_APP_KEY;
+    const appSecret = process.env.OMIE_APP_SECRET;
+    
+    if (!appKey || !appSecret) {
+      throw new Error('OMIE_APP_KEY and OMIE_APP_SECRET environment variables are required');
+    }
+    
+    return new OmieService({
+      appKey,
+      appSecret
+    });
+  }
+
   private async makeRequest(endpoint: string, call: string, params: any = {}) {
     const payload = {
       call,
@@ -749,4 +763,95 @@ export function getOmieService(): OmieService | null {
 
 export function isOmieConfigured(): boolean {
   return !!(process.env.OMIE_APP_KEY && process.env.OMIE_APP_SECRET);
+}
+
+// Função para criar pedido no Omie
+export async function createOmieOrder(orderData: {
+  customer: {
+    document: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
+  products: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>;
+  totalValue: number;
+  orderNumber: string;
+  sellerId: string;
+}) {
+  const omieService = OmieService.createFromEnv();
+
+  try {
+    // 1. Buscar ou criar cliente no Omie
+    let omieCustomerId;
+    try {
+      const existingCustomer = await omieService.getClientByDocument(orderData.customer.document);
+      omieCustomerId = existingCustomer.codigo_cliente_omie;
+      console.log('Cliente encontrado no Omie:', omieCustomerId);
+    } catch (error) {
+      // Cliente não existe, criar novo
+      console.log('Criando novo cliente no Omie...');
+      const newCustomer = await omieService.createClient({
+        cnpj_cpf: orderData.customer.document,
+        razao_social: orderData.customer.name,
+        nome_fantasia: orderData.customer.name,
+        email: orderData.customer.email,
+        telefone1_numero: orderData.customer.phone,
+        endereco: orderData.customer.address
+      });
+      omieCustomerId = newCustomer.codigo_cliente_omie;
+      console.log('Cliente criado no Omie:', omieCustomerId);
+    }
+
+    // 2. Criar pedido de venda no Omie
+    const omieOrderPayload = {
+      cabecalho: {
+        numero_pedido: orderData.orderNumber,
+        codigo_cliente: omieCustomerId,
+        data_previsao: new Date().toISOString().split('T')[0], // YYYY-MM-DD
+        etapa: '10', // Pedido em aberto
+        codigo_parcela: '999', // À vista
+        origem_pedido: 'CRM-HonestSucos'
+      },
+      det: orderData.products.map((product, index) => ({
+        ide: {
+          codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`
+        },
+        produto: {
+          descricao: product.description,
+          quantidade: product.quantity,
+          valor_unitario: product.unitPrice
+        }
+      })),
+      observacoes: {
+        obs_venda: `Pedido gerado pelo CRM - Vendedor ID: ${orderData.sellerId}`
+      }
+    };
+
+    console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
+
+    const omieOrder = await omieService.makeRequest(
+      '/produtos/pedidovendas/',
+      'IncluirPedido',
+      omieOrderPayload
+    );
+
+    console.log('Pedido criado no Omie com sucesso:', omieOrder);
+
+    return {
+      numero_pedido: omieOrder.numero_pedido || orderData.orderNumber,
+      codigo_pedido: omieOrder.codigo_pedido,
+      codigo_cliente_omie: omieCustomerId,
+      status: 'success'
+    };
+
+  } catch (error) {
+    console.error('Erro ao criar pedido no Omie:', error);
+    throw new Error(`Falha na integração Omie: ${error.message}`);
+  }
 }
