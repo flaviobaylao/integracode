@@ -157,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/customers/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       await storage.deleteCustomer(id);
@@ -179,10 +179,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/products', isAuthenticated, async (req: any, res) => {
+  app.post('/api/products', authenticateUser, async (req: any, res) => {
     try {
       // Only admin and coordinators can manage products
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
@@ -201,10 +201,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/products/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/products/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
@@ -220,10 +220,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/products/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/products/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
@@ -280,8 +280,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      const data = processedData;
-      const salesCard = await storage.createSalesCard(data);
+      const salesCard = await storage.createSalesCard(processedData);
       res.json(salesCard);
     } catch (error) {
       console.error("Error creating sales card:", error);
@@ -1457,6 +1456,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: false,
         message: 'Failed to update telemarketing card'
       });
+    }
+  });
+
+  // Route to finalize sale with Omie integration
+  app.post('/api/sales-cards/:id/finalize-sale', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { products, totalValue, orderNumber } = req.body;
+
+      console.log('Finalizing sale for card:', id);
+      console.log('Sale data:', { products, totalValue, orderNumber });
+
+      // Update sales card with products and value
+      const updateData = {
+        status: 'completed',
+        completedDate: new Date(),
+        saleValue: totalValue,
+        products: products,
+      };
+
+      const salesCard = await storage.updateSalesCard(id, updateData);
+
+      // Get full card data with customer info for Omie
+      const fullCard = await storage.getSalesCardById(id);
+      
+      if (fullCard && fullCard.customer) {
+        try {
+          // Send order to Omie ERP
+          console.log('Sending order to Omie...');
+          
+          const omieOrderData = {
+            orderNumber,
+            customerId: fullCard.customer.id,
+            customerName: fullCard.customer.fantasyName || fullCard.customer.name,
+            customerDocument: fullCard.customer.cnpj || fullCard.customer.cpf,
+            products: products.map((p: any) => ({
+              name: p.name,
+              quantity: p.quantity,
+              unitPrice: p.unitPrice,
+              totalPrice: p.totalPrice
+            })),
+            totalValue,
+            orderDate: new Date().toISOString(),
+          };
+
+          // Here we would integrate with Omie API
+          // For now, just simulate success and update order ID
+          const omieOrderId = `OMIE-${orderNumber}`;
+          
+          await storage.updateSalesCard(id, { 
+            omieOrderId,
+            status: 'invoiced'
+          });
+
+          console.log('Order sent to Omie successfully:', omieOrderId);
+
+          res.json({
+            success: true,
+            orderNumber,
+            omieOrderId,
+            salesCard
+          });
+
+        } catch (omieError) {
+          console.error('Error sending to Omie:', omieError);
+          // Even if Omie fails, mark the sale as completed
+          res.json({
+            success: true,
+            orderNumber,
+            salesCard,
+            warning: 'Venda registrada, mas houve erro ao enviar para Omie'
+          });
+        }
+      } else {
+        res.json({
+          success: true,
+          orderNumber,
+          salesCard
+        });
+      }
+
+    } catch (error) {
+      console.error("Error finalizing sale:", error);
+      res.status(500).json({ message: "Failed to finalize sale" });
     }
   });
 

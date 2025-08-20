@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
+import SaleModal from "./SaleModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
@@ -23,6 +24,8 @@ export default function SalesCards() {
     type: 'sale' | 'no-sale' | null;
     card: SalesCardWithRelations | null;
   }>({ type: null, card: null });
+  const [showSaleModal, setShowSaleModal] = useState(false);
+  const [selectedCardForSale, setSelectedCardForSale] = useState<SalesCardWithRelations | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -313,9 +316,12 @@ export default function SalesCards() {
                     <div className="flex items-center space-x-3">
                       <Button
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
-                        onClick={() => setActionDialog({ type: 'sale', card })}
+                        onClick={() => {
+                          setSelectedCardForSale(card);
+                          setShowSaleModal(true);
+                        }}
                       >
-                        <i className="fas fa-check mr-2"></i>Venda
+                        <i className="fas fa-shopping-cart mr-2"></i>Venda
                       </Button>
                       <Button
                         className="flex-1 bg-red-500 hover:bg-red-600 text-white"
@@ -474,6 +480,16 @@ export default function SalesCards() {
           editingCard={editingCard}
         />
       )}
+
+      {/* Sale Modal */}
+      <SaleModal
+        isOpen={showSaleModal}
+        onClose={() => {
+          setShowSaleModal(false);
+          setSelectedCardForSale(null);
+        }}
+        salesCard={selectedCardForSale}
+      />
     </div>
   );
 }
