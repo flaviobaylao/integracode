@@ -1344,7 +1344,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         message: 'Overdue cards processed successfully',
-        ...result
+        processedCount: result.processedCount,
+        sentToTelemarketing: result.sentToTelemarketing,
+        transferred: result.transferred,
+        errors: result.errors
       });
 
     } catch (error) {
@@ -1362,12 +1365,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       
       // Buscar cards de telemarketing atribuídos ao usuário atual
-      const telemarketingCards = await storage.getSalesCards(userId, {
-        status: 'telemarketing',
-        assignedToUser: userId
-      });
+      const telemarketingCards = await db.execute(sql`
+        SELECT sc.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+        FROM sales_cards sc
+        JOIN customers c ON sc.customer_id = c.id
+        WHERE sc.status = 'telemarketing' 
+        AND sc.telemarketing_assigned_to = ${userId}
+        ORDER BY sc.scheduled_date ASC
+      `);
 
-      res.json(telemarketingCards);
+      res.json(telemarketingCards.rows || []);
 
     } catch (error) {
       console.error('Error fetching telemarketing cards:', error);

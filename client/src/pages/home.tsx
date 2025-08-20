@@ -7,6 +7,7 @@ import ProductManagement from "@/components/ProductManagement";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
 import OmieIntegration from "@/components/OmieIntegration";
 import Sellers from "@/pages/sellers";
+import TelemarketingPage from "@/pages/telemarketing";
 import { useState } from "react";
 
 export default function Home() {
@@ -37,13 +38,15 @@ export default function Home() {
         return <OmieIntegration />;
       case 'sellers':
         return <Sellers />;
+      case 'telemarketing':
+        return <TelemarketingPage />;
       default:
         return <Dashboard />;
     }
   };
 
   return (
-    <Layout activeView={activeView} setActiveView={setActiveView} user={user}>
+    <Layout activeView={activeView} setActiveView={setActiveView} user={user as any}>
       {renderActiveView()}
     </Layout>
   );

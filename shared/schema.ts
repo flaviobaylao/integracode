@@ -111,7 +111,7 @@ export const salesCards = pgTable("sales_cards", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull(),
   sellerId: varchar("seller_id").notNull(),
-  status: varchar("status").notNull().default('pending'), // pending, completed, invoiced, telemarketing, cancelled
+  status: varchar("status").notNull().default('pending'), // pending, completed, invoiced, telemarketing, cancelled, transferred
   scheduledDate: timestamp("scheduled_date").notNull(),
   completedDate: timestamp("completed_date"),
   saleValue: decimal("sale_value", { precision: 10, scale: 2 }),

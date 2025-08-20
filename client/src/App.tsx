@@ -9,6 +9,7 @@ import Landing from "@/pages/landing";
 import Home from "@/pages/home";
 import AdminLogin from "@/pages/admin-login";
 import Sellers from "@/pages/sellers";
+import TelemarketingPage from "@/pages/telemarketing";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -22,6 +23,7 @@ function Router() {
         <>
           <Route path="/" component={Home} />
           <Route path="/sellers" component={Sellers} />
+          <Route path="/telemarketing" component={TelemarketingPage} />
         </>
       )}
       <Route component={NotFound} />

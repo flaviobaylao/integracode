@@ -725,6 +725,7 @@ export class DatabaseStorage implements IStorage {
   async processOverdueCards(): Promise<{
     processedCount: number;
     sentToTelemarketing: number;
+    transferred: number;
     errors: string[];
   }> {
     try {
@@ -746,22 +747,41 @@ export class DatabaseStorage implements IStorage {
           )
         );
 
+      // Buscar cards de telemarketing não atendidos ontem
+      const overdueTelemarketingCards = await db
+        .select()
+        .from(salesCards)
+        .where(
+          and(
+            eq(salesCards.status, 'telemarketing'),
+            gte(salesCards.scheduledDate, yesterday),
+            lte(salesCards.scheduledDate, today)
+          )
+        );
+
       let processedCount = 0;
       let sentToTelemarketing = 0;
+      let transferred = 0;
       const errors: string[] = [];
 
+      // Processar cards normais para telemarketing (primeira tentativa)
       for (const card of overdueCards) {
         try {
           // Atribuir ao próximo atendente de telemarketing
           const assignedAgent = await this.getNextTelemarketingAgent();
           
           if (assignedAgent) {
+            // Adicionar prefixo RESGATE ao nome do cliente
+            const customer = await this.getCustomer(card.customerId);
+            const newNotes = `RESGATE - ${customer?.name || 'Cliente'}\n${card.notes || ''}`;
+
             await db.update(salesCards)
               .set({
                 status: 'telemarketing',
                 telemarketingAssignedTo: assignedAgent.id,
                 telemarketingDate: new Date(),
-                scheduledDate: today, // Reagendar para hoje
+                scheduledDate: today,
+                notes: newNotes,
                 updatedAt: new Date()
               })
               .where(eq(salesCards.id, card.id));
@@ -777,9 +797,44 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
+      // Processar cards de telemarketing não atendidos (segunda tentativa = transferir cliente)
+      for (const card of overdueTelemarketingCards) {
+        try {
+          if (card.telemarketingAssignedTo) {
+            const customer = await this.getCustomer(card.customerId);
+            
+            // Alterar prefixo para TRANSFERIDO
+            const newNotes = card.notes?.replace('RESGATE', 'TRANSFERIDO') || `TRANSFERIDO - ${customer?.name || 'Cliente'}`;
+            
+            // Transferir cliente definitivamente para o atendente de telemarketing
+            await this.updateCustomer(card.customerId, {
+              sellerId: card.telemarketingAssignedTo // Atendente de telemarketing vira o novo vendedor
+            });
+
+            // Atualizar card
+            await db.update(salesCards)
+              .set({
+                status: 'transferred',
+                sellerId: card.telemarketingAssignedTo, // Atendente vira novo vendedor do card
+                scheduledDate: today,
+                notes: newNotes,
+                updatedAt: new Date()
+              })
+              .where(eq(salesCards.id, card.id));
+
+            transferred++;
+          }
+
+          processedCount++;
+        } catch (error: any) {
+          errors.push(`Erro ao transferir card ${card.id}: ${error.message}`);
+        }
+      }
+
       return {
         processedCount,
         sentToTelemarketing,
+        transferred,
         errors
       };
 
