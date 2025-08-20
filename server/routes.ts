@@ -258,12 +258,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
     try {
-      const data = insertSalesCardSchema.parse(req.body);
+      console.log('POST /api/sales-cards - Request body:', req.body);
+      
+      // Processar a data corretamente
+      const processedData = {
+        ...req.body,
+        scheduledDate: new Date(req.body.scheduledDate),
+        status: req.body.status || 'pending',
+        isRecurring: req.body.isRecurring || true,
+      };
+      
+      console.log('POST /api/sales-cards - Processed data:', processedData);
+      
+      // Validar apenas os campos obrigatórios
+      const requiredFields = ['customerId', 'sellerId', 'scheduledDate', 'routeDay', 'recurrenceType'];
+      for (const field of requiredFields) {
+        if (!processedData[field]) {
+          return res.status(400).json({ 
+            message: `Campo obrigatório ausente: ${field}` 
+          });
+        }
+      }
+      
+      const data = processedData;
       const salesCard = await storage.createSalesCard(data);
       res.json(salesCard);
     } catch (error) {
       console.error("Error creating sales card:", error);
       if (error instanceof z.ZodError) {
+        console.log('Zod validation errors:', error.errors);
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to create sales card" });

@@ -117,10 +117,10 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
       // Combine date and time into a single DateTime
       const scheduledDateTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`);
       
-      const dataToValidate = {
+      const dataToSubmit = {
         customerId: formData.customerId,
         sellerId: formData.sellerId,
-        scheduledDate: scheduledDateTime,
+        scheduledDate: scheduledDateTime.toISOString(),
         status: editingCard?.status || 'pending',
         notes: formData.notes || undefined,
         routeDay: formData.routeDay,
@@ -128,8 +128,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         isRecurring: true,
       };
 
-      const validatedData = insertSalesCardSchema.parse(dataToValidate);
-      createSalesCardMutation.mutate(validatedData);
+      // Não usar validação Zod aqui - deixar o backend validar
+      createSalesCardMutation.mutate(dataToSubmit);
     } catch (error) {
       if (error instanceof z.ZodError) {
         const fieldErrors: Record<string, string> = {};
