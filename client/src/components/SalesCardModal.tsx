@@ -33,7 +33,6 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [customerOpen, setCustomerOpen] = useState(false);
-  const [customerSearch, setCustomerSearch] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -42,21 +41,11 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     retry: false,
   });
 
-  // Filtrar clientes baseado na busca
-  const filteredCustomers = useMemo(() => {
-    if (!customers) return [];
-    if (!customerSearch) return customers;
-    
-    return customers.filter((customer: CustomerWithSeller) =>
-      customer.name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      customer.fantasyName?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      customer.document?.includes(customerSearch) ||
-      customer.phone?.includes(customerSearch)
-    );
-  }, [customers, customerSearch]);
+  // O Command component gerencia a busca automaticamente
+  const filteredCustomers = customers || [];
 
   // Encontrar cliente selecionado
-  const selectedCustomer = customers?.find((c: CustomerWithSeller) => c.id === formData.customerId);
+  const selectedCustomer = customers?.find((c: any) => c.id === formData.customerId);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -72,6 +61,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         scheduledDate: scheduledDate.toISOString().split('T')[0],
         scheduledTime: scheduledDate.toTimeString().slice(0, 5),
         notes: editingCard.notes || '',
+        routeDay: editingCard.routeDay || '',
+        recurrenceType: editingCard.recurrenceType || 'semanal',
       });
     } else {
       const now = new Date();
@@ -80,7 +71,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
       
       setFormData({
         customerId: '',
-        sellerId: currentUser?.id || '',
+        sellerId: (currentUser as any)?.id || '',
         scheduledDate: today,
         scheduledTime: currentTime,
         notes: '',
@@ -176,7 +167,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   )}
                 >
                   {selectedCustomer 
-                    ? `${selectedCustomer.fantasyName || selectedCustomer.name} ${selectedCustomer.document ? `(${selectedCustomer.document})` : ''}`
+                    ? `${selectedCustomer.fantasyName || selectedCustomer.name} ${selectedCustomer.cnpj ? `(${selectedCustomer.cnpj})` : ''}`
                     : "Buscar cliente..."
                   }
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -186,23 +177,20 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                 <Command>
                   <CommandInput 
                     placeholder="Buscar por nome, nome fantasia, documento..." 
-                    value={customerSearch}
-                    onValueChange={setCustomerSearch}
                   />
                   <CommandList>
                     <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
                     <CommandGroup>
-                      {filteredCustomers.map((customer: CustomerWithSeller) => (
+                      {filteredCustomers.map((customer: any) => (
                         <CommandItem
                           key={customer.id}
-                          value={customer.id}
-                          onSelect={(currentValue) => {
+                          value={`${customer.fantasyName || customer.name} ${customer.cnpj || ''} ${customer.phone || ''}`}
+                          onSelect={() => {
                             setFormData(prev => ({ 
                               ...prev, 
-                              customerId: currentValue === formData.customerId ? "" : currentValue 
+                              customerId: customer.id
                             }));
                             setCustomerOpen(false);
-                            setCustomerSearch('');
                           }}
                         >
                           <Check
@@ -219,7 +207,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                               {customer.name !== customer.fantasyName && customer.name && (
                                 <span>{customer.name} • </span>
                               )}
-                              {customer.document && <span>{customer.document} • </span>}
+                              {customer.cnpj && <span>{customer.cnpj} • </span>}
                               {customer.phone && <span>{customer.phone}</span>}
                             </div>
                           </div>
@@ -233,7 +221,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
             {errors.customerId && <p className="text-sm text-red-500 mt-1">{errors.customerId}</p>}
           </div>
           
-          {currentUser?.role !== 'vendedor' && (
+          {(currentUser as any)?.role !== 'vendedor' && (
             <div>
               <Label htmlFor="sellerId">Vendedor Responsável *</Label>
               <Select 
@@ -244,8 +232,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={currentUser?.id || ''}>
-                    {currentUser?.firstName} {currentUser?.lastName}
+                  <SelectItem value={(currentUser as any)?.id || ''}>
+                    {(currentUser as any)?.firstName} {(currentUser as any)?.lastName}
                   </SelectItem>
                 </SelectContent>
               </Select>
