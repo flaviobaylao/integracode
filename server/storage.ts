@@ -48,7 +48,7 @@ export interface IStorage {
   deleteProduct(id: string): Promise<void>;
   
   // Sales card operations
-  getSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
+  getSalesCards(sellerId?: string, filters?: { routeDay?: string; status?: string }): Promise<SalesCardWithRelations[]>;
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
@@ -237,7 +237,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Sales card operations
-  async getSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
+  async getSalesCards(sellerId?: string, filters?: { routeDay?: string; status?: string }): Promise<SalesCardWithRelations[]> {
     let query = db
       .select()
       .from(salesCards)
@@ -245,8 +245,22 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .orderBy(desc(salesCards.scheduledDate));
     
+    let conditions = [];
+    
     if (sellerId) {
-      query = query.where(eq(salesCards.sellerId, sellerId));
+      conditions.push(eq(salesCards.sellerId, sellerId));
+    }
+    
+    if (filters?.routeDay) {
+      conditions.push(sql`${salesCards.routeDay} = ${filters.routeDay}`);
+    }
+    
+    if (filters?.status) {
+      conditions.push(sql`${salesCards.status} = ${filters.status}`);
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
     }
     
     const result = await query;

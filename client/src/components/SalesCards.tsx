@@ -11,10 +11,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import SalesCardModal from "./SalesCardModal";
+import SalesCardFilters from "./SalesCardFilters";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [routeFilter, setRouteFilter] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
   const [actionDialog, setActionDialog] = useState<{
@@ -24,8 +26,17 @@ export default function SalesCards() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Construir query string para filtros
+  const buildQueryString = () => {
+    const params = new URLSearchParams();
+    if (routeFilter) params.append('route_day', routeFilter);
+    if (statusFilter && statusFilter !== 'all') params.append('status', statusFilter);
+    return params.toString() ? `?${params.toString()}` : '';
+  };
+
   const { data: salesCards, isLoading } = useQuery({
-    queryKey: ['/api/sales-cards'],
+    queryKey: ['/api/sales-cards', routeFilter, statusFilter],
+    queryFn: () => fetch(`/api/sales-cards${buildQueryString()}`, { credentials: 'include' }).then(r => r.json()),
     retry: false,
   });
 
@@ -187,31 +198,31 @@ export default function SalesCards() {
     );
   }
 
+  const clearAllFilters = () => {
+    setRouteFilter('');
+    setStatusFilter('all');
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Cards de Venda</h2>
-        <div className="flex items-center space-x-4">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Filtrar por status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os status</SelectItem>
-              <SelectItem value="pending">Pendente</SelectItem>
-              <SelectItem value="in_progress">Em atendimento</SelectItem>
-              <SelectItem value="completed">Finalizado</SelectItem>
-              <SelectItem value="no_sale">Não venda</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            className="bg-honest-blue hover:bg-blue-700"
-            onClick={() => setShowModal(true)}
-          >
-            <i className="fas fa-plus mr-2"></i>Novo Card
-          </Button>
-        </div>
+        <Button
+          className="bg-honest-blue hover:bg-blue-700"
+          onClick={() => setShowModal(true)}
+        >
+          <i className="fas fa-plus mr-2"></i>Novo Card
+        </Button>
       </div>
+
+      {/* Filtros */}
+      <SalesCardFilters
+        routeDay={routeFilter}
+        status={statusFilter}
+        onRouteChange={setRouteFilter}
+        onStatusChange={setStatusFilter}
+        onClearFilters={clearAllFilters}
+      />
 
       {/* Sales Cards Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
