@@ -579,6 +579,159 @@ export class OmieService {
       }
     };
   }
+
+  // ===== INTEGRAÇÃO DE PEDIDOS COM INFORMAÇÕES DE ENTREGA =====
+
+  // Criar pedido de venda no Omie com informações de entrega
+  async createSalesOrder(salesCard: any, customer: any, products: any[]): Promise<any> {
+    try {
+      // Mapear status de entrega para observações do Omie
+      const deliveryStatusMap = {
+        'pending': 'ENTREGA: Aguardando entrega',
+        'in_transit': 'ENTREGA: Em trânsito',
+        'delivered': 'ENTREGA: Entregue com sucesso',
+        'failed': 'ENTREGA: Falha na entrega',
+        'returned': 'ENTREGA: Produto devolvido'
+      };
+
+      const deliveryInfo = salesCard.deliveryStatus 
+        ? deliveryStatusMap[salesCard.deliveryStatus as keyof typeof deliveryStatusMap] || ''
+        : '';
+
+      const deliveryNotes = salesCard.deliveryNotes 
+        ? `\nOBS ENTREGA: ${salesCard.deliveryNotes}` 
+        : '';
+
+      const trackingInfo = salesCard.trackingCode 
+        ? `\nCÓDIGO RASTREAMENTO: ${salesCard.trackingCode}` 
+        : '';
+
+      const deliveryDate = salesCard.deliveryCompletedDate 
+        ? `\nDATA ENTREGA: ${new Date(salesCard.deliveryCompletedDate).toLocaleString('pt-BR')}` 
+        : '';
+
+      const observacoes = `Pedido CRM: ${salesCard.id}\n${deliveryInfo}${deliveryNotes}${trackingInfo}${deliveryDate}`.trim();
+
+      // Determinar etapa baseada no status
+      let etapa = '10'; // Pedido
+      if (salesCard.deliveryStatus === 'delivered') {
+        etapa = '60'; // Entregue
+      } else if (salesCard.deliveryStatus === 'failed') {
+        etapa = '50'; // Faturado mas com problema
+      } else if (salesCard.deliveryStatus === 'in_transit') {
+        etapa = '50'; // Faturado, em trânsito
+      } else if (salesCard.status === 'completed') {
+        etapa = '50'; // Faturado
+      }
+
+      const omieCustomerId = customer.id.includes('omie-client-') 
+        ? parseInt(customer.id.replace('omie-client-', ''))
+        : customer.omieId || null;
+
+      if (!omieCustomerId) {
+        throw new Error('ID do cliente no Omie não encontrado');
+      }
+
+      const salesOrder = {
+        codigo_cliente_omie: omieCustomerId,
+        codigo_pedido_integracao: salesCard.id,
+        data_previsao: salesCard.deliveryScheduledDate || salesCard.scheduledDate,
+        etapa,
+        codigo_cenario_impostos: '1000000001',
+        observacoes,
+        det: products.map((product: any, index: number) => ({
+          ide: {
+            codigo_item_integracao: `${salesCard.id}-item-${index + 1}`,
+            simples_nacional: 'S'
+          },
+          produto: {
+            codigo_produto_integracao: product.id,
+            descricao: product.name,
+            unidade: 'UN',
+            quantidade: product.quantity || 1,
+            valor_unitario: parseFloat(product.price) || 0,
+            valor_total: (parseFloat(product.price) || 0) * (product.quantity || 1)
+          }
+        }))
+      };
+
+      const response = await this.makeRequest('/produtos/pedidovenda/', 'IncluirPedido', {
+        pedido_venda_produto: salesOrder
+      });
+
+      return response.pedido_venda_produto;
+    } catch (error) {
+      console.error('Erro ao criar pedido no Omie:', error);
+      throw error;
+    }
+  }
+
+  // Atualizar pedido existente no Omie com informações de entrega
+  async updateOrderDeliveryStatus(omieOrderId: string, salesCard: any): Promise<any> {
+    try {
+      const deliveryStatusMap = {
+        'pending': 'ENTREGA: Aguardando entrega',
+        'in_transit': 'ENTREGA: Em trânsito', 
+        'delivered': 'ENTREGA: Entregue com sucesso',
+        'failed': 'ENTREGA: Falha na entrega - verificar com cliente',
+        'returned': 'ENTREGA: Produto devolvido'
+      };
+
+      const deliveryInfo = salesCard.deliveryStatus 
+        ? deliveryStatusMap[salesCard.deliveryStatus as keyof typeof deliveryStatusMap] || ''
+        : '';
+
+      const deliveryDate = salesCard.deliveryCompletedDate 
+        ? `\nEntregue em: ${new Date(salesCard.deliveryCompletedDate).toLocaleString('pt-BR')}` 
+        : '';
+
+      const trackingInfo = salesCard.trackingCode 
+        ? `\nRastreamento: ${salesCard.trackingCode}` 
+        : '';
+
+      const failureReason = salesCard.deliveryFailureReason && salesCard.deliveryStatus === 'failed'
+        ? `\nMotivo: ${this.getFailureReasonLabel(salesCard.deliveryFailureReason)}`
+        : '';
+
+      const observacoes = `Pedido CRM: ${salesCard.id}\n${deliveryInfo}${deliveryDate}${trackingInfo}${failureReason}`.trim();
+
+      // Determinar nova etapa
+      let etapa = '10';
+      if (salesCard.deliveryStatus === 'delivered') {
+        etapa = '60';
+      } else if (salesCard.deliveryStatus === 'failed') {
+        etapa = '50';
+      } else if (salesCard.deliveryStatus === 'in_transit') {
+        etapa = '50';
+      }
+
+      const response = await this.makeRequest('/produtos/pedidovenda/', 'AlterarPedidoVenda', {
+        pedido_venda_produto: {
+          codigo_pedido: omieOrderId,
+          observacoes,
+          etapa
+        }
+      });
+
+      return response;
+    } catch (error) {
+      console.error('Erro ao atualizar pedido no Omie:', error);
+      throw error;
+    }
+  }
+
+  private getFailureReasonLabel(reason: string): string {
+    const reasonLabels = {
+      'customer_absent': 'Cliente ausente',
+      'address_incorrect': 'Endereço incorreto',
+      'customer_refused': 'Cliente recusou',
+      'payment_issue': 'Problema no pagamento',
+      'product_damaged': 'Produto danificado',
+      'other': 'Outros motivos'
+    };
+    
+    return reasonLabels[reason as keyof typeof reasonLabels] || reason;
+  }
 }
 
 // Singleton instance - configuração será feita via variáveis de ambiente

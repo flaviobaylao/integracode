@@ -218,13 +218,13 @@ export default function DeliveryStatus({
               <div className="text-center py-4">
                 <span className="text-sm text-gray-500">Carregando histórico...</span>
               </div>
-            ) : deliveryHistory && deliveryHistory.length > 0 ? (
+            ) : deliveryHistory && Array.isArray(deliveryHistory) && deliveryHistory.length > 0 ? (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm">Histórico Completo</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
-                  {deliveryHistory.map((item: DeliveryHistoryItem) => {
+                  {(deliveryHistory as DeliveryHistoryItem[]).map((item: DeliveryHistoryItem) => {
                     const StatusIcon = getStatusIcon(item.status);
                     const datetime = formatDateTime(item.timestamp);
                     

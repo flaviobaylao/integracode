@@ -1084,10 +1084,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
         driverId
       });
 
-      res.json({ success: true, message: "Delivery status updated" });
+      // ===== SINCRONIZAÇÃO AUTOMÁTICA COM OMIE =====
+      // Se o sales card tem um pedido no Omie, atualizar com informações de entrega
+      if (salesCard.omieOrderId) {
+        try {
+          const omieService = getOmieService();
+          if (omieService) {
+            const updatedSalesCard = await storage.getSalesCard(salesCard.id);
+            await omieService.updateOrderDeliveryStatus(salesCard.omieOrderId, updatedSalesCard);
+            console.log(`Omie order ${salesCard.omieOrderId} updated with delivery status: ${status}`);
+          }
+        } catch (omieError) {
+          console.error('Error updating Omie order:', omieError);
+          // Não falha o webhook se o Omie der erro - operação continua
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Delivery status updated",
+        omieUpdated: !!salesCard.omieOrderId 
+      });
     } catch (error) {
       console.error("Error processing delivery webhook:", error);
       res.status(500).json({ message: "Failed to process delivery update" });
+    }
+  });
+
+  // ===== OMIE SALES ORDER INTEGRATION =====
+
+  // Exportar sales card para o Omie como pedido de venda
+  app.post('/api/sales-cards/:id/export-to-omie', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const salesCard = await storage.getSalesCard(id);
+      if (!salesCard) {
+        return res.status(404).json({ message: 'Sales card not found' });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: 'Omie integration not configured' 
+        });
+      }
+
+      // Buscar dados do cliente
+      const customer = await storage.getCustomer(salesCard.customerId);
+      if (!customer) {
+        return res.status(404).json({ message: 'Customer not found' });
+      }
+
+      // Se não há ID do cliente no Omie, não pode exportar
+      if (!customer.id.includes('omie-client-')) {
+        return res.status(400).json({ 
+          message: 'Customer must be imported from Omie first' 
+        });
+      }
+
+      // Preparar lista de produtos (usar dados do request ou produtos padrão)
+      const products = req.body.products || [
+        {
+          id: 'default-product',
+          name: 'Produto de vendas',
+          price: salesCard.value || 0,
+          quantity: 1
+        }
+      ];
+
+      // Criar pedido no Omie com informações de entrega
+      const omieOrder = await omieService.createSalesOrder(salesCard, customer, products);
+      
+      // Salvar ID do pedido do Omie no sales card
+      await storage.updateSalesCard(id, {
+        omieOrderId: omieOrder.codigo_pedido.toString()
+      });
+
+      res.json({
+        success: true,
+        message: 'Sales order exported to Omie successfully',
+        omieOrderId: omieOrder.codigo_pedido,
+        salesCardId: id,
+        deliveryStatus: salesCard.deliveryStatus
+      });
+
+    } catch (error) {
+      console.error('Error exporting to Omie:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to export to Omie'
+      });
+    }
+  });
+
+  // Sincronizar status de entrega de todos os pedidos para o Omie
+  app.post('/api/omie/sync-delivery-status', isAuthenticated, async (req, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: 'Omie integration not configured' 
+        });
+      }
+
+      // Buscar todos os sales cards com pedidos no Omie
+      const salesCards = await storage.getSalesCards();
+      const cardsWithOmieOrders = salesCards.filter(card => card.omieOrderId);
+
+      let updated = 0;
+      let errors: string[] = [];
+
+      for (const salesCard of cardsWithOmieOrders) {
+        try {
+          await omieService.updateOrderDeliveryStatus(salesCard.omieOrderId!, salesCard);
+          updated++;
+          console.log(`Updated Omie order ${salesCard.omieOrderId} for sales card ${salesCard.id}`);
+        } catch (error: any) {
+          const errorMsg = `Error updating order ${salesCard.omieOrderId}: ${error.message}`;
+          errors.push(errorMsg);
+          console.error(errorMsg);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: 'Delivery status sync completed',
+        totalProcessed: cardsWithOmieOrders.length,
+        updated,
+        errors: errors.length > 0 ? errors : undefined
+      });
+
+    } catch (error) {
+      console.error('Error syncing delivery status:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to sync delivery status'
+      });
     }
   });
 
