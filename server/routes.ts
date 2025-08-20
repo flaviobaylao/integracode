@@ -1224,6 +1224,198 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ===== SISTEMA DE VENDAS RECORRENTES =====
+
+  // Finalizar card de venda (concretizar venda ou marcar como não-venda)
+  app.post('/api/sales-cards/:id/complete', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { outcome, saleValue, notes } = req.body;
+
+      if (!outcome || !['sale', 'no_sale'].includes(outcome)) {
+        return res.status(400).json({ 
+          message: 'Outcome must be "sale" or "no_sale"' 
+        });
+      }
+
+      const result = await storage.completeRecurringSalesCard(
+        id, 
+        outcome, 
+        outcome === 'sale' ? saleValue : undefined
+      );
+
+      // Se houve venda, atualizar dados do cliente
+      if (outcome === 'sale' && saleValue) {
+        const salesCard = result.completedCard;
+        await storage.updateCustomer(salesCard.customerId, {
+          lastSaleDate: new Date(),
+          lastSaleValue: saleValue.toString()
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Sales card completed successfully',
+        completedCard: result.completedCard,
+        nextCard: result.nextCard,
+        hasNextCard: !!result.nextCard
+      });
+
+    } catch (error) {
+      console.error('Error completing sales card:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to complete sales card'
+      });
+    }
+  });
+
+  // Enviar card de vendas para faturamento (criar pedido no Omie)
+  app.post('/api/sales-cards/:id/invoice', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { products } = req.body; // Array de produtos com quantidades
+
+      const salesCard = await storage.getSalesCard(id);
+      if (!salesCard) {
+        return res.status(404).json({ message: 'Sales card not found' });
+      }
+
+      if (salesCard.status !== 'completed') {
+        return res.status(400).json({ 
+          message: 'Sales card must be completed before invoicing' 
+        });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: 'Omie integration not configured' 
+        });
+      }
+
+      // Buscar dados do cliente
+      const customer = await storage.getCustomer(salesCard.customerId);
+      if (!customer) {
+        return res.status(404).json({ message: 'Customer not found' });
+      }
+
+      // Usar produtos do card ou produtos fornecidos no request
+      const orderProducts = products || salesCard.products || [];
+
+      if (orderProducts.length === 0) {
+        return res.status(400).json({ 
+          message: 'No products specified for invoicing' 
+        });
+      }
+
+      // Criar pedido no Omie
+      const omieOrder = await omieService.createSalesOrder(salesCard, customer, orderProducts);
+      
+      // Atualizar card com status de faturado e dados do pedido
+      const updatedCard = await storage.updateSalesCard(id, {
+        status: 'invoiced',
+        omieOrderId: omieOrder.codigo_pedido.toString(),
+        notes: `${salesCard.notes || ''}\nFaturado no Omie - Pedido #${omieOrder.codigo_pedido}`
+      });
+
+      res.json({
+        success: true,
+        message: 'Sales card invoiced successfully',
+        salesCard: updatedCard,
+        omieOrderId: omieOrder.codigo_pedido,
+        omieOrderCode: omieOrder.numero_pedido || omieOrder.codigo_pedido
+      });
+
+    } catch (error) {
+      console.error('Error invoicing sales card:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to invoice sales card'
+      });
+    }
+  });
+
+  // Processar cards em atraso (executar diariamente via cron ou manual)
+  app.post('/api/sales-cards/process-overdue', isAuthenticated, async (req, res) => {
+    try {
+      const result = await storage.processOverdueCards();
+
+      res.json({
+        success: true,
+        message: 'Overdue cards processed successfully',
+        ...result
+      });
+
+    } catch (error) {
+      console.error('Error processing overdue cards:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to process overdue cards'
+      });
+    }
+  });
+
+  // Listar cards de telemarketing para um atendente
+  app.get('/api/telemarketing/my-cards', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Buscar cards de telemarketing atribuídos ao usuário atual
+      const telemarketingCards = await storage.getSalesCards(userId, {
+        status: 'telemarketing',
+        assignedToUser: userId
+      });
+
+      res.json(telemarketingCards);
+
+    } catch (error) {
+      console.error('Error fetching telemarketing cards:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch telemarketing cards'
+      });
+    }
+  });
+
+  // Atualizar card de telemarketing
+  app.put('/api/telemarketing/cards/:id', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { outcome, notes, rescheduleDate } = req.body;
+
+      const updateData: any = {
+        telemarketingNotes: notes,
+        updatedAt: new Date()
+      };
+
+      if (outcome === 'completed') {
+        updateData.status = 'completed';
+        updateData.completedDate = new Date();
+      } else if (outcome === 'reschedule' && rescheduleDate) {
+        updateData.status = 'pending';
+        updateData.scheduledDate = new Date(rescheduleDate);
+        updateData.telemarketingAssignedTo = null; // Volta para a fila normal
+        updateData.telemarketingDate = null;
+      }
+
+      const updatedCard = await storage.updateSalesCard(id, updateData);
+
+      res.json({
+        success: true,
+        message: 'Telemarketing card updated successfully',
+        salesCard: updatedCard
+      });
+
+    } catch (error) {
+      console.error('Error updating telemarketing card:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update telemarketing card'
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

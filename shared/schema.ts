@@ -106,18 +106,42 @@ export const deliveryFailureReasonEnum = pgEnum('delivery_failure_reason', [
   'other'                // Outros motivos
 ]);
 
-// Sales cards table
+// Sales cards table - Sistema de vendas recorrentes
 export const salesCards = pgTable("sales_cards", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull(),
   sellerId: varchar("seller_id").notNull(),
-  status: salesCardStatusEnum("status").notNull().default('pending'),
+  status: varchar("status").notNull().default('pending'), // pending, completed, invoiced, telemarketing, cancelled
   scheduledDate: timestamp("scheduled_date").notNull(),
   completedDate: timestamp("completed_date"),
   saleValue: decimal("sale_value", { precision: 10, scale: 2 }),
   noSaleReason: text("no_sale_reason"),
   notes: text("notes"),
-  duplicatedFromId: varchar("duplicated_from_id"),
+  
+  // Produtos do card de vendas
+  products: jsonb("products").$type<Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>>(),
+  
+  // Configuração de recorrência obrigatória
+  routeDay: varchar("route_day").notNull(), // segunda, terca, quarta, quinta, sexta, sabado, domingo
+  recurrenceType: varchar("recurrence_type").notNull(), // semanal, quinzenal, trisemanal, mensal
+  
+  // Controle de recorrência
+  isRecurring: boolean("is_recurring").default(true), // Se gera próximo card automaticamente
+  parentCardId: varchar("parent_card_id"), // ID do card original que gerou este
+  nextCardId: varchar("next_card_id"), // ID do próximo card gerado
+  duplicatedFromId: varchar("duplicated_from_id"), // Compatibilidade com sistema anterior
+  
+  // Sistema de telemarketing para cards não atendidos
+  telemarketingAssignedTo: varchar("telemarketing_assigned_to"), // ID do atendente de telemarketing
+  telemarketingDate: timestamp("telemarketing_date"), // Data que foi para telemarketing
+  telemarketingNotes: text("telemarketing_notes"),
+  
   // Delivery integration fields
   deliveryStatus: deliveryStatusEnum("delivery_status").default('pending'),
   deliveryScheduledDate: timestamp("delivery_scheduled_date"),
@@ -126,6 +150,11 @@ export const salesCards = pgTable("sales_cards", {
   deliveryNotes: text("delivery_notes"),
   deliveryDriverId: varchar("delivery_driver_id"),
   trackingCode: varchar("tracking_code"),
+  
+  // Integração com Omie ERP
+  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP
+  invoiceNumber: varchar("invoice_number"), // Número da nota fiscal emitida
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -173,6 +202,29 @@ export const deliveryDrivers = pgTable("delivery_drivers", {
   isActive: boolean("is_active").notNull().default(true),
   currentLocation: varchar("current_location"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Telemarketing agents table
+export const telemarketingAgents = pgTable("telemarketing_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(), // Referência ao usuário do sistema
+  name: varchar("name").notNull(),
+  phone: varchar("phone"),
+  email: varchar("email"),
+  isActive: boolean("is_active").notNull().default(true),
+  maxCardsPerDay: integer("max_cards_per_day").default(50), // Limite de cards por dia
+  currentCardsCount: integer("current_cards_count").default(0), // Cards atuais do dia
+  lastAssignedAt: timestamp("last_assigned_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Telemarketing queue control - para controlar fila round-robin
+export const telemarketingQueue = pgTable("telemarketing_queue", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  lastAssignedAgentId: varchar("last_assigned_agent_id"),
+  queuePosition: integer("queue_position").default(0),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -226,6 +278,14 @@ export const deliveryHistoryRelations = relations(deliveryHistory, ({ one }) => 
 export const deliveryDriversRelations = relations(deliveryDrivers, ({ many }) => ({
   salesCards: many(salesCards),
   deliveryHistory: many(deliveryHistory),
+}));
+
+export const telemarketingAgentsRelations = relations(telemarketingAgents, ({ one, many }) => ({
+  user: one(users, {
+    fields: [telemarketingAgents.userId],
+    references: [users.id],
+  }),
+  assignedCards: many(salesCards),
 }));
 
 export const messageHistoryRelations = relations(messageHistory, ({ one }) => ({

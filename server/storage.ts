@@ -634,6 +634,230 @@ export class DatabaseStorage implements IStorage {
     `);
     return result.rows[0];
   }
+
+  // ===== SISTEMA DE VENDAS RECORRENTES =====
+
+  // Criar próximo card de venda baseado na recorrência
+  async createNextRecurringCard(parentCard: SalesCard): Promise<SalesCard> {
+    const nextDate = this.calculateNextScheduledDate(
+      parentCard.scheduledDate,
+      parentCard.routeDay,
+      parentCard.recurrenceType
+    );
+
+    const nextCard = {
+      customerId: parentCard.customerId,
+      sellerId: parentCard.sellerId,
+      scheduledDate: nextDate,
+      status: 'pending' as const,
+      products: parentCard.products,
+      routeDay: parentCard.routeDay,
+      recurrenceType: parentCard.recurrenceType,
+      isRecurring: parentCard.isRecurring,
+      parentCardId: parentCard.id,
+      saleValue: parentCard.saleValue,
+      notes: `Card recorrente gerado automaticamente a partir do card ${parentCard.id}`
+    };
+
+    const [createdCard] = await db.insert(salesCards).values({
+      customerId: nextCard.customerId,
+      sellerId: nextCard.sellerId,
+      scheduledDate: nextCard.scheduledDate,
+      status: nextCard.status,
+      products: nextCard.products,
+      routeDay: nextCard.routeDay,
+      recurrenceType: nextCard.recurrenceType,
+      isRecurring: nextCard.isRecurring,
+      parentCardId: nextCard.parentCardId,
+      saleValue: nextCard.saleValue,
+      notes: nextCard.notes
+    }).returning();
+
+    // Atualizar card pai com referência ao próximo card
+    await db.update(salesCards)
+      .set({ nextCardId: createdCard.id, updatedAt: new Date() })
+      .where(eq(salesCards.id, parentCard.id));
+
+    return createdCard;
+  }
+
+  // Calcular próxima data baseada na recorrência
+  private calculateNextScheduledDate(
+    currentDate: Date,
+    routeDay: string,
+    recurrenceType: string
+  ): Date {
+    const dayMap = {
+      'domingo': 0, 'segunda': 1, 'terca': 2, 'quarta': 3,
+      'quinta': 4, 'sexta': 5, 'sabado': 6
+    };
+
+    const targetDayOfWeek = dayMap[routeDay as keyof typeof dayMap];
+    const nextDate = new Date(currentDate);
+
+    // Adicionar intervalo baseado no tipo de recorrência
+    switch (recurrenceType) {
+      case 'semanal':
+        nextDate.setDate(nextDate.getDate() + 7);
+        break;
+      case 'quinzenal':
+        nextDate.setDate(nextDate.getDate() + 14);
+        break;
+      case 'trisemanal':
+        nextDate.setDate(nextDate.getDate() + 21);
+        break;
+      case 'mensal':
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        break;
+      default:
+        nextDate.setDate(nextDate.getDate() + 7); // Padrão semanal
+    }
+
+    // Ajustar para o dia da semana correto
+    const currentDayOfWeek = nextDate.getDay();
+    const daysUntilTarget = (targetDayOfWeek - currentDayOfWeek + 7) % 7;
+    nextDate.setDate(nextDate.getDate() + daysUntilTarget);
+
+    return nextDate;
+  }
+
+  // Processar cards não atendidos e enviar para telemarketing
+  async processOverdueCards(): Promise<{
+    processedCount: number;
+    sentToTelemarketing: number;
+    errors: string[];
+  }> {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      // Buscar cards pendentes que deveriam ter sido atendidos ontem
+      const overdueCards = await db
+        .select()
+        .from(salesCards)
+        .where(
+          and(
+            eq(salesCards.status, 'pending'),
+            gte(salesCards.scheduledDate, yesterday),
+            lte(salesCards.scheduledDate, today)
+          )
+        );
+
+      let processedCount = 0;
+      let sentToTelemarketing = 0;
+      const errors: string[] = [];
+
+      for (const card of overdueCards) {
+        try {
+          // Atribuir ao próximo atendente de telemarketing
+          const assignedAgent = await this.getNextTelemarketingAgent();
+          
+          if (assignedAgent) {
+            await db.update(salesCards)
+              .set({
+                status: 'telemarketing',
+                telemarketingAssignedTo: assignedAgent.id,
+                telemarketingDate: new Date(),
+                scheduledDate: today, // Reagendar para hoje
+                updatedAt: new Date()
+              })
+              .where(eq(salesCards.id, card.id));
+
+            sentToTelemarketing++;
+          } else {
+            errors.push(`Nenhum atendente de telemarketing disponível para o card ${card.id}`);
+          }
+
+          processedCount++;
+        } catch (error: any) {
+          errors.push(`Erro ao processar card ${card.id}: ${error.message}`);
+        }
+      }
+
+      return {
+        processedCount,
+        sentToTelemarketing,
+        errors
+      };
+
+    } catch (error) {
+      console.error('Erro ao processar cards em atraso:', error);
+      throw error;
+    }
+  }
+
+  // Obter próximo agente de telemarketing na fila (round-robin)
+  async getNextTelemarketingAgent(): Promise<any> {
+    try {
+      // Buscar agentes ativos ordenados por última atribuição
+      const agents = await db.execute(sql`
+        SELECT * FROM telemarketing_agents 
+        WHERE is_active = true 
+        AND (current_cards_count < max_cards_per_day OR max_cards_per_day IS NULL)
+        ORDER BY COALESCE(last_assigned_at, '1900-01-01'::timestamp) ASC, created_at ASC
+        LIMIT 1
+      `);
+
+      if (agents.rows.length === 0) {
+        return null;
+      }
+
+      const agent = agents.rows[0];
+
+      // Atualizar contadores do agente
+      await db.execute(sql`
+        UPDATE telemarketing_agents 
+        SET 
+          current_cards_count = current_cards_count + 1,
+          last_assigned_at = NOW(),
+          updated_at = NOW()
+        WHERE id = ${agent.id}
+      `);
+
+      return agent;
+    } catch (error) {
+      console.error('Erro ao obter próximo agente de telemarketing:', error);
+      return null;
+    }
+  }
+
+  // Finalizar card de venda e criar próximo (se recorrente)
+  async completeRecurringSalesCard(cardId: string, outcome: 'sale' | 'no_sale', saleValue?: number): Promise<{
+    completedCard: SalesCard;
+    nextCard?: SalesCard;
+  }> {
+    const card = await this.getSalesCard(cardId);
+    if (!card) {
+      throw new Error('Sales card not found');
+    }
+
+    // Marcar card como completed
+    const [completedCard] = await db.update(salesCards)
+      .set({
+        status: 'completed',
+        completedDate: new Date(),
+        outcome,
+        saleValue: outcome === 'sale' ? (saleValue ? saleValue.toString() : card.saleValue) : null,
+        updatedAt: new Date()
+      })
+      .where(eq(salesCards.id, cardId))
+      .returning();
+
+    let nextCard: SalesCard | undefined;
+
+    // Se foi venda e card é recorrente, criar próximo card
+    if (outcome === 'sale' && card.isRecurring) {
+      nextCard = await this.createNextRecurringCard(completedCard);
+    }
+
+    return {
+      completedCard,
+      nextCard
+    };
+  }
 }
 
 export const storage = new DatabaseStorage();
