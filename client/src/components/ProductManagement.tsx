@@ -1,41 +1,12 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import ProductModal from "./ProductModal";
 import type { Product } from "@shared/schema";
 
 export default function ProductManagement() {
-  const [showModal, setShowModal] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-
   const { data: products, isLoading } = useQuery({
     queryKey: ['/api/products'],
     retry: false,
-  });
-
-  const deleteProductMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest('DELETE', `/api/products/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
-      toast({
-        title: "Sucesso",
-        description: "Produto excluído com sucesso!",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
   });
 
   const formatCurrency = (value: number) => {
@@ -70,12 +41,20 @@ export default function ProductManagement() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Catálogo de Produtos</h2>
-        <Button
-          className="bg-honest-blue hover:bg-blue-700"
-          onClick={() => setShowModal(true)}
-        >
-          <i className="fas fa-plus mr-2"></i>Novo Produto
-        </Button>
+        <div className="text-right">
+          <p className="text-sm text-gray-600 mb-2">
+            Produtos são importados apenas do Omie ERP
+          </p>
+          <Button
+            className="bg-green-600 hover:bg-green-700 text-white"
+            onClick={() => {
+              // Redirecionar para a aba de integração Omie
+              window.location.hash = '#omie-integration';
+            }}
+          >
+            <i className="fas fa-download mr-2"></i>Importar do Omie
+          </Button>
+        </div>
       </div>
 
       {/* Product Grid */}
@@ -121,23 +100,25 @@ export default function ProductManagement() {
                     </div>
                   </div>
                   
-                  <div className="flex items-center space-x-2">
-                    <Button
-                      className="flex-1 bg-honest-blue hover:bg-blue-700 text-white text-sm"
-                      onClick={() => {
-                        setEditingProduct(product);
-                        setShowModal(true);
-                      }}
-                    >
-                      <i className="fas fa-edit mr-1"></i>Editar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => deleteProductMutation.mutate(product.id)}
-                    >
-                      <i className="fas fa-trash text-red-600"></i>
-                    </Button>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-gray-500 flex items-center">
+                      {product.omieProductId ? (
+                        <>
+                          <i className="fas fa-check-circle text-green-500 mr-1"></i>
+                          Produto Omie #{product.omieProductId}
+                        </>
+                      ) : (
+                        <>
+                          <i className="fas fa-info-circle text-blue-500 mr-1"></i>
+                          Produto Local
+                        </>
+                      )}
+                    </div>
+                    {product.stockQuantity !== undefined && (
+                      <div className="text-xs text-gray-500">
+                        Estoque Omie: {product.stockQuantity}
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -150,17 +131,16 @@ export default function ProductManagement() {
         )}
       </div>
 
-      {/* Product Modal */}
-      {showModal && (
-        <ProductModal
-          isOpen={showModal}
-          onClose={() => {
-            setShowModal(false);
-            setEditingProduct(null);
-          }}
-          editingProduct={editingProduct}
-        />
-      )}
+      {/* Informações sobre importação */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-center">
+          <i className="fas fa-info-circle text-blue-500 mr-2"></i>
+          <p className="text-sm text-blue-700">
+            <strong>Importante:</strong> Todos os produtos são importados automaticamente do Omie ERP. 
+            Para adicionar novos produtos, cadastre-os primeiro no sistema Omie e depois use a função de importação.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
