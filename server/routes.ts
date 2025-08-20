@@ -1621,72 +1621,156 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Test Omie products import
-  app.post('/api/omie/test-products', isAuthenticated, async (req: any, res) => {
+  // Import products from Omie with correct active filter
+  app.post('/api/omie/import-products', isAuthenticated, async (req: any, res) => {
     try {
-      console.log('Testing Omie products import...');
+      const userId = req.user?.claims?.sub;
       
-      // Test call to list active products from Omie
-      const payload = {
-        call: 'ListarProdutos',
-        app_key: process.env.OMIE_APP_KEY,
-        app_secret: process.env.OMIE_APP_SECRET,
-        param: [{
-          pagina: 1,
-          registros_por_pagina: 10,
-          apenas_importado_api: 'N'
-        }]
-      };
-
-      const response = await fetch('https://app.omie.com.br/api/v1/geral/produtos/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        return res.status(500).json({ 
-          success: false,
-          message: `Erro API Omie: ${response.status}` 
-        });
+      // Only admin can import products
+      const user = await storage.getUser(userId);
+      if (user?.role !== 'admin') {
+        return res.status(403).json({ message: "Apenas administradores podem importar produtos" });
       }
 
-      const data = await response.json();
+      console.log('Iniciando importação de produtos ativos do Omie...');
       
-      if (data.faultstring) {
-        return res.status(500).json({ 
-          success: false,
-          message: `Erro Omie: ${data.faultstring}` 
+      let totalProcessed = 0;
+      let importedCount = 0;
+      const errors: string[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        const payload = {
+          call: 'ListarProdutos',
+          app_key: process.env.OMIE_APP_KEY,
+          app_secret: process.env.OMIE_APP_SECRET,
+          param: [{
+            pagina: currentPage,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N'
+          }]
+        };
+
+        const response = await fetch('https://app.omie.com.br/api/v1/geral/produtos/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
+
+        if (!response.ok) {
+          break;
+        }
+
+        const data = await response.json();
+        if (data.faultstring) {
+          errors.push(`Erro API Omie: ${data.faultstring}`);
+          break;
+        }
+
+        const products = data.produto_servico_cadastro || [];
+        
+        for (const product of products) {
+          totalProcessed++;
+          
+          // Filtro rigoroso baseado na sua tela Omie: apenas produtos REALMENTE ativos
+          const isInactive = product.inativo === 'S' || product.inativo === 'true' || product.inativo === true;
+          const isBlocked = product.bloqueado === 'S' || product.bloqueado === 'true' || product.bloqueado === true;
+          const hasValidPrice = product.valor_unitario && product.valor_unitario > 0;
+          
+          // Produtos da sua tela têm códigos específicos e são de BEBIDAS DE FRUTAS
+          const isFromCorrectCategory = product.familia && product.familia.includes('BEBIDAS DE FRUTAS');
+          
+          if (isInactive || isBlocked || !hasValidPrice || !isFromCorrectCategory) {
+            console.log(`Pulando produto: ${product.descricao} (inativo: ${product.inativo}, bloqueado: ${product.bloqueado}, categoria: ${product.familia})`);
+            continue;
+          }
+
+          try {
+            // Buscar estoque real do produto
+            let stockQuantity = 0;
+            try {
+              const stockPayload = {
+                call: 'ConsultarPosEstoque',
+                app_key: process.env.OMIE_APP_KEY,
+                app_secret: process.env.OMIE_APP_SECRET,
+                param: [{ codigo_produto: product.codigo_produto }]
+              };
+
+              const stockResponse = await fetch('https://app.omie.com.br/api/v1/estoque/consulta/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(stockPayload),
+              });
+
+              if (stockResponse.ok) {
+                const stockData = await stockResponse.json();
+                if (!stockData.faultstring && stockData.saldo_estoque !== undefined) {
+                  stockQuantity = stockData.saldo_estoque || 0;
+                }
+              }
+            } catch (stockError) {
+              console.log(`Estoque indisponível para ${product.codigo}: ${stockError}`);
+            }
+
+            // Verificar se produto já existe
+            const existingProducts = await storage.getAllProducts();
+            const existingProduct = existingProducts.find(p => p.omieProductId === product.codigo_produto);
+            
+            const productData = {
+              name: product.descricao || 'Produto sem nome',
+              description: product.descricao_detalhada || product.descricao || '',
+              price: (product.valor_unitario || 0).toString(),
+              stock: stockQuantity,
+              stockQuantity: stockQuantity,
+              unit: product.unidade || 'UN',
+              omieProductId: product.codigo_produto,
+              omieCode: product.codigo || product.codigo_produto.toString(),
+              ncm: product.ncm || '',
+              ean: product.ean || '',
+              categoryId: 'bebidas-frutas',
+              isActive: true
+            };
+
+            if (existingProduct) {
+              // Atualizar produto existente
+              await storage.updateProduct(existingProduct.id, productData);
+              console.log(`Produto atualizado: ${product.descricao} (Estoque: ${stockQuantity})`);
+            } else {
+              // Criar novo produto
+              await storage.createProduct({
+                id: `omie-${product.codigo_produto}`,
+                ...productData
+              });
+              console.log(`Produto importado: ${product.descricao} (Estoque: ${stockQuantity})`);
+            }
+
+            importedCount++;
+
+          } catch (productError: any) {
+            errors.push(`Erro ao processar ${product.descricao}: ${productError.message}`);
+          }
+        }
+
+        // Verificar próxima página
+        const totalPages = Math.ceil((data.total_de_registros || 0) / 50);
+        hasMorePages = currentPage < totalPages;
+        currentPage++;
       }
-
-      const products = data.produto_servico_cadastro || [];
-      const activeProducts = products.filter((p: any) => p.inativo !== 'S');
-      
-      console.log(`Found ${products.length} total products, ${activeProducts.length} active`);
-
-      // Show first 5 active products as sample
-      const sampleProducts = activeProducts.slice(0, 5).map((p: any) => ({
-        codigo: p.codigo_produto,
-        nome: p.descricao,
-        preco: p.valor_unitario,
-        unidade: p.unidade,
-        ativo: p.inativo !== 'S'
-      }));
 
       res.json({
         success: true,
-        totalProducts: products.length,
-        activeProducts: activeProducts.length,
-        sampleProducts,
-        message: `Conexão Omie OK! ${activeProducts.length} produtos ativos encontrados`
+        totalProcessed,
+        imported: importedCount,
+        errors,
+        message: `Importação concluída: ${importedCount} produtos da categoria BEBIDAS DE FRUTAS importados do Omie`
       });
 
     } catch (error: any) {
-      console.error('Error testing Omie products:', error);
+      console.error('Erro na importação de produtos:', error);
       res.status(500).json({ 
         success: false,
-        message: `Erro na conexão: ${error.message}` 
+        message: `Falha na importação: ${error.message}` 
       });
     }
   });

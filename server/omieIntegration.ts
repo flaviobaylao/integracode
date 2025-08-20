@@ -815,9 +815,19 @@ export async function importActiveProducts(): Promise<{
       for (const product of products) {
         result.totalProcessed++;
         
-        // Importar apenas produtos ATIVOS
-        if (product.inativo === 'S') {
-          continue; // Pular produtos inativos
+        // Filtro mais rigoroso para produtos realmente ativos
+        const isInactive = product.inativo === 'S' || product.inativo === 'true' || product.inativo === true;
+        const isBlocked = product.bloqueado === 'S' || product.bloqueado === 'true' || product.bloqueado === true;
+        
+        if (isInactive || isBlocked) {
+          console.log(`Pulando produto inativo/bloqueado: ${product.descricao} (inativo: ${product.inativo}, bloqueado: ${product.bloqueado})`);
+          continue;
+        }
+
+        // Verificar se o produto tem preço válido (produtos sem preço podem estar inativos na prática)
+        if (!product.valor_unitario || product.valor_unitario <= 0) {
+          console.log(`Pulando produto sem preço: ${product.descricao}`);
+          continue;
         }
 
         try {
