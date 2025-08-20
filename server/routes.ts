@@ -270,13 +270,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/sales-cards/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
+      console.log('PUT /api/sales-cards/:id - Request body:', req.body);
+      console.log('PUT /api/sales-cards/:id - User ID:', req.userId);
+      
       const data = insertSalesCardSchema.partial().parse(req.body);
+      console.log('PUT /api/sales-cards/:id - Parsed data:', data);
       
       // Check permissions for reassigning sales cards
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       
       if (data.sellerId && user?.role === 'vendedor') {
@@ -287,11 +291,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(salesCard);
     } catch (error) {
       console.error("Error updating sales card:", error);
+      if (error instanceof z.ZodError) {
+        console.log('Zod validation errors:', error.errors);
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to update sales card" });
     }
   });
 
-  app.post('/api/sales-cards/:id/duplicate', isAuthenticated, async (req: any, res) => {
+  app.post('/api/sales-cards/:id/duplicate', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { newDate } = req.body;
@@ -308,7 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/sales-cards/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       await storage.deleteSalesCard(id);
