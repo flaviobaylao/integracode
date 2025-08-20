@@ -28,9 +28,10 @@ Preferred communication style: Simple, everyday language.
 - **Users**: Role-based system (admin, coordinator, administrative, vendedor) with routes and profile information
 - **Customers**: Customer data with seller assignments, contact information, and visit scheduling
 - **Products**: Product catalog with pricing and inventory tracking
-- **Sales Cards**: Visit scheduling and sales tracking with customer relationships
+- **Sales Cards**: Visit scheduling and sales tracking with customer relationships and delivery integration
 - **Message Templates**: WhatsApp message templates for customer communication
 - **Message History**: Audit trail for WhatsApp communications
+- **Delivery Management**: Delivery drivers, delivery history, and real-time status tracking
 - **Sessions**: PostgreSQL-based session storage for authentication
 
 ## Authentication & Authorization
@@ -49,6 +50,9 @@ Preferred communication style: Simple, everyday language.
 - **Omie ERP Integration**: Complete synchronization of clients, vendors, products and overdue debts
 - **Bulk Import Operations**: Individual and bulk client import from Omie with seller assignment
 - **Financial Tracking**: Real-time overdue debt monitoring and credit analysis
+- **Delivery Integration**: Real-time delivery status tracking integrated with App Entregas Honest
+- **Delivery Tracking**: Complete delivery history, driver management, and status updates
+- **Webhook Support**: External API endpoints for delivery status updates from delivery app
 
 # External Dependencies
 

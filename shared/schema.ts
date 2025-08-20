@@ -87,6 +87,25 @@ export const products = pgTable("products", {
 // Sales cards status enum
 export const salesCardStatusEnum = pgEnum('sales_card_status', ['pending', 'in_progress', 'completed', 'no_sale']);
 
+// Delivery status enum
+export const deliveryStatusEnum = pgEnum('delivery_status', [
+  'pending',      // Aguardando entrega
+  'in_transit',   // Em trânsito
+  'delivered',    // Entregue
+  'failed',       // Falha na entrega
+  'returned'      // Devolvido
+]);
+
+// Delivery failure reasons enum
+export const deliveryFailureReasonEnum = pgEnum('delivery_failure_reason', [
+  'customer_absent',     // Cliente ausente
+  'address_incorrect',   // Endereço incorreto
+  'customer_refused',    // Cliente recusou
+  'payment_issue',       // Problema de pagamento
+  'product_damaged',     // Produto danificado
+  'other'                // Outros motivos
+]);
+
 // Sales cards table
 export const salesCards = pgTable("sales_cards", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -99,6 +118,14 @@ export const salesCards = pgTable("sales_cards", {
   noSaleReason: text("no_sale_reason"),
   notes: text("notes"),
   duplicatedFromId: varchar("duplicated_from_id"),
+  // Delivery integration fields
+  deliveryStatus: deliveryStatusEnum("delivery_status").default('pending'),
+  deliveryScheduledDate: timestamp("delivery_scheduled_date"),
+  deliveryCompletedDate: timestamp("delivery_completed_date"),
+  deliveryFailureReason: deliveryFailureReasonEnum("delivery_failure_reason"),
+  deliveryNotes: text("delivery_notes"),
+  deliveryDriverId: varchar("delivery_driver_id"),
+  trackingCode: varchar("tracking_code"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -124,6 +151,31 @@ export const messageHistory = pgTable("message_history", {
   sentAt: timestamp("sent_at").defaultNow(),
 });
 
+// Delivery history/tracking table
+export const deliveryHistory = pgTable("delivery_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesCardId: varchar("sales_card_id").notNull(),
+  status: deliveryStatusEnum("status").notNull(),
+  timestamp: timestamp("timestamp").defaultNow(),
+  location: varchar("location"), // Localização atual da entrega
+  notes: text("notes"),
+  driverId: varchar("driver_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Delivery drivers table
+export const deliveryDrivers = pgTable("delivery_drivers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  phone: varchar("phone").notNull(),
+  vehicleType: varchar("vehicle_type"), // Tipo de veículo (moto, carro, etc)
+  licensePlate: varchar("license_plate"),
+  isActive: boolean("is_active").notNull().default(true),
+  currentLocation: varchar("current_location"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   customers: many(customers),
@@ -140,7 +192,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
   messageHistory: many(messageHistory),
 }));
 
-export const salesCardsRelations = relations(salesCards, ({ one }) => ({
+export const salesCardsRelations = relations(salesCards, ({ one, many }) => ({
   customer: one(customers, {
     fields: [salesCards.customerId],
     references: [customers.id],
@@ -149,10 +201,31 @@ export const salesCardsRelations = relations(salesCards, ({ one }) => ({
     fields: [salesCards.sellerId],
     references: [users.id],
   }),
+  deliveryDriver: one(deliveryDrivers, {
+    fields: [salesCards.deliveryDriverId],
+    references: [deliveryDrivers.id],
+  }),
   duplicatedFrom: one(salesCards, {
     fields: [salesCards.duplicatedFromId],
     references: [salesCards.id],
   }),
+  deliveryHistory: many(deliveryHistory),
+}));
+
+export const deliveryHistoryRelations = relations(deliveryHistory, ({ one }) => ({
+  salesCard: one(salesCards, {
+    fields: [deliveryHistory.salesCardId],
+    references: [salesCards.id],
+  }),
+  driver: one(deliveryDrivers, {
+    fields: [deliveryHistory.driverId],
+    references: [deliveryDrivers.id],
+  }),
+}));
+
+export const deliveryDriversRelations = relations(deliveryDrivers, ({ many }) => ({
+  salesCards: many(salesCards),
+  deliveryHistory: many(deliveryHistory),
 }));
 
 export const messageHistoryRelations = relations(messageHistory, ({ one }) => ({

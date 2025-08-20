@@ -21,7 +21,7 @@ import {
   type MessageHistory,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, lte, sql, inArray, or } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -67,6 +67,16 @@ export interface IStorage {
   // Message history operations
   getMessageHistory(customerId?: string): Promise<MessageHistory[]>;
   createMessageHistory(history: InsertMessageHistory): Promise<MessageHistory>;
+  
+  // Delivery operations
+  updateSalesCardDeliveryStatus(id: string, data: any): Promise<SalesCard>;
+  getSalesCardByTrackingCode(trackingCode: string): Promise<SalesCard | undefined>;
+  getPendingDeliveries(): Promise<SalesCard[]>;
+  createDeliveryHistory(data: any): Promise<any>;
+  getDeliveryHistory(salesCardId: string): Promise<any[]>;
+  getDeliveryDrivers(): Promise<any[]>;
+  createDeliveryDriver(data: any): Promise<any>;
+  updateDriverLocation(driverId: string, location: string): Promise<any>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -536,6 +546,93 @@ export class DatabaseStorage implements IStorage {
       overdueClients: overdueCards.length,
       conversionRate,
     };
+  }
+
+  // ===== DELIVERY OPERATIONS =====
+
+  async updateSalesCardDeliveryStatus(id: string, data: any): Promise<SalesCard> {
+    const [updatedCard] = await db.execute(sql`
+      UPDATE sales_cards 
+      SET 
+        delivery_status = ${data.deliveryStatus},
+        delivery_completed_date = ${data.deliveryCompletedDate},
+        delivery_failure_reason = ${data.deliveryFailureReason},
+        delivery_notes = ${data.deliveryNotes},
+        delivery_driver_id = ${data.deliveryDriverId},
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `);
+    return updatedCard as SalesCard;
+  }
+
+  async getSalesCardByTrackingCode(trackingCode: string): Promise<SalesCard | undefined> {
+    const result = await db.execute(sql`
+      SELECT * FROM sales_cards 
+      WHERE tracking_code = ${trackingCode}
+      LIMIT 1
+    `);
+    return result.rows[0] as SalesCard;
+  }
+
+  async getPendingDeliveries(): Promise<SalesCard[]> {
+    const result = await db.execute(sql`
+      SELECT sc.*, c.name as customer_name, c.address as customer_address
+      FROM sales_cards sc
+      JOIN customers c ON sc.customer_id = c.id
+      WHERE sc.status = 'completed' 
+      AND sc.delivery_status IN ('pending', 'in_transit')
+      ORDER BY sc.scheduled_date ASC
+    `);
+    return result.rows as SalesCard[];
+  }
+
+  async createDeliveryHistory(data: any): Promise<any> {
+    const result = await db.execute(sql`
+      INSERT INTO delivery_history (sales_card_id, status, timestamp, location, notes, driver_id)
+      VALUES (${data.salesCardId}, ${data.status}, ${data.timestamp || new Date()}, ${data.location}, ${data.notes}, ${data.driverId})
+      RETURNING *
+    `);
+    return result.rows[0];
+  }
+
+  async getDeliveryHistory(salesCardId: string): Promise<any[]> {
+    const result = await db.execute(sql`
+      SELECT dh.*, dd.name as driver_name
+      FROM delivery_history dh
+      LEFT JOIN delivery_drivers dd ON dh.driver_id = dd.id
+      WHERE dh.sales_card_id = ${salesCardId} 
+      ORDER BY dh.timestamp DESC
+    `);
+    return result.rows;
+  }
+
+  async getDeliveryDrivers(): Promise<any[]> {
+    const result = await db.execute(sql`
+      SELECT * FROM delivery_drivers 
+      WHERE is_active = true 
+      ORDER BY name
+    `);
+    return result.rows;
+  }
+
+  async createDeliveryDriver(data: any): Promise<any> {
+    const result = await db.execute(sql`
+      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, current_location)
+      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${data.currentLocation})
+      RETURNING *
+    `);
+    return result.rows[0];
+  }
+
+  async updateDriverLocation(driverId: string, location: string): Promise<any> {
+    const result = await db.execute(sql`
+      UPDATE delivery_drivers 
+      SET current_location = ${location}, updated_at = NOW() 
+      WHERE id = ${driverId}
+      RETURNING *
+    `);
+    return result.rows[0];
   }
 }
 

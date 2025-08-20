@@ -991,6 +991,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ===== DELIVERY INTEGRATION APIS =====
+  
+  // Atualizar status de entrega
+  app.put("/api/deliveries/:salesCardId/status", async (req, res) => {
+    try {
+      const { salesCardId } = req.params;
+      const { 
+        status, 
+        deliveryCompletedDate, 
+        deliveryFailureReason, 
+        deliveryNotes, 
+        driverId,
+        location 
+      } = req.body;
+
+      // Atualizar sales card com novo status de entrega
+      const updatedCard = await storage.updateSalesCardDeliveryStatus(salesCardId, {
+        deliveryStatus: status,
+        deliveryCompletedDate: status === 'delivered' ? new Date() : deliveryCompletedDate,
+        deliveryFailureReason: status === 'failed' ? deliveryFailureReason : null,
+        deliveryNotes,
+        deliveryDriverId: driverId
+      });
+
+      // Registrar histórico de entrega
+      await storage.createDeliveryHistory({
+        salesCardId,
+        status,
+        location,
+        notes: deliveryNotes,
+        driverId
+      });
+
+      res.json(updatedCard);
+    } catch (error) {
+      console.error("Error updating delivery status:", error);
+      res.status(500).json({ message: "Failed to update delivery status" });
+    }
+  });
+
+  // Buscar entregas pendentes
+  app.get("/api/deliveries/pending", async (req, res) => {
+    try {
+      const pendingDeliveries = await storage.getPendingDeliveries();
+      res.json(pendingDeliveries);
+    } catch (error) {
+      console.error("Error fetching pending deliveries:", error);
+      res.status(500).json({ message: "Failed to fetch pending deliveries" });
+    }
+  });
+
+  // Buscar histórico de entregas de um card de venda
+  app.get("/api/deliveries/:salesCardId/history", async (req, res) => {
+    try {
+      const { salesCardId } = req.params;
+      const history = await storage.getDeliveryHistory(salesCardId);
+      res.json(history);
+    } catch (error) {
+      console.error("Error fetching delivery history:", error);
+      res.status(500).json({ message: "Failed to fetch delivery history" });
+    }
+  });
+
+  // Webhook para App Entregas Honest (endpoints públicos para integração externa)
+  app.post("/api/webhook/delivery-update", async (req, res) => {
+    try {
+      const { trackingCode, status, timestamp, location, notes, driverId } = req.body;
+
+      // Buscar sales card pelo código de rastreamento
+      const salesCard = await storage.getSalesCardByTrackingCode(trackingCode);
+      
+      if (!salesCard) {
+        return res.status(404).json({ message: "Sales card not found" });
+      }
+
+      // Atualizar status
+      await storage.updateSalesCardDeliveryStatus(salesCard.id, {
+        deliveryStatus: status,
+        deliveryCompletedDate: status === 'delivered' ? new Date(timestamp) : null,
+        deliveryNotes: notes,
+        deliveryDriverId: driverId
+      });
+
+      // Registrar no histórico
+      await storage.createDeliveryHistory({
+        salesCardId: salesCard.id,
+        status,
+        timestamp: new Date(timestamp),
+        location,
+        notes,
+        driverId
+      });
+
+      res.json({ success: true, message: "Delivery status updated" });
+    } catch (error) {
+      console.error("Error processing delivery webhook:", error);
+      res.status(500).json({ message: "Failed to process delivery update" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
