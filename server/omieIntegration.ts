@@ -765,6 +765,133 @@ export function isOmieConfigured(): boolean {
   return !!(process.env.OMIE_APP_KEY && process.env.OMIE_APP_SECRET);
 }
 
+// Função para importar produtos ativos do Omie
+export async function importActiveProducts(): Promise<{
+  totalProcessed: number;
+  imported: number;
+  errors: string[];
+}> {
+  try {
+    const result = {
+      totalProcessed: 0,
+      imported: 0,
+      errors: []
+    };
+
+    let currentPage = 1;
+    let hasMorePages = true;
+
+    while (hasMorePages) {
+      // Buscar produtos do Omie
+      const payload = {
+        call: 'ListarProdutos',
+        app_key: process.env.OMIE_APP_KEY,
+        app_secret: process.env.OMIE_APP_SECRET,
+        param: [{
+          pagina: currentPage,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N'
+        }]
+      };
+
+      const response = await fetch('https://app.omie.com.br/api/v1/geral/produtos/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro API Omie: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.faultstring) {
+        throw new Error(`Erro Omie: ${data.faultstring}`);
+      }
+
+      const products = data.produto_servico_cadastro || [];
+      
+      for (const product of products) {
+        result.totalProcessed++;
+        
+        // Importar apenas produtos ATIVOS
+        if (product.inativo === 'S') {
+          continue; // Pular produtos inativos
+        }
+
+        try {
+          // Buscar estoque do produto
+          let stockQuantity = 0;
+          try {
+            const stockPayload = {
+              call: 'ConsultarPosEstoque',
+              app_key: process.env.OMIE_APP_KEY,
+              app_secret: process.env.OMIE_APP_SECRET,
+              param: [{
+                codigo_produto: product.codigo_produto
+              }]
+            };
+
+            const stockResponse = await fetch('https://app.omie.com.br/api/v1/estoque/consulta/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(stockPayload),
+            });
+
+            if (stockResponse.ok) {
+              const stockData = await stockResponse.json();
+              if (!stockData.faultstring && stockData.saldo_estoque) {
+                stockQuantity = stockData.saldo_estoque || 0;
+              }
+            }
+          } catch (stockError) {
+            console.log(`Não foi possível obter estoque para produto ${product.codigo}: ${stockError}`);
+          }
+
+          // Converter produto do Omie para formato do sistema
+          const systemProduct = {
+            id: `omie-product-${product.codigo_produto}`,
+            name: product.descricao || 'Produto sem nome',
+            description: product.descricao_detalhada || product.descricao || '',
+            price: product.valor_unitario || 0,
+            categoryId: 'categoria-sucos', // Categoria padrão baseada na imagem
+            isActive: true,
+            stockQuantity: stockQuantity,
+            unit: product.unidade || 'UN',
+            omieProductId: product.codigo_produto,
+            omieCode: product.codigo || product.codigo_produto.toString(),
+            ncm: product.ncm || '',
+            ean: product.ean || '',
+            weight: product.peso_liq || 0,
+            height: product.altura || 0,
+            width: product.largura || 0,
+            depth: product.profundidade || 0
+          };
+
+          console.log(`Importando produto ativo: ${systemProduct.name} (Estoque: ${stockQuantity})`);
+          result.imported++;
+          
+          // Aqui você salvaria no banco - será implementado na rota
+          
+        } catch (productError: any) {
+          result.errors.push(`Erro ao processar produto ${product.codigo}: ${productError.message}`);
+        }
+      }
+
+      // Verificar se há mais páginas
+      const totalPages = Math.ceil((data.total_de_registros || 0) / 50);
+      hasMorePages = currentPage < totalPages;
+      currentPage++;
+    }
+
+    return result;
+  } catch (error: any) {
+    console.error('Erro ao importar produtos do Omie:', error);
+    throw new Error(`Falha na importação: ${error.message}`);
+  }
+}
+
 // Função para criar pedido no Omie
 export async function createOmieOrder(orderData: {
   customer: {
@@ -800,14 +927,36 @@ export async function createOmieOrder(orderData: {
     } catch (error) {
       // Cliente não existe, criar novo
       console.log('Criando novo cliente no Omie...');
-      const newCustomer = await omieService.incluirCliente({
-        cnpj_cpf: orderData.customer.document,
-        razao_social: orderData.customer.name,
-        nome_fantasia: orderData.customer.name,
-        email: orderData.customer.email,
-        telefone1_numero: orderData.customer.phone,
-        endereco: orderData.customer.address
+      // Criar cliente diretamente via API
+      const clientPayload = {
+        call: 'IncluirCliente',
+        app_key: process.env.OMIE_APP_KEY,
+        app_secret: process.env.OMIE_APP_SECRET,
+        param: [{
+          cnpj_cpf: orderData.customer.document,
+          razao_social: orderData.customer.name,
+          nome_fantasia: orderData.customer.name,
+          email: orderData.customer.email,
+          telefone1_numero: orderData.customer.phone,
+          endereco: orderData.customer.address
+        }]
+      };
+
+      const clientResponse = await fetch('https://app.omie.com.br/api/v1/geral/clientes/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(clientPayload),
       });
+
+      if (!clientResponse.ok) {
+        throw new Error(`Erro ao criar cliente: ${clientResponse.status}`);
+      }
+
+      const newCustomer = await clientResponse.json();
+      
+      if (newCustomer.faultstring) {
+        throw new Error(`Erro Omie cliente: ${newCustomer.faultstring}`);
+      }
       omieCustomerId = newCustomer.codigo_cliente_omie;
       console.log('Cliente criado no Omie:', omieCustomerId);
     }
@@ -874,7 +1023,7 @@ export async function createOmieOrder(orderData: {
       status: 'success'
     };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro ao criar pedido no Omie:', error);
     throw new Error(`Falha na integração Omie: ${error.message}`);
   }

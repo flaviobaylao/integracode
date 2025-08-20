@@ -1578,7 +1578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               omieData: omieResult
             });
 
-          } catch (omieApiError) {
+          } catch (omieApiError: any) {
             console.error('Omie API Error:', omieApiError);
             
             // Marcar como completed mesmo com erro no Omie
@@ -1618,6 +1618,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error finalizing sale:", error);
       res.status(500).json({ message: "Failed to finalize sale" });
+    }
+  });
+
+  // Test Omie products import
+  app.post('/api/omie/test-products', isAuthenticated, async (req: any, res) => {
+    try {
+      console.log('Testing Omie products import...');
+      
+      // Test call to list active products from Omie
+      const payload = {
+        call: 'ListarProdutos',
+        app_key: process.env.OMIE_APP_KEY,
+        app_secret: process.env.OMIE_APP_SECRET,
+        param: [{
+          pagina: 1,
+          registros_por_pagina: 10,
+          apenas_importado_api: 'N'
+        }]
+      };
+
+      const response = await fetch('https://app.omie.com.br/api/v1/geral/produtos/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        return res.status(500).json({ 
+          success: false,
+          message: `Erro API Omie: ${response.status}` 
+        });
+      }
+
+      const data = await response.json();
+      
+      if (data.faultstring) {
+        return res.status(500).json({ 
+          success: false,
+          message: `Erro Omie: ${data.faultstring}` 
+        });
+      }
+
+      const products = data.produto_servico_cadastro || [];
+      const activeProducts = products.filter((p: any) => p.inativo !== 'S');
+      
+      console.log(`Found ${products.length} total products, ${activeProducts.length} active`);
+
+      // Show first 5 active products as sample
+      const sampleProducts = activeProducts.slice(0, 5).map((p: any) => ({
+        codigo: p.codigo_produto,
+        nome: p.descricao,
+        preco: p.valor_unitario,
+        unidade: p.unidade,
+        ativo: p.inativo !== 'S'
+      }));
+
+      res.json({
+        success: true,
+        totalProducts: products.length,
+        activeProducts: activeProducts.length,
+        sampleProducts,
+        message: `Conexão Omie OK! ${activeProducts.length} produtos ativos encontrados`
+      });
+
+    } catch (error: any) {
+      console.error('Error testing Omie products:', error);
+      res.status(500).json({ 
+        success: false,
+        message: `Erro na conexão: ${error.message}` 
+      });
     }
   });
 
