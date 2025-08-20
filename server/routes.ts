@@ -1673,18 +1673,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const product of products) {
           totalProcessed++;
           
-          // Filtro rigoroso baseado na sua tela Omie: apenas produtos REALMENTE ativos
-          const isInactive = product.inativo === 'S' || product.inativo === 'true' || product.inativo === true;
-          const isBlocked = product.bloqueado === 'S' || product.bloqueado === 'true' || product.bloqueado === true;
-          const hasValidPrice = product.valor_unitario && product.valor_unitario > 0;
+          // Log detalhado de TODOS os produtos para debug
+          console.log(`\n=== PRODUTO ${totalProcessed} ===`);
+          console.log(`Nome: ${product.descricao}`);
+          console.log(`Código: ${product.codigo_produto}`);
+          console.log(`Código Produto: ${product.codigo}`);
+          console.log(`Inativo: "${product.inativo}"`);
+          console.log(`Bloqueado: "${product.bloqueado}"`);
+          console.log(`Família: "${product.familia}"`);
+          console.log(`Preço: ${product.valor_unitario}`);
+          console.log(`Unidade: ${product.unidade}`);
           
-          // Produtos da sua tela têm códigos específicos e são de BEBIDAS DE FRUTAS
-          const isFromCorrectCategory = product.familia && product.familia.includes('BEBIDAS DE FRUTAS');
+          // Filtro baseado EXATAMENTE na sua tela do Omie
+          // Na sua imagem, os produtos ativos são da família "BEBIDAS DE FRUTAS"
+          // e têm códigos como PRD-MA-500, PRD-AC-350, etc.
           
-          if (isInactive || isBlocked || !hasValidPrice || !isFromCorrectCategory) {
-            console.log(`Pulando produto: ${product.descricao} (inativo: ${product.inativo}, bloqueado: ${product.bloqueado}, categoria: ${product.familia})`);
+          // 1. Produto deve estar ativo (não inativo)
+          if (product.inativo === 'S' || product.inativo === true || product.inativo === 'true') {
+            console.log(`❌ Produto INATIVO - Pulando`);
             continue;
           }
+          
+          // 2. Produto não deve estar bloqueado
+          if (product.bloqueado === 'S' || product.bloqueado === true || product.bloqueado === 'true') {
+            console.log(`❌ Produto BLOQUEADO - Pulando`);
+            continue;
+          }
+          
+          // 3. Deve ter preço válido (produtos da sua tela têm preços)
+          if (!product.valor_unitario || product.valor_unitario <= 0) {
+            console.log(`❌ Produto SEM PREÇO - Pulando`);
+            continue;
+          }
+          
+          // 4. Filtro baseado nos produtos REAIS da sua tela
+          // Da sua imagem, os produtos válidos são:
+          // - SUCO MISTO DE FRUTA - MARACUJÁ 500ml (PRD-MA-500)
+          // - SUCO MISTO DE FRUTA - ACEROLA 350ml (PRD-AC-350) 
+          // - SUCO MISTO DE FRUTA - ACEROLA 900ml (PRD-AC-900)
+          // - etc. (todos são "SUCO MISTO DE FRUTA")
+          
+          const isValidProduct = product.descricao && (
+            product.descricao.includes('SUCO MISTO DE FRUTA') ||
+            product.descricao.includes('SUCO DE FRUTA') ||
+            (product.familia && product.familia.includes('BEBIDAS DE FRUTAS'))
+          );
+          
+          if (!isValidProduct) {
+            console.log(`❌ Produto não é um suco válido - Pulando`);
+            continue;
+          }
+          
+          // 5. Verificar se tem código válido (PRD- ou similar)
+          const hasValidCode = product.codigo && (
+            product.codigo.startsWith('PRD-') || 
+            product.codigo.includes('AC') || 
+            product.codigo.includes('MA') ||
+            product.codigo.includes('LI') ||
+            product.codigo.includes('MO')
+          );
+          
+          if (!hasValidCode) {
+            console.log(`❌ Produto sem código válido (código: ${product.codigo}) - Pulando`);
+            continue;
+          }
+          
+          console.log(`✅ PRODUTO VÁLIDO - Será importado!`);
 
           try {
             // Buscar estoque real do produto
