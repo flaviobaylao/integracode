@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -6,10 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertSalesCardSchema, type SalesCardWithRelations, type CustomerWithSeller } from "@shared/schema";
 import { z } from "zod";
+import { cn } from "@/lib/utils";
 
 interface SalesCardModalProps {
   isOpen: boolean;
@@ -24,8 +28,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     scheduledDate: '',
     scheduledTime: '',
     notes: '',
+    routeDay: '',
+    recurrenceType: 'semanal',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -33,6 +41,22 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     queryKey: ['/api/customers'],
     retry: false,
   });
+
+  // Filtrar clientes baseado na busca
+  const filteredCustomers = useMemo(() => {
+    if (!customers) return [];
+    if (!customerSearch) return customers;
+    
+    return customers.filter((customer: CustomerWithSeller) =>
+      customer.name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
+      customer.fantasyName?.toLowerCase().includes(customerSearch.toLowerCase()) ||
+      customer.document?.includes(customerSearch) ||
+      customer.phone?.includes(customerSearch)
+    );
+  }, [customers, customerSearch]);
+
+  // Encontrar cliente selecionado
+  const selectedCustomer = customers?.find((c: CustomerWithSeller) => c.id === formData.customerId);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -60,6 +84,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         scheduledDate: today,
         scheduledTime: currentTime,
         notes: '',
+        routeDay: '',
+        recurrenceType: 'semanal',
       });
     }
     setErrors({});
@@ -106,6 +132,9 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         scheduledDate: scheduledDateTime,
         status: editingCard?.status || 'pending',
         notes: formData.notes || undefined,
+        routeDay: formData.routeDay,
+        recurrenceType: formData.recurrenceType,
+        isRecurring: true,
       };
 
       const validatedData = insertSalesCardSchema.parse(dataToValidate);
@@ -135,21 +164,72 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor="customerId">Cliente *</Label>
-            <Select 
-              value={formData.customerId} 
-              onValueChange={(value) => setFormData(prev => ({ ...prev, customerId: value }))}
-            >
-              <SelectTrigger className={errors.customerId ? "border-red-500" : ""}>
-                <SelectValue placeholder="Selecione um cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {customers?.map((customer: CustomerWithSeller) => (
-                  <SelectItem key={customer.id} value={customer.id}>
-                    {customer.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={customerOpen} onOpenChange={setCustomerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={customerOpen}
+                  className={cn(
+                    "w-full justify-between",
+                    errors.customerId ? "border-red-500" : ""
+                  )}
+                >
+                  {selectedCustomer 
+                    ? `${selectedCustomer.fantasyName || selectedCustomer.name} ${selectedCustomer.document ? `(${selectedCustomer.document})` : ''}`
+                    : "Buscar cliente..."
+                  }
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[400px] p-0">
+                <Command>
+                  <CommandInput 
+                    placeholder="Buscar por nome, nome fantasia, documento..." 
+                    value={customerSearch}
+                    onValueChange={setCustomerSearch}
+                  />
+                  <CommandList>
+                    <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                    <CommandGroup>
+                      {filteredCustomers.map((customer: CustomerWithSeller) => (
+                        <CommandItem
+                          key={customer.id}
+                          value={customer.id}
+                          onSelect={(currentValue) => {
+                            setFormData(prev => ({ 
+                              ...prev, 
+                              customerId: currentValue === formData.customerId ? "" : currentValue 
+                            }));
+                            setCustomerOpen(false);
+                            setCustomerSearch('');
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              formData.customerId === customer.id ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <div className="flex flex-col">
+                            <div className="font-medium">
+                              {customer.fantasyName || customer.name}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {customer.name !== customer.fantasyName && customer.name && (
+                                <span>{customer.name} • </span>
+                              )}
+                              {customer.document && <span>{customer.document} • </span>}
+                              {customer.phone && <span>{customer.phone}</span>}
+                            </div>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             {errors.customerId && <p className="text-sm text-red-500 mt-1">{errors.customerId}</p>}
           </div>
           
@@ -196,6 +276,50 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                 className={errors.scheduledTime ? "border-red-500" : ""}
               />
               {errors.scheduledTime && <p className="text-sm text-red-500 mt-1">{errors.scheduledTime}</p>}
+            </div>
+          </div>
+
+          {/* Campos obrigatórios para recorrência */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="routeDay">Rota (Dia da Semana) *</Label>
+              <Select 
+                value={formData.routeDay} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, routeDay: value }))}
+              >
+                <SelectTrigger className={errors.routeDay ? "border-red-500" : ""}>
+                  <SelectValue placeholder="Selecione o dia" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="segunda">Segunda-feira</SelectItem>
+                  <SelectItem value="terca">Terça-feira</SelectItem>
+                  <SelectItem value="quarta">Quarta-feira</SelectItem>
+                  <SelectItem value="quinta">Quinta-feira</SelectItem>
+                  <SelectItem value="sexta">Sexta-feira</SelectItem>
+                  <SelectItem value="sabado">Sábado</SelectItem>
+                  <SelectItem value="domingo">Domingo</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.routeDay && <p className="text-sm text-red-500 mt-1">{errors.routeDay}</p>}
+            </div>
+
+            <div>
+              <Label htmlFor="recurrenceType">Tipo de Recorrência *</Label>
+              <Select 
+                value={formData.recurrenceType} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, recurrenceType: value }))}
+              >
+                <SelectTrigger className={errors.recurrenceType ? "border-red-500" : ""}>
+                  <SelectValue placeholder="Frequência" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="trisemanal">Trisemanal (3 semanas)</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.recurrenceType && <p className="text-sm text-red-500 mt-1">{errors.recurrenceType}</p>}
             </div>
           </div>
           
