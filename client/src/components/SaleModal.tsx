@@ -55,7 +55,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Buscar valor mínimo de pedido
   const minimumOrderValue = useMemo(() => {
-    const setting = systemSettings?.find((s: any) => s.key === 'minimum_order_value');
+    if (!systemSettings || !Array.isArray(systemSettings)) return 0;
+    const setting = systemSettings.find((s: any) => s.key === 'minimum_order_value');
     return setting ? parseFloat(setting.value) : 0;
   }, [systemSettings]);
 
@@ -294,7 +295,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   <div className="text-center py-8">Carregando produtos...</div>
                 ) : (
                   <div className="grid gap-3">
-                    {products?.map((product: Product) => (
+                    {(products as Product[])?.map((product: Product) => (
                       <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
                         <CardContent className="p-4">
                           <div className="flex justify-between items-center">
