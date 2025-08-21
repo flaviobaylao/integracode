@@ -263,6 +263,93 @@ export class OmieService {
     }
   }
 
+  // Criar pedido de venda no Omie
+  async createSalesOrder(salesCard: any, customer: any, products: any[]): Promise<any> {
+    try {
+      console.log('Criando pedido no Omie para cliente:', customer.name);
+      
+      // Gerar número único para o pedido
+      const orderNumber = `HS-${Date.now()}`;
+      const integrationCode = `CRM-${salesCard.id}`;
+      
+      // Buscar código do cliente no Omie
+      let omieClientCode = null;
+      
+      // Tentar encontrar cliente pelo CPF/CNPJ
+      const document = customer.cnpj || customer.cpf;
+      if (document) {
+        const omieClient = await this.getClientByCnpjCpf(document);
+        if (omieClient) {
+          omieClientCode = omieClient.codigo_cliente_omie;
+        }
+      }
+
+      if (!omieClientCode) {
+        throw new Error('Cliente não encontrado no Omie ERP');
+      }
+
+      // Preparar detalhes dos produtos
+      const orderItems = products.map((product, index) => ({
+        ide: {
+          codigo_item_integracao: `${integrationCode}-ITEM-${index + 1}`
+        },
+        produto: {
+          codigo_produto_integracao: product.id,
+          descricao: product.name,
+          quantidade: product.quantity,
+          valor_unitario: product.unitPrice
+        }
+      }));
+
+      const totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+
+      // Payload para API Omie (estrutura correta)
+      const orderPayload = {
+        cabecalho: {
+          codigo_pedido_integracao: integrationCode,
+          codigo_cliente: omieClientCode,
+          data_previsao: new Date().toLocaleDateString('pt-BR'),
+          etapa: "50", // Pedido de venda
+          numero_pedido: orderNumber,
+          codigo_parcela: "999", // À vista
+          quantidade_itens: products.length
+        },
+        det: orderItems,
+        frete: {
+          modalidade: "9" // Sem ocorrência de transporte
+        },
+        informacoes_adicionais: {
+          consumidor_final: "S",
+          enviar_email: "N",
+          observacoes: `Pedido criado via CRM Honest Sucos - Card: ${salesCard.id}`
+        }
+      };
+
+      console.log('Enviando pedido para Omie:', orderNumber);
+      console.log('Cliente Omie ID:', omieClientCode);
+      console.log('Total de itens:', products.length);
+      console.log('Valor total:', totalValue);
+
+      const response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+
+      if (response && response.codigo_pedido) {
+        console.log('Pedido criado com sucesso no Omie:', response.codigo_pedido);
+        return {
+          codigo_pedido: response.codigo_pedido,
+          numero_pedido: response.numero_pedido || orderNumber,
+          codigo_status: response.codigo_status || '0',
+          descricao_status: response.descricao_status || 'Pedido incluído com sucesso'
+        };
+      } else {
+        throw new Error('Resposta inválida da API Omie');
+      }
+
+    } catch (error) {
+      console.error('Erro ao criar pedido no Omie:', error);
+      throw new Error(`Falha ao criar pedido no Omie: ${error.message}`);
+    }
+  }
+
   // Listar todos os clientes do Omie
   async getAllClients(page = 1, pageSize = 50): Promise<{
     clients: OmieClient[];
