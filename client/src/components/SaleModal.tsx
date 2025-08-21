@@ -8,10 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Minus, ShoppingCart, Receipt, Check } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { SalesCard, Product } from "@shared/schema";
+import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
+import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
 
 interface SaleItem {
   id: string;
@@ -30,6 +32,8 @@ interface SaleModalProps {
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('a_vista');
+  const [operationType, setOperationType] = useState<OperationType>('venda');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -158,8 +162,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Confirmar e enviar para Omie
   const confirmSale = () => {
-    // Verificar valor mínimo do pedido
-    if (minimumOrderValue > 0 && totalSale < minimumOrderValue) {
+    // Verificar valor mínimo do pedido (apenas para vendas, não para amostras)
+    if (operationType === 'venda' && minimumOrderValue > 0 && totalSale < minimumOrderValue) {
       toast({
         title: "Valor Mínimo não Atingido",
         description: `O valor mínimo do pedido é R$ ${minimumOrderValue.toFixed(2)}. Valor atual: R$ ${totalSale.toFixed(2)}`,
@@ -172,6 +176,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       products: saleItems,
       totalValue: totalSale,
       orderNumber: `HS-${Date.now()}`, // Número do pedido único
+      paymentMethod,
+      operationType,
     };
 
     finalizeSaleMutation.mutate(saleData);
@@ -217,6 +223,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   </div>
                   <div>
                     <strong>Número do Pedido:</strong> HS-{Date.now()}
+                  </div>
+                  <div>
+                    <strong>Modo de Pagamento:</strong> {PAYMENT_METHOD_LABELS[paymentMethod]}
+                  </div>
+                  <div>
+                    <strong>Tipo de Operação:</strong> {OPERATION_TYPE_LABELS[operationType]}
                   </div>
                   
                   <Separator />
@@ -383,11 +395,45 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   <span>Total da Venda:</span>
                   <span>R$ {totalSale.toFixed(2)}</span>
                 </div>
-                {minimumOrderValue > 0 && (
+                {minimumOrderValue > 0 && operationType === 'venda' && (
                   <div className="text-sm text-gray-500 text-right">
                     Valor mínimo: R$ {minimumOrderValue.toFixed(2)}
                   </div>
                 )}
+                
+                {/* Campos de Pagamento e Operação */}
+                <div className="space-y-3 pt-3 border-t">
+                  <div className="space-y-2">
+                    <Label className="text-sm flex items-center gap-2">
+                      <CreditCard className="h-4 w-4" />
+                      Modo de Pagamento
+                    </Label>
+                    <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="a_vista">À Vista</SelectItem>
+                        <SelectItem value="boleto">Boleto</SelectItem>
+                        <SelectItem value="pix">PIX</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label className="text-sm">Tipo de Operação</Label>
+                    <Select value={operationType} onValueChange={(value) => setOperationType(value as OperationType)}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="venda">Venda</SelectItem>
+                        <SelectItem value="troca">Troca</SelectItem>
+                        <SelectItem value="amostra">Amostra</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 
                 <div className="flex flex-col gap-2">
                   <Button 
@@ -395,7 +441,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                     disabled={saleItems.length === 0}
                     className="w-full"
                   >
-                    Finalizar Venda
+                    Finalizar {OPERATION_TYPE_LABELS[operationType]}
                   </Button>
                   <Button variant="outline" onClick={onClose} className="w-full">
                     Cancelar

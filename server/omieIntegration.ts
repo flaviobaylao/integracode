@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PAYMENT_METHOD_TO_OMIE_ACCOUNT } from '@shared/schema';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -264,7 +265,7 @@ export class OmieService {
   }
 
   // Criar pedido de venda no Omie
-  async createSalesOrder(salesCard: any, customer: any, products: any[]): Promise<any> {
+  async createSalesOrder(salesCard: any, customer: any, products: any[], paymentMethod?: string, operationType?: string): Promise<any> {
     try {
       console.log('Criando pedido no Omie para cliente:', customer.name);
       
@@ -303,6 +304,14 @@ export class OmieService {
 
       const totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
 
+      // Determinar conta do Omie baseada no método de pagamento
+      const omieAccountCode = paymentMethod 
+        ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
+        : 2425423833; // Padrão: Caixinha (À vista)
+
+      // Determinar código da parcela baseado no método de pagamento
+      const parcelaCode = paymentMethod === 'boleto' ? '030' : '999'; // 30 dias para boleto, à vista para outros
+
       // Payload para API Omie (estrutura correta)
       const orderPayload = {
         cabecalho: {
@@ -310,8 +319,8 @@ export class OmieService {
           codigo_cliente: omieClientCode,
           data_previsao: new Date().toLocaleDateString('pt-BR'),
           etapa: "50", // Pedido de venda
-          numero_pedido: orderNumber,
-          codigo_parcela: "999", // À vista
+          numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
+          codigo_parcela: parcelaCode,
           quantidade_itens: products.length
         },
         det: orderItems,
@@ -319,9 +328,11 @@ export class OmieService {
           modalidade: "9" // Sem ocorrência de transporte
         },
         informacoes_adicionais: {
+          codigo_categoria: "1.01.03", // Categoria fiscal
+          codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
           enviar_email: "N",
-          observacoes: `Pedido criado via CRM Honest Sucos - Card: ${salesCard.id}`
+          observacoes: `Pedido ${operationType || 'venda'} via CRM - Pagamento: ${paymentMethod || 'a_vista'} - Card: ${salesCard.id}`
         }
       };
 
@@ -1007,6 +1018,8 @@ export async function createOmieOrder(orderData: {
   totalValue: number;
   orderNumber: string;
   sellerId: string;
+  paymentMethod?: string;
+  operationType?: string;
 }) {
   const omieService = OmieService.createFromEnv();
 
@@ -1059,13 +1072,21 @@ export async function createOmieOrder(orderData: {
     }
 
     // 2. Criar pedido de venda no Omie
+    // Determinar conta do Omie baseada no método de pagamento
+    const omieAccountCode = orderData.paymentMethod 
+      ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[orderData.paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
+      : 2425423833; // Padrão: Caixinha (À vista)
+
+    // Determinar código da parcela baseado no método de pagamento
+    const parcelaCode = orderData.paymentMethod === 'boleto' ? '030' : '999';
+
     const omieOrderPayload = {
       cabecalho: {
-        numero_pedido: orderData.orderNumber,
+        numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
         codigo_cliente: omieCustomerId,
-        data_previsao: new Date().toISOString().split('T')[0], // YYYY-MM-DD
-        etapa: '10', // Pedido em aberto
-        codigo_parcela: '999', // À vista
+        data_previsao: new Date().toLocaleDateString('pt-BR'),
+        etapa: '50', // Pedido de venda
+        codigo_parcela: parcelaCode,
         origem_pedido: 'CRM-HonestSucos'
       },
       det: orderData.products.map((product, index) => ({
@@ -1078,8 +1099,15 @@ export async function createOmieOrder(orderData: {
           valor_unitario: product.unitPrice
         }
       })),
-      observacoes: {
-        obs_venda: `Pedido gerado pelo CRM - Vendedor ID: ${orderData.sellerId}`
+      frete: {
+        modalidade: "9" // Sem ocorrência de transporte
+      },
+      informacoes_adicionais: {
+        codigo_categoria: "1.01.03", // Categoria fiscal
+        codigo_conta_corrente: omieAccountCode,
+        consumidor_final: "S",
+        enviar_email: "N",
+        observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
 
@@ -1093,7 +1121,7 @@ export async function createOmieOrder(orderData: {
       param: [omieOrderPayload]
     };
 
-    const response = await fetch('https://app.omie.com.br/api/v1/produtos/pedidovendas/', {
+    const response = await fetch('https://app.omie.com.br/api/v1/produtos/pedido/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

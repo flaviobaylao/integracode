@@ -1500,17 +1500,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { products, totalValue, orderNumber } = req.body;
+      const { products, totalValue, orderNumber, paymentMethod, operationType } = req.body;
 
       console.log('Finalizing sale for card:', id);
       console.log('Sale data:', { products, totalValue, orderNumber });
 
-      // Update sales card with products and value
+      // Update sales card with products, value, payment method and operation type
       const updateData = {
         status: 'completed',
         completedDate: new Date(),
         saleValue: totalValue,
         products: products,
+        paymentMethod: paymentMethod || 'a_vista',
+        operationType: operationType || 'venda',
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);
@@ -1558,7 +1560,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               })),
               totalValue,
               orderNumber,
-              sellerId: fullCard.sellerId
+              sellerId: fullCard.sellerId,
+              paymentMethod: paymentMethod || 'a_vista',
+              operationType: operationType || 'venda'
             });
 
             const omieOrderId = omieResult.numero_pedido || `OMIE-${orderNumber}`;

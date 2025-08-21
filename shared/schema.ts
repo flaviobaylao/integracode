@@ -98,6 +98,20 @@ export const products = pgTable("products", {
 // Sales cards status enum
 export const salesCardStatusEnum = pgEnum('sales_card_status', ['pending', 'in_progress', 'completed', 'no_sale']);
 
+// Payment method enum - linked to Omie accounts
+export const paymentMethodEnum = pgEnum('payment_method', [
+  'a_vista',    // Caixinha (2425423833) 
+  'boleto',     // Boleto (2427900197)
+  'pix'         // PIX (novo)
+]);
+
+// Operation type enum
+export const operationTypeEnum = pgEnum('operation_type', [
+  'venda',     // Venda normal
+  'troca',     // Troca de produto
+  'amostra'    // Amostra grátis
+]);
+
 // Delivery status enum
 export const deliveryStatusEnum = pgEnum('delivery_status', [
   'pending',      // Aguardando entrega
@@ -165,6 +179,10 @@ export const salesCards = pgTable("sales_cards", {
   // Integração com Omie ERP
   omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP
   invoiceNumber: varchar("invoice_number"), // Número da nota fiscal emitida
+  
+  // Novas funcionalidades - Pagamento e Operação
+  paymentMethod: paymentMethodEnum("payment_method").notNull().default('a_vista'),
+  operationType: operationTypeEnum("operation_type").notNull().default('venda'),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -390,3 +408,27 @@ export type SalesCardWithRelations = SalesCard & {
   customer: Customer;
   seller: User;
 };
+
+// Payment methods type for frontend forms
+export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
+export type OperationType = 'venda' | 'troca' | 'amostra';
+
+// Mapeamento dos métodos de pagamento para contas do Omie
+export const PAYMENT_METHOD_TO_OMIE_ACCOUNT = {
+  'a_vista': 2425423833,  // Caixinha
+  'boleto': 2427900197,   // Boleto
+  'pix': 2425423833       // PIX usa mesma conta da Caixinha por enquanto
+} as const;
+
+// Labels para exibição na interface
+export const PAYMENT_METHOD_LABELS = {
+  'a_vista': 'À Vista',
+  'boleto': 'Boleto',
+  'pix': 'PIX'
+} as const;
+
+export const OPERATION_TYPE_LABELS = {
+  'venda': 'Venda',
+  'troca': 'Troca',
+  'amostra': 'Amostra'
+} as const;
