@@ -402,7 +402,7 @@ export default function SalesCards() {
                       >
                         <i className="fas fa-copy mr-2"></i>Duplicar
                       </Button>
-                      {!card.omieOrderId && (
+                      {(!card.omieOrderId || card.omieOrderId === null || card.omieOrderId === '') && (
                         <Button
                           className="bg-orange-500 hover:bg-orange-600 text-white"
                           onClick={() => handleSendToOmie(card)}
@@ -416,7 +416,7 @@ export default function SalesCards() {
                           Enviar Omie
                         </Button>
                       )}
-                      {card.omieOrderId && (
+                      {card.omieOrderId && card.omieOrderId !== null && card.omieOrderId !== '' && (
                         <Button
                           variant="outline"
                           className="text-green-600 border-green-600"
