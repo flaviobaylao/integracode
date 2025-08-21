@@ -1149,6 +1149,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== OMIE SALES ORDER INTEGRATION =====
 
+  // Send card to Omie endpoint
+  app.post('/api/sales-cards/:id/send-to-omie', isAuthenticated, async (req, res) => {
+    try {
+      const cardId = req.params.id;
+      
+      // Buscar o card com dados relacionados
+      const card = await storage.getSalesCardWithRelations(cardId);
+      
+      if (!card) {
+        return res.status(404).json({ message: 'Card não encontrado' });
+      }
+      
+      if (!card.saleValue || parseFloat(card.saleValue) === 0) {
+        return res.status(400).json({ 
+          message: 'Este card não possui uma venda registrada para enviar ao Omie' 
+        });
+      }
+      
+      if (card.omieOrderId) {
+        return res.status(400).json({ 
+          message: 'Este pedido já foi enviado para o Omie' 
+        });
+      }
+      
+      // Preparar dados da venda para envio
+      const saleData = {
+        customer: {
+          document: card.customer.cnpj || card.customer.cpf || '',
+          name: card.customer.fantasyName || card.customer.name,
+          email: card.customer.email || '',
+          phone: card.customer.phone || '',
+          address: card.customer.address || ''
+        },
+        products: [
+          {
+            description: `Venda via CRM - Card ${card.id}`,
+            quantity: 1,
+            unitPrice: parseFloat(card.saleValue),
+            totalPrice: parseFloat(card.saleValue)
+          }
+        ],
+        totalValue: parseFloat(card.saleValue),
+        orderNumber: `HS-CARD-${card.id}`,
+        sellerId: card.sellerId,
+        paymentMethod: card.paymentMethod || 'a_vista',
+        operationType: card.operationType || 'venda'
+      };
+      
+      console.log('Enviando card para Omie:', {
+        cardId,
+        totalValue: saleData.totalValue,
+        paymentMethod: saleData.paymentMethod,
+        operationType: saleData.operationType
+      });
+      
+      // Enviar para Omie
+      const omieResponse = await createOmieOrder(saleData);
+      
+      // Atualizar card com ID do Omie
+      await storage.updateSalesCard(cardId, {
+        omieOrderId: omieResponse.orderNumber || `HS-${Date.now()}`,
+        notes: (card.notes || '') + `\n\nEnviado para Omie: ${new Date().toLocaleString('pt-BR')}`
+      });
+      
+      res.json({ 
+        message: 'Pedido enviado para Omie com sucesso!',
+        omieOrderId: omieResponse.orderNumber 
+      });
+      
+    } catch (error) {
+      console.error('Erro ao enviar para Omie:', error);
+      res.status(500).json({ 
+        message: 'Erro ao enviar para Omie: ' + (error as Error).message 
+      });
+    }
+  });
+
   // Exportar sales card para o Omie como pedido de venda
   app.post('/api/sales-cards/:id/export-to-omie', isAuthenticated, async (req, res) => {
     try {

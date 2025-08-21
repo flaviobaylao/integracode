@@ -104,6 +104,26 @@ export default function SalesCards() {
     },
   });
 
+  const sendToOmieMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      toast({
+        title: "Sucesso",
+        description: "Pedido enviado para Omie com sucesso!",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao Enviar para Omie",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleStartService = (card: SalesCardWithRelations) => {
     updateCardMutation.mutate({
       id: card.id,
@@ -145,6 +165,18 @@ export default function SalesCards() {
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
     window.open(whatsappUrl, '_blank');
+  };
+
+  const handleSendToOmie = (card: SalesCardWithRelations) => {
+    if (!card.saleValue || parseFloat(card.saleValue) === 0) {
+      toast({
+        title: "Aviso",
+        description: "Este card não possui uma venda registrada para enviar ao Omie.",
+        variant: "destructive",
+      });
+      return;
+    }
+    sendToOmieMutation.mutate(card.id);
   };
 
   const getStatusColor = (status: string) => {
@@ -355,7 +387,7 @@ export default function SalesCards() {
                   )}
                   
                   {card.status === 'completed' && (
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2">
                       <Button
                         variant="outline"
                         className="flex-1"
@@ -370,6 +402,30 @@ export default function SalesCards() {
                       >
                         <i className="fas fa-copy mr-2"></i>Duplicar
                       </Button>
+                      {!card.omieOrderId && (
+                        <Button
+                          className="bg-orange-500 hover:bg-orange-600 text-white"
+                          onClick={() => handleSendToOmie(card)}
+                          disabled={sendToOmieMutation.isPending}
+                        >
+                          {sendToOmieMutation.isPending ? (
+                            <i className="fas fa-spinner fa-spin mr-2"></i>
+                          ) : (
+                            <i className="fas fa-paper-plane mr-2"></i>
+                          )}
+                          Enviar Omie
+                        </Button>
+                      )}
+                      {card.omieOrderId && (
+                        <Button
+                          variant="outline"
+                          className="text-green-600 border-green-600"
+                          disabled
+                        >
+                          <i className="fas fa-check mr-2"></i>
+                          Enviado
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
