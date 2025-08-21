@@ -282,6 +282,28 @@ export default function SalesCards() {
                     <span className="text-sm text-gray-600">{card.customer.phone}</span>
                   </div>
 
+                  {/* Informações de Pagamento e Operação */}
+                  <div className="flex items-center space-x-4 text-sm">
+                    <div className="flex items-center space-x-1">
+                      <i className="fas fa-credit-card text-blue-500"></i>
+                      <span className="font-medium text-blue-600">
+                        {card.paymentMethod === 'a_vista' && 'À Vista'}
+                        {card.paymentMethod === 'boleto' && 'Boleto'}
+                        {card.paymentMethod === 'pix' && 'PIX'}
+                        {!card.paymentMethod && 'À Vista'}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <i className="fas fa-tag text-purple-500"></i>
+                      <span className="font-medium text-purple-600">
+                        {card.operationType === 'venda' && 'Venda'}
+                        {card.operationType === 'troca' && 'Troca'}
+                        {card.operationType === 'amostra' && 'Amostra'}
+                        {!card.operationType && 'Venda'}
+                      </span>
+                    </div>
+                  </div>
+
                   {card.saleValue && (
                     <div className="text-right">
                       <p className="text-sm font-medium text-green-600">

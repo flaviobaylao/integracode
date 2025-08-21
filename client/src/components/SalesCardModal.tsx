@@ -30,6 +30,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     notes: '',
     routeDay: '',
     recurrenceType: 'semanal',
+    paymentMethod: 'a_vista',
+    operationType: 'venda',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -63,6 +65,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         notes: editingCard.notes || '',
         routeDay: editingCard.routeDay || '',
         recurrenceType: editingCard.recurrenceType || 'semanal',
+        paymentMethod: editingCard.paymentMethod || 'a_vista',
+        operationType: editingCard.operationType || 'venda',
       });
     } else {
       const now = new Date();
@@ -77,6 +81,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         notes: '',
         routeDay: '',
         recurrenceType: 'semanal',
+        paymentMethod: 'a_vista',
+        operationType: 'venda',
       });
     }
     setErrors({});
@@ -308,6 +314,45 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                 </SelectContent>
               </Select>
               {errors.recurrenceType && <p className="text-sm text-red-500 mt-1">{errors.recurrenceType}</p>}
+            </div>
+          </div>
+
+          {/* Método de Pagamento e Tipo de Operação */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="paymentMethod">Método de Pagamento *</Label>
+              <Select 
+                value={formData.paymentMethod} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, paymentMethod: value }))}
+              >
+                <SelectTrigger className={errors.paymentMethod ? "border-red-500" : ""}>
+                  <SelectValue placeholder="Selecione o pagamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="a_vista">À Vista</SelectItem>
+                  <SelectItem value="boleto">Boleto</SelectItem>
+                  <SelectItem value="pix">PIX</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.paymentMethod && <p className="text-sm text-red-500 mt-1">{errors.paymentMethod}</p>}
+            </div>
+
+            <div>
+              <Label htmlFor="operationType">Tipo de Operação *</Label>
+              <Select 
+                value={formData.operationType} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, operationType: value }))}
+              >
+                <SelectTrigger className={errors.operationType ? "border-red-500" : ""}>
+                  <SelectValue placeholder="Tipo da operação" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="venda">Venda</SelectItem>
+                  <SelectItem value="troca">Troca</SelectItem>
+                  <SelectItem value="amostra">Amostra</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.operationType && <p className="text-sm text-red-500 mt-1">{errors.operationType}</p>}
             </div>
           </div>
           
