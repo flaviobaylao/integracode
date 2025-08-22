@@ -20,7 +20,9 @@ import {
   Send,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  Package,
+  ShoppingCart
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -302,6 +304,69 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCa
               )}
             </CardContent>
           </Card>
+
+          {/* Produtos Vendidos */}
+          {card.products && card.products.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Package className="h-5 w-5 text-blue-600" />
+                  <span>Produtos Vendidos</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {card.products.map((product, index) => (
+                    <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <ShoppingCart className="h-5 w-5 text-blue-500" />
+                        <div>
+                          <p className="font-medium text-gray-900">{product.name}</p>
+                          <p className="text-sm text-gray-600">
+                            Qtd: {product.quantity} | Preço unitário: {' '}
+                            {new Intl.NumberFormat('pt-BR', {
+                              style: 'currency',
+                              currency: 'BRL',
+                            }).format(product.unitPrice)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-green-600">
+                          {new Intl.NumberFormat('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          }).format(product.totalPrice)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {/* Total Geral */}
+                  <div className="border-t pt-4 mt-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-semibold text-gray-900">Total Geral:</span>
+                      <span className="text-2xl font-bold text-green-600">
+                        {card.saleValue ? 
+                          new Intl.NumberFormat('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          }).format(parseFloat(card.saleValue))
+                          : 
+                          new Intl.NumberFormat('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          }).format(
+                            card.products.reduce((total, product) => total + product.totalPrice, 0)
+                          )
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Observações */}
           {card.notes && (
