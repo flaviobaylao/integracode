@@ -1,0 +1,379 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+// Removed Separator import as it's not needed
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { 
+  Calendar, 
+  Clock, 
+  Phone, 
+  MapPin, 
+  User, 
+  CreditCard, 
+  Tag, 
+  DollarSign,
+  MessageSquare,
+  FileText,
+  Send,
+  CheckCircle,
+  XCircle,
+  AlertCircle
+} from "lucide-react";
+import type { SalesCardWithRelations } from "@shared/schema";
+
+interface SalesCardDetailsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  card: SalesCardWithRelations | null;
+}
+
+export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCardDetailsModalProps) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const sendToOmieMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      toast({
+        title: "Sucesso",
+        description: "Pedido enviado para Omie com sucesso!",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao Enviar para Omie",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendToOmie = () => {
+    if (!card?.saleValue || parseFloat(card.saleValue) === 0) {
+      toast({
+        title: "Aviso",
+        description: "Este card não possui uma venda registrada para enviar ao Omie.",
+        variant: "destructive",
+      });
+      return;
+    }
+    sendToOmieMutation.mutate(card.id);
+  };
+
+  const openWhatsApp = (phone: string, customerName: string) => {
+    const message = encodeURIComponent(
+      `Olá ${customerName}! Somos da Honest Sucos. Gostaria de agendar uma visita para apresentar nossos produtos frescos e naturais. Qual o melhor horário para você?`
+    );
+    const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
+    window.open(whatsappUrl, '_blank');
+  };
+
+  const getStatusInfo = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return { 
+          label: 'Finalizado', 
+          color: 'bg-green-100 text-green-800', 
+          icon: CheckCircle,
+          iconColor: 'text-green-600'
+        };
+      case 'in_progress':
+        return { 
+          label: 'Em Atendimento', 
+          color: 'bg-yellow-100 text-yellow-800', 
+          icon: AlertCircle,
+          iconColor: 'text-yellow-600'
+        };
+      case 'pending':
+        return { 
+          label: 'Pendente', 
+          color: 'bg-blue-100 text-blue-800', 
+          icon: Clock,
+          iconColor: 'text-blue-600'
+        };
+      case 'no_sale':
+        return { 
+          label: 'Não Venda', 
+          color: 'bg-red-100 text-red-800', 
+          icon: XCircle,
+          iconColor: 'text-red-600'
+        };
+      default:
+        return { 
+          label: status, 
+          color: 'bg-gray-100 text-gray-800', 
+          icon: AlertCircle,
+          iconColor: 'text-gray-600'
+        };
+    }
+  };
+
+  const getPaymentMethodLabel = (method?: string) => {
+    switch (method) {
+      case 'a_vista': return 'À Vista';
+      case 'boleto': return 'Boleto';
+      case 'pix': return 'PIX';
+      default: return 'À Vista';
+    }
+  };
+
+  const getOperationTypeLabel = (type?: string) => {
+    switch (type) {
+      case 'venda': return 'Venda';
+      case 'troca': return 'Troca';
+      case 'amostra': return 'Amostra';
+      default: return 'Venda';
+    }
+  };
+
+  const getRecurrenceLabel = (type?: string) => {
+    switch (type) {
+      case 'semanal': return 'Semanal';
+      case 'quinzenal': return 'Quinzenal';
+      case 'mensal': return 'Mensal';
+      default: return 'Semanal';
+    }
+  };
+
+  if (!card) return null;
+
+  const statusInfo = getStatusInfo(card.status);
+  const StatusIcon = statusInfo.icon;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center space-x-3">
+            <StatusIcon className={`h-6 w-6 ${statusInfo.iconColor}`} />
+            <span>Detalhes da Venda</span>
+            <Badge className={statusInfo.color}>
+              {statusInfo.label}
+            </Badge>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-6">
+          {/* Informações do Cliente */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <User className="h-5 w-5 text-blue-600" />
+                <span>Informações do Cliente</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Nome</p>
+                  <p className="font-semibold text-lg">{card.customer.name}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Vendedor</p>
+                  <p className="font-medium">{card.seller?.firstName} {card.seller?.lastName}</p>
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2 text-gray-700">
+                <Phone className="h-4 w-4" />
+                <span>{card.customer.phone}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openWhatsApp(card.customer.phone, card.customer.name)}
+                  className="ml-2 text-green-600 hover:text-green-700"
+                >
+                  <MessageSquare className="h-4 w-4 mr-1" />
+                  WhatsApp
+                </Button>
+              </div>
+              
+              <div className="flex items-start space-x-2 text-gray-700">
+                <MapPin className="h-4 w-4 mt-1" />
+                <span>{card.customer.address}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Informações do Agendamento */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Calendar className="h-5 w-5 text-purple-600" />
+                <span>Agendamento</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Data</p>
+                  <p className="font-medium">
+                    {new Date(card.scheduledDate).toLocaleDateString('pt-BR')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Horário</p>
+                  <p className="font-medium">
+                    {new Date(card.scheduledDate).toLocaleTimeString('pt-BR', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Recorrência</p>
+                  <p className="font-medium">{getRecurrenceLabel(card.recurrenceType)}</p>
+                </div>
+              </div>
+              
+              <div>
+                <p className="text-sm text-gray-600">Dia da Rota</p>
+                <p className="font-medium capitalize">{card.routeDay || 'Não definido'}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Informações da Venda */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <DollarSign className="h-5 w-5 text-green-600" />
+                <span>Detalhes da Venda</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Tipo de Operação</p>
+                  <div className="flex items-center space-x-2">
+                    <Tag className="h-4 w-4 text-purple-500" />
+                    <span className="font-medium text-purple-600">
+                      {getOperationTypeLabel(card.operationType)}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Método de Pagamento</p>
+                  <div className="flex items-center space-x-2">
+                    <CreditCard className="h-4 w-4 text-blue-500" />
+                    <span className="font-medium text-blue-600">
+                      {getPaymentMethodLabel(card.paymentMethod)}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Valor da Venda</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {card.saleValue ? 
+                      new Intl.NumberFormat('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      }).format(parseFloat(card.saleValue))
+                      : 'Não registrado'
+                    }
+                  </p>
+                </div>
+              </div>
+
+              {card.completedDate && (
+                <div>
+                  <p className="text-sm text-gray-600">Data de Finalização</p>
+                  <p className="font-medium">
+                    {new Date(card.completedDate).toLocaleDateString('pt-BR')} às{' '}
+                    {new Date(card.completedDate).toLocaleTimeString('pt-BR', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </div>
+              )}
+
+              {card.noSaleReason && (
+                <div>
+                  <p className="text-sm text-gray-600">Motivo da Não Venda</p>
+                  <p className="font-medium text-red-600">{card.noSaleReason}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Observações */}
+          {card.notes && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <FileText className="h-5 w-5 text-gray-600" />
+                  <span>Observações</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="whitespace-pre-wrap">{card.notes}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Integração Omie */}
+          {card.status === 'completed' && card.saleValue && parseFloat(card.saleValue) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Send className="h-5 w-5 text-orange-600" />
+                  <span>Integração Omie ERP</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {card.omieOrderId ? (
+                  <div className="flex items-center space-x-2 text-green-600">
+                    <CheckCircle className="h-5 w-5" />
+                    <span className="font-medium">Enviado para Omie</span>
+                    <Badge variant="outline" className="ml-2">
+                      {card.omieOrderId}
+                    </Badge>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2 text-orange-600">
+                      <AlertCircle className="h-5 w-5" />
+                      <span>Pendente de envio para Omie</span>
+                    </div>
+                    <Button
+                      onClick={handleSendToOmie}
+                      disabled={sendToOmieMutation.isPending}
+                      className="bg-orange-500 hover:bg-orange-600"
+                    >
+                      {sendToOmieMutation.isPending ? (
+                        <>
+                          <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                          Enviando...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="h-4 w-4 mr-2" />
+                          Enviar para Omie
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-4">
+          <Button variant="outline" onClick={onClose}>
+            Fechar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

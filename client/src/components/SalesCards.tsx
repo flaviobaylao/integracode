@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
+import SalesCardDetailsModal from "./SalesCardDetailsModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
@@ -26,6 +27,8 @@ export default function SalesCards() {
   }>({ type: null, card: null });
   const [showSaleModal, setShowSaleModal] = useState(false);
   const [selectedCardForSale, setSelectedCardForSale] = useState<SalesCardWithRelations | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedCardForDetails, setSelectedCardForDetails] = useState<SalesCardWithRelations | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -263,7 +266,14 @@ export default function SalesCards() {
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredCards.length > 0 ? (
           filteredCards.map((card: SalesCardWithRelations) => (
-            <Card key={card.id} className="overflow-hidden">
+            <Card 
+              key={card.id} 
+              className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow duration-200"
+              onClick={() => {
+                setSelectedCardForDetails(card);
+                setShowDetailsModal(true);
+              }}
+            >
               <CardContent className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <Badge className={getStatusColor(card.status)}>
@@ -273,7 +283,8 @@ export default function SalesCards() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setEditingCard(card);
                         setShowModal(true);
                       }}
@@ -283,7 +294,10 @@ export default function SalesCards() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => deleteCardMutation.mutate(card.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteCardMutation.mutate(card.id);
+                      }}
                     >
                       <i className="fas fa-trash"></i>
                     </Button>
@@ -353,13 +367,19 @@ export default function SalesCards() {
                     <div className="flex items-center space-x-3">
                       <Button
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
-                        onClick={() => openWhatsApp(card.customer.phone, card.customer.name)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openWhatsApp(card.customer.phone, card.customer.name);
+                        }}
                       >
                         <i className="fab fa-whatsapp mr-2"></i>WhatsApp
                       </Button>
                       <Button
                         className="flex-1 bg-honest-blue hover:bg-blue-700"
-                        onClick={() => handleStartService(card)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartService(card);
+                        }}
                       >
                         Atender
                       </Button>
@@ -370,7 +390,8 @@ export default function SalesCards() {
                     <div className="flex items-center space-x-3">
                       <Button
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setSelectedCardForSale(card);
                           setShowSaleModal(true);
                         }}
@@ -379,7 +400,10 @@ export default function SalesCards() {
                       </Button>
                       <Button
                         className="flex-1 bg-red-500 hover:bg-red-600 text-white"
-                        onClick={() => setActionDialog({ type: 'no-sale', card })}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActionDialog({ type: 'no-sale', card });
+                        }}
                       >
                         <i className="fas fa-times mr-2"></i>Não Venda
                       </Button>
@@ -391,7 +415,8 @@ export default function SalesCards() {
                       <Button
                         variant="outline"
                         className="flex-1"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           const nextWeek = new Date();
                           nextWeek.setDate(nextWeek.getDate() + 7);
                           duplicateCardMutation.mutate({
@@ -405,7 +430,10 @@ export default function SalesCards() {
                       {(!card.omieOrderId || card.omieOrderId === null || card.omieOrderId === '') && (
                         <Button
                           className="bg-orange-500 hover:bg-orange-600 text-white"
-                          onClick={() => handleSendToOmie(card)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendToOmie(card);
+                          }}
                           disabled={sendToOmieMutation.isPending}
                         >
                           {sendToOmieMutation.isPending ? (
@@ -567,6 +595,16 @@ export default function SalesCards() {
           setSelectedCardForSale(null);
         }}
         salesCard={selectedCardForSale}
+      />
+
+      {/* Sales Card Details Modal */}
+      <SalesCardDetailsModal
+        isOpen={showDetailsModal}
+        onClose={() => {
+          setShowDetailsModal(false);
+          setSelectedCardForDetails(null);
+        }}
+        card={selectedCardForDetails}
       />
     </div>
   );
