@@ -498,35 +498,18 @@ export class OmieService {
     try {
       console.log('Starting overdue debts query...');
       
-      // Tentar diferentes endpoints conhecidos do Omie
-      let response;
-      try {
-        // Primeiro: tentar endpoint de contas a receber financeiro
-        response = await this.makeRequest('financas/contareceber/', 'ListarContasReceber', {
-          pagina: 1,
-          registros_por_pagina: 50,
-          apenas_importado_api: 'N'
-        });
-      } catch (error1) {
-        console.warn('Endpoint financas/contareceber/ falhou, tentando geral/contasreceber/...');
-        try {
-          // Segundo: tentar endpoint geral
-          response = await this.makeRequest('geral/contasreceber/', 'ListarContasReceber', {
-            pagina: 1,
-            registros_por_pagina: 50,
-            apenas_importado_api: 'N'
-          });
-        } catch (error2) {
-          console.warn('Endpoint geral/contasreceber/ falhou, tentando geral/relatorio/...');
-          // Terceiro: tentar endpoint de relatórios
-          response = await this.makeRequest('geral/relatorio/', 'ExportarContasReceber', {
-            dDataDe: '01/01/2023',
-            dDataAte: new Date().toLocaleDateString('pt-BR'),
-            nPagina: 1,
-            nRegPorPagina: 50
-          });
-        }
-      }
+      // Usar o endpoint oficial do Omie para contas a receber
+      const today = new Date();
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(today.getMonth() - 6);
+      
+      const response = await this.makeRequest('financas/contareceber/', 'ListarContasReceber', {
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: 'N',
+        filtrar_por_registro_de: sixMonthsAgo.toLocaleDateString('pt-BR'),
+        filtrar_por_registro_ate: today.toLocaleDateString('pt-BR')
+      });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
       console.log(`Processing ${response.total_de_registros || 0} records...`);
@@ -541,35 +524,39 @@ export class OmieService {
       const debtorsMap = new Map();
       let totalAmount = 0;
 
+      console.log(`Found ${contas.length} accounts to process`);
+      
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
+        
+        console.log(`Processing account: ${conta.numero_documento}, due: ${conta.data_vencimento}, amount: ${conta.valor_documento}`);
 
         const vencimento = new Date(conta.data_vencimento);
         const diffTime = hoje.getTime() - vencimento.getTime();
         const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
         if (diasAtraso > 0) {
-          const clientId = conta.codigo_cliente_omie || conta.codigo_cliente_fornecedor;
+          const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
           if (valor > 0) {
             totalAmount += valor;
 
-          if (!debtorsMap.has(clientId)) {
-            // Usar dados básicos do cliente sem chamada adicional
-            const clienteBasico = {
-              codigo_cliente_omie: clientId,
-              nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
-              cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
-            };
-            
-            debtorsMap.set(clientId, {
-              cliente: clienteBasico,
-              debitos: [],
-              valorTotal: 0,
-              diasMaximoAtraso: 0
-            });
-          }
+            if (!debtorsMap.has(clientId)) {
+              // Usar dados básicos do cliente sem chamada adicional
+              const clienteBasico = {
+                codigo_cliente_omie: clientId,
+                nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
+                cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
+              };
+              
+              debtorsMap.set(clientId, {
+                cliente: clienteBasico,
+                debitos: [],
+                valorTotal: 0,
+                diasMaximoAtraso: 0
+              });
+            }
 
             const debtor = debtorsMap.get(clientId);
             debtor.debitos.push({
