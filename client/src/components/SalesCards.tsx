@@ -612,6 +612,16 @@ export default function SalesCards() {
           setSelectedCardForDetails(null);
         }}
         card={selectedCardForDetails}
+        onStartSale={(card) => {
+          setShowDetailsModal(false);
+          setSelectedCardForSale(card);
+          setShowSaleModal(true);
+        }}
+        onStartNoSale={(card) => {
+          setShowDetailsModal(false);
+          setSelectedCardForNoSale(card);
+          setShowNoSaleModal(true);
+        }}
       />
 
       {/* Sale Edit Modal */}

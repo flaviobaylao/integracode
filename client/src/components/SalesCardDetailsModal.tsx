@@ -22,7 +22,10 @@ import {
   XCircle,
   AlertCircle,
   Package,
-  ShoppingCart
+  ShoppingCart,
+  Navigation,
+  CircleDollarSign,
+  Ban
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -30,9 +33,11 @@ interface SalesCardDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   card: SalesCardWithRelations | null;
+  onStartSale?: (card: SalesCardWithRelations) => void;
+  onStartNoSale?: (card: SalesCardWithRelations) => void;
 }
 
-export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCardDetailsModalProps) {
+export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale }: SalesCardDetailsModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -74,6 +79,20 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCa
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
     window.open(whatsappUrl, '_blank');
+  };
+
+  const openWaze = (latitude: string, longitude: string) => {
+    if (!latitude || !longitude) {
+      toast({
+        title: "Localização não disponível",
+        description: "É necessário cadastrar a latitude e longitude do cliente para usar a navegação.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;
+    window.open(wazeUrl, '_blank');
   };
 
   const getStatusInfo = (status: string) => {
@@ -190,6 +209,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCa
                   size="sm"
                   onClick={() => openWhatsApp(card.customer.phone, card.customer.name)}
                   className="ml-2 text-green-600 hover:text-green-700"
+                  data-testid="button-whatsapp"
                 >
                   <MessageSquare className="h-4 w-4 mr-1" />
                   WhatsApp
@@ -199,6 +219,16 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCa
               <div className="flex items-start space-x-2 text-gray-700">
                 <MapPin className="h-4 w-4 mt-1" />
                 <span>{card.customer.address}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openWaze((card as any).customerLatitude, (card as any).customerLongitude)}
+                  className="ml-2 text-blue-600 hover:text-blue-700"
+                  data-testid="button-waze"
+                >
+                  <Navigation className="h-4 w-4 mr-1" />
+                  Waze
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -432,6 +462,31 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card }: SalesCa
             </Card>
           )}
         </div>
+
+        {/* Botões de Ação */}
+        {card.status === 'pending' && (
+          <div className="border-t pt-4">
+            <div className="flex flex-wrap justify-center gap-3">
+              <Button
+                onClick={() => onStartSale?.(card)}
+                className="bg-green-600 hover:bg-green-700 text-white"
+                data-testid="button-start-sale"
+              >
+                <CircleDollarSign className="h-4 w-4 mr-2" />
+                Finalizar Venda
+              </Button>
+              <Button
+                onClick={() => onStartNoSale?.(card)}
+                variant="outline"
+                className="border-red-600 text-red-600 hover:bg-red-50"
+                data-testid="button-start-no-sale"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Não Venda
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end space-x-3 pt-4">
           <Button variant="outline" onClick={onClose}>
