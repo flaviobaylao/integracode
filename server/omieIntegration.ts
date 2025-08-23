@@ -530,9 +530,7 @@ export class OmieService {
       const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
         pagina: 1,
         registros_por_pagina: 100,
-        apenas_importado_api: 'N',
-        filtrar_por_situacao: 'ABERTO',
-        data_vencimento_ate: today.toLocaleDateString('pt-BR')
+        apenas_importado_api: 'N'
       });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
@@ -559,8 +557,9 @@ export class OmieService {
         const diffTime = hoje.getTime() - vencimento.getTime();
         const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        // Como já filtramos apenas títulos em atraso, processar todos
-        if (true) {
+        // Verificar se a conta está realmente em atraso e aberta
+        if (diasAtraso > 0 && 
+            (conta.status_titulo === 'ABERTO' || conta.situacao === 'NORMAL' || !conta.status_titulo)) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
