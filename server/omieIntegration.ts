@@ -498,13 +498,45 @@ export class OmieService {
     try {
       console.log('Starting overdue debts query...');
       
-      // Usar endpoint alternativo que sabemos que funciona
-      const response = await this.makeRequest('geral/contasreceber/', 'ListarContasReceber', {
-        pagina: 1,
-        registros_por_pagina: 50
-      });
+      // Tentar diferentes endpoints conhecidos do Omie
+      let response;
+      try {
+        // Primeiro: tentar endpoint de contas a receber financeiro
+        response = await this.makeRequest('financas/contareceber/', 'ListarContasReceber', {
+          pagina: 1,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N'
+        });
+      } catch (error1) {
+        console.warn('Endpoint financas/contareceber/ falhou, tentando geral/contasreceber/...');
+        try {
+          // Segundo: tentar endpoint geral
+          response = await this.makeRequest('geral/contasreceber/', 'ListarContasReceber', {
+            pagina: 1,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N'
+          });
+        } catch (error2) {
+          console.warn('Endpoint geral/contasreceber/ falhou, tentando geral/relatorio/...');
+          // Terceiro: tentar endpoint de relatórios
+          response = await this.makeRequest('geral/relatorio/', 'ExportarContasReceber', {
+            dDataDe: '01/01/2023',
+            dDataAte: new Date().toLocaleDateString('pt-BR'),
+            nPagina: 1,
+            nRegPorPagina: 50
+          });
+        }
+      }
 
-      const contas = response.conta_receber_cadastro || [];
+      console.log(`API response received:`, JSON.stringify(response, null, 2));
+      console.log(`Processing ${response.total_de_registros || 0} records...`);
+
+      // Diferentes endpoints podem ter estruturas diferentes
+      const contas = response.conta_receber_cadastro || 
+                     response.cadastro || 
+                     response.contasReceber || 
+                     response.lista_contas_receber || 
+                     [];
       const hoje = new Date();
       const debtorsMap = new Map();
       let totalAmount = 0;
