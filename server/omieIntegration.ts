@@ -530,7 +530,8 @@ export class OmieService {
       const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
         pagina: 1,
         registros_por_pagina: 100,
-        apenas_importado_api: 'N'
+        apenas_importado_api: 'N',
+        filtrar_status: 'ABERTO'
       });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
@@ -576,8 +577,8 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Verificar se a conta está em atraso E não foi recebida ainda
-        if (diasAtraso > 0 && statusAberto) {
+        // Como já filtramos apenas contas abertas na API, verificar apenas se está em atraso
+        if (diasAtraso > 0) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
