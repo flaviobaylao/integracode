@@ -555,14 +555,11 @@ export class OmieService {
         const status = conta.status_titulo || 'UNDEFINED';
         statusCount[status] = (statusCount[status] || 0) + 1;
         
-        // Verificar todos os status que não são finalizados
-        if (status !== 'RECEBIDO' && status !== 'LIQUIDADO' && 
-            status !== 'PAGO' && status !== 'CANCELADO') {
-          statusWithAtraso.push(status);
-        }
+        // Incluir todos os status para análise completa
+        statusWithAtraso.push(status);
       });
       console.log('Status distribution:', statusCount);
-      console.log('Status não finalizados (possíveis débitos):', [...new Set(statusWithAtraso)]);
+      console.log('Todos os status encontrados:', [...new Set(statusWithAtraso)]);
       
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
@@ -592,20 +589,13 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Critério principal: vencido em data anterior à data atual
-        // Excluir apenas status claramente finalizados (pago/cancelado)
-        const statusTitulo = conta.status_titulo || '';
-        const isFinalized = statusTitulo === 'RECEBIDO' || 
-                           statusTitulo === 'LIQUIDADO' ||
-                           statusTitulo === 'PAGO' ||
-                           statusTitulo === 'CANCELADO';
-        
-        // Se venceu e não está finalizado, é considerado em atraso
-        if (diasAtraso > 0 && !isFinalized) {
+        // Trazer TODOS os débitos sem filtro para análise
+        // Vamos mostrar todas as contas para entender melhor o sistema
+        if (true) { // Sempre inclui
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
-          console.log(`Found overdue account: clientId=${clientId}, valor=${valor}, diasAtraso=${diasAtraso}`);
+          console.log(`Including account: clientId=${clientId}, valor=${valor}, diasAtraso=${diasAtraso}, status=${conta.status_titulo}`);
           
           if (valor > 0) {
             totalAmount += valor;
