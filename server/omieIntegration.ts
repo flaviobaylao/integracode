@@ -555,13 +555,14 @@ export class OmieService {
         const status = conta.status_titulo || 'UNDEFINED';
         statusCount[status] = (statusCount[status] || 0) + 1;
         
-        // Procurar status que contenham "aberto"
-        if (status.includes('ABERTO')) {
+        // Verificar todos os status que não são finalizados
+        if (status !== 'RECEBIDO' && status !== 'LIQUIDADO' && 
+            status !== 'PAGO' && status !== 'CANCELADO') {
           statusWithAtraso.push(status);
         }
       });
       console.log('Status distribution:', statusCount);
-      console.log('Status with "ABERTO":', [...new Set(statusWithAtraso)]);
+      console.log('Status não finalizados (possíveis débitos):', [...new Set(statusWithAtraso)]);
       
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
@@ -591,13 +592,16 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Procurar por status "ABERTO" ou "EM ABERTO" com data vencida
+        // Critério principal: vencido em data anterior à data atual
+        // Excluir apenas status claramente finalizados (pago/cancelado)
         const statusTitulo = conta.status_titulo || '';
-        const isAberto = statusTitulo === 'ABERTO' || 
-                        statusTitulo === 'EM ABERTO' ||
-                        statusTitulo.includes('ABERTO');
+        const isFinalized = statusTitulo === 'RECEBIDO' || 
+                           statusTitulo === 'LIQUIDADO' ||
+                           statusTitulo === 'PAGO' ||
+                           statusTitulo === 'CANCELADO';
         
-        if (diasAtraso > 0 && isAberto) {
+        // Se venceu e não está finalizado, é considerado em atraso
+        if (diasAtraso > 0 && !isFinalized) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
