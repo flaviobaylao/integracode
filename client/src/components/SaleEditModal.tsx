@@ -341,11 +341,22 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                         <SelectValue placeholder="Selecione um produto" />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.isArray(availableProducts) && availableProducts.map((p: any) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
+                        {Array.isArray(availableProducts) && availableProducts
+                          .filter((p: any) => {
+                            // Mostra o produto se:
+                            // 1. Não está selecionado em nenhum outro campo, OU
+                            // 2. É o produto já selecionado neste campo atual
+                            const isUsedElsewhere = products.some((prod, i) => 
+                              i !== index && prod.id === p.id && prod.id !== ''
+                            );
+                            return !isUsedElsewhere;
+                          })
+                          .map((p: any) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))
+                        }
                       </SelectContent>
                     </Select>
                   </div>
