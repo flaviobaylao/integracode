@@ -332,7 +332,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                       onValueChange={(value) => selectProductById(index, value)}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione um produto" />
+                        <SelectValue placeholder="Selecione um produto">
+                          {product.name || "Selecione um produto"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {Array.isArray(availableProducts) && availableProducts.map((p: any) => (
