@@ -569,10 +569,15 @@ export class OmieService {
         const diffTime = hoje.getTime() - vencimento.getTime();
         const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}`);
+        const statusAberto = !conta.status_titulo || 
+                           conta.status_titulo === 'ABERTO' || 
+                           conta.status_titulo === 'PENDENTE' ||
+                           conta.status_titulo === 'VENCIDO';
+        
+        console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Verificar se a conta está em atraso (mais flexível com status)
-        if (diasAtraso > 0) {
+        // Verificar se a conta está em atraso E não foi recebida ainda
+        if (diasAtraso > 0 && statusAberto) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
