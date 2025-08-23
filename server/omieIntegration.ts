@@ -555,13 +555,13 @@ export class OmieService {
         const status = conta.status_titulo || 'UNDEFINED';
         statusCount[status] = (statusCount[status] || 0) + 1;
         
-        // Procurar status que contenham "atrasado"
-        if (status.includes('ATRASADO') || status.includes('ATRASO') || status.includes('VENCIDO')) {
+        // Procurar status que contenham "aberto"
+        if (status.includes('ABERTO')) {
           statusWithAtraso.push(status);
         }
       });
       console.log('Status distribution:', statusCount);
-      console.log('Status with "ATRASADO/ATRASO/VENCIDO":', [...new Set(statusWithAtraso)]);
+      console.log('Status with "ABERTO":', [...new Set(statusWithAtraso)]);
       
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
@@ -591,21 +591,13 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Procurar por status que contenham "ATRASADO" ou similar
+        // Procurar por status "ABERTO" ou "EM ABERTO" com data vencida
         const statusTitulo = conta.status_titulo || '';
-        const hasAtrasadoStatus = statusTitulo.includes('ATRASADO') || 
-                                 statusTitulo.includes('ATRASO') ||
-                                 statusTitulo.includes('VENCIDO');
+        const isAberto = statusTitulo === 'ABERTO' || 
+                        statusTitulo === 'EM ABERTO' ||
+                        statusTitulo.includes('ABERTO');
         
-        // Também aceitar contas em aberto com atraso real
-        const isValidForOverdue = hasAtrasadoStatus || 
-                                 (diasAtraso > 0 && 
-                                  statusTitulo !== 'RECEBIDO' && 
-                                  statusTitulo !== 'LIQUIDADO' &&
-                                  statusTitulo !== 'PAGO' &&
-                                  statusTitulo !== 'CANCELADO');
-        
-        if (isValidForOverdue) {
+        if (diasAtraso > 0 && isAberto) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
