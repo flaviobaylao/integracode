@@ -553,11 +553,14 @@ export class OmieService {
         
         console.log(`Processing account:`, JSON.stringify({
           numero_documento: conta.numero_documento,
+          numero_documento_fiscal: conta.numero_documento_fiscal,
           data_vencimento: conta.data_vencimento,
+          data_emissao: conta.data_emissao,
           valor_documento: conta.valor_documento,
           codigo_cliente_fornecedor: conta.codigo_cliente_fornecedor,
           status_titulo: conta.status_titulo,
-          situacao: conta.situacao
+          situacao: conta.situacao,
+          observacao: conta.observacao
         }, null, 2));
 
         // Converter data de vencimento do formato brasileiro DD/MM/YYYY
@@ -579,8 +582,20 @@ export class OmieService {
             totalAmount += valor;
 
             if (!debtorsMap.has(clientId)) {
-              // Usar dados básicos do cliente sem chamada adicional
-              const clienteBasico = {
+              // Buscar dados reais do cliente no Omie
+              let clienteCompleto;
+              try {
+                console.log(`Fetching client data for ${clientId}...`);
+                clienteCompleto = await this.getClientByCode(clientId);
+              } catch (error) {
+                console.warn(`Failed to fetch client ${clientId}, using basic data`);
+              }
+              
+              const clienteBasico = clienteCompleto ? {
+                codigo_cliente_omie: clienteCompleto.codigo_cliente_omie,
+                nome_fantasia: clienteCompleto.nome_fantasia || clienteCompleto.razao_social,
+                cnpj_cpf: clienteCompleto.cnpj_cpf
+              } : {
                 codigo_cliente_omie: clientId,
                 nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
                 cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
@@ -593,21 +608,25 @@ export class OmieService {
                 diasMaximoAtraso: 0
               });
               
-              console.log(`Created new debtor entry for client ${clientId}`);
+              console.log(`Created new debtor entry for client ${clienteBasico.nome_fantasia} (${clientId})`);
             }
 
             const debtor = debtorsMap.get(clientId);
             debtor.debitos.push({
               numero_documento: conta.numero_documento || 'N/A',
+              numero_documento_fiscal: conta.numero_documento_fiscal || 'N/A',
+              codigo_lancamento_omie: conta.codigo_lancamento_omie,
               valor: valor,
               data_vencimento: conta.data_vencimento,
+              data_emissao: conta.data_emissao || '',
               dias_atraso: diasAtraso,
-              observacao: conta.observacao || ''
+              observacao: conta.observacao || '',
+              status_titulo: conta.status_titulo || 'N/A'
             });
             debtor.valorTotal += valor;
             debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
             
-            console.log(`Added debt to client ${clientId}: R$ ${valor} (${diasAtraso} dias em atraso)`);
+            console.log(`Added debt to client ${debtor.cliente.nome_fantasia}: R$ ${valor} (${diasAtraso} dias em atraso) - Doc: ${conta.numero_documento} - NF: ${conta.numero_documento_fiscal}`);
           }
         }
       }
