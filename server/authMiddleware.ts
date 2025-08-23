@@ -5,24 +5,37 @@ import { storage } from './storage';
 export const authenticateUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
     let userId: string | null = null;
+    let userEmail: string | null = null;
     
     // Verificar sessão local primeiro (para admin Flavio)
     if ((req.session as any)?.user?.claims?.sub) {
       userId = (req.session as any).user.claims.sub;
+      userEmail = (req.session as any).user.claims.email;
     }
     // Verificar autenticação Replit
     else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
       userId = (req.user as any).claims.sub;
+      userEmail = (req.user as any).claims.email;
     }
     
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     
-    // Verificar se o usuário existe no banco
-    const user = await storage.getUser(userId);
+    // Verificar se o usuário existe no banco - primeiro por ID
+    let user = await storage.getUser(userId);
+    
+    // Se não encontrou por ID e temos email, buscar por email (para vendedores com email do Omie)
+    if (!user && userEmail) {
+      user = await storage.getUserByEmail(userEmail);
+      console.log(`User not found by ID ${userId}, searching by email ${userEmail}:`, user ? 'found' : 'not found');
+    }
+    
     if (!user || !user.isActive) {
-      return res.status(401).json({ message: "User not found or inactive" });
+      return res.status(401).json({ 
+        message: "User not found or inactive",
+        details: `Searched by ID: ${userId}${userEmail ? `, email: ${userEmail}` : ''}` 
+      });
     }
     
     // Adicionar usuário ao objeto request
@@ -53,6 +66,7 @@ export const checkSellerAccess = (req: Request, res: Response, next: NextFunctio
   
   if (user.role === 'vendedor') {
     // Adicionar filtro de vendedor às queries
+    // Usar o ID do usuário que corresponde ao email cadastrado no Omie
     (req as any).sellerId = user.id;
   }
   

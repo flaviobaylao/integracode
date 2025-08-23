@@ -16,16 +16,26 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
-    { id: 'sales-cards', label: 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true },
+    { 
+      id: 'sales-cards', 
+      label: user?.role === 'vendedor' ? 'Meus Cards de Venda' : 'Cards de Venda',
+      icon: 'fas fa-clipboard-list', 
+      available: true 
+    },
     { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true },
-    { id: 'customers', label: 'Clientes', icon: 'fas fa-users', available: true },
+    { 
+      id: 'customers', 
+      label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes',
+      icon: 'fas fa-users', 
+      available: true 
+    },
     { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports },
-    { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: true },
-    { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: true },
+    { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
+    { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
-    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: true },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
   ];
 
   const getRoleLabel = (role: string) => {

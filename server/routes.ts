@@ -63,7 +63,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      const userEmail = req.user.claims.email;
+      
+      // First try to find user by ID
+      let user = await storage.getUser(userId);
+      
+      // If not found by ID but we have an email, try to find by email
+      if (!user && userEmail) {
+        user = await storage.getUserByEmail(userEmail);
+        
+        // If found by email but with different ID, this means we need to update the user
+        if (user && user.id !== userId) {
+          console.log(`Updating user ID from ${user.id} to ${userId} for email ${userEmail}`);
+          // Note: This scenario might need special handling for data consistency
+        }
+      }
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
@@ -87,6 +106,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      
+      console.log(`Fetching customers for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
       
       const customers = await storage.getCustomers(sellerId);
       res.json(customers);
@@ -241,9 +262,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sales card routes
   app.get('/api/sales-cards', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
+      const user = req.currentUser;
       const sellerId = req.sellerId;
       const routeDay = req.query.route_day; // Filter by route day (segunda, terca, etc)
       const status = req.query.status; // Filter by status
+      
+      console.log(`Fetching sales cards for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
       
       const salesCards = await storage.getSalesCards(sellerId, {
         routeDay,
@@ -359,13 +383,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dashboard routes
-  app.get('/api/dashboard/stats', isAuthenticated, async (req: any, res) => {
+  app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
+      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       
-      // Vendedores only see their own stats
-      const sellerId = user?.role === 'vendedor' ? userId : undefined;
+      console.log(`Fetching dashboard stats for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
+      
       const stats = await storage.getDashboardStats(sellerId);
       res.json(stats);
     } catch (error) {
