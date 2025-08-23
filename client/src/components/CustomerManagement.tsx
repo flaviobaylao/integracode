@@ -57,6 +57,20 @@ export default function CustomerManagement() {
     window.open(whatsappUrl, '_blank');
   };
 
+  const openWaze = (customer: any) => {
+    if (!customer.latitude || !customer.longitude) {
+      toast({
+        title: "Localização não disponível",
+        description: "É necessário cadastrar a latitude e longitude do cliente primeiro.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const wazeUrl = `https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes&zoom=17`;
+    window.open(wazeUrl, '_blank');
+  };
+
   const filteredCustomers = customers?.filter((customer: any) => {
     const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -257,22 +271,36 @@ export default function CustomerManagement() {
                               setEditingCustomer(customer);
                               setShowModal(true);
                             }}
+                            data-testid={`button-edit-customer-${customer.id}`}
                           >
-                            <i className="fas fa-edit"></i>
+                            <Edit className="h-4 w-4 text-gray-600" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => openWhatsApp(customer.phone, customer.name)}
+                            data-testid={`button-whatsapp-customer-${customer.id}`}
                           >
-                            <i className="fab fa-whatsapp text-green-600"></i>
+                            <Phone className="h-4 w-4 text-green-600" />
                           </Button>
+                          {customer.latitude && customer.longitude && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openWaze(customer)}
+                              data-testid={`button-waze-customer-${customer.id}`}
+                              className="text-blue-600 hover:text-blue-700"
+                            >
+                              <MapPin className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => deleteCustomerMutation.mutate(customer.id)}
+                            data-testid={`button-delete-customer-${customer.id}`}
                           >
-                            <i className="fas fa-trash text-red-600"></i>
+                            <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>
                         </div>
                       </td>

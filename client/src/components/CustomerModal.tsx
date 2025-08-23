@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
-import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar } from "lucide-react";
+import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target } from "lucide-react";
 
 interface CustomerModalProps {
   isOpen: boolean;
@@ -47,6 +47,7 @@ const weekdayOptions = [
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -74,6 +75,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       sellerId: '',
       weekdays: '[]',
       isActive: true,
+      latitude: '',
+      longitude: '',
     },
   });
 
@@ -98,6 +101,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         sellerId: customer.sellerId || '',
         weekdays: customer.weekdays || '[]',
         isActive: customer.isActive !== undefined ? customer.isActive : true,
+        latitude: (customer as any).latitude || '',
+        longitude: (customer as any).longitude || '',
       });
     } else {
       form.reset({
@@ -117,9 +122,72 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         sellerId: '',
         weekdays: '[]',
         isActive: true,
+        latitude: '',
+        longitude: '',
       });
     }
   }, [customer, form]);
+
+  const captureLocation = () => {
+    setIsCapturingLocation(true);
+    
+    if (!navigator.geolocation) {
+      toast({
+        title: "Geolocalização não suportada",
+        description: "Seu navegador não suporta geolocalização.",
+        variant: "destructive",
+      });
+      setIsCapturingLocation(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude.toString();
+        const longitude = position.coords.longitude.toString();
+        
+        form.setValue('latitude', latitude);
+        form.setValue('longitude', longitude);
+        
+        toast({
+          title: "Localização capturada!",
+          description: `Latitude: ${latitude}, Longitude: ${longitude}`,
+        });
+        setIsCapturingLocation(false);
+      },
+      (error) => {
+        console.error('Erro ao capturar localização:', error);
+        toast({
+          title: "Erro ao capturar localização",
+          description: "Não foi possível obter sua localização. Verifique as permissões do navegador.",
+          variant: "destructive",
+        });
+        setIsCapturingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const openWaze = () => {
+    const latitude = form.watch('latitude');
+    const longitude = form.watch('longitude');
+    
+    if (!latitude || !longitude) {
+      toast({
+        title: "Localização não disponível",
+        description: "É necessário capturar ou inserir a latitude e longitude primeiro.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;
+    window.open(wazeUrl, '_blank');
+  };
 
   const searchCNPJ = async (cnpj: string) => {
     if (!cnpj || cnpj.replace(/\D/g, '').length !== 14) {
@@ -570,6 +638,95 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                       </FormItem>
                     )}
                   />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Geolocalização */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-medium">Localização GPS</h3>
+                    <div className="flex space-x-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={captureLocation}
+                        disabled={isCapturingLocation}
+                        className="text-blue-600 hover:text-blue-700"
+                        data-testid="button-capture-location"
+                      >
+                        {isCapturingLocation ? (
+                          <>
+                            <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full mr-2" />
+                            Capturando...
+                          </>
+                        ) : (
+                          <>
+                            <Target className="h-4 w-4 mr-2" />
+                            Capturar Local
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={openWaze}
+                        className="text-blue-600 hover:text-blue-700"
+                        data-testid="button-open-waze"
+                      >
+                        <Navigation className="h-4 w-4 mr-2" />
+                        Waze
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="latitude"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Latitude</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              value={field.value || ''}
+                              placeholder="-23.5505"
+                              type="number"
+                              step="any"
+                              data-testid="input-latitude"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="longitude"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Longitude</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              value={field.value || ''}
+                              placeholder="-46.6333"
+                              type="number"
+                              step="any"
+                              data-testid="input-longitude"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>

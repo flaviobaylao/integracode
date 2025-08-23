@@ -78,6 +78,11 @@ export const customers = pgTable("customers", {
   isActive: boolean("is_active").notNull().default(true),
   lastSaleDate: timestamp("last_sale_date"),
   lastSaleValue: decimal("last_sale_value", { precision: 10, scale: 2 }),
+  
+  // Geolocalização do cliente
+  latitude: decimal("latitude", { precision: 10, scale: 8 }),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
