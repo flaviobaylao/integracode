@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check, ChevronsUpDown, Search, Truck, Clock } from "lucide-react";
+import { Check, ChevronsUpDown, Search, Truck, Clock, MapPin, Target } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertSalesCardSchema, type SalesCardWithRelations, type CustomerWithSeller } from "@shared/schema";
@@ -35,9 +35,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     operationType: 'venda',
     deliveryWeekdays: [] as string[],
     deliveryTimeSlots: [] as string[],
+    customerLatitude: '',
+    customerLongitude: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -72,6 +75,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         operationType: editingCard.operationType || 'venda',
         deliveryWeekdays: (editingCard as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
         deliveryTimeSlots: (editingCard as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
+        customerLatitude: (editingCard as any).customerLatitude || '',
+        customerLongitude: (editingCard as any).customerLongitude || '',
       });
     } else {
       const now = new Date();
@@ -90,6 +95,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         operationType: 'venda',
         deliveryWeekdays: ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
         deliveryTimeSlots: ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
+        customerLatitude: '',
+        customerLongitude: '',
       });
     }
     setErrors({});
@@ -122,6 +129,60 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     },
   });
 
+  // Função para capturar localização atual
+  const captureCurrentLocation = async () => {
+    if (!navigator.geolocation) {
+      toast({
+        title: "Erro",
+        description: "Geolocalização não é suportada pelo navegador.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCapturingLocation(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setFormData(prev => ({
+          ...prev,
+          customerLatitude: position.coords.latitude.toString(),
+          customerLongitude: position.coords.longitude.toString(),
+        }));
+        toast({
+          title: "Sucesso",
+          description: "Localização capturada com sucesso!",
+        });
+        setIsCapturingLocation(false);
+      },
+      (error) => {
+        let errorMessage = 'Erro desconhecido';
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Permissão negada. Permita acesso à localização.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Localização indisponível.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Tempo esgotado para capturar localização.";
+            break;
+        }
+        toast({
+          title: "Erro de Localização",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        setIsCapturingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000
+      }
+    );
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
@@ -143,6 +204,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         deliveryTimeSlots: formData.deliveryTimeSlots,
         paymentMethod: formData.paymentMethod,
         operationType: formData.operationType,
+        customerLatitude: formData.customerLatitude || null,
+        customerLongitude: formData.customerLongitude || null,
       };
 
       // Não usar validação Zod aqui - deixar o backend validar
@@ -475,6 +538,55 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Georreferenciamento do Cliente */}
+          <div className="border-t border-gray-200 pt-6">
+            <div className="mb-4">
+              <div className="flex items-center space-x-2 mb-3">
+                <MapPin className="h-5 w-5 text-green-600" />
+                <Label className="text-base font-semibold">Localização do Cliente (Georreferenciamento)</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="customerLatitude">Latitude</Label>
+                  <Input
+                    id="customerLatitude"
+                    type="text"
+                    value={formData.customerLatitude}
+                    onChange={(e) => setFormData(prev => ({ ...prev, customerLatitude: e.target.value }))}
+                    placeholder="Ex: -23.550520"
+                    data-testid="input-latitude"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="customerLongitude">Longitude</Label>
+                  <Input
+                    id="customerLongitude"
+                    type="text"
+                    value={formData.customerLongitude}
+                    onChange={(e) => setFormData(prev => ({ ...prev, customerLongitude: e.target.value }))}
+                    placeholder="Ex: -46.633309"
+                    data-testid="input-longitude"
+                  />
+                </div>
+              </div>
+              
+              <Button
+                type="button"
+                variant="outline"
+                onClick={captureCurrentLocation}
+                disabled={isCapturingLocation}
+                className="flex items-center space-x-2"
+                data-testid="button-capture-location"
+              >
+                <Target className={`h-4 w-4 ${isCapturingLocation ? 'animate-pulse' : ''}`} />
+                <span>
+                  {isCapturingLocation ? 'Capturando...' : 'Capturar Localização Atual'}
+                </span>
+              </Button>
             </div>
           </div>
           
