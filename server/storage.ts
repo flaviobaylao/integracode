@@ -304,6 +304,218 @@ export class DatabaseStorage implements IStorage {
     return updatedSalesCard;
   }
 
+  // Função para calcular próxima data baseada no dia da semana e periodicidade
+  private calculateNextRecurrenceDate(routeDay: string, recurrenceType: string, fromDate: Date = new Date()): Date {
+    const daysOfWeek: { [key: string]: number } = {
+      'domingo': 0,
+      'segunda': 1,
+      'terca': 2,
+      'quarta': 3,
+      'quinta': 4,
+      'sexta': 5,
+      'sabado': 6
+    };
+
+    const targetDay = daysOfWeek[routeDay.toLowerCase()];
+    if (targetDay === undefined) {
+      throw new Error(`Dia da semana inválido: ${routeDay}`);
+    }
+
+    const nextDate = new Date(fromDate);
+    
+    // Encontrar a próxima ocorrência do dia da semana
+    const currentDay = nextDate.getDay();
+    let daysToAdd = (targetDay - currentDay + 7) % 7;
+    
+    // Se é o mesmo dia, vai para a próxima semana
+    if (daysToAdd === 0) {
+      daysToAdd = 7;
+    }
+
+    nextDate.setDate(nextDate.getDate() + daysToAdd);
+
+    // Aplicar periodicidade
+    switch (recurrenceType) {
+      case 'semanal':
+        // Já calculado acima
+        break;
+      case 'quinzenal':
+        nextDate.setDate(nextDate.getDate() + 7); // +1 semana
+        break;
+      case 'trisemanal':
+        nextDate.setDate(nextDate.getDate() + 14); // +2 semanas
+        break;
+      case 'mensal':
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        break;
+      default:
+        throw new Error(`Tipo de recorrência inválido: ${recurrenceType}`);
+    }
+
+    return nextDate;
+  }
+
+  // Gerar próximo card de vendas automaticamente
+  async generateNextSalesCard(parentCardId: string): Promise<SalesCard | null> {
+    try {
+      // Buscar card pai
+      const [parentCard] = await db
+        .select()
+        .from(salesCards)
+        .where(eq(salesCards.id, parentCardId));
+
+      if (!parentCard) {
+        throw new Error('Card pai não encontrado');
+      }
+
+      // Verificar se já tem próximo card gerado
+      if (parentCard.nextCardId) {
+        const [existingNextCard] = await db
+          .select()
+          .from(salesCards)
+          .where(eq(salesCards.id, parentCard.nextCardId));
+        
+        if (existingNextCard) {
+          return existingNextCard;
+        }
+      }
+
+      // Calcular próxima data
+      const nextDate = this.calculateNextRecurrenceDate(
+        parentCard.routeDay,
+        parentCard.recurrenceType,
+        parentCard.scheduledDate
+      );
+
+      // Criar novo card
+      const nextCardData: InsertSalesCard = {
+        customerId: parentCard.customerId,
+        sellerId: parentCard.sellerId,
+        status: 'pending',
+        scheduledDate: nextDate,
+        routeDay: parentCard.routeDay,
+        recurrenceType: parentCard.recurrenceType,
+        isRecurring: parentCard.isRecurring,
+        parentCardId: parentCardId,
+        paymentMethod: parentCard.paymentMethod,
+        operationType: parentCard.operationType
+      };
+
+      const [newCard] = await db.insert(salesCards).values(nextCardData).returning();
+
+      // Atualizar card pai com referência ao próximo
+      await db
+        .update(salesCards)
+        .set({ nextCardId: newCard.id })
+        .where(eq(salesCards.id, parentCardId));
+
+      return newCard;
+    } catch (error) {
+      console.error('Erro ao gerar próximo card:', error);
+      return null;
+    }
+  }
+
+  // Buscar cards por dia da semana e data
+  async getSalesCardsByDayAndDate(
+    sellerId: string, 
+    routeDay: string, 
+    startDate: Date, 
+    endDate: Date,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<SalesCardWithRelations[]> {
+    const cardsWithRelations = await db
+      .select({
+        // Sales card fields
+        id: salesCards.id,
+        customerId: salesCards.customerId,
+        sellerId: salesCards.sellerId,
+        status: salesCards.status,
+        scheduledDate: salesCards.scheduledDate,
+        completedDate: salesCards.completedDate,
+        saleValue: salesCards.saleValue,
+        noSaleReason: salesCards.noSaleReason,
+        notes: salesCards.notes,
+        products: salesCards.products,
+        routeDay: salesCards.routeDay,
+        recurrenceType: salesCards.recurrenceType,
+        isRecurring: salesCards.isRecurring,
+        parentCardId: salesCards.parentCardId,
+        nextCardId: salesCards.nextCardId,
+        duplicatedFromId: salesCards.duplicatedFromId,
+        telemarketingAssignedTo: salesCards.telemarketingAssignedTo,
+        telemarketingDate: salesCards.telemarketingDate,
+        telemarketingNotes: salesCards.telemarketingNotes,
+        deliveryStatus: salesCards.deliveryStatus,
+        deliveryScheduledDate: salesCards.deliveryScheduledDate,
+        deliveryCompletedDate: salesCards.deliveryCompletedDate,
+        deliveryFailureReason: salesCards.deliveryFailureReason,
+        deliveryNotes: salesCards.deliveryNotes,
+        deliveryDriverId: salesCards.deliveryDriverId,
+        trackingCode: salesCards.trackingCode,
+        omieOrderId: salesCards.omieOrderId,
+        invoiceNumber: salesCards.invoiceNumber,
+        paymentMethod: salesCards.paymentMethod,
+        operationType: salesCards.operationType,
+        createdAt: salesCards.createdAt,
+        updatedAt: salesCards.updatedAt,
+        // Customer fields
+        customer: {
+          id: customers.id,
+          name: customers.name,
+          customerType: customers.customerType,
+          cpf: customers.cpf,
+          cnpj: customers.cnpj,
+          companyName: customers.companyName,
+          fantasyName: customers.fantasyName,
+          phone: customers.phone,
+          email: customers.email,
+          address: customers.address,
+          city: customers.city,
+          state: customers.state,
+          zipCode: customers.zipCode,
+          route: customers.route,
+          sellerId: customers.sellerId,
+          weekdays: customers.weekdays,
+          isActive: customers.isActive,
+          lastSaleDate: customers.lastSaleDate,
+          lastSaleValue: customers.lastSaleValue,
+          createdAt: customers.createdAt,
+          updatedAt: customers.updatedAt,
+        },
+        // Seller fields
+        seller: {
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          profileImageUrl: users.profileImageUrl,
+          role: users.role,
+          route: users.route,
+          isActive: users.isActive,
+          createdAt: users.createdAt,
+          updatedAt: users.updatedAt,
+        }
+      })
+      .from(salesCards)
+      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .innerJoin(users, eq(salesCards.sellerId, users.id))
+      .where(
+        and(
+          eq(salesCards.sellerId, sellerId),
+          eq(salesCards.routeDay, routeDay),
+          gte(salesCards.scheduledDate, startDate),
+          lte(salesCards.scheduledDate, endDate)
+        )
+      )
+      .orderBy(salesCards.scheduledDate)
+      .limit(limit)
+      .offset(offset);
+
+    return cardsWithRelations;
+  }
+
   async deleteSalesCard(id: string): Promise<void> {
     await db.delete(salesCards).where(eq(salesCards.id, id));
   }

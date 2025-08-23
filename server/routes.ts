@@ -310,6 +310,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const salesCard = await storage.updateSalesCard(id, data);
+      
+      // Se o card foi completado e tem recorrência ativa, gerar próximo card
+      if (data.status === 'completed' && salesCard.isRecurring) {
+        const nextCard = await storage.generateNextSalesCard(salesCard.id);
+        if (nextCard) {
+          console.log(`Próximo card gerado para o cliente ${salesCard.customerId}: ${nextCard.id}`);
+        }
+      }
+      
       res.json(salesCard);
     } catch (error) {
       console.error("Error updating sales card:", error);
@@ -384,6 +393,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching overdue clients:", error);
       res.status(500).json({ message: "Failed to fetch overdue clients" });
+    }
+  });
+
+  // Endpoint para buscar cards por dia da semana e período
+  app.get('/api/sales-cards/by-day/:routeDay', authenticateUser, async (req: any, res) => {
+    try {
+      const { routeDay } = req.params;
+      const { startDate, endDate, page = 1, limit = 20, sellerId: querySellerId } = req.query;
+      
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Para vendedores, mostrar apenas seus cards
+      const sellerId = user.role === 'vendedor' ? user.id : querySellerId;
+      
+      if (!sellerId) {
+        return res.status(400).json({ message: "sellerId is required for non-vendedor users" });
+      }
+      
+      const start = startDate ? new Date(startDate as string) : new Date();
+      const end = endDate ? new Date(endDate as string) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 dias
+      
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      const cards = await storage.getSalesCardsByDayAndDate(
+        sellerId,
+        routeDay,
+        start,
+        end,
+        Number(limit),
+        offset
+      );
+      
+      res.json({
+        cards,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          hasMore: cards.length === Number(limit)
+        }
+      });
+    } catch (error) {
+      console.error("Error fetching sales cards by day:", error);
+      res.status(500).json({ message: "Failed to fetch sales cards" });
+    }
+  });
+
+  // Endpoint para gerar próximo card manualmente
+  app.post('/api/sales-cards/:id/generate-next', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Verificar se o card existe e o usuário tem permissão
+      const card = await storage.getSalesCard(id);
+      if (!card) {
+        return res.status(404).json({ message: "Sales card not found" });
+      }
+      
+      if (user.role === 'vendedor' && card.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const nextCard = await storage.generateNextSalesCard(id);
+      
+      if (!nextCard) {
+        return res.status(400).json({ message: "Could not generate next card" });
+      }
+      
+      res.json(nextCard);
+    } catch (error) {
+      console.error("Error generating next card:", error);
+      res.status(500).json({ message: "Failed to generate next card" });
     }
   });
 

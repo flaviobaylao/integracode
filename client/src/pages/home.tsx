@@ -8,6 +8,7 @@ import WhatsAppIntegration from "@/components/WhatsAppIntegration";
 import OmieIntegration from "@/components/OmieIntegration";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
+import SalesSchedule from "@/pages/SalesSchedule";
 import { useState } from "react";
 
 export default function Home() {
@@ -40,6 +41,8 @@ export default function Home() {
         return <Sellers />;
       case 'telemarketing':
         return <TelemarketingPage />;
+      case 'sales-schedule':
+        return <SalesSchedule />;
       default:
         return <Dashboard />;
     }

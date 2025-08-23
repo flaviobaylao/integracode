@@ -17,6 +17,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
     { id: 'sales-cards', label: 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true },
+    { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true },
     { id: 'customers', label: 'Clientes', icon: 'fas fa-users', available: true },
     { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports },
     { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: true },
