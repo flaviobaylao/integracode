@@ -146,9 +146,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     
     const selectedProduct = availableProducts.find((p: any) => p.id === productId);
     if (selectedProduct) {
-      updateProduct(index, 'id', selectedProduct.id);
-      updateProduct(index, 'name', selectedProduct.name);
-      updateProduct(index, 'unitPrice', parseFloat(selectedProduct.price || '0'));
+      const updatedProducts = [...products];
+      updatedProducts[index] = {
+        ...updatedProducts[index],
+        id: selectedProduct.id,
+        name: selectedProduct.name,
+        unitPrice: parseFloat(selectedProduct.price || '0'),
+        totalPrice: updatedProducts[index].quantity * parseFloat(selectedProduct.price || '0')
+      };
+      setProducts(updatedProducts);
     }
   };
 
@@ -332,9 +338,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                       onValueChange={(value) => selectProductById(index, value)}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione um produto">
-                          {product.name || "Selecione um produto"}
-                        </SelectValue>
+                        <SelectValue placeholder="Selecione um produto" />
                       </SelectTrigger>
                       <SelectContent>
                         {Array.isArray(availableProducts) && availableProducts.map((p: any) => (
