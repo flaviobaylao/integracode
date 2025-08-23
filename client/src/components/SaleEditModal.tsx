@@ -44,6 +44,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [paymentMethod, setPaymentMethod] = useState('a_vista');
   const [operationType, setOperationType] = useState('venda');
   const [notes, setNotes] = useState('');
+  const [routeDay, setRouteDay] = useState('');
+  const [recurrenceType, setRecurrenceType] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -60,11 +62,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setPaymentMethod(card.paymentMethod || 'a_vista');
       setOperationType(card.operationType || 'venda');
       setNotes(card.notes || '');
+      setRouteDay(card.routeDay || '');
+      setRecurrenceType(card.recurrenceType || '');
     } else {
       setProducts([]);
       setPaymentMethod('a_vista');
       setOperationType('venda');
       setNotes('');
+      setRouteDay('');
+      setRecurrenceType('');
     }
   }, [card]);
 
@@ -186,6 +192,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           paymentMethod: paymentMethod,
           operationType: operationType,
           notes: notes,
+          routeDay: routeDay,
+          recurrenceType: recurrenceType,
           completedDate: new Date()
         }
       });
@@ -265,19 +273,36 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                     <p className="font-medium">{card.customer.route || 'Não definida'}</p>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4 text-purple-500" />
-                  <div>
-                    <p className="text-sm text-gray-600">Dia da Semana:</p>
-                    <p className="font-medium capitalize">{card.routeDay || 'Não definido'}</p>
-                  </div>
+                <div>
+                  <Label>Dia da Semana</Label>
+                  <Select value={routeDay} onValueChange={setRouteDay}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione o dia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="segunda">Segunda-feira</SelectItem>
+                      <SelectItem value="terca">Terça-feira</SelectItem>
+                      <SelectItem value="quarta">Quarta-feira</SelectItem>
+                      <SelectItem value="quinta">Quinta-feira</SelectItem>
+                      <SelectItem value="sexta">Sexta-feira</SelectItem>
+                      <SelectItem value="sabado">Sábado</SelectItem>
+                      <SelectItem value="domingo">Domingo</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4 text-orange-500" />
-                  <div>
-                    <p className="text-sm text-gray-600">Periodicidade:</p>
-                    <p className="font-medium capitalize">{card.recurrenceType || 'Não definida'}</p>
-                  </div>
+                <div>
+                  <Label>Periodicidade</Label>
+                  <Select value={recurrenceType} onValueChange={setRecurrenceType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a periodicidade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semanal">Semanal</SelectItem>
+                      <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                      <SelectItem value="trisemanal">Tri-semanal</SelectItem>
+                      <SelectItem value="mensal">Mensal</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </CardContent>
