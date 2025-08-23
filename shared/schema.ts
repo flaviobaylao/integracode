@@ -184,6 +184,10 @@ export const salesCards = pgTable("sales_cards", {
   paymentMethod: paymentMethodEnum("payment_method").notNull().default('a_vista'),
   operationType: operationTypeEnum("operation_type").notNull().default('venda'),
   
+  // Configurações de entrega - dias da semana e horários
+  deliveryWeekdays: jsonb("delivery_weekdays").$type<string[]>().default([]), // dias da semana selecionados para entrega
+  deliveryTimeSlots: jsonb("delivery_time_slots").$type<string[]>().default([]), // horários selecionados para entrega
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

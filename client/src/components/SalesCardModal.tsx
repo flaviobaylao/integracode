@@ -8,7 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Check, ChevronsUpDown, Search, Truck, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertSalesCardSchema, type SalesCardWithRelations, type CustomerWithSeller } from "@shared/schema";
@@ -32,13 +33,15 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     recurrenceType: 'semanal',
     paymentMethod: 'a_vista',
     operationType: 'venda',
+    deliveryWeekdays: [] as string[],
+    deliveryTimeSlots: [] as string[],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [customerOpen, setCustomerOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: customers } = useQuery({
+  const { data: customers } = useQuery<any[]>({
     queryKey: ['/api/customers'],
     retry: false,
   });
@@ -67,6 +70,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         recurrenceType: editingCard.recurrenceType || 'semanal',
         paymentMethod: editingCard.paymentMethod || 'a_vista',
         operationType: editingCard.operationType || 'venda',
+        deliveryWeekdays: (editingCard as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
+        deliveryTimeSlots: (editingCard as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
       });
     } else {
       const now = new Date();
@@ -83,6 +88,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         recurrenceType: 'semanal',
         paymentMethod: 'a_vista',
         operationType: 'venda',
+        deliveryWeekdays: ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
+        deliveryTimeSlots: ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
       });
     }
     setErrors({});
@@ -132,6 +139,10 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         routeDay: formData.routeDay,
         recurrenceType: formData.recurrenceType,
         isRecurring: true,
+        deliveryWeekdays: formData.deliveryWeekdays,
+        deliveryTimeSlots: formData.deliveryTimeSlots,
+        paymentMethod: formData.paymentMethod,
+        operationType: formData.operationType,
       };
 
       // Não usar validação Zod aqui - deixar o backend validar
@@ -149,9 +160,46 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     }
   };
 
+  // Dias da semana disponíveis
+  const weekdays = [
+    { value: 'segunda', label: 'Segunda-feira' },
+    { value: 'terca', label: 'Terça-feira' },
+    { value: 'quarta', label: 'Quarta-feira' },
+    { value: 'quinta', label: 'Quinta-feira' },
+    { value: 'sexta', label: 'Sexta-feira' },
+    { value: 'sabado', label: 'Sábado' },
+    { value: 'domingo', label: 'Domingo' }
+  ];
+
+  // Horários disponíveis das 7h às 19h
+  const timeSlots = [
+    '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+    '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+  ];
+
+  // Função para gerenciar checkboxes de dias da semana
+  const handleWeekdayChange = (weekday: string, checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      deliveryWeekdays: checked 
+        ? [...prev.deliveryWeekdays, weekday]
+        : prev.deliveryWeekdays.filter(w => w !== weekday)
+    }));
+  };
+
+  // Função para gerenciar checkboxes de horários
+  const handleTimeSlotChange = (timeSlot: string, checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      deliveryTimeSlots: checked 
+        ? [...prev.deliveryTimeSlots, timeSlot]
+        : prev.deliveryTimeSlots.filter(t => t !== timeSlot)
+    }));
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {editingCard ? 'Editar Card de Venda' : 'Novo Card de Venda'}
@@ -238,9 +286,11 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={(currentUser as any)?.id || ''}>
-                    {(currentUser as any)?.firstName} {(currentUser as any)?.lastName}
-                  </SelectItem>
+                  {(currentUser as any)?.id && (
+                    <SelectItem value={(currentUser as any)?.id}>
+                      {(currentUser as any)?.firstName} {(currentUser as any)?.lastName}
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               {errors.sellerId && <p className="text-sm text-red-500 mt-1">{errors.sellerId}</p>}
@@ -367,6 +417,65 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
               placeholder="Observações sobre o atendimento..."
             />
             {errors.notes && <p className="text-sm text-red-500 mt-1">{errors.notes}</p>}
+          </div>
+
+          {/* Configurações de Entrega */}
+          <div className="border-t border-gray-200 pt-6">
+            <div className="mb-4">
+              <div className="flex items-center space-x-2 mb-3">
+                <Truck className="h-5 w-5 text-blue-600" />
+                <Label className="text-base font-semibold">Configurações de Entrega</Label>
+              </div>
+              
+              {/* Dias da Semana */}
+              <div className="mb-6">
+                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Entrega</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  {weekdays.map((day) => (
+                    <div key={day.value} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`weekday-${day.value}`}
+                        checked={formData.deliveryWeekdays.includes(day.value)}
+                        onCheckedChange={(checked) => handleWeekdayChange(day.value, checked as boolean)}
+                        data-testid={`checkbox-weekday-${day.value}`}
+                      />
+                      <Label 
+                        htmlFor={`weekday-${day.value}`} 
+                        className="text-sm font-normal cursor-pointer"
+                      >
+                        {day.label}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Horários de Entrega */}
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Clock className="h-4 w-4 text-blue-600" />
+                  <Label className="text-sm font-medium">Horários Disponíveis para Entrega</Label>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {timeSlots.map((time) => (
+                    <div key={time} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`time-${time}`}
+                        checked={formData.deliveryTimeSlots.includes(time)}
+                        onCheckedChange={(checked) => handleTimeSlotChange(time, checked as boolean)}
+                        data-testid={`checkbox-time-${time}`}
+                      />
+                      <Label 
+                        htmlFor={`time-${time}`} 
+                        className="text-xs font-normal cursor-pointer"
+                      >
+                        {time}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
           
           <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
