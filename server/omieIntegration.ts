@@ -530,8 +530,7 @@ export class OmieService {
       const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
         pagina: 1,
         registros_por_pagina: 100,
-        apenas_importado_api: 'N',
-        filtrar_status: 'ABERTO'
+        apenas_importado_api: 'N'
       });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
@@ -548,6 +547,14 @@ export class OmieService {
       let totalAmount = 0;
 
       console.log(`Found ${contas.length} accounts to process`);
+      
+      // Analisar os status disponíveis para entender melhor os dados
+      const statusCount = {};
+      contas.forEach(conta => {
+        const status = conta.status_titulo || 'UNDEFINED';
+        statusCount[status] = (statusCount[status] || 0) + 1;
+      });
+      console.log('Status distribution:', statusCount);
       
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
@@ -577,8 +584,13 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Como já filtramos apenas contas abertas na API, verificar apenas se está em atraso
-        if (diasAtraso > 0) {
+        // Verificar se está em atraso E se não foi totalmente pago
+        // Vamos considerar como pendente qualquer status que não seja claramente "pago/recebido"
+        const isPaid = conta.status_titulo === 'RECEBIDO' || 
+                      conta.status_titulo === 'LIQUIDADO' ||
+                      conta.status_titulo === 'PAGO';
+        
+        if (diasAtraso > 0 && !isPaid) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
