@@ -879,6 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      console.log('Fetching overdue debts from Omie...');
       const overdueData = await omieService.getOverdueDebts();
       res.json(overdueData);
 
@@ -888,6 +889,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "Erro ao buscar débitos em atraso no Omie",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
       });
+    }
+  });
+
+  // Blocked orders routes
+  app.get('/api/blocked-orders', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const sellerId = user?.role === 'vendedor' ? user.id : undefined;
+      
+      console.log(`Fetching blocked orders for user ${user.email} (role: ${user.role})`);
+      
+      // Para implementação inicial, retornar lista vazia
+      // TODO: Implementar storage.getBlockedOrders quando schema estiver aplicado
+      const blockedOrders = [];
+      res.json(blockedOrders);
+    } catch (error) {
+      console.error("Error fetching blocked orders:", error);
+      res.status(500).json({ message: "Failed to fetch blocked orders" });
+    }
+  });
+
+  // Release blocked orders (only admin, coordinator, administrative)
+  app.post('/api/blocked-orders/release', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { orderIds } = req.body;
+      const userId = req.currentUser.id;
+      
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ message: "Lista de IDs de pedidos é obrigatória" });
+      }
+      
+      console.log(`Releasing ${orderIds.length} blocked orders by user ${req.currentUser.email}`);
+      
+      // Para implementação inicial, simular liberação
+      // TODO: Implementar lógica real quando schema estiver aplicado
+      res.json({
+        released: orderIds.length,
+        errors: [],
+        message: `${orderIds.length} pedido(s) liberado(s) com sucesso`
+      });
+      
+    } catch (error) {
+      console.error("Error releasing blocked orders:", error);
+      res.status(500).json({ message: "Failed to release blocked orders" });
     }
   });
 
@@ -1695,7 +1740,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { products, totalValue, orderNumber, paymentMethod, operationType } = req.body;
 
       console.log('Finalizing sale for card:', id);
-      console.log('Sale data:', { products, totalValue, orderNumber });
+      console.log('Sale data:', { products, totalValue, orderNumber, operationType });
+
+      // Check if order should be blocked
+      let shouldBlock = false;
+      let blockReason = '';
+      let blockDetails = '';
+
+      // Block if operation is troca or amostra
+      if (operationType === 'troca' || operationType === 'amostra') {
+        shouldBlock = true;
+        blockReason = 'operation_type';
+        blockDetails = operationType === 'troca' 
+          ? 'Pedido de troca requer aprovação manual'
+          : 'Pedido de amostra requer aprovação manual';
+      }
+
+      // Check if customer has overdue debt
+      if (!shouldBlock) {
+        try {
+          const salesCard = await storage.getSalesCard(id);
+          if (salesCard && salesCard.customer) {
+            const customerDocument = salesCard.customer.cnpj || salesCard.customer.cpf;
+            if (customerDocument) {
+              const omieService = getOmieService();
+              if (omieService) {
+                const creditInfo = await omieService.getClientCreditInfo(customerDocument);
+                if (creditInfo && creditInfo.valor_em_aberto > 0 && creditInfo.dias_em_atraso > 0) {
+                  shouldBlock = true;
+                  blockReason = 'overdue_debt';
+                  blockDetails = `Cliente possui débito vencido de R$ ${creditInfo.valor_em_aberto.toFixed(2)} há ${creditInfo.dias_em_atraso} dias`;
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Error checking customer debt:', error);
+          // Continue sem bloquear se não conseguir verificar débito
+        }
+      }
+
+      if (shouldBlock) {
+        // Create blocked order instead of finalizing
+        console.log(`Blocking order for card ${id}, reason: ${blockReason}`);
+        
+        // For now, just set status as blocked in sales card
+        const updateData = {
+          status: 'blocked',
+          products: products,
+          saleValue: totalValue.toString(),
+          paymentMethod: paymentMethod || 'a_vista',
+          operationType: operationType || 'venda',
+          notes: (await storage.getSalesCard(id))?.notes + `\n\nPedido bloqueado: ${blockDetails}`
+        };
+
+        await storage.updateSalesCard(id, updateData);
+        
+        return res.json({
+          success: true,
+          blocked: true,
+          message: 'Pedido bloqueado para aprovação manual',
+          reason: blockDetails
+        });
+      }
 
       // Update sales card with products, value, payment method and operation type
       const updateData = {

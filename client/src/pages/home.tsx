@@ -9,6 +9,8 @@ import OmieIntegration from "@/components/OmieIntegration";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
+import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
+import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
 import { useState } from "react";
 
 export default function Home() {
@@ -43,6 +45,10 @@ export default function Home() {
         return <TelemarketingPage />;
       case 'sales-schedule':
         return <SalesSchedule />;
+      case 'overdue-debts':
+        return <OverdueDebtsManagement />;
+      case 'blocked-orders':
+        return <BlockedOrdersManagement user={user as any} />;
       default:
         return <Dashboard />;
     }

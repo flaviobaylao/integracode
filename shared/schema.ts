@@ -126,6 +126,13 @@ export const deliveryStatusEnum = pgEnum('delivery_status', [
   'returned'      // Devolvido
 ]);
 
+// Blocked orders status enum
+export const blockedOrderStatusEnum = pgEnum('blocked_order_status', [
+  'blocked',      // Bloqueado
+  'released',     // Liberado
+  'sent_to_omie'  // Enviado para Omie
+]);
+
 // Delivery failure reasons enum
 export const deliveryFailureReasonEnum = pgEnum('delivery_failure_reason', [
   'customer_absent',     // Cliente ausente
@@ -267,6 +274,53 @@ export const telemarketingQueue = pgTable("telemarketing_queue", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   lastAssignedAgentId: varchar("last_assigned_agent_id"),
   queuePosition: integer("queue_position").default(0),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Overdue debts table - para armazenar débitos vencidos do Omie
+export const overdueDebts = pgTable("overdue_debts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull(), // ID do cliente no sistema
+  omieClientId: varchar("omie_client_id").notNull(), // ID do cliente no Omie
+  clientName: varchar("client_name").notNull(),
+  clientDocument: varchar("client_document"), // CPF/CNPJ
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  maxDaysOverdue: integer("max_days_overdue").notNull(),
+  debts: jsonb("debts").$type<Array<{
+    numero_documento: string;
+    valor: number;
+    data_vencimento: string;
+    dias_atraso: number;
+    observacao?: string;
+  }>>(),
+  lastSyncAt: timestamp("last_sync_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Blocked orders table - para pedidos bloqueados
+export const blockedOrders = pgTable("blocked_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesCardId: varchar("sales_card_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  sellerId: varchar("seller_id").notNull(),
+  status: blockedOrderStatusEnum("status").notNull().default('blocked'),
+  blockReason: varchar("block_reason").notNull(), // 'operation_type', 'overdue_debt', 'credit_limit'
+  blockDetails: text("block_details"), // Detalhes específicos do bloqueio
+  operationType: operationTypeEnum("operation_type"),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
+  products: jsonb("products").$type<Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>>(),
+  blockedAt: timestamp("blocked_at").defaultNow(),
+  releasedAt: timestamp("released_at"),
+  releasedBy: varchar("released_by"), // ID do usuário que liberou
+  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie após liberação
+  createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -418,6 +472,20 @@ export type CustomerWithSeller = Customer & {
 };
 
 export type SalesCardWithRelations = SalesCard & {
+  customer: Customer;
+  seller: User;
+  deliveryDriver?: any;
+};
+
+export type DeliveryDriver = typeof deliveryDrivers.$inferSelect;
+export type InsertDeliveryDriver = typeof deliveryDrivers.$inferInsert;
+
+export type OverdueDebt = typeof overdueDebts.$inferSelect;
+export type InsertOverdueDebt = typeof overdueDebts.$inferInsert;
+
+export type BlockedOrder = typeof blockedOrders.$inferSelect;
+export type InsertBlockedOrder = typeof blockedOrders.$inferInsert;
+export type BlockedOrderWithRelations = BlockedOrder & {
   customer: Customer;
   seller: User;
 };

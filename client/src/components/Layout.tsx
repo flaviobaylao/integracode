@@ -36,6 +36,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
+    { id: 'overdue-debts', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports },
+    { id: 'blocked-orders', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports },
   ];
 
   const getRoleLabel = (role: string) => {
