@@ -157,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/customers/:id', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const data = insertCustomerSchema.partial().parse(req.body);
+      const data = req.body;
       
       // Check permissions for reassigning customers
       const userId = req.user.claims.sub;

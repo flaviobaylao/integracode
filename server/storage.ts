@@ -88,6 +88,10 @@ export interface IStorage {
     overdueClients: number;
     conversionRate: number;
   }>;
+  
+  // Additional methods needed
+  getSalesCardsByDayAndDate(sellerId: string, routeDay: string, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
+  generateNextSalesCard(parentCardId: string): Promise<SalesCard | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -268,7 +272,7 @@ export class DatabaseStorage implements IStorage {
     }
     
     if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+      query = query.where(and(...conditions)) as any;
     }
     
     const result = await query;
@@ -297,14 +301,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard> {
-    const [newSalesCard] = await db.insert(salesCards).values(salesCard).returning();
+    const [newSalesCard] = await db.insert(salesCards).values(salesCard as any).returning();
     return newSalesCard;
   }
 
   async updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard> {
     const [updatedSalesCard] = await db
       .update(salesCards)
-      .set({ ...salesCard, updatedAt: new Date() })
+      .set({ ...salesCard as any, updatedAt: new Date() })
       .where(eq(salesCards.id, id))
       .returning();
     return updatedSalesCard;
@@ -407,7 +411,7 @@ export class DatabaseStorage implements IStorage {
         operationType: parentCard.operationType
       };
 
-      const [newCard] = await db.insert(salesCards).values(nextCardData).returning();
+      const [newCard] = await db.insert(salesCards).values(nextCardData as any).returning();
 
       // Atualizar card pai com referência ao próximo
       await db
@@ -519,7 +523,7 @@ export class DatabaseStorage implements IStorage {
       .limit(limit)
       .offset(offset);
 
-    return cardsWithRelations;
+    return cardsWithRelations as SalesCardWithRelations[];
   }
 
   async deleteSalesCard(id: string): Promise<void> {
@@ -606,7 +610,11 @@ export class DatabaseStorage implements IStorage {
         scheduledDate: newDate,
         duplicatedFromId: id,
         notes: originalCard.notes,
-      })
+        routeDay: originalCard.routeDay,
+        recurrenceType: originalCard.recurrenceType,
+        paymentMethod: originalCard.paymentMethod,
+        operationType: originalCard.operationType,
+      } as any)
       .returning();
     
     return newCard;
@@ -642,13 +650,13 @@ export class DatabaseStorage implements IStorage {
 
   // Message history operations
   async getMessageHistory(customerId?: string): Promise<MessageHistory[]> {
-    let query = db.select().from(messageHistory).orderBy(desc(messageHistory.sentAt));
-    
     if (customerId) {
-      query = query.where(eq(messageHistory.customerId, customerId));
+      return await db.select().from(messageHistory)
+        .where(eq(messageHistory.customerId, customerId))
+        .orderBy(desc(messageHistory.sentAt));
     }
     
-    return await query;
+    return await db.select().from(messageHistory).orderBy(desc(messageHistory.sentAt));
   }
 
   async createMessageHistory(history: InsertMessageHistory): Promise<MessageHistory> {
@@ -785,7 +793,7 @@ export class DatabaseStorage implements IStorage {
   // ===== DELIVERY OPERATIONS =====
 
   async updateSalesCardDeliveryStatus(id: string, data: any): Promise<SalesCard> {
-    const [updatedCard] = await db.execute(sql`
+    const result = await db.execute(sql`
       UPDATE sales_cards 
       SET 
         delivery_status = ${data.deliveryStatus},
@@ -797,7 +805,7 @@ export class DatabaseStorage implements IStorage {
       WHERE id = ${id}
       RETURNING *
     `);
-    return updatedCard as SalesCard;
+    return result.rows[0] as SalesCard;
   }
 
   async getSalesCardByTrackingCode(trackingCode: string): Promise<SalesCard | undefined> {
@@ -1128,10 +1136,9 @@ export class DatabaseStorage implements IStorage {
       .set({
         status: 'completed',
         completedDate: new Date(),
-        outcome,
         saleValue: outcome === 'sale' ? (saleValue ? saleValue.toString() : card.saleValue) : null,
         updatedAt: new Date()
-      })
+      } as any)
       .where(eq(salesCards.id, cardId))
       .returning();
 

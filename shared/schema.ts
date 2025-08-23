@@ -414,8 +414,8 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   lastSaleValue: true,
 }).extend({
   // Validação customizada para CPF ou CNPJ obrigatório
-  cpf: z.string().optional(),
-  cnpj: z.string().optional(),
+  cpf: z.string().nullable().optional(),
+  cnpj: z.string().nullable().optional(),
 }).refine(
   (data) => data.cpf || data.cnpj,
   {
