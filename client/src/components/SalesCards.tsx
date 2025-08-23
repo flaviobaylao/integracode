@@ -14,6 +14,8 @@ import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
 import SalesCardDetailsModal from "./SalesCardDetailsModal";
+import SaleEditModal from "./SaleEditModal";
+import NoSaleModal from "./NoSaleModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
@@ -29,6 +31,10 @@ export default function SalesCards() {
   const [selectedCardForSale, setSelectedCardForSale] = useState<SalesCardWithRelations | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedCardForDetails, setSelectedCardForDetails] = useState<SalesCardWithRelations | null>(null);
+  const [showSaleEditModal, setShowSaleEditModal] = useState(false);
+  const [selectedCardForEdit, setSelectedCardForEdit] = useState<SalesCardWithRelations | null>(null);
+  const [showNoSaleModal, setShowNoSaleModal] = useState(false);
+  const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<SalesCardWithRelations | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -392,17 +398,18 @@ export default function SalesCards() {
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setSelectedCardForSale(card);
-                          setShowSaleModal(true);
+                          setSelectedCardForEdit(card);
+                          setShowSaleEditModal(true);
                         }}
                       >
-                        <i className="fas fa-shopping-cart mr-2"></i>Venda
+                        <i className="fas fa-shopping-cart mr-2"></i>Finalizar Venda
                       </Button>
                       <Button
                         className="flex-1 bg-red-500 hover:bg-red-600 text-white"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setActionDialog({ type: 'no-sale', card });
+                          setSelectedCardForNoSale(card);
+                          setShowNoSaleModal(true);
                         }}
                       >
                         <i className="fas fa-times mr-2"></i>Não Venda
@@ -605,6 +612,26 @@ export default function SalesCards() {
           setSelectedCardForDetails(null);
         }}
         card={selectedCardForDetails}
+      />
+
+      {/* Sale Edit Modal */}
+      <SaleEditModal
+        isOpen={showSaleEditModal}
+        onClose={() => {
+          setShowSaleEditModal(false);
+          setSelectedCardForEdit(null);
+        }}
+        card={selectedCardForEdit}
+      />
+
+      {/* No Sale Modal */}
+      <NoSaleModal
+        isOpen={showNoSaleModal}
+        onClose={() => {
+          setShowNoSaleModal(false);
+          setSelectedCardForNoSale(null);
+        }}
+        card={selectedCardForNoSale}
       />
     </div>
   );
