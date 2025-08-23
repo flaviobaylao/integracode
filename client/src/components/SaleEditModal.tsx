@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { 
@@ -21,7 +22,9 @@ import {
   ShoppingCart,
   MapPin,
   Calendar,
-  Route
+  Route,
+  Truck,
+  Clock
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -46,6 +49,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [notes, setNotes] = useState('');
   const [routeDay, setRouteDay] = useState('');
   const [recurrenceType, setRecurrenceType] = useState('');
+  const [deliveryWeekdays, setDeliveryWeekdays] = useState<string[]>(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+  const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<string[]>(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -64,6 +69,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes(card.notes || '');
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
+      setDeliveryWeekdays((card as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+      setDeliveryTimeSlots((card as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
     } else {
       setProducts([]);
       setPaymentMethod('a_vista');
@@ -71,6 +78,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes('');
       setRouteDay('');
       setRecurrenceType('');
+      setDeliveryWeekdays(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+      setDeliveryTimeSlots(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
     }
   }, [card]);
 
@@ -200,6 +209,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           notes: notes,
           routeDay: routeDay,
           recurrenceType: recurrenceType,
+          deliveryWeekdays: deliveryWeekdays,
+          deliveryTimeSlots: deliveryTimeSlots,
           completedDate: new Date()
         }
       });
@@ -231,6 +242,39 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   if (!card) return null;
+
+  // Dias da semana disponíveis
+  const weekdays = [
+    { value: 'segunda', label: 'Segunda-feira' },
+    { value: 'terca', label: 'Terça-feira' },
+    { value: 'quarta', label: 'Quarta-feira' },
+    { value: 'quinta', label: 'Quinta-feira' },
+    { value: 'sexta', label: 'Sexta-feira' },
+    { value: 'sabado', label: 'Sábado' },
+    { value: 'domingo', label: 'Domingo' }
+  ];
+
+  // Horários disponíveis das 7h às 19h
+  const timeSlots = [
+    '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+    '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+  ];
+
+  // Função para gerenciar checkboxes de dias da semana
+  const handleWeekdayChange = (weekday: string, checked: boolean) => {
+    setDeliveryWeekdays(checked 
+      ? [...deliveryWeekdays, weekday]
+      : deliveryWeekdays.filter(w => w !== weekday)
+    );
+  };
+
+  // Função para gerenciar checkboxes de horários
+  const handleTimeSlotChange = (timeSlot: string, checked: boolean) => {
+    setDeliveryTimeSlots(checked 
+      ? [...deliveryTimeSlots, timeSlot]
+      : deliveryTimeSlots.filter(t => t !== timeSlot)
+    );
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -309,6 +353,66 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                       <SelectItem value="mensal">Mensal</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Configurações de Entrega */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Truck className="h-5 w-5 text-blue-600" />
+                <span>Configurações de Entrega</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {/* Dias da Semana */}
+              <div className="mb-6">
+                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Entrega</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  {weekdays.map((day) => (
+                    <div key={day.value} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`weekday-${day.value}`}
+                        checked={deliveryWeekdays.includes(day.value)}
+                        onCheckedChange={(checked) => handleWeekdayChange(day.value, checked as boolean)}
+                        data-testid={`checkbox-weekday-${day.value}`}
+                      />
+                      <Label 
+                        htmlFor={`weekday-${day.value}`} 
+                        className="text-sm font-normal cursor-pointer"
+                      >
+                        {day.label}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Horários de Entrega */}
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Clock className="h-4 w-4 text-blue-600" />
+                  <Label className="text-sm font-medium">Horários Disponíveis para Entrega</Label>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {timeSlots.map((time) => (
+                    <div key={time} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`time-${time}`}
+                        checked={deliveryTimeSlots.includes(time)}
+                        onCheckedChange={(checked) => handleTimeSlotChange(time, checked as boolean)}
+                        data-testid={`checkbox-time-${time}`}
+                      />
+                      <Label 
+                        htmlFor={`time-${time}`} 
+                        className="text-xs font-normal cursor-pointer"
+                      >
+                        {time}
+                      </Label>
+                    </div>
+                  ))}
                 </div>
               </div>
             </CardContent>
