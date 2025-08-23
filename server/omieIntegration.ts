@@ -507,7 +507,8 @@ export class OmieService {
         pagina: 1,
         registros_por_pagina: 100,
         apenas_importado_api: 'N',
-        apenas_titulos_em_atraso: 'S'
+        filtrar_por_situacao: 'ABERTO',
+        data_vencimento_ate: today.toLocaleDateString('pt-BR')
       });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
