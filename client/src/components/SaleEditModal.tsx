@@ -18,7 +18,10 @@ import {
   CheckCircle, 
   XCircle,
   DollarSign,
-  ShoppingCart
+  ShoppingCart,
+  MapPin,
+  Calendar,
+  Route
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -133,7 +136,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   const selectProductById = (index: number, productId: string) => {
-    const selectedProduct = availableProducts?.find((p: any) => p.id === productId);
+    if (!availableProducts || !Array.isArray(availableProducts)) return;
+    
+    const selectedProduct = availableProducts.find((p: any) => p.id === productId);
     if (selectedProduct) {
       updateProduct(index, 'id', selectedProduct.id);
       updateProduct(index, 'name', selectedProduct.name);
@@ -243,6 +248,41 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             </CardContent>
           </Card>
 
+          {/* Informações de Rota e Periodicidade */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Route className="h-5 w-5 text-green-600" />
+                <span>Rota e Periodicidade</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="flex items-center space-x-2">
+                  <MapPin className="h-4 w-4 text-blue-500" />
+                  <div>
+                    <p className="text-sm text-gray-600">Rota:</p>
+                    <p className="font-medium">{card.customer.route || 'Não definida'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Calendar className="h-4 w-4 text-purple-500" />
+                  <div>
+                    <p className="text-sm text-gray-600">Dia da Semana:</p>
+                    <p className="font-medium capitalize">{card.routeDay || 'Não definido'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Calendar className="h-4 w-4 text-orange-500" />
+                  <div>
+                    <p className="text-sm text-gray-600">Periodicidade:</p>
+                    <p className="font-medium capitalize">{card.recurrenceType || 'Não definida'}</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Produtos */}
           <Card>
             <CardHeader>
@@ -270,7 +310,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                         <SelectValue placeholder="Selecione um produto" />
                       </SelectTrigger>
                       <SelectContent>
-                        {availableProducts?.map((p: any) => (
+                        {Array.isArray(availableProducts) && availableProducts.map((p: any) => (
                           <SelectItem key={p.id} value={p.id}>
                             {p.name}
                           </SelectItem>
