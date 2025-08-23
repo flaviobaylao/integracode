@@ -507,8 +507,7 @@ export class OmieService {
         pagina: 1,
         registros_por_pagina: 100,
         apenas_importado_api: 'N',
-        filtrar_por_registro_de: sixMonthsAgo.toLocaleDateString('pt-BR'),
-        filtrar_por_registro_ate: today.toLocaleDateString('pt-BR')
+        apenas_titulos_em_atraso: 'S'
       });
 
       console.log(`API response received:`, JSON.stringify(response, null, 2));
@@ -529,13 +528,14 @@ export class OmieService {
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
         
-        console.log(`Processing account: ${conta.numero_documento}, due: ${conta.data_vencimento}, amount: ${conta.valor_documento}`);
+        console.log(`Processing account: ${conta.numero_documento}, due: ${conta.data_vencimento}, amount: ${conta.valor_documento}, client: ${conta.codigo_cliente_fornecedor}`);
 
         const vencimento = new Date(conta.data_vencimento);
         const diffTime = hoje.getTime() - vencimento.getTime();
         const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        if (diasAtraso > 0) {
+        // Como já filtramos apenas títulos em atraso, processar todos
+        if (true) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
