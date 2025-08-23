@@ -584,13 +584,14 @@ export class OmieService {
         
         console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
 
-        // Verificar se está em atraso E se não foi totalmente pago
-        // Vamos considerar como pendente qualquer status que não seja claramente "pago/recebido"
-        const isPaid = conta.status_titulo === 'RECEBIDO' || 
-                      conta.status_titulo === 'LIQUIDADO' ||
-                      conta.status_titulo === 'PAGO';
+        // Verificar se está em atraso E se não foi pago/cancelado
+        // Excluir contas pagas, canceladas ou liquidadas
+        const isInvalidStatus = conta.status_titulo === 'RECEBIDO' || 
+                               conta.status_titulo === 'LIQUIDADO' ||
+                               conta.status_titulo === 'PAGO' ||
+                               conta.status_titulo === 'CANCELADO';
         
-        if (diasAtraso > 0 && !isPaid) {
+        if (diasAtraso > 0 && !isInvalidStatus) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
           
