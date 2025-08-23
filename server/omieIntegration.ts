@@ -551,17 +551,29 @@ export class OmieService {
       for (const conta of contas) {
         if (!conta.data_vencimento) continue;
         
-        console.log(`Processing account: ${conta.numero_documento}, due: ${conta.data_vencimento}, amount: ${conta.valor_documento}, client: ${conta.codigo_cliente_fornecedor}`);
+        console.log(`Processing account:`, JSON.stringify({
+          numero_documento: conta.numero_documento,
+          data_vencimento: conta.data_vencimento,
+          valor_documento: conta.valor_documento,
+          codigo_cliente_fornecedor: conta.codigo_cliente_fornecedor,
+          status_titulo: conta.status_titulo,
+          situacao: conta.situacao
+        }, null, 2));
 
-        const vencimento = new Date(conta.data_vencimento);
+        // Converter data de vencimento do formato brasileiro DD/MM/YYYY
+        const [dia, mes, ano] = conta.data_vencimento.split('/');
+        const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
         const diffTime = hoje.getTime() - vencimento.getTime();
         const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        // Verificar se a conta está realmente em atraso e aberta
-        if (diasAtraso > 0 && 
-            (conta.status_titulo === 'ABERTO' || conta.situacao === 'NORMAL' || !conta.status_titulo)) {
+        console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}`);
+
+        // Verificar se a conta está em atraso (mais flexível com status)
+        if (diasAtraso > 0) {
           const clientId = conta.codigo_cliente_fornecedor;
           const valor = parseFloat(conta.valor_documento || '0');
+          
+          console.log(`Found overdue account: clientId=${clientId}, valor=${valor}, diasAtraso=${diasAtraso}`);
           
           if (valor > 0) {
             totalAmount += valor;
@@ -580,6 +592,8 @@ export class OmieService {
                 valorTotal: 0,
                 diasMaximoAtraso: 0
               });
+              
+              console.log(`Created new debtor entry for client ${clientId}`);
             }
 
             const debtor = debtorsMap.get(clientId);
@@ -592,15 +606,22 @@ export class OmieService {
             });
             debtor.valorTotal += valor;
             debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
+            
+            console.log(`Added debt to client ${clientId}: R$ ${valor} (${diasAtraso} dias em atraso)`);
           }
         }
       }
 
-      return {
+      const result = {
         debts: Array.from(debtorsMap.values()),
         totalAmount,
         totalClients: debtorsMap.size
       };
+      
+      console.log(`Final result:`, JSON.stringify(result, null, 2));
+      console.log(`Total debtors found: ${result.totalClients}, Total amount: R$ ${result.totalAmount}`);
+      
+      return result;
     } catch (error) {
       console.error('Erro ao buscar débitos em atraso no Omie:', error);
       // Retornar estrutura vazia para não quebrar a aplicação
