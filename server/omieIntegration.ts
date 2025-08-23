@@ -94,6 +94,12 @@ export class OmieService {
       param: [params]
     };
 
+    console.log(`Making request to ${endpoint} with call ${call}`);
+    console.log('Request URL:', `${this.baseUrl}${endpoint}`);
+    console.log('Request payload:', JSON.stringify(payload, null, 2));
+    console.log('App Key exists:', !!this.config.appKey);
+    console.log('App Secret exists:', !!this.config.appSecret);
+
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -102,11 +108,17 @@ export class OmieService {
       body: JSON.stringify(payload),
     });
 
+    console.log('Response status:', response.status);
+    console.log('Response headers:', response.headers);
+
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Error response body:', errorText);
       throw new Error(`Omie API error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
+    console.log('Response data:', JSON.stringify(data, null, 2));
     
     if (data.faultstring) {
       throw new Error(`Omie API fault: ${data.faultstring}`);
@@ -498,12 +510,24 @@ export class OmieService {
     try {
       console.log('Starting overdue debts query...');
       
+      // Primeiro, vamos testar se a API está funcionando com uma chamada simples
+      console.log('Testing API with client listing first...');
+      try {
+        const testResponse = await this.makeRequest('/geral/clientes/', 'ListarClientes', {
+          pagina: 1,
+          registros_por_pagina: 5,
+          apenas_importado_api: 'N'
+        });
+        console.log('API test successful, proceeding with overdue debts...');
+      } catch (testError) {
+        console.error('API test failed:', testError);
+        throw new Error('API authentication or connection failed');
+      }
+      
       // Usar o endpoint oficial do Omie para contas a receber
       const today = new Date();
-      const sixMonthsAgo = new Date();
-      sixMonthsAgo.setMonth(today.getMonth() - 6);
       
-      const response = await this.makeRequest('financas/contareceber/', 'ListarContasReceber', {
+      const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
         pagina: 1,
         registros_por_pagina: 100,
         apenas_importado_api: 'N',
