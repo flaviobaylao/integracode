@@ -69,9 +69,21 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes(card.notes || '');
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
-      setDeliveryWeekdays((card as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
-      setDeliveryTimeSlots((card as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
+      
+      // Se o card tem configurações de entrega, usa elas, senão usa os valores padrão
+      const defaultWeekdays = ['segunda', 'terca', 'quarta', 'quinta', 'sexta'];
+      const defaultTimeSlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+      
+      setDeliveryWeekdays((card as any).deliveryWeekdays?.length > 0 
+        ? (card as any).deliveryWeekdays 
+        : defaultWeekdays
+      );
+      setDeliveryTimeSlots((card as any).deliveryTimeSlots?.length > 0 
+        ? (card as any).deliveryTimeSlots 
+        : defaultTimeSlots
+      );
     } else {
+      // Valores padrão quando não há card
       setProducts([]);
       setPaymentMethod('a_vista');
       setOperationType('venda');
