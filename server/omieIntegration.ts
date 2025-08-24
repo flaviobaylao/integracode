@@ -538,7 +538,6 @@ export class OmieService {
                        [];
 
         console.log(`Page ${currentPage}: Found ${contas.length} accounts to process`);
-        totalProcessed += contas.length;
         
         // Log básico para debug
         if (currentPage <= 2) {
@@ -546,9 +545,13 @@ export class OmieService {
           console.log(`Total de contas na página: ${contas.length}`);
         }
 
+        let contaIndex = 0;
         for (const conta of contas) {
+          contaIndex++;
+          totalProcessed++;
+          
           // Log primeiras contas para debug
-          if (totalProcessed < 10) {
+          if (totalProcessed <= 10) {
             console.log(`\nConta ${totalProcessed + 1}:`);
             console.log(`  Numero: ${conta.numero_documento}`);
             console.log(`  Vencimento: ${conta.data_vencimento}`);
@@ -557,7 +560,7 @@ export class OmieService {
           }
           
           if (!conta.data_vencimento) {
-            if (totalProcessed < 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
+            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
             continue;
           }
           
@@ -567,7 +570,7 @@ export class OmieService {
           const diffTime = hoje.getTime() - vencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-          if (totalProcessed < 10) {
+          if (totalProcessed <= 10) {
             console.log(`  -> Data hoje: ${hoje.toLocaleDateString()}`);
             console.log(`  -> Data vencimento: ${vencimento.toLocaleDateString()}`);
             console.log(`  -> Dias atraso: ${diasAtraso}`);
@@ -582,7 +585,7 @@ export class OmieService {
                           conta.status_titulo !== 'BAIXADO';
           
           // Log detalhado para debug - todos os títulos vencidos
-          if (isVencido && totalProcessed < 20) {
+          if (isVencido && totalProcessed <= 50) {
             console.log(`  *** VENCIDO: ${conta.numero_documento} - Status: ${conta.status_titulo} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso} - Incluído: ${isAberto} ***`);
           }
           
