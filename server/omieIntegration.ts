@@ -501,153 +501,121 @@ export class OmieService {
     }
   }
 
-  // Buscar débitos em atraso
+  // Buscar débitos em atraso - TODOS os títulos vencidos
   async getOverdueDebts(): Promise<{
     debts: any[];
     totalAmount: number;
     totalClients: number;
   }> {
     try {
-      console.log('Starting overdue debts query...');
+      console.log('Starting comprehensive overdue debts query...');
       
-      // Primeiro, vamos testar se a API está funcionando com uma chamada simples
-      console.log('Testing API with client listing first...');
-      try {
-        const testResponse = await this.makeRequest('/geral/clientes/', 'ListarClientes', {
-          pagina: 1,
-          registros_por_pagina: 5,
-          apenas_importado_api: 'N'
-        });
-        console.log('API test successful, proceeding with overdue debts...');
-      } catch (testError) {
-        console.error('API test failed:', testError);
-        throw new Error('API authentication or connection failed');
-      }
-      
-      // Usar o endpoint oficial do Omie para contas a receber
-      const today = new Date();
-      
-      const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
-        pagina: 1,
-        registros_por_pagina: 100,
-        apenas_importado_api: 'N'
-      });
-
-      console.log(`API response received:`, JSON.stringify(response, null, 2));
-      console.log(`Processing ${response.total_de_registros || 0} records...`);
-
-      // Diferentes endpoints podem ter estruturas diferentes
-      const contas = response.conta_receber_cadastro || 
-                     response.cadastro || 
-                     response.contasReceber || 
-                     response.lista_contas_receber || 
-                     [];
       const hoje = new Date();
       const debtorsMap = new Map();
       let totalAmount = 0;
-
-      console.log(`Found ${contas.length} accounts to process`);
+      let totalProcessed = 0;
       
-      // Analisar os status disponíveis para entender melhor os dados
-      const statusCount = {};
-      const statusWithAtraso = [];
-      contas.forEach(conta => {
-        const status = conta.status_titulo || 'UNDEFINED';
-        statusCount[status] = (statusCount[status] || 0) + 1;
-        
-        // Incluir todos os status para análise completa
-        statusWithAtraso.push(status);
-      });
-      console.log('Status distribution:', statusCount);
-      console.log('Todos os status encontrados:', [...new Set(statusWithAtraso)]);
+      // Implementar paginação para buscar TODOS os títulos
+      let currentPage = 1;
+      let hasMorePages = true;
+      const pageSize = 500; // Aumentar para processar mais registros por vez
       
-      for (const conta of contas) {
-        if (!conta.data_vencimento) continue;
+      while (hasMorePages) {
+        console.log(`Fetching page ${currentPage} with ${pageSize} records...`);
         
-        console.log(`Processing account:`, JSON.stringify({
-          numero_documento: conta.numero_documento,
-          numero_documento_fiscal: conta.numero_documento_fiscal,
-          data_vencimento: conta.data_vencimento,
-          data_emissao: conta.data_emissao,
-          valor_documento: conta.valor_documento,
-          codigo_cliente_fornecedor: conta.codigo_cliente_fornecedor,
-          status_titulo: conta.status_titulo,
-          situacao: conta.situacao,
-          observacao: conta.observacao
-        }, null, 2));
+        const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
+          pagina: currentPage,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: 'N'
+        });
 
-        // Converter data de vencimento do formato brasileiro DD/MM/YYYY
-        const [dia, mes, ano] = conta.data_vencimento.split('/');
-        const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-        const diffTime = hoje.getTime() - vencimento.getTime();
-        const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        // Diferentes endpoints podem ter estruturas diferentes
+        const contas = response.conta_receber_cadastro || 
+                       response.cadastro || 
+                       response.contasReceber || 
+                       response.lista_contas_receber || 
+                       [];
 
-        const statusAberto = !conta.status_titulo || 
-                           conta.status_titulo === 'ABERTO' || 
-                           conta.status_titulo === 'PENDENTE' ||
-                           conta.status_titulo === 'VENCIDO';
+        console.log(`Page ${currentPage}: Found ${contas.length} accounts to process`);
+        totalProcessed += contas.length;
         
-        console.log(`Account ${conta.numero_documento}: dias_atraso=${diasAtraso}, status=${conta.status_titulo}, situacao=${conta.situacao}, isOpen=${statusAberto}`);
-
-        // Trazer TODOS os débitos sem filtro para análise
-        // Vamos mostrar todas as contas para entender melhor o sistema
-        if (true) { // Sempre inclui
-          const clientId = conta.codigo_cliente_fornecedor;
-          const valor = parseFloat(conta.valor_documento || '0');
+        for (const conta of contas) {
+          if (!conta.data_vencimento) continue;
           
-          console.log(`Including account: clientId=${clientId}, valor=${valor}, diasAtraso=${diasAtraso}, status=${conta.status_titulo}`);
+          // Converter data de vencimento do formato brasileiro DD/MM/YYYY
+          const [dia, mes, ano] = conta.data_vencimento.split('/');
+          const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - vencimento.getTime();
+          const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+          // Verificar se o título está em aberto (não pago/quitado)
+          const statusAberto = !conta.status_titulo || 
+                             conta.status_titulo === 'ABERTO' || 
+                             conta.status_titulo === 'PENDENTE' ||
+                             conta.status_titulo === 'VENCIDO' ||
+                             conta.status_titulo === 'EM_ABERTO';
           
-          if (valor > 0) {
-            totalAmount += valor;
-
-            if (!debtorsMap.has(clientId)) {
-              // Buscar dados reais do cliente no Omie
-              let clienteCompleto;
-              try {
-                console.log(`Fetching client data for ${clientId}...`);
-                clienteCompleto = await this.getClientByCode(clientId);
-              } catch (error) {
-                console.warn(`Failed to fetch client ${clientId}, using basic data`);
-              }
-              
-              const clienteBasico = clienteCompleto ? {
-                codigo_cliente_omie: clienteCompleto.codigo_cliente_omie,
-                nome_fantasia: clienteCompleto.nome_fantasia || clienteCompleto.razao_social,
-                cnpj_cpf: clienteCompleto.cnpj_cpf
-              } : {
-                codigo_cliente_omie: clientId,
-                nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
-                cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
-              };
-              
-              debtorsMap.set(clientId, {
-                cliente: clienteBasico,
-                debitos: [],
-                valorTotal: 0,
-                diasMaximoAtraso: 0
-              });
-              
-              console.log(`Created new debtor entry for client ${clienteBasico.nome_fantasia} (${clientId})`);
-            }
-
-            const debtor = debtorsMap.get(clientId);
-            debtor.debitos.push({
-              numero_documento: conta.numero_documento || 'N/A',
-              numero_documento_fiscal: conta.numero_documento_fiscal || 'N/A',
-              codigo_lancamento_omie: conta.codigo_lancamento_omie,
-              valor: valor,
-              data_vencimento: conta.data_vencimento,
-              data_emissao: conta.data_emissao || '',
-              dias_atraso: diasAtraso,
-              observacao: conta.observacao || '',
-              status_titulo: conta.status_titulo || 'N/A'
-            });
-            debtor.valorTotal += valor;
-            debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
+          // FILTRO: Incluir apenas títulos vencidos (data_vencimento < hoje) E em aberto
+          if (diasAtraso > 0 && statusAberto) {
+            const clientId = conta.codigo_cliente_fornecedor;
+            const valor = parseFloat(conta.valor_documento || '0');
             
-            console.log(`Added debt to client ${debtor.cliente.nome_fantasia}: R$ ${valor} (${diasAtraso} dias em atraso) - Doc: ${conta.numero_documento} - NF: ${conta.numero_documento_fiscal}`);
+            if (valor > 0) {
+              totalAmount += valor;
+
+              if (!debtorsMap.has(clientId)) {
+                // Buscar dados reais do cliente no Omie (com cache para otimizar)
+                let clienteCompleto;
+                try {
+                  clienteCompleto = await this.getClientByCode(clientId);
+                } catch (error) {
+                  console.warn(`Failed to fetch client ${clientId}, using basic data`);
+                }
+                
+                const clienteBasico = clienteCompleto ? {
+                  codigo_cliente_omie: clienteCompleto.codigo_cliente_omie,
+                  nome_fantasia: clienteCompleto.nome_fantasia || clienteCompleto.razao_social,
+                  cnpj_cpf: clienteCompleto.cnpj_cpf
+                } : {
+                  codigo_cliente_omie: clientId,
+                  nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
+                  cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
+                };
+                
+                debtorsMap.set(clientId, {
+                  cliente: clienteBasico,
+                  debitos: [],
+                  valorTotal: 0,
+                  diasMaximoAtraso: 0
+                });
+              }
+
+              const debtor = debtorsMap.get(clientId);
+              debtor.debitos.push({
+                numero_documento: conta.numero_documento || 'N/A',
+                numero_documento_fiscal: conta.numero_documento_fiscal || 'N/A',
+                codigo_lancamento_omie: conta.codigo_lancamento_omie,
+                valor: valor,
+                data_vencimento: conta.data_vencimento,
+                data_emissao: conta.data_emissao || '',
+                dias_atraso: diasAtraso,
+                observacao: conta.observacao || '',
+                status_titulo: conta.status_titulo || 'N/A'
+              });
+              debtor.valorTotal += valor;
+              debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
+            }
           }
         }
+
+        // Verificar se há mais páginas
+        const totalPages = response.total_de_paginas || 1;
+        const totalRegistros = response.total_de_registros || 0;
+        
+        console.log(`Page ${currentPage}/${totalPages} - Total records: ${totalRegistros}`);
+        
+        currentPage++;
+        hasMorePages = currentPage <= totalPages && contas.length === pageSize;
       }
 
       const result = {
@@ -656,8 +624,8 @@ export class OmieService {
         totalClients: debtorsMap.size
       };
       
-      console.log(`Final result:`, JSON.stringify(result, null, 2));
-      console.log(`Total debtors found: ${result.totalClients}, Total amount: R$ ${result.totalAmount}`);
+      console.log(`Processamento completo: ${totalProcessed} registros analisados`);
+      console.log(`Débitos vencidos encontrados: ${result.totalClients} clientes, Total: R$ ${result.totalAmount.toFixed(2)}`);
       
       return result;
     } catch (error) {
