@@ -8,7 +8,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, RefreshCw, Search, Eye } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search, Eye, Download } from "lucide-react";
+import * as XLSX from 'xlsx';
 
 interface OverdueDebt {
   cliente: {
@@ -93,6 +94,89 @@ export default function OverdueDebtsManagement() {
     return new Date(dateString).toLocaleDateString('pt-BR');
   };
 
+  // Função para exportar débitos para Excel
+  const exportToExcel = () => {
+    if (!overdueDebts?.debts || overdueDebts.debts.length === 0) {
+      toast({
+        title: "Nenhum dado para exportar",
+        description: "Não há débitos vencidos para exportar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Preparar dados para planilha principal (resumo por cliente)
+      const resumoData = filteredDebts.map((debt, index) => ({
+        'Código Cliente': debt.cliente.codigo_cliente_omie,
+        'Nome/Razão Social': debt.cliente.nome_fantasia,
+        'CNPJ/CPF': debt.cliente.cnpj_cpf,
+        'Valor Total em Atraso': debt.valorTotal,
+        'Máximo Dias em Atraso': debt.diasMaximoAtraso,
+        'Quantidade de Documentos': debt.debitos.length,
+      }));
+
+      // Preparar dados detalhados (todos os documentos)
+      const detalhesData: any[] = [];
+      filteredDebts.forEach((debt) => {
+        debt.debitos.forEach((documento) => {
+          detalhesData.push({
+            'Código Cliente': debt.cliente.codigo_cliente_omie,
+            'Nome/Razão Social': debt.cliente.nome_fantasia,
+            'CNPJ/CPF': debt.cliente.cnpj_cpf,
+            'Número Documento': documento.numero_documento,
+            'Valor': documento.valor,
+            'Data Vencimento': documento.data_vencimento,
+            'Dias em Atraso': documento.dias_atraso,
+            'Observação': documento.observacao || '',
+          });
+        });
+      });
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Aba 1: Resumo por cliente
+      const resumoSheet = XLSX.utils.json_to_sheet(resumoData);
+      XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo por Cliente');
+
+      // Aba 2: Detalhes dos documentos
+      const detalhesSheet = XLSX.utils.json_to_sheet(detalhesData);
+      XLSX.utils.book_append_sheet(workbook, detalhesSheet, 'Detalhes dos Documentos');
+
+      // Aba 3: Estatísticas gerais
+      const estatisticasData = [
+        { 'Métrica': 'Total de Clientes com Débitos', 'Valor': overdueDebts.totalClients },
+        { 'Métrica': 'Valor Total em Atraso', 'Valor': overdueDebts.totalAmount },
+        { 'Métrica': 'Valor Médio por Cliente', 'Valor': overdueDebts.totalClients > 0 ? (overdueDebts.totalAmount / overdueDebts.totalClients) : 0 },
+        { 'Métrica': 'Total de Documentos Vencidos', 'Valor': detalhesData.length },
+        { 'Métrica': 'Data da Exportação', 'Valor': new Date().toLocaleDateString('pt-BR') },
+      ];
+      const estatisticasSheet = XLSX.utils.json_to_sheet(estatisticasData);
+      XLSX.utils.book_append_sheet(workbook, estatisticasSheet, 'Estatísticas');
+
+      // Gerar nome do arquivo
+      const dataAtual = new Date().toISOString().split('T')[0];
+      const nomeArquivo = `debitos-vencidos-${dataAtual}.xlsx`;
+
+      // Fazer download
+      XLSX.writeFile(workbook, nomeArquivo);
+
+      toast({
+        title: "Exportação concluída",
+        description: `Arquivo "${nomeArquivo}" baixado com sucesso.`,
+      });
+
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast({
+        title: "Erro na exportação",
+        description: "Ocorreu um erro ao gerar o arquivo Excel.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -103,15 +187,27 @@ export default function OverdueDebtsManagement() {
             Gerencie os débitos vencidos dos clientes no Omie ERP
           </p>
         </div>
-        <Button 
-          onClick={() => syncOverdueDebts.mutate()}
-          disabled={syncOverdueDebts.isPending}
-          className="bg-honest-orange hover:bg-honest-orange-dark"
-          data-testid="button-sync-overdue-debts"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${syncOverdueDebts.isPending ? 'animate-spin' : ''}`} />
-          {syncOverdueDebts.isPending ? 'Sincronizando...' : 'Sincronizar Débitos'}
-        </Button>
+        <div className="flex space-x-3">
+          {overdueDebts && filteredDebts.length > 0 && (
+            <Button 
+              onClick={exportToExcel}
+              variant="outline"
+              data-testid="button-export-excel"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Exportar Excel
+            </Button>
+          )}
+          <Button 
+            onClick={() => syncOverdueDebts.mutate()}
+            disabled={syncOverdueDebts.isPending}
+            className="bg-honest-orange hover:bg-honest-orange-dark"
+            data-testid="button-sync-overdue-debts"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncOverdueDebts.isPending ? 'animate-spin' : ''}`} />
+            {syncOverdueDebts.isPending ? 'Sincronizando...' : 'Sincronizar Débitos'}
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}

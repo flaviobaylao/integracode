@@ -556,10 +556,6 @@ export class OmieService {
                           conta.status_titulo !== 'CANCELADO' &&
                           conta.status_titulo !== 'LIQUIDADO';
           
-          // Log para debug apenas os primeiros 5 registros
-          if (totalProcessed <= 5) {
-            console.log(`DEBUG - Doc ${conta.numero_documento}: vencimento=${conta.data_vencimento}, diasAtraso=${diasAtraso}, status=${conta.status_titulo}, isVencido=${isVencido}, isAberto=${isAberto}`);
-          }
           
           if (isVencido && isAberto) {
             const clientId = conta.codigo_cliente_fornecedor;
