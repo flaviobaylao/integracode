@@ -872,6 +872,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para buscar débitos em atraso do Omie
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
+      // Evitar cache
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(503).json({ 
@@ -879,8 +886,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log('Fetching overdue debts from Omie...');
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] Fetching overdue debts from Omie - NO CACHE...`);
       const overdueData = await omieService.getOverdueDebts();
+      console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients`);
       res.json(overdueData);
 
     } catch (error) {

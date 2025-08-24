@@ -508,7 +508,8 @@ export class OmieService {
     totalClients: number;
   }> {
     try {
-      console.log('Starting comprehensive overdue debts query...');
+      const executionId = Date.now();
+      console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with situacao filter...`);
       
       const hoje = new Date();
       const debtorsMap = new Map();
