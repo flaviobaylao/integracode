@@ -548,21 +548,11 @@ export class OmieService {
           const diffTime = hoje.getTime() - vencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-          // Verificar se o título está em aberto (não pago/quitado)
-          const statusAberto = conta.status_titulo === 'ABERTO' || 
-                             conta.status_titulo === 'PENDENTE' ||
-                             conta.status_titulo === 'VENCIDO' ||
-                             conta.status_titulo === 'EM_ABERTO';
+          // FILTRO: Incluir apenas títulos com situação "atrasados"
+          const situacaoAtrasada = conta.situacao && 
+                                 conta.situacao.toLowerCase().includes('atrasad');
           
-          // Excluir títulos já recebidos/pagos/quitados
-          const statusPago = conta.status_titulo === 'RECEBIDO' ||
-                           conta.status_titulo === 'PAGO' ||
-                           conta.status_titulo === 'QUITADO' ||
-                           conta.status_titulo === 'CANCELADO' ||
-                           conta.status_titulo === 'LIQUIDADO';
-          
-          // FILTRO: Incluir apenas títulos vencidos (data_vencimento < hoje) E em aberto (não pagos)
-          if (diasAtraso > 0 && statusAberto && !statusPago) {
+          if (situacaoAtrasada) {
             const clientId = conta.codigo_cliente_fornecedor;
             const valor = parseFloat(conta.valor_documento || '0');
             
