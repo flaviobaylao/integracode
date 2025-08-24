@@ -14,6 +14,14 @@ import {
   insertMessageHistorySchema,
 } from "@shared/schema";
 import { z } from "zod";
+import multer from 'multer';
+import * as XLSX from 'xlsx';
+
+// Configurar multer para upload de arquivos
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -896,6 +904,125 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error fetching overdue debts from Omie:", error);
       res.status(500).json({ 
         message: "Erro ao buscar débitos em atraso no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Rota para comparar arquivo Excel com dados da sincronização
+  app.post('/api/omie/compare-excel', authenticateUser, upload.single('excelFile'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "Arquivo Excel é obrigatório" });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      console.log('Analisando arquivo Excel...');
+      
+      // Ler arquivo Excel
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0]; // Primeira aba
+      const worksheet = workbook.Sheets[sheetName];
+      const excelData = XLSX.utils.sheet_to_json(worksheet);
+
+      console.log(`Arquivo Excel contém ${excelData.length} registros`);
+
+      // Buscar dados atuais da API Omie
+      console.log('Buscando dados atuais da API Omie...');
+      const omieData = await omieService.getOverdueDebts();
+
+      console.log(`API Omie retornou ${omieData.totalClients} clientes com débitos`);
+
+      // Comparar dados
+      const comparison = {
+        excel: {
+          totalRecords: excelData.length,
+          columns: Object.keys(excelData[0] || {}),
+          sample: excelData.slice(0, 3) // Primeiros 3 registros para análise
+        },
+        omie: {
+          totalClients: omieData.totalClients,
+          totalAmount: omieData.totalAmount,
+          sampleClients: omieData.debts.slice(0, 3).map(debt => ({
+            codigo_cliente_omie: debt.cliente.codigo_cliente_omie,
+            nome_fantasia: debt.cliente.nome_fantasia,
+            cnpj_cpf: debt.cliente.cnpj_cpf,
+            valorTotal: debt.valorTotal,
+            diasMaximoAtraso: debt.diasMaximoAtraso,
+            qtdDocumentos: debt.debitos.length
+          }))
+        },
+        differences: [],
+        recommendations: []
+      };
+
+      // Analisar estrutura do Excel para identificar possíveis campos de comparação
+      const excelColumns = Object.keys(excelData[0] || {});
+      const possibleClientFields = excelColumns.filter(col => 
+        col.toLowerCase().includes('client') ||
+        col.toLowerCase().includes('nome') ||
+        col.toLowerCase().includes('razao') ||
+        col.toLowerCase().includes('cnpj') ||
+        col.toLowerCase().includes('cpf') ||
+        col.toLowerCase().includes('codigo')
+      );
+
+      const possibleValueFields = excelColumns.filter(col => 
+        col.toLowerCase().includes('valor') ||
+        col.toLowerCase().includes('total') ||
+        col.toLowerCase().includes('debt') ||
+        col.toLowerCase().includes('divida')
+      );
+
+      const possibleDateFields = excelColumns.filter(col => 
+        col.toLowerCase().includes('data') ||
+        col.toLowerCase().includes('venc') ||
+        col.toLowerCase().includes('date') ||
+        col.toLowerCase().includes('atraso')
+      );
+
+      // Adicionar recomendações baseadas na análise
+      comparison.recommendations.push({
+        type: 'structure',
+        message: `Arquivo Excel possui ${excelColumns.length} colunas. Campos identificados:`,
+        details: {
+          possibleClientFields,
+          possibleValueFields,
+          possibleDateFields
+        }
+      });
+
+      // Se conseguirmos identificar um campo de cliente, fazer comparação básica
+      if (possibleClientFields.length > 0) {
+        const clientField = possibleClientFields[0];
+        const excelClients = new Set(excelData.map((row: any) => row[clientField]?.toString().trim()));
+        const omieClients = new Set(omieData.debts.map(debt => debt.cliente.nome_fantasia));
+
+        const onlyInExcel = Array.from(excelClients).filter(client => !omieClients.has(client));
+        const onlyInOmie = Array.from(omieClients).filter(client => !excelClients.has(client));
+
+        comparison.differences.push({
+          type: 'clients',
+          message: 'Comparação de clientes entre Excel e Omie',
+          excelTotal: excelClients.size,
+          omieTotal: omieClients.size,
+          onlyInExcel: onlyInExcel.slice(0, 10), // Primeiros 10
+          onlyInOmie: onlyInOmie.slice(0, 10), // Primeiros 10
+        });
+      }
+
+      res.json(comparison);
+
+    } catch (error) {
+      console.error("Error comparing Excel file:", error);
+      res.status(500).json({ 
+        message: "Erro ao analisar arquivo Excel",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
       });
     }

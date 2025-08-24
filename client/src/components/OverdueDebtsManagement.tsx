@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, RefreshCw, Search, Eye, Download } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search, Eye, Download, Upload } from "lucide-react";
 import * as XLSX from 'xlsx';
 
 interface OverdueDebt {
@@ -37,6 +37,8 @@ interface OverdueDebtsData {
 export default function OverdueDebtsManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDebt, setSelectedDebt] = useState<OverdueDebt | null>(null);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState<any>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -177,6 +179,58 @@ export default function OverdueDebtsManagement() {
     }
   };
 
+  // Função para comparar arquivo Excel
+  const compareExcelFile = async (file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append('excelFile', file);
+
+      const response = await fetch('/api/omie/compare-excel', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Erro ao comparar arquivo');
+      }
+
+      const result = await response.json();
+      setComparisonResult(result);
+      setShowComparisonModal(true);
+
+      toast({
+        title: "Comparação concluída",
+        description: "Arquivo Excel analisado com sucesso.",
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao comparar arquivo Excel:', error);
+      toast({
+        title: "Erro na comparação",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.type !== 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' && 
+          !file.name.endsWith('.xlsx')) {
+        toast({
+          title: "Formato inválido",
+          description: "Por favor, selecione um arquivo Excel (.xlsx).",
+          variant: "destructive",
+        });
+        return;
+      }
+      compareExcelFile(file);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -189,14 +243,34 @@ export default function OverdueDebtsManagement() {
         </div>
         <div className="flex space-x-3">
           {overdueDebts && filteredDebts.length > 0 && (
-            <Button 
-              onClick={exportToExcel}
-              variant="outline"
-              data-testid="button-export-excel"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Exportar Excel
-            </Button>
+            <>
+              <Button 
+                onClick={exportToExcel}
+                variant="outline"
+                data-testid="button-export-excel"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Exportar Excel
+              </Button>
+              <label className="cursor-pointer">
+                <Button 
+                  variant="outline"
+                  data-testid="button-compare-excel"
+                  asChild
+                >
+                  <span>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Comparar Excel
+                  </span>
+                </Button>
+                <input
+                  type="file"
+                  accept=".xlsx"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
+            </>
           )}
           <Button 
             onClick={() => syncOverdueDebts.mutate()}
@@ -434,6 +508,133 @@ export default function OverdueDebtsManagement() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal de comparação Excel */}
+      {showComparisonModal && comparisonResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-4xl max-h-[80vh] overflow-hidden">
+            <CardHeader className="border-b">
+              <CardTitle className="flex items-center justify-between">
+                <span>Comparação: Excel vs Sincronização Omie</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowComparisonModal(false)}
+                >
+                  ×
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 overflow-y-auto space-y-6">
+              {/* Resumo geral */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Arquivo Excel</h3>
+                  <div className="space-y-2">
+                    <p><strong>Total de registros:</strong> {comparisonResult.excel.totalRecords}</p>
+                    <p><strong>Colunas encontradas:</strong> {comparisonResult.excel.columns.length}</p>
+                    <div className="text-sm text-gray-600">
+                      <strong>Colunas:</strong> {comparisonResult.excel.columns.join(', ')}
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Sincronização Omie</h3>
+                  <div className="space-y-2">
+                    <p><strong>Total de clientes:</strong> {comparisonResult.omie.totalClients}</p>
+                    <p><strong>Valor total:</strong> {formatCurrency(comparisonResult.omie.totalAmount)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Diferenças encontradas */}
+              {comparisonResult.differences.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Diferenças Encontradas</h3>
+                  {comparisonResult.differences.map((diff: any, index: number) => (
+                    <div key={index} className="border rounded p-4 bg-yellow-50">
+                      <h4 className="font-medium">{diff.message}</h4>
+                      {diff.type === 'clients' && (
+                        <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <p><strong>Excel:</strong> {diff.excelTotal} clientes</p>
+                            {diff.onlyInExcel.length > 0 && (
+                              <div className="mt-1">
+                                <p className="text-red-600"><strong>Apenas no Excel:</strong></p>
+                                <ul className="text-xs text-gray-600">
+                                  {diff.onlyInExcel.map((client: string, idx: number) => (
+                                    <li key={idx}>• {client}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <p><strong>Omie:</strong> {diff.omieTotal} clientes</p>
+                            {diff.onlyInOmie.length > 0 && (
+                              <div className="mt-1">
+                                <p className="text-blue-600"><strong>Apenas no Omie:</strong></p>
+                                <ul className="text-xs text-gray-600">
+                                  {diff.onlyInOmie.map((client: string, idx: number) => (
+                                    <li key={idx}>• {client}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Recomendações */}
+              {comparisonResult.recommendations.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Análise e Recomendações</h3>
+                  {comparisonResult.recommendations.map((rec: any, index: number) => (
+                    <div key={index} className="border rounded p-4 bg-blue-50">
+                      <p className="font-medium">{rec.message}</p>
+                      {rec.details && (
+                        <div className="mt-2 text-sm">
+                          {rec.details.possibleClientFields?.length > 0 && (
+                            <p><strong>Campos de cliente:</strong> {rec.details.possibleClientFields.join(', ')}</p>
+                          )}
+                          {rec.details.possibleValueFields?.length > 0 && (
+                            <p><strong>Campos de valor:</strong> {rec.details.possibleValueFields.join(', ')}</p>
+                          )}
+                          {rec.details.possibleDateFields?.length > 0 && (
+                            <p><strong>Campos de data:</strong> {rec.details.possibleDateFields.join(', ')}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Amostras dos dados */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Amostra Excel</h3>
+                  <div className="text-xs bg-gray-100 p-3 rounded overflow-auto">
+                    <pre>{JSON.stringify(comparisonResult.excel.sample, null, 2)}</pre>
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold text-lg mb-3">Amostra Omie</h3>
+                  <div className="text-xs bg-gray-100 p-3 rounded overflow-auto">
+                    <pre>{JSON.stringify(comparisonResult.omie.sampleClients, null, 2)}</pre>
                   </div>
                 </div>
               </div>
