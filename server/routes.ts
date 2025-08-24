@@ -1042,6 +1042,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para buscar vendedores
+  app.get('/api/omie/vendedores', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const vendedores = await omieService.getAllVendors();
+      res.json(vendedores.vendors);
+
+    } catch (error) {
+      console.error("Error fetching vendors from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar vendedores no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Blocked orders routes
   app.get('/api/blocked-orders', authenticateUser, async (req: any, res) => {
     try {

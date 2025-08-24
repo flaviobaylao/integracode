@@ -222,6 +222,20 @@ export class OmieService {
     diasEmAtraso?: number;
   }> {
     try {
+      // Primeiro, verificar se cliente está na lista de débitos vencidos
+      const overdueDebts = await this.getOverdueDebts();
+      const clienteComDebito = overdueDebts.debts.find(debt => 
+        debt.cliente.cnpj_cpf === cnpjCpf
+      );
+
+      if (clienteComDebito) {
+        return {
+          aprovado: false,
+          motivo: `Cliente com débitos vencidos: ${this.formatCurrency(clienteComDebito.valorTotal)}`,
+          diasEmAtraso: clienteComDebito.diasMaximoAtraso
+        };
+      }
+
       const creditInfo = await this.getClientCreditInfo(cnpjCpf);
       
       if (!creditInfo) {
@@ -274,6 +288,14 @@ export class OmieService {
         motivo: 'Erro interno na consulta de crédito'
       };
     }
+  }
+
+  // Método auxiliar para formatação de moeda
+  private formatCurrency(value: number): string {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(value);
   }
 
   // Criar pedido de venda no Omie
@@ -619,7 +641,8 @@ export class OmieService {
                   cliente: clienteBasico,
                   debitos: [],
                   valorTotal: 0,
-                  diasMaximoAtraso: 0
+                  diasMaximoAtraso: 0,
+                  vendedores: new Set() // Para agrupar vendedores únicos do cliente
                 });
               }
 
@@ -634,10 +657,19 @@ export class OmieService {
                 data_emissao: conta.data_emissao || '',
                 dias_atraso: diasAtraso,
                 observacao: conta.observacao || '',
-                status_titulo: conta.status_titulo || 'N/A'
+                status_titulo: conta.status_titulo || 'N/A',
+                // Novos campos solicitados
+                nota_fiscal_cupom: conta.numero_documento_fiscal || conta.numero_documento || 'N/A',
+                tipo_documento: conta.codigo_tipo_documento || 'N/A',
+                codigo_vendedor: conta.codigo_vendedor || null
               });
               debtor.valorTotal += valor;
               debtor.diasMaximoAtraso = Math.max(debtor.diasMaximoAtraso, diasAtraso);
+              
+              // Adicionar vendedor ao conjunto se existir
+              if (conta.codigo_vendedor) {
+                debtor.vendedores.add(conta.codigo_vendedor);
+              }
             }
           }
         }
@@ -652,8 +684,14 @@ export class OmieService {
         hasMorePages = currentPage <= totalPages && contas.length === pageSize;
       }
 
+      // Converter Sets de vendedores para arrays antes de retornar
+      const debtsList = Array.from(debtorsMap.values()).map(debtor => ({
+        ...debtor,
+        vendedores: Array.from(debtor.vendedores)
+      }));
+
       const result = {
-        debts: Array.from(debtorsMap.values()),
+        debts: debtsList,
         totalAmount,
         totalClients: debtorsMap.size
       };

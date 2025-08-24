@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AlertTriangle, RefreshCw, Search, Eye, Download, Upload } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from 'xlsx';
 
 interface OverdueDebt {
@@ -39,6 +40,7 @@ export default function OverdueDebtsManagement() {
   const [selectedDebt, setSelectedDebt] = useState<OverdueDebt | null>(null);
   const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<any>(null);
+  const [selectedVendor, setSelectedVendor] = useState<string>("all");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -46,6 +48,12 @@ export default function OverdueDebtsManagement() {
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
     queryKey: ['/api/omie/overdue-debts'],
     enabled: false, // Não carregar automaticamente
+  });
+
+  // Query para buscar vendedores
+  const { data: vendedores } = useQuery<any[]>({
+    queryKey: ['/api/omie/vendedores'],
+    staleTime: 1000 * 60 * 10, // 10 minutos
   });
 
   // Mutation para sincronizar débitos vencidos
@@ -81,8 +89,13 @@ export default function OverdueDebtsManagement() {
 
   const filteredDebts = overdueDebts?.debts?.filter(debt => {
     const searchLower = searchTerm.toLowerCase();
-    return debt.cliente.nome_fantasia.toLowerCase().includes(searchLower) ||
-           debt.cliente.cnpj_cpf.includes(searchTerm);
+    const matchesSearch = debt.cliente.nome_fantasia.toLowerCase().includes(searchLower) ||
+                         debt.cliente.cnpj_cpf.includes(searchTerm);
+    
+    const matchesVendor = selectedVendor === "all" || 
+                         debt.vendedores?.includes(parseInt(selectedVendor));
+    
+    return matchesSearch && matchesVendor;
   }) || [];
 
   const formatCurrency = (value: number) => {
@@ -365,6 +378,21 @@ export default function OverdueDebtsManagement() {
               className="pl-10"
               data-testid="input-search-debts"
             />
+          </div>
+          <div className="min-w-[200px]">
+            <Select value={selectedVendor} onValueChange={setSelectedVendor}>
+              <SelectTrigger data-testid="select-vendor-filter">
+                <SelectValue placeholder="Filtrar por vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os vendedores</SelectItem>
+                {vendedores?.map((vendedor) => (
+                  <SelectItem key={vendedor.codigo} value={vendedor.codigo.toString()}>
+                    {vendedor.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       )}
