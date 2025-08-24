@@ -554,31 +554,31 @@ export class OmieService {
           if (totalProcessed <= 10) {
             console.log(`\nConta ${totalProcessed + 1}:`);
             console.log(`  Numero: ${conta.numero_documento}`);
-            console.log(`  Vencimento: ${conta.data_vencimento}`);
+            console.log(`  Data previsao: ${conta.data_previsao}`);
             console.log(`  Status: ${conta.status_titulo}`);
             console.log(`  Valor: ${conta.valor_documento}`);
           }
           
-          if (!conta.data_vencimento) {
-            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
+          if (!conta.data_previsao) {
+            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE PREVISÃO, pulando`);
             continue;
           }
           
-          // Converter data de vencimento do formato brasileiro DD/MM/YYYY
-          const [dia, mes, ano] = conta.data_vencimento.split('/');
-          const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-          const diffTime = hoje.getTime() - vencimento.getTime();
+          // Converter data de PREVISÃO do formato brasileiro DD/MM/YYYY
+          const [dia, mes, ano] = conta.data_previsao.split('/');
+          const dataPrevisao = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - dataPrevisao.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
           if (totalProcessed <= 10) {
             console.log(`  -> Data hoje: ${hoje.toLocaleDateString()}`);
-            console.log(`  -> Data vencimento: ${vencimento.toLocaleDateString()}`);
+            console.log(`  -> Data previsão: ${dataPrevisao.toLocaleDateString()}`);
             console.log(`  -> Dias atraso: ${diasAtraso}`);
           }
 
-          // FILTRO: Títulos vencidos (diasAtraso > 0) E que não foram pagos
+          // FILTRO: Títulos com previsão de recebimento vencida (diasAtraso > 0) E que estão em aberto
           const isVencido = diasAtraso > 0;
-          // Temporariamente incluir todos os status EXCETO os definitivamente pagos/cancelados
+          // Incluir apenas títulos em aberto (não pagos)
           const isAberto = conta.status_titulo !== 'RECEBIDO' && 
                           conta.status_titulo !== 'CANCELADO' &&
                           conta.status_titulo !== 'LIQUIDADO' &&
@@ -630,6 +630,7 @@ export class OmieService {
                 codigo_lancamento_omie: conta.codigo_lancamento_omie,
                 valor: valor,
                 data_vencimento: conta.data_vencimento,
+                data_previsao: conta.data_previsao,
                 data_emissao: conta.data_emissao || '',
                 dias_atraso: diasAtraso,
                 observacao: conta.observacao || '',
@@ -678,11 +679,11 @@ export class OmieService {
         const contas = response.conta_receber_cadastro || response.cadastro || response.contasReceber || response.lista_contas_receber || [];
         
         for (const conta of contas) {
-          if (!conta.data_vencimento) continue;
+          if (!conta.data_previsao) continue;
           
-          const [dia, mes, ano] = conta.data_vencimento.split('/');
-          const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-          const diffTime = hoje.getTime() - vencimento.getTime();
+          const [dia, mes, ano] = conta.data_previsao.split('/');
+          const dataPrevisao = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - dataPrevisao.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
           
           if (diasAtraso > 0) {
