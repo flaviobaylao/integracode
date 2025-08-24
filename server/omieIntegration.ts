@@ -540,14 +540,38 @@ export class OmieService {
         console.log(`Page ${currentPage}: Found ${contas.length} accounts to process`);
         totalProcessed += contas.length;
         
+        // Log básico para debug
+        if (currentPage <= 2) {
+          console.log(`\n=== DEBUG PÁGINA ${currentPage} ===`);
+          console.log(`Total de contas na página: ${contas.length}`);
+        }
+
         for (const conta of contas) {
-          if (!conta.data_vencimento) continue;
+          // Log primeiras contas para debug
+          if (totalProcessed < 10) {
+            console.log(`\nConta ${totalProcessed + 1}:`);
+            console.log(`  Numero: ${conta.numero_documento}`);
+            console.log(`  Vencimento: ${conta.data_vencimento}`);
+            console.log(`  Status: ${conta.status_titulo}`);
+            console.log(`  Valor: ${conta.valor_documento}`);
+          }
+          
+          if (!conta.data_vencimento) {
+            if (totalProcessed < 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
+            continue;
+          }
           
           // Converter data de vencimento do formato brasileiro DD/MM/YYYY
           const [dia, mes, ano] = conta.data_vencimento.split('/');
           const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
           const diffTime = hoje.getTime() - vencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+          if (totalProcessed < 10) {
+            console.log(`  -> Data hoje: ${hoje.toLocaleDateString()}`);
+            console.log(`  -> Data vencimento: ${vencimento.toLocaleDateString()}`);
+            console.log(`  -> Dias atraso: ${diasAtraso}`);
+          }
 
           // FILTRO: Títulos vencidos (diasAtraso > 0) E que não foram pagos
           const isVencido = diasAtraso > 0;
@@ -558,8 +582,8 @@ export class OmieService {
                           conta.status_titulo !== 'BAIXADO';
           
           // Log detalhado para debug - todos os títulos vencidos
-          if (isVencido && totalProcessed < 100) {
-            console.log(`DEBUG: Conta ${conta.numero_documento} - Status: ${conta.status_titulo} - Valor: ${conta.valor_documento} - Dias atraso: ${diasAtraso} - Incluído: ${isAberto}`);
+          if (isVencido && totalProcessed < 20) {
+            console.log(`  *** VENCIDO: ${conta.numero_documento} - Status: ${conta.status_titulo} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso} - Incluído: ${isAberto} ***`);
           }
           
           if (isVencido && isAberto) {
