@@ -542,6 +542,9 @@ export class OmieService {
         for (const conta of contas) {
           if (!conta.data_vencimento) continue;
           
+          // Log para debug - mostrar os campos situacao e status_titulo
+          console.log(`DEBUG - Conta ${conta.numero_documento}: situacao="${conta.situacao}", status_titulo="${conta.status_titulo}"`);
+          
           // Converter data de vencimento do formato brasileiro DD/MM/YYYY
           const [dia, mes, ano] = conta.data_vencimento.split('/');
           const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
@@ -551,6 +554,8 @@ export class OmieService {
           // FILTRO: Incluir apenas títulos com situação "atrasados"
           const situacaoAtrasada = conta.situacao && 
                                  conta.situacao.toLowerCase().includes('atrasad');
+          
+          console.log(`DEBUG - Conta ${conta.numero_documento}: situacaoAtrasada=${situacaoAtrasada}`);
           
           if (situacaoAtrasada) {
             const clientId = conta.codigo_cliente_fornecedor;
