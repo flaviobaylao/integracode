@@ -553,6 +553,10 @@ export class OmieService {
           const isVencido = diasAtraso > 0;
           const isAberto = conta.status_titulo === 'EM_ABERTO';
           
+          // Log detalhado para debug - apenas primeiros registros
+          if (totalProcessed < 50 && isVencido) {
+            console.log(`DEBUG: Conta ${conta.numero_documento} - Status: ${conta.status_titulo} - Valor: ${conta.valor_documento} - Dias atraso: ${diasAtraso} - Incluído: ${isAberto}`);
+          }
           
           if (isVencido && isAberto) {
             const clientId = conta.codigo_cliente_fornecedor;
@@ -624,6 +628,50 @@ export class OmieService {
       
       console.log(`Processamento completo: ${totalProcessed} registros analisados`);
       console.log(`Débitos vencidos encontrados: ${result.totalClients} clientes, Total: R$ ${result.totalAmount.toFixed(2)}`);
+      
+      // Log dos status encontrados para análise
+      const statusCounts = new Map();
+      let vencidosTotal = 0;
+      
+      // Fazer uma segunda passada apenas para contagem de status
+      currentPage = 1;
+      hasMorePages = true;
+      
+      while (hasMorePages && currentPage <= 3) { // Analisar apenas primeiras 3 páginas para performance
+        const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
+          pagina: currentPage,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: 'N'
+        });
+
+        const contas = response.conta_receber_cadastro || response.cadastro || response.contasReceber || response.lista_contas_receber || [];
+        
+        for (const conta of contas) {
+          if (!conta.data_vencimento) continue;
+          
+          const [dia, mes, ano] = conta.data_vencimento.split('/');
+          const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - vencimento.getTime();
+          const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          
+          if (diasAtraso > 0) {
+            vencidosTotal++;
+            const status = conta.status_titulo || 'SEM_STATUS';
+            statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+          }
+        }
+        
+        currentPage++;
+        hasMorePages = currentPage <= 3;
+      }
+      
+      console.log(`\n=== ANÁLISE DE STATUS (primeiras 3 páginas) ===`);
+      console.log(`Total de títulos vencidos: ${vencidosTotal}`);
+      console.log(`Status encontrados em títulos vencidos:`);
+      for (const [status, count] of statusCounts.entries()) {
+        console.log(`  ${status}: ${count} títulos`);
+      }
+      console.log(`=====================================\n`);
       
       return result;
     } catch (error) {
