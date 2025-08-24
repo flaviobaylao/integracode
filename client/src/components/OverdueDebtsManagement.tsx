@@ -192,11 +192,24 @@ export default function OverdueDebtsManagement() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Erro ao comparar arquivo');
+        let errorMessage = 'Erro ao comparar arquivo';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          // Se não conseguir fazer parse do JSON, usar a mensagem padrão
+          errorMessage = `Erro HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (jsonError) {
+        console.error('Erro ao fazer parse do JSON:', jsonError);
+        throw new Error('Resposta inválida do servidor. Verifique os logs do console.');
+      }
       setComparisonResult(result);
       setShowComparisonModal(true);
 

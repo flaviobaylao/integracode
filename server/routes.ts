@@ -912,18 +912,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para comparar arquivo Excel com dados da sincronização
   app.post('/api/omie/compare-excel', authenticateUser, upload.single('excelFile'), async (req: any, res) => {
     try {
+      console.log('Route /api/omie/compare-excel called');
+      console.log('File received:', !!req.file);
+      
+      // Garantir que sempre retornamos JSON
+      res.setHeader('Content-Type', 'application/json');
+      
       if (!req.file) {
+        console.log('No file uploaded');
         return res.status(400).json({ message: "Arquivo Excel é obrigatório" });
       }
 
       const omieService = getOmieService();
       if (!omieService) {
+        console.log('Omie service not configured');
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
         });
       }
 
       console.log('Analisando arquivo Excel...');
+      console.log('File name:', req.file.originalname);
+      console.log('File size:', req.file.size);
       
       // Ler arquivo Excel
       const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -1021,10 +1031,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     } catch (error) {
       console.error("Error comparing Excel file:", error);
-      res.status(500).json({ 
-        message: "Erro ao analisar arquivo Excel",
-        error: error instanceof Error ? error.message : 'Erro desconhecido'
-      });
+      // Garantir que sempre retornamos JSON mesmo em erro
+      if (!res.headersSent) {
+        res.setHeader('Content-Type', 'application/json');
+        res.status(500).json({ 
+          message: "Erro ao analisar arquivo Excel",
+          error: error instanceof Error ? error.message : 'Erro desconhecido'
+        });
+      }
     }
   });
 
