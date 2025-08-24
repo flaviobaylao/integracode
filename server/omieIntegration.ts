@@ -549,12 +549,9 @@ export class OmieService {
           const diffTime = hoje.getTime() - vencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-          // FILTRO: Títulos vencidos (diasAtraso > 0) E que não foram pagos/cancelados
+          // FILTRO: Títulos vencidos (diasAtraso > 0) E que estão realmente em aberto
           const isVencido = diasAtraso > 0;
-          const isAberto = conta.status_titulo && 
-                          conta.status_titulo !== 'RECEBIDO' && 
-                          conta.status_titulo !== 'CANCELADO' &&
-                          conta.status_titulo !== 'LIQUIDADO';
+          const isAberto = conta.status_titulo === 'EM_ABERTO';
           
           
           if (isVencido && isAberto) {
