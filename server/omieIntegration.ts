@@ -543,22 +543,20 @@ export class OmieService {
         for (const conta of contas) {
           if (!conta.data_vencimento) continue;
           
-          // Log para debug - mostrar os campos situacao e status_titulo
-          console.log(`DEBUG - Conta ${conta.numero_documento}: situacao="${conta.situacao}", status_titulo="${conta.status_titulo}"`);
-          
           // Converter data de vencimento do formato brasileiro DD/MM/YYYY
           const [dia, mes, ano] = conta.data_vencimento.split('/');
           const vencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
           const diffTime = hoje.getTime() - vencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-          // FILTRO: Incluir apenas títulos com situação "atrasados"
-          const situacaoAtrasada = conta.situacao && 
-                                 conta.situacao.toLowerCase().includes('atrasad');
+          // FILTRO: Títulos vencidos (diasAtraso > 0) E que não foram pagos/cancelados
+          const isVencido = diasAtraso > 0;
+          const isAberto = conta.status_titulo && 
+                          conta.status_titulo !== 'RECEBIDO' && 
+                          conta.status_titulo !== 'CANCELADO' &&
+                          conta.status_titulo !== 'LIQUIDADO';
           
-          console.log(`DEBUG - Conta ${conta.numero_documento}: situacaoAtrasada=${situacaoAtrasada}`);
-          
-          if (situacaoAtrasada) {
+          if (isVencido && isAberto) {
             const clientId = conta.codigo_cliente_fornecedor;
             const valor = parseFloat(conta.valor_documento || '0');
             
