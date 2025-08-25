@@ -813,19 +813,22 @@ export class OmieService {
           currentPage++;
         } catch (error: any) {
           // Tratar caso específico onde não há registros na etapa
-          // Verificar tanto a mensagem original quanto a de resposta do Omie
           const errorMessage = error.message || '';
-          const isNoRecordsError = errorMessage.includes('500 Internal Server Error') && 
-                                  error.response?.includes('NÃ£o existem registros para a pÃ¡gina');
+          const errorResponse = error.response || '';
           
-          if (isNoRecordsError || 
-              errorMessage.includes('Não existem registros para a página') || 
-              errorMessage.includes('NÃ£o existem registros para a pÃ¡gina')) {
-            console.log(`Nenhum pedido encontrado na etapa ${stage}`);
+          // Verificar se é o erro específico de "não existem registros"
+          const isNoRecordsError = errorMessage.includes('500 Internal Server Error') && 
+                                  (errorResponse.includes('NÃ£o existem registros para a pÃ¡gina') ||
+                                   errorResponse.includes('Não existem registros para a página'));
+          
+          if (isNoRecordsError) {
+            console.log(`Nenhum pedido encontrado na etapa ${stage} - retornando lista vazia`);
             hasMorePages = false;
             break;
           }
+          
           // Se for outro tipo de erro, rejeitar
+          console.error(`Erro não tratado na etapa ${stage}:`, error);
           throw error;
         }
       }
