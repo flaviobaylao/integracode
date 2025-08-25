@@ -161,8 +161,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     setShowConfirmation(true);
   };
 
-  // Confirmar e enviar para Omie
-  const confirmSale = () => {
+  // Capturar coordenadas GPS automaticamente
+  const captureGPSAndFinalizeSale = () => {
     // Verificar valor mínimo do pedido (apenas para vendas, não para amostras)
     if (operationType === 'venda' && minimumOrderValue > 0 && totalSale < minimumOrderValue) {
       toast({
@@ -173,16 +173,80 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       return;
     }
 
-    const saleData = {
-      products: saleItems,
-      totalValue: totalSale,
-      orderNumber: `HS-${Date.now()}`, // Número do pedido único
-      paymentMethod,
-      operationType,
-    };
+    // Tentar capturar localização GPS primeiro
+    if (navigator.geolocation) {
+      toast({
+        title: "Capturando localização...",
+        description: "Obtendo coordenadas GPS para registrar no cliente",
+      });
 
-    finalizeSaleMutation.mutate(saleData);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const saleData = {
+            products: saleItems,
+            totalValue: totalSale,
+            orderNumber: `HS-${Date.now()}`,
+            paymentMethod,
+            operationType,
+            customerLatitude: position.coords.latitude.toString(),
+            customerLongitude: position.coords.longitude.toString(),
+          };
+
+          toast({
+            title: "Localização capturada!",
+            description: "Coordenadas GPS serão salvas no cliente",
+          });
+
+          finalizeSaleMutation.mutate(saleData);
+        },
+        (error) => {
+          console.error('Erro ao capturar GPS:', error);
+          
+          // Se não conseguir capturar GPS, finalizar venda mesmo assim
+          const saleData = {
+            products: saleItems,
+            totalValue: totalSale,
+            orderNumber: `HS-${Date.now()}`,
+            paymentMethod,
+            operationType,
+          };
+
+          toast({
+            title: "GPS não disponível",
+            description: "Venda será finalizada sem coordenadas GPS",
+            variant: "destructive",
+          });
+
+          finalizeSaleMutation.mutate(saleData);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 5000, // 5 segundos timeout
+          maximumAge: 0,
+        }
+      );
+    } else {
+      // Navegador não suporta geolocalização
+      const saleData = {
+        products: saleItems,
+        totalValue: totalSale,
+        orderNumber: `HS-${Date.now()}`,
+        paymentMethod,
+        operationType,
+      };
+
+      toast({
+        title: "Geolocalização não suportada",
+        description: "Venda será finalizada sem coordenadas GPS",
+        variant: "destructive",
+      });
+
+      finalizeSaleMutation.mutate(saleData);
+    }
   };
+
+  // Manter função de confirmação para compatibilidade
+  const confirmSale = captureGPSAndFinalizeSale;
 
   // Reset ao fechar
   useEffect(() => {

@@ -275,7 +275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -293,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -315,7 +315,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -337,7 +337,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -355,7 +355,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -434,7 +434,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.userId;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -495,6 +495,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const salesCard = await storage.createSalesCard(processedData);
+      
+      // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
+      if (req.body.customerLatitude && req.body.customerLongitude) {
+        try {
+          await storage.updateCustomer(processedData.customerId, {
+            latitude: req.body.customerLatitude,
+            longitude: req.body.customerLongitude
+          });
+          console.log(`Coordenadas GPS atualizadas para cliente ${processedData.customerId}: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
+        } catch (coordError) {
+          console.error('Erro ao atualizar coordenadas do cliente:', coordError);
+          // Não falhar a criação da venda se a atualização de coordenadas falhar
+        }
+      }
+      
       res.json(salesCard);
     } catch (error) {
       console.error("Error creating sales card:", error);
@@ -524,6 +539,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const salesCard = await storage.updateSalesCard(id, data);
+      
+      // Se coordenadas GPS foram capturadas durante a atualização da venda, atualizar o cliente
+      if (req.body.customerLatitude && req.body.customerLongitude) {
+        try {
+          await storage.updateCustomer(salesCard.customerId, {
+            latitude: req.body.customerLatitude,
+            longitude: req.body.customerLongitude
+          });
+          console.log(`Coordenadas GPS atualizadas para cliente ${salesCard.customerId}: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
+        } catch (coordError) {
+          console.error('Erro ao atualizar coordenadas do cliente:', coordError);
+          // Não falhar a atualização da venda se a atualização de coordenadas falhar
+        }
+      }
       
       // Se o card foi completado e tem recorrência ativa, gerar próximo card
       if (data.status === 'completed' && salesCard.isRecurring) {
@@ -708,7 +737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -2304,6 +2333,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);
+
+      // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
+      if (req.body.customerLatitude && req.body.customerLongitude) {
+        try {
+          const card = await storage.getSalesCard(id);
+          if (card) {
+            await storage.updateCustomer(card.customerId, {
+              latitude: req.body.customerLatitude,
+              longitude: req.body.customerLongitude
+            });
+            console.log(`Coordenadas GPS atualizadas para cliente ${card.customerId} após venda finalizada: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
+          }
+        } catch (coordError) {
+          console.error('Erro ao atualizar coordenadas do cliente após venda:', coordError);
+          // Não falhar a finalização da venda se a atualização de coordenadas falhar
+        }
+      }
 
       // Get full card data with customer info for Omie
       const fullCard = await storage.getSalesCardById(id);
