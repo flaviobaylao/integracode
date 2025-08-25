@@ -605,9 +605,9 @@ export class OmieService {
           const statusesFechados = ['RECEBIDO', 'CANCELADO', 'LIQUIDADO', 'BAIXADO', 'PAGO', 'QUITADO', 'COMPENSADO', 'ESTORNADO'];
           const isAberto = !statusesFechados.includes(conta.status_titulo);
           
-          // Log detalhado para debug - só títulos que serão incluídos
-          if (isVencido && isAberto && totalProcessed <= 20) {
-            console.log(`  ✓ INCLUÍDO: ${conta.numero_documento} - Status: ${conta.status_titulo} - Vendedor: ${conta.codigo_vendedor} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso}`);
+          // Log dos status encontrados para entender quais estão sendo incluídos
+          if (isVencido && totalProcessed <= 30) {
+            console.log(`  Status: ${conta.status_titulo} - ${isAberto ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso}`);
           }
           
           if (isVencido && isAberto) {
@@ -712,7 +712,7 @@ export class OmieService {
     }
   }
 
-  // Listar todos os vendedores ativos do Omie
+  // Listar todos os vendedores ativos do Omie - buscar TODAS as páginas
   async getAllVendors(page = 1, pageSize = 50): Promise<{
     vendors: OmieVendor[];
     totalPages: number;
@@ -720,18 +720,32 @@ export class OmieService {
     currentPage: number;
   }> {
     try {
-      const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
-        pagina: page,
-        registros_por_pagina: pageSize,
-        apenas_importado_api: 'N'
-      });
-
-      console.log('Resposta da API Omie vendedores:', JSON.stringify(response, null, 2));
-
-      const vendors = response.cadastro || response.vendedores_cadastro || [];
-      console.log(`Encontrados ${vendors.length} vendedores na página ${page}`);
+      // Buscar TODAS as páginas de vendedores para garantir que não perca nenhum
+      let allVendors: any[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
       
-      const mappedVendors = vendors.map((vendor: any) => ({
+      while (hasMorePages) {
+        const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
+          pagina: currentPage,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: 'N'
+        });
+
+        const vendors = response.cadastro || response.vendedores_cadastro || [];
+        console.log(`Página ${currentPage}: Encontrados ${vendors.length} vendedores`);
+        
+        allVendors = allVendors.concat(vendors);
+        
+        // Verificar se há mais páginas
+        const totalPages = response.total_de_paginas || 1;
+        hasMorePages = currentPage < totalPages;
+        currentPage++;
+      }
+      
+      console.log(`Total de vendedores encontrados em todas as páginas: ${allVendors.length}`);
+      
+      const mappedVendors = allVendors.map((vendor: any) => ({
         codigo: vendor.codigo,
         nome: vendor.nome,
         email: vendor.email,
@@ -740,17 +754,18 @@ export class OmieService {
         comissao: vendor.comissao
       }));
 
-      console.log('Vendedores mapeados:', mappedVendors);
-      
       // Filtrar apenas vendedores ativos
       const activeVendors = mappedVendors.filter((vendor: any) => vendor.inativo !== 'S');
       console.log(`Vendedores ativos filtrados: ${activeVendors.length} de ${mappedVendors.length}`);
       
+      // Log dos nomes dos vendedores ativos para verificar se Mariangela está incluída
+      console.log('Vendedores ativos encontrados:', activeVendors.map(v => v.nome).sort());
+      
       return {
         vendors: activeVendors,
-        totalPages: response.total_de_paginas || 1,
-        totalRecords: response.total_de_registros || 0,
-        currentPage: page
+        totalPages: 1, // Como agregamos tudo, é só uma página
+        totalRecords: activeVendors.length,
+        currentPage: 1
       };
     } catch (error) {
       console.error('Erro ao listar vendedores no Omie:', error);

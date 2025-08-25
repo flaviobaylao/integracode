@@ -70,8 +70,7 @@ export default function OverdueDebtsManagement() {
           vendedores_array: debt.vendedores,
           debitos_vendedores: debt.debitos.map(d => ({ 
             documento: d.numero_documento, 
-            vendedor: d.codigo_vendedor,
-            status: d.status_titulo 
+            vendedor: d.codigo_vendedor
           }))
         });
       });
@@ -257,8 +256,8 @@ export default function OverdueDebtsManagement() {
         console.error('Erro ao fazer parse do JSON:', jsonError);
         throw new Error('Resposta inválida do servidor. Verifique os logs do console.');
       }
-      setComparisonResult(result);
-      setShowComparisonModal(true);
+      // Resultado da comparação (funcionalidade removida)
+      console.log('Comparação Excel concluída:', result);
 
       toast({
         title: "Comparação concluída",
