@@ -598,13 +598,12 @@ export class OmieService {
             console.log(`  -> Dias atraso: ${diasAtraso}`);
           }
 
-          // FILTRO: Títulos com previsão de recebimento vencida (diasAtraso > 0) E que estão em aberto
+          // FILTRO: Títulos com previsão de recebimento vencida (diasAtraso > 0) E que estão REALMENTE em aberto
           const isVencido = diasAtraso > 0;
-          // Incluir apenas títulos em aberto (não pagos)
-          const isAberto = conta.status_titulo !== 'RECEBIDO' && 
-                          conta.status_titulo !== 'CANCELADO' &&
-                          conta.status_titulo !== 'LIQUIDADO' &&
-                          conta.status_titulo !== 'BAIXADO';
+          
+          // Lista rígida de status que indicam títulos PAGOS/CANCELADOS/RESOLVIDOS
+          const statusesFechados = ['RECEBIDO', 'CANCELADO', 'LIQUIDADO', 'BAIXADO', 'PAGO', 'QUITADO', 'COMPENSADO', 'ESTORNADO'];
+          const isAberto = !statusesFechados.includes(conta.status_titulo);
           
           // Log detalhado para debug - só títulos que serão incluídos
           if (isVencido && isAberto && totalProcessed <= 20) {
@@ -743,20 +742,12 @@ export class OmieService {
 
       console.log('Vendedores mapeados:', mappedVendors);
       
-      // Mostrar todos os vendedores (ativos e inativos) para debug
-      console.log('Vendedores mapeados (todos):', mappedVendors.map(v => ({
-        codigo: v.codigo,
-        nome: v.nome,
-        inativo: v.inativo
-      })));
-      
-      // Incluir vendedores ativos E inativos que tenham débitos associados
-      // Por enquanto, vamos incluir todos para resolver o problema do filtro
-      const allVendors = mappedVendors; // Incluir todos por agora
-      console.log(`Vendedores incluídos: ${allVendors.length} (incluindo inativos para resolver filtro)`);
+      // Filtrar apenas vendedores ativos
+      const activeVendors = mappedVendors.filter((vendor: any) => vendor.inativo !== 'S');
+      console.log(`Vendedores ativos filtrados: ${activeVendors.length} de ${mappedVendors.length}`);
       
       return {
-        vendors: allVendors,
+        vendors: activeVendors,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page

@@ -59,7 +59,7 @@ export default function OverdueDebtsManagement() {
 
   // Debug logs para vendedores
   React.useEffect(() => {
-    console.log('Estado vendedores:', { vendedores, isLoadingVendedores, vendedoresError });
+    console.log('Estado vendedores:', { vendedores: vendedores?.slice(0, 5), isLoadingVendedores, vendedoresError });
     
     // Log dos débitos e vendedores quando mudarem
     if (overdueDebts?.debts) {
@@ -70,7 +70,8 @@ export default function OverdueDebtsManagement() {
           vendedores_array: debt.vendedores,
           debitos_vendedores: debt.debitos.map(d => ({ 
             documento: d.numero_documento, 
-            vendedor: d.codigo_vendedor 
+            vendedor: d.codigo_vendedor,
+            status: d.status_titulo 
           }))
         });
       });
@@ -120,14 +121,7 @@ export default function OverdueDebtsManagement() {
                          debt.debitos.some(debito => debito.codigo_vendedor === parseInt(selectedVendor)) ||
                          (debt.vendedores && debt.vendedores.includes(parseInt(selectedVendor)));
     
-    // Debug log para o filtro
-    if (selectedVendor !== "all" && matchesSearch) {
-      console.log(`Filtro vendedor ${selectedVendor} para cliente ${debt.cliente.nome_fantasia}:`, {
-        matchesVendor,
-        debitos_vendedores: debt.debitos.map(d => d.codigo_vendedor),
-        vendedores_array: debt.vendedores
-      });
-    }
+    // Remover logs excessivos de debug - só usar quando necessário
     
     return matchesSearch && matchesVendor;
   }) || [];
@@ -424,7 +418,7 @@ export default function OverdueDebtsManagement() {
                 <SelectItem value="all">Todos os vendedores</SelectItem>
                 {vendedores?.map((vendedor) => (
                   <SelectItem key={vendedor.codigo} value={vendedor.codigo.toString()}>
-                    {vendedor.nome || `Vendedor ${vendedor.codigo}`} {vendedor.inativo === 'S' && '(Inativo)'}
+                    {vendedor.nome || `Vendedor ${vendedor.codigo}`}
                   </SelectItem>
                 ))}
               </SelectContent>
