@@ -606,9 +606,9 @@ export class OmieService {
                           conta.status_titulo !== 'LIQUIDADO' &&
                           conta.status_titulo !== 'BAIXADO';
           
-          // Log detalhado para debug - todos os títulos vencidos
-          if (isVencido && totalProcessed <= 50) {
-            console.log(`  *** VENCIDO: ${conta.numero_documento} - Status: ${conta.status_titulo} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso} - Incluído: ${isAberto} ***`);
+          // Log detalhado para debug - só títulos que serão incluídos
+          if (isVencido && isAberto && totalProcessed <= 20) {
+            console.log(`  ✓ INCLUÍDO: ${conta.numero_documento} - Status: ${conta.status_titulo} - Vendedor: ${conta.codigo_vendedor} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso}`);
           }
           
           if (isVencido && isAberto) {
@@ -743,12 +743,20 @@ export class OmieService {
 
       console.log('Vendedores mapeados:', mappedVendors);
       
-      // Filtrar apenas vendedores ativos
-      const activeVendors = mappedVendors.filter((vendor: any) => vendor.inativo !== 'S');
-      console.log(`Vendedores ativos filtrados: ${activeVendors.length} de ${mappedVendors.length}`);
+      // Mostrar todos os vendedores (ativos e inativos) para debug
+      console.log('Vendedores mapeados (todos):', mappedVendors.map(v => ({
+        codigo: v.codigo,
+        nome: v.nome,
+        inativo: v.inativo
+      })));
+      
+      // Incluir vendedores ativos E inativos que tenham débitos associados
+      // Por enquanto, vamos incluir todos para resolver o problema do filtro
+      const allVendors = mappedVendors; // Incluir todos por agora
+      console.log(`Vendedores incluídos: ${allVendors.length} (incluindo inativos para resolver filtro)`);
       
       return {
-        vendors: activeVendors,
+        vendors: allVendors,
         totalPages: response.total_de_paginas || 1,
         totalRecords: response.total_de_registros || 0,
         currentPage: page

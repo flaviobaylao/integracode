@@ -424,7 +424,7 @@ export default function OverdueDebtsManagement() {
                 <SelectItem value="all">Todos os vendedores</SelectItem>
                 {vendedores?.map((vendedor) => (
                   <SelectItem key={vendedor.codigo} value={vendedor.codigo.toString()}>
-                    {vendedor.nome || `Vendedor ${vendedor.codigo}`}
+                    {vendedor.nome || `Vendedor ${vendedor.codigo}`} {vendedor.inativo === 'S' && '(Inativo)'}
                   </SelectItem>
                 ))}
               </SelectContent>
