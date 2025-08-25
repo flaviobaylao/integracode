@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ interface OverdueDebt {
     data_vencimento: string;
     dias_atraso: number;
     observacao?: string;
+    codigo_vendedor?: number;
   }>;
   valorTotal: number;
   diasMaximoAtraso: number;
@@ -49,10 +51,15 @@ export default function OverdueDebtsManagement() {
   });
 
   // Query para buscar vendedores
-  const { data: vendedores, isLoading: isLoadingVendedores } = useQuery<any[]>({
+  const { data: vendedores, isLoading: isLoadingVendedores, error: vendedoresError } = useQuery<any[]>({
     queryKey: ['/api/omie/vendedores'],
     staleTime: 1000 * 60 * 10, // 10 minutos
   });
+
+  // Debug logs para vendedores
+  React.useEffect(() => {
+    console.log('Estado vendedores:', { vendedores, isLoadingVendedores, vendedoresError });
+  }, [vendedores, isLoadingVendedores, vendedoresError]);
 
 
   // Mutation para sincronizar débitos vencidos
@@ -91,11 +98,18 @@ export default function OverdueDebtsManagement() {
     const matchesSearch = debt.cliente.nome_fantasia.toLowerCase().includes(searchLower) ||
                          debt.cliente.cnpj_cpf.includes(searchTerm);
     
+    // Verificar se o debt contém o vendedor selecionado nos seus débitos
     const matchesVendor = selectedVendor === "all" || 
-                         debt.vendedores?.includes(parseInt(selectedVendor));
+                         debt.debitos.some(debito => debito.codigo_vendedor === parseInt(selectedVendor));
     
     return matchesSearch && matchesVendor;
   }) || [];
+
+  // Calcular subtotais dos débitos filtrados
+  const filteredTotals = {
+    totalAmount: filteredDebts.reduce((sum, debt) => sum + debt.valorTotal, 0),
+    totalClients: filteredDebts.length
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -301,10 +315,15 @@ export default function OverdueDebtsManagement() {
                   <AlertTriangle className="h-6 w-6 text-red-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-gray-600">Total de Clientes</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {overdueDebts.totalClients}
+                  <p className="text-sm text-gray-600">
+                    {selectedVendor === "all" ? "Total de Clientes" : "Clientes Filtrados"}
                   </p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {filteredTotals.totalClients}
+                  </p>
+                  {selectedVendor !== "all" && (
+                    <p className="text-xs text-gray-500">de {overdueDebts.totalClients} total</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -317,10 +336,15 @@ export default function OverdueDebtsManagement() {
                   <AlertTriangle className="h-6 w-6 text-orange-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-gray-600">Valor Total</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {formatCurrency(overdueDebts.totalAmount)}
+                  <p className="text-sm text-gray-600">
+                    {selectedVendor === "all" ? "Valor Total dos Débitos" : "Valor Filtrado"}
                   </p>
+                  <p className="text-2xl font-bold text-red-600">
+                    {formatCurrency(filteredTotals.totalAmount)}
+                  </p>
+                  {selectedVendor !== "all" && (
+                    <p className="text-xs text-gray-500">de {formatCurrency(overdueDebts.totalAmount)} total</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -333,11 +357,15 @@ export default function OverdueDebtsManagement() {
                   <AlertTriangle className="h-6 w-6 text-yellow-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-gray-600">Média por Cliente</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {overdueDebts.totalClients > 0 
-                      ? formatCurrency(overdueDebts.totalAmount / overdueDebts.totalClients)
-                      : formatCurrency(0)
+                  <p className="text-sm text-gray-600">
+                    {selectedVendor === "all" ? "Média por Cliente" : "Vendedor Selecionado"}
+                  </p>
+                  <p className="text-sm font-bold text-gray-900">
+                    {selectedVendor === "all" 
+                      ? (overdueDebts.totalClients > 0 
+                          ? formatCurrency(overdueDebts.totalAmount / overdueDebts.totalClients)
+                          : formatCurrency(0))
+                      : (vendedores?.find(v => v.codigo.toString() === selectedVendor)?.nome || `Vendedor ${selectedVendor}`)
                     }
                   </p>
                 </div>
