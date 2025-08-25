@@ -11,6 +11,7 @@ import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
 import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
 import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
+import LocationsManagement from "@/pages/LocationsManagement";
 import OrderSteps from "@/components/OrderSteps";
 import { useState } from "react";
 
@@ -60,6 +61,8 @@ export default function Home() {
         return <OrderSteps step="awaiting-route" />;
       case 'order-in-route':
         return <OrderSteps step="in-route" />;
+      case 'locations':
+        return <LocationsManagement />;
       default:
         return <Dashboard />;
     }

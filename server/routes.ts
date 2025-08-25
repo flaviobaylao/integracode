@@ -12,6 +12,7 @@ import {
   insertSalesCardSchema,
   insertMessageTemplateSchema,
   insertMessageHistorySchema,
+  insertLocationSchema,
 } from "@shared/schema";
 import { z } from "zod";
 import multer from 'multer';
@@ -264,6 +265,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting product:", error);
       res.status(500).json({ message: "Failed to delete product" });
+    }
+  });
+
+  // Location routes
+  app.get('/api/locations', authenticateUser, async (req: any, res) => {
+    try {
+      // Only admin and coordinators can view locations
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const locations = await storage.getLocations();
+      res.json(locations);
+    } catch (error) {
+      console.error("Error fetching locations:", error);
+      res.status(500).json({ message: "Failed to fetch locations" });
+    }
+  });
+
+  app.post('/api/locations', authenticateUser, async (req: any, res) => {
+    try {
+      // Only admin and coordinators can manage locations
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const data = insertLocationSchema.parse(req.body);
+      const location = await storage.createLocation(data);
+      res.json(location);
+    } catch (error) {
+      console.error("Error creating location:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create location" });
+    }
+  });
+
+  app.put('/api/locations/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const data = insertLocationSchema.partial().parse(req.body);
+      const location = await storage.updateLocation(id, data);
+      res.json(location);
+    } catch (error) {
+      console.error("Error updating location:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update location" });
+    }
+  });
+
+  app.delete('/api/locations/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      await storage.deleteLocation(id);
+      res.json({ message: "Location deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting location:", error);
+      res.status(500).json({ message: "Failed to delete location" });
+    }
+  });
+
+  // Import locations from Excel file
+  app.post('/api/locations/import', authenticateUser, upload.single('file'), async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      // Parse Excel file
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet);
+
+      console.log(`Importing ${data.length} locations from Excel file`);
+
+      const locationsToImport = [];
+      const errors = [];
+
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i] as any;
+        
+        try {
+          // Map Excel columns to our schema (flexible column names)
+          const cpfCnpj = row['CNPJ/CPF'] || row['cpf_cnpj'] || row['cpfCnpj'] || row['documento'] || '';
+          const fantasyName = row['Nome Fantasia'] || row['fantasy_name'] || row['fantasyName'] || row['nome'] || '';
+          const latitude = parseFloat(row['Latitude'] || row['latitude'] || row['lat'] || '0');
+          const longitude = parseFloat(row['Longitude'] || row['longitude'] || row['lng'] || '0');
+
+          if (!cpfCnpj || !fantasyName || latitude === 0 || longitude === 0) {
+            errors.push(`Linha ${i + 2}: Dados obrigatórios ausentes (CNPJ/CPF, Nome Fantasia, Latitude, Longitude)`);
+            continue;
+          }
+
+          // Check if location already exists
+          const existingLocation = await storage.getLocationByCpfCnpj(cpfCnpj.toString());
+          if (existingLocation) {
+            errors.push(`Linha ${i + 2}: Localização já existe para CNPJ/CPF ${cpfCnpj}`);
+            continue;
+          }
+
+          locationsToImport.push({
+            cpfCnpj: cpfCnpj.toString(),
+            fantasyName: fantasyName.toString(),
+            latitude: latitude.toString(),
+            longitude: longitude.toString(),
+            isActive: true,
+          });
+        } catch (error) {
+          errors.push(`Linha ${i + 2}: Erro ao processar dados - ${error}`);
+        }
+      }
+
+      let importedLocations = [];
+      if (locationsToImport.length > 0) {
+        importedLocations = await storage.bulkCreateLocations(locationsToImport);
+      }
+
+      // Update customer coordinates after import
+      const coordinatesUpdate = await storage.updateCustomerCoordinatesFromLocations();
+
+      res.json({
+        imported: importedLocations.length,
+        errors: errors,
+        coordinatesUpdated: coordinatesUpdate,
+        message: `Importadas ${importedLocations.length} localizações. ${coordinatesUpdate.updated} clientes tiveram suas coordenadas atualizadas.`
+      });
+    } catch (error) {
+      console.error("Error importing locations:", error);
+      res.status(500).json({ message: "Failed to import locations" });
+    }
+  });
+
+  // Update customer coordinates from existing locations
+  app.post('/api/locations/update-customer-coordinates', authenticateUser, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const result = await storage.updateCustomerCoordinatesFromLocations();
+      res.json({
+        message: `Coordenadas atualizadas para ${result.updated} clientes`,
+        ...result
+      });
+    } catch (error) {
+      console.error("Error updating customer coordinates:", error);
+      res.status(500).json({ message: "Failed to update customer coordinates" });
     }
   });
 

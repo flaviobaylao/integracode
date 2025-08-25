@@ -324,6 +324,19 @@ export const blockedOrders = pgTable("blocked_orders", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Locations table - para cadastro de localizações
+export const locations = pgTable("locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cpfCnpj: varchar("cpf_cnpj").notNull().unique(), // CPF ou CNPJ do cliente
+  fantasyName: varchar("fantasy_name").notNull(), // Nome fantasia do cliente
+  latitude: decimal("latitude", { precision: 10, scale: 8 }).notNull(),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }).notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  importedAt: timestamp("imported_at").defaultNow(), // Data da importação
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   customers: many(customers),
@@ -452,6 +465,13 @@ export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit
   updatedAt: true,
 });
 
+export const insertLocationSchema = createInsertSchema(locations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  importedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -489,6 +509,9 @@ export type BlockedOrderWithRelations = BlockedOrder & {
   customer: Customer;
   seller: User;
 };
+
+export type Location = typeof locations.$inferSelect;
+export type InsertLocation = z.infer<typeof insertLocationSchema>;
 
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';

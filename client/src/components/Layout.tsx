@@ -42,6 +42,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { id: 'overdue-debts', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports },
     { id: 'blocked-orders', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports },
+    { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
   ];
 
   const orderStepsItems = [

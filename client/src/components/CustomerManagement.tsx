@@ -213,6 +213,7 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Cliente</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Documento</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Contato</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Rota</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Venda</th>
@@ -237,6 +238,21 @@ export default function CustomerManagement() {
                           <p className="text-sm text-gray-800">{customer.phone}</p>
                           {customer.email && (
                             <p className="text-sm text-gray-600">{customer.email}</p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-xs text-gray-600 space-y-1">
+                          {customer.latitude && customer.longitude ? (
+                            <>
+                              <div className="flex items-center gap-1">
+                                <MapPin className="h-3 w-3 text-green-600" />
+                                <span className="font-mono">{parseFloat(customer.latitude).toFixed(6)}</span>
+                              </div>
+                              <div className="font-mono">{parseFloat(customer.longitude).toFixed(6)}</div>
+                            </>
+                          ) : (
+                            <span className="text-gray-400 italic">Não definido</span>
                           )}
                         </div>
                       </td>
@@ -308,7 +324,7 @@ export default function CustomerManagement() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
                     </td>
                   </tr>

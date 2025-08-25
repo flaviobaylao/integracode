@@ -6,6 +6,7 @@ import {
   messageTemplates,
   messageHistory,
   systemSettings,
+  locations,
   type User,
   type UpsertUser,
   type InsertCustomer,
@@ -20,6 +21,8 @@ import {
   type MessageTemplate,
   type InsertMessageHistory,
   type MessageHistory,
+  type Location,
+  type InsertLocation,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -92,6 +95,16 @@ export interface IStorage {
   // Additional methods needed
   getSalesCardsByDayAndDate(sellerId: string, routeDay: string, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
   generateNextSalesCard(parentCardId: string): Promise<SalesCard | null>;
+  
+  // Location operations
+  getLocations(): Promise<Location[]>;
+  getLocation(id: string): Promise<Location | undefined>;
+  createLocation(location: InsertLocation): Promise<Location>;
+  updateLocation(id: string, location: Partial<InsertLocation>): Promise<Location>;
+  deleteLocation(id: string): Promise<void>;
+  getLocationByCpfCnpj(cpfCnpj: string): Promise<Location | undefined>;
+  bulkCreateLocations(locations: InsertLocation[]): Promise<Location[]>;
+  updateCustomerCoordinatesFromLocations(): Promise<{ updated: number; matched: number; total: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1193,6 +1206,102 @@ export class DatabaseStorage implements IStorage {
       customer: row.customers,
       seller: row.users,
     } as SalesCardWithRelations;
+  }
+
+  // Location operations
+  async getLocations(): Promise<Location[]> {
+    return await db.select().from(locations).where(eq(locations.isActive, true)).orderBy(locations.fantasyName);
+  }
+
+  async getLocation(id: string): Promise<Location | undefined> {
+    const [location] = await db.select().from(locations).where(eq(locations.id, id));
+    return location;
+  }
+
+  async createLocation(location: InsertLocation): Promise<Location> {
+    const [newLocation] = await db.insert(locations).values(location).returning();
+    return newLocation;
+  }
+
+  async updateLocation(id: string, location: Partial<InsertLocation>): Promise<Location> {
+    const [updatedLocation] = await db
+      .update(locations)
+      .set({ ...location, updatedAt: new Date() })
+      .where(eq(locations.id, id))
+      .returning();
+    return updatedLocation;
+  }
+
+  async deleteLocation(id: string): Promise<void> {
+    await db.update(locations).set({ isActive: false }).where(eq(locations.id, id));
+  }
+
+  async getLocationByCpfCnpj(cpfCnpj: string): Promise<Location | undefined> {
+    const [location] = await db.select().from(locations).where(eq(locations.cpfCnpj, cpfCnpj));
+    return location;
+  }
+
+  async bulkCreateLocations(locationsData: InsertLocation[]): Promise<Location[]> {
+    try {
+      // Inserir todas as localizações em uma única operação
+      const insertedLocations = await db.insert(locations).values(locationsData).returning();
+      return insertedLocations;
+    } catch (error) {
+      console.error('Erro ao inserir localizações em lote:', error);
+      throw error;
+    }
+  }
+
+  // Atualizar coordenadas dos clientes baseado nas localizações cadastradas
+  async updateCustomerCoordinatesFromLocations(): Promise<{ updated: number; matched: number; total: number }> {
+    try {
+      // Buscar todas as localizações ativas
+      const allLocations = await db.select().from(locations).where(eq(locations.isActive, true));
+      
+      let updated = 0;
+      let matched = 0;
+      
+      for (const location of allLocations) {
+        // Buscar clientes que tenham o mesmo CPF/CNPJ
+        const matchingCustomers = await db
+          .select()
+          .from(customers)
+          .where(
+            and(
+              eq(customers.isActive, true),
+              or(
+                eq(customers.cpf, location.cpfCnpj),
+                eq(customers.cnpj, location.cpfCnpj)
+              )
+            )
+          );
+
+        matched += matchingCustomers.length;
+
+        // Atualizar coordenadas dos clientes encontrados
+        for (const customer of matchingCustomers) {
+          await db
+            .update(customers)
+            .set({
+              latitude: location.latitude,
+              longitude: location.longitude,
+              updatedAt: new Date()
+            })
+            .where(eq(customers.id, customer.id));
+          
+          updated++;
+        }
+      }
+
+      return {
+        updated,
+        matched,
+        total: allLocations.length
+      };
+    } catch (error) {
+      console.error('Erro ao atualizar coordenadas dos clientes:', error);
+      throw error;
+    }
   }
 }
 
