@@ -897,7 +897,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Etapa inválida' });
       }
       
-      const result = await omieIntegration.getOrdersByStage(omieStage);
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = await omieService.getOrdersByStage(omieStage);
       
       res.json({
         orders: result.orders,
@@ -932,7 +939,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Etapa inválida' });
       }
       
-      const result = await omieIntegration.getOrdersByStage(omieStage);
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const result = await omieService.getOrdersByStage(omieStage);
       
       res.json({
         success: true,
