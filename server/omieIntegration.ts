@@ -786,22 +786,34 @@ export class OmieService {
       let hasMorePages = true;
       
       while (hasMorePages) {
-        const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
-          pagina: currentPage,
-          registros_por_pagina: pageSize,
-          etapa: stage, // Filtrar por etapa específica
-          apenas_importado_api: 'N'
-        });
+        try {
+          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+            pagina: currentPage,
+            registros_por_pagina: pageSize,
+            etapa: stage, // Filtrar por etapa específica
+            apenas_importado_api: 'N'
+          });
 
-        const orders = response.pedido_venda_produto || [];
-        console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos na etapa ${stage}`);
-        
-        allOrders = allOrders.concat(orders);
-        
-        // Verificar se há mais páginas
-        const totalPages = response.total_de_paginas || 1;
-        hasMorePages = currentPage < totalPages;
-        currentPage++;
+          const orders = response.pedido_venda_produto || [];
+          console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos na etapa ${stage}`);
+          
+          allOrders = allOrders.concat(orders);
+          
+          // Verificar se há mais páginas
+          const totalPages = response.total_de_paginas || 1;
+          hasMorePages = currentPage < totalPages;
+          currentPage++;
+        } catch (error: any) {
+          // Tratar caso específico onde não há registros na etapa
+          if (error.message?.includes('Não existem registros para a página') || 
+              error.message?.includes('NÃ£o existem registros para a pÃ¡gina')) {
+            console.log(`Nenhum pedido encontrado na etapa ${stage}`);
+            hasMorePages = false;
+            break;
+          }
+          // Se for outro tipo de erro, rejeitar
+          throw error;
+        }
       }
       
       console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
