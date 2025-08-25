@@ -29,6 +29,7 @@ interface OverdueDebt {
   }>;
   valorTotal: number;
   diasMaximoAtraso: number;
+  vendedores?: number[]; // Array de códigos de vendedores do cliente
 }
 
 interface OverdueDebtsData {
@@ -59,7 +60,22 @@ export default function OverdueDebtsManagement() {
   // Debug logs para vendedores
   React.useEffect(() => {
     console.log('Estado vendedores:', { vendedores, isLoadingVendedores, vendedoresError });
-  }, [vendedores, isLoadingVendedores, vendedoresError]);
+    
+    // Log dos débitos e vendedores quando mudarem
+    if (overdueDebts?.debts) {
+      console.log('Debug débitos e vendedores:');
+      overdueDebts.debts.slice(0, 3).forEach((debt, idx) => {
+        console.log(`Cliente ${idx + 1}:`, {
+          nome: debt.cliente.nome_fantasia,
+          vendedores_array: debt.vendedores,
+          debitos_vendedores: debt.debitos.map(d => ({ 
+            documento: d.numero_documento, 
+            vendedor: d.codigo_vendedor 
+          }))
+        });
+      });
+    }
+  }, [vendedores, isLoadingVendedores, vendedoresError, overdueDebts]);
 
 
   // Mutation para sincronizar débitos vencidos
@@ -98,9 +114,20 @@ export default function OverdueDebtsManagement() {
     const matchesSearch = debt.cliente.nome_fantasia.toLowerCase().includes(searchLower) ||
                          debt.cliente.cnpj_cpf.includes(searchTerm);
     
-    // Verificar se o debt contém o vendedor selecionado nos seus débitos
+    // Verificar se o debt contém o vendedor selecionado
+    // Primeiro verificar nos débitos individuais, depois no array vendedores (fallback)
     const matchesVendor = selectedVendor === "all" || 
-                         debt.debitos.some(debito => debito.codigo_vendedor === parseInt(selectedVendor));
+                         debt.debitos.some(debito => debito.codigo_vendedor === parseInt(selectedVendor)) ||
+                         (debt.vendedores && debt.vendedores.includes(parseInt(selectedVendor)));
+    
+    // Debug log para o filtro
+    if (selectedVendor !== "all" && matchesSearch) {
+      console.log(`Filtro vendedor ${selectedVendor} para cliente ${debt.cliente.nome_fantasia}:`, {
+        matchesVendor,
+        debitos_vendedores: debt.debitos.map(d => d.codigo_vendedor),
+        vendedores_array: debt.vendedores
+      });
+    }
     
     return matchesSearch && matchesVendor;
   }) || [];
