@@ -878,24 +878,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para buscar débitos em atraso do Omie
+  // Get available stages from Omie
+  app.get('/api/omie/stages', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const stages = await omieService.getAvailableStages();
+      res.json({ stages });
+    } catch (error) {
+      console.error('Erro ao buscar etapas disponíveis:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar etapas disponíveis', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   // Get orders by step/stage
   app.get('/api/omie/orders/:step', authenticateUser, async (req: any, res) => {
     try {
       const { step } = req.params;
-      
-      // Mapear step para etapa do Omie
-      const stageMapping: Record<string, string> = {
-        'sale': '10',        // Pedido de Venda
-        'billing': '20',     // Faturar
-        'billed': '30',      // Faturado
-        'awaiting-route': '40', // Aguardando Rota
-        'in-route': '50'     // Em Rota
-      };
-      
-      const omieStage = stageMapping[step];
-      if (!omieStage) {
-        return res.status(400).json({ message: 'Etapa inválida' });
-      }
       
       const omieService = getOmieService();
       if (!omieService) {
@@ -904,12 +911,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Primeiro buscar etapas disponíveis para mapear corretamente
+      const availableStages = await omieService.getAvailableStages();
+      
+      // Mapear step para etapa do Omie baseado nas etapas disponíveis
+      const stageMapping: Record<string, string> = {};
+      
+      // Criar mapeamento dinâmico baseado nas etapas disponíveis
+      availableStages.forEach((stage: any, index: number) => {
+        const stageCode = stage.cCodigo || stage.codigo;
+        if (index === 0) stageMapping['sale'] = stageCode;
+        else if (index === 1) stageMapping['billing'] = stageCode;
+        else if (index === 2) stageMapping['billed'] = stageCode;
+        else if (index === 3) stageMapping['awaiting-route'] = stageCode;
+        else if (index === 4) stageMapping['in-route'] = stageCode;
+      });
+      
+      const omieStage = stageMapping[step];
+      if (!omieStage) {
+        return res.status(400).json({ 
+          message: 'Etapa não disponível nesta conta',
+          availableStages: availableStages.map((s: any) => ({ 
+            codigo: s.cCodigo || s.codigo, 
+            descricao: s.cDescricao || s.descricao 
+          }))
+        });
+      }
+
       const result = await omieService.getOrdersByStage(omieStage);
       
       res.json({
         orders: result.orders,
         totalCount: result.totalRecords,
-        currentStep: step
+        currentStep: step,
+        omieStage,
+        availableStages
       });
     } catch (error) {
       console.error('Erro ao buscar pedidos por etapa:', error);
@@ -925,24 +961,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { step } = req.params;
       
-      // Mapear step para etapa do Omie
-      const stageMapping: Record<string, string> = {
-        'sale': '10',        // Pedido de Venda
-        'billing': '20',     // Faturar
-        'billed': '30',      // Faturado
-        'awaiting-route': '40', // Aguardando Rota
-        'in-route': '50'     // Em Rota
-      };
-      
-      const omieStage = stageMapping[step];
-      if (!omieStage) {
-        return res.status(400).json({ message: 'Etapa inválida' });
-      }
-      
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
+        });
+      }
+
+      // Primeiro buscar etapas disponíveis para mapear corretamente
+      const availableStages = await omieService.getAvailableStages();
+      
+      // Mapear step para etapa do Omie baseado nas etapas disponíveis
+      const stageMapping: Record<string, string> = {};
+      
+      // Criar mapeamento dinâmico baseado nas etapas disponíveis
+      availableStages.forEach((stage: any, index: number) => {
+        const stageCode = stage.cCodigo || stage.codigo;
+        if (index === 0) stageMapping['sale'] = stageCode;
+        else if (index === 1) stageMapping['billing'] = stageCode;
+        else if (index === 2) stageMapping['billed'] = stageCode;
+        else if (index === 3) stageMapping['awaiting-route'] = stageCode;
+        else if (index === 4) stageMapping['in-route'] = stageCode;
+      });
+      
+      const omieStage = stageMapping[step];
+      if (!omieStage) {
+        return res.status(400).json({ 
+          message: 'Etapa não disponível nesta conta',
+          availableStages: availableStages.map((s: any) => ({ 
+            codigo: s.cCodigo || s.codigo, 
+            descricao: s.cDescricao || s.descricao 
+          }))
         });
       }
 
@@ -951,7 +1000,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         count: result.totalRecords,
-        message: `${result.totalRecords} pedidos sincronizados da etapa ${step}`
+        message: `${result.totalRecords} pedidos sincronizados da etapa ${step}`,
+        omieStage,
+        availableStages
       });
     } catch (error) {
       console.error('Erro ao sincronizar pedidos por etapa:', error);

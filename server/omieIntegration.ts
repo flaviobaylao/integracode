@@ -781,6 +781,22 @@ export class OmieService {
     }
   }
 
+  // Listar etapas de faturamento disponíveis
+  async getAvailableStages(): Promise<any[]> {
+    try {
+      const response = await this.makeRequest('/produtos/pedido/', 'ListarEtapasFaturamento', {});
+      
+      // A resposta pode vir em diferentes formatos dependendo da versão
+      const stages = response.etapas || response.lista_etapas || [];
+      console.log('Etapas de faturamento disponíveis:', stages);
+      
+      return stages.filter((stage: any) => stage.cInativo !== 'S'); // Apenas etapas ativas
+    } catch (error) {
+      console.error('Erro ao buscar etapas de faturamento:', error);
+      return [];
+    }
+  }
+
   // Listar pedidos por etapa do Omie
   async getOrdersByStage(stage: string, page = 1, pageSize = 50): Promise<{
     orders: any[];
@@ -795,7 +811,7 @@ export class OmieService {
       
       while (hasMorePages) {
         try {
-          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidosVenda', {
             pagina: currentPage,
             registros_por_pagina: pageSize,
             etapa: stage, // Filtrar por etapa específica
