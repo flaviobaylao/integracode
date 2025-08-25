@@ -878,6 +878,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para buscar débitos em atraso do Omie
+  // Get orders by step/stage
+  app.get('/api/omie/orders/:step', authenticateUser, async (req: any, res) => {
+    try {
+      const { step } = req.params;
+      
+      // Mapear step para etapa do Omie
+      const stageMapping: Record<string, string> = {
+        'sale': '10',        // Pedido de Venda
+        'billing': '20',     // Faturar
+        'billed': '30',      // Faturado
+        'awaiting-route': '40', // Aguardando Rota
+        'in-route': '50'     // Em Rota
+      };
+      
+      const omieStage = stageMapping[step];
+      if (!omieStage) {
+        return res.status(400).json({ message: 'Etapa inválida' });
+      }
+      
+      const result = await omieIntegration.getOrdersByStage(omieStage);
+      
+      res.json({
+        orders: result.orders,
+        totalCount: result.totalRecords,
+        currentStep: step
+      });
+    } catch (error) {
+      console.error('Erro ao buscar pedidos por etapa:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar pedidos', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
+  // Sync orders by step/stage
+  app.post('/api/omie/orders/:step/sync', authenticateUser, async (req: any, res) => {
+    try {
+      const { step } = req.params;
+      
+      // Mapear step para etapa do Omie
+      const stageMapping: Record<string, string> = {
+        'sale': '10',        // Pedido de Venda
+        'billing': '20',     // Faturar
+        'billed': '30',      // Faturado
+        'awaiting-route': '40', // Aguardando Rota
+        'in-route': '50'     // Em Rota
+      };
+      
+      const omieStage = stageMapping[step];
+      if (!omieStage) {
+        return res.status(400).json({ message: 'Etapa inválida' });
+      }
+      
+      const result = await omieIntegration.getOrdersByStage(omieStage);
+      
+      res.json({
+        success: true,
+        count: result.totalRecords,
+        message: `${result.totalRecords} pedidos sincronizados da etapa ${step}`
+      });
+    } catch (error) {
+      console.error('Erro ao sincronizar pedidos por etapa:', error);
+      res.status(500).json({ 
+        message: 'Erro ao sincronizar pedidos', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
       // Evitar cache

@@ -773,6 +773,96 @@ export class OmieService {
     }
   }
 
+  // Listar pedidos por etapa do Omie
+  async getOrdersByStage(stage: string, page = 1, pageSize = 50): Promise<{
+    orders: any[];
+    totalPages: number;
+    totalRecords: number;
+    currentPage: number;
+  }> {
+    try {
+      let allOrders: any[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+          pagina: currentPage,
+          registros_por_pagina: pageSize,
+          etapa: stage, // Filtrar por etapa específica
+          apenas_importado_api: 'N'
+        });
+
+        const orders = response.pedido_venda_produto || [];
+        console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos na etapa ${stage}`);
+        
+        allOrders = allOrders.concat(orders);
+        
+        // Verificar se há mais páginas
+        const totalPages = response.total_de_paginas || 1;
+        hasMorePages = currentPage < totalPages;
+        currentPage++;
+      }
+      
+      console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
+      
+      // Mapear e enriquecer os pedidos com dados dos clientes
+      const enrichedOrders = await Promise.all(
+        allOrders.map(async (order: any) => {
+          try {
+            // Buscar dados do cliente
+            const clientResponse = await this.makeRequest('/geral/clientes/', 'ConsultarCliente', {
+              codigo_cliente_omie: order.cabecalho?.codigo_cliente
+            });
+
+            return {
+              codigo_pedido: order.cabecalho?.codigo_pedido,
+              numero_pedido: order.cabecalho?.numero_pedido,
+              codigo_cliente: order.cabecalho?.codigo_cliente,
+              cliente: {
+                nome_fantasia: clientResponse.nome_fantasia || 'Cliente não encontrado',
+                cnpj_cpf: clientResponse.cnpj_cpf || '',
+              },
+              etapa: order.cabecalho?.etapa,
+              data_pedido: order.cabecalho?.data_pedido,
+              qtde_itens: order.cabecalho?.qtde_itens || 0,
+              valor_total_pedido: parseFloat(order.cabecalho?.valor_total_pedido || '0'),
+              codigo_vendedor: order.cabecalho?.codigo_vendedor,
+              vendedor: order.cabecalho?.vendedor
+            };
+          } catch (error) {
+            console.error(`Erro ao buscar cliente ${order.cabecalho?.codigo_cliente}:`, error);
+            return {
+              codigo_pedido: order.cabecalho?.codigo_pedido,
+              numero_pedido: order.cabecalho?.numero_pedido,
+              codigo_cliente: order.cabecalho?.codigo_cliente,
+              cliente: {
+                nome_fantasia: 'Cliente não encontrado',
+                cnpj_cpf: '',
+              },
+              etapa: order.cabecalho?.etapa,
+              data_pedido: order.cabecalho?.data_pedido,
+              qtde_itens: order.cabecalho?.qtde_itens || 0,
+              valor_total_pedido: parseFloat(order.cabecalho?.valor_total_pedido || '0'),
+              codigo_vendedor: order.cabecalho?.codigo_vendedor,
+              vendedor: order.cabecalho?.vendedor
+            };
+          }
+        })
+      );
+      
+      return {
+        orders: enrichedOrders,
+        totalPages: 1, // Como agregamos tudo, é só uma página
+        totalRecords: enrichedOrders.length,
+        currentPage: 1
+      };
+    } catch (error) {
+      console.error(`Erro ao listar pedidos da etapa ${stage} no Omie:`, error);
+      throw error;
+    }
+  }
+
   // Listar todos os produtos ativos do Omie
   async getAllProducts(page = 1, pageSize = 50): Promise<{
     products: OmieProduct[];

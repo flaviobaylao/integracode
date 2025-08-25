@@ -1,6 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useState } from "react";
 import type { User } from "@shared/schema";
 
 interface LayoutProps {
@@ -13,6 +16,7 @@ interface LayoutProps {
 export default function Layout({ children, activeView, setActiveView, user }: LayoutProps) {
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
+  const [orderStepsOpen, setOrderStepsOpen] = useState(false);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
@@ -38,6 +42,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { id: 'overdue-debts', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports },
     { id: 'blocked-orders', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports },
+  ];
+
+  const orderStepsItems = [
+    { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart' },
+    { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice' },
+    { id: 'order-billed', label: 'Faturado', icon: 'fas fa-check-circle' },
+    { id: 'order-awaiting-route', label: 'Aguardando Rota', icon: 'fas fa-clock' },
+    { id: 'order-in-route', label: 'Em Rota', icon: 'fas fa-truck' },
   ];
 
   const getRoleLabel = (role: string) => {
@@ -125,6 +137,41 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                     </Button>
                   </li>
                 ))}
+              
+              {/* Menu Etapas dos Pedidos */}
+              {canAccessReports && (
+                <li>
+                  <Collapsible open={orderStepsOpen} onOpenChange={setOrderStepsOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                      >
+                        <i className="fas fa-list-ol"></i>
+                        <span className="font-medium">Etapas dos Pedidos</span>
+                        {orderStepsOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                      {orderStepsItems.map(item => (
+                        <Button
+                          key={item.id}
+                          variant="ghost"
+                          className={`w-full justify-start space-x-3 text-sm ${
+                            activeView === item.id
+                              ? 'text-honest-blue bg-blue-50'
+                              : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                          onClick={() => setActiveView(item.id)}
+                        >
+                          <i className={item.icon}></i>
+                          <span>{item.label}</span>
+                        </Button>
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                </li>
+              )}
             </ul>
           </div>
         </nav>

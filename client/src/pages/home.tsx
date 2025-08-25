@@ -11,6 +11,7 @@ import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
 import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
 import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
+import OrderSteps from "@/components/OrderSteps";
 import { useState } from "react";
 
 export default function Home() {
@@ -49,6 +50,16 @@ export default function Home() {
         return <OverdueDebtsManagement />;
       case 'blocked-orders':
         return <BlockedOrdersManagement user={user as any} />;
+      case 'order-sale':
+        return <OrderSteps step="sale" />;
+      case 'order-billing':
+        return <OrderSteps step="billing" />;
+      case 'order-billed':
+        return <OrderSteps step="billed" />;
+      case 'order-awaiting-route':
+        return <OrderSteps step="awaiting-route" />;
+      case 'order-in-route':
+        return <OrderSteps step="in-route" />;
       default:
         return <Dashboard />;
     }
