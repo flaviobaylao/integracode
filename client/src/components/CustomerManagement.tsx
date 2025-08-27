@@ -24,11 +24,18 @@ export default function CustomerManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [routeFilter, setRouteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active');
+  const [sellerFilter, setSellerFilter] = useState('all');
+  const [routeDateFilter, setRouteDateFilter] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: customers, isLoading } = useQuery({
     queryKey: ['/api/customers'],
+    retry: false,
+  });
+
+  const { data: users } = useQuery({
+    queryKey: ['/api/users'],
     retry: false,
   });
 
@@ -83,8 +90,28 @@ export default function CustomerManagement() {
     const matchesStatus = statusFilter === 'all' || 
                          (statusFilter === 'active' && customer.isActive) ||
                          (statusFilter === 'inactive' && !customer.isActive);
+    const matchesSeller = sellerFilter === 'all' || customer.sellerId === sellerFilter;
     
-    return matchesSearch && matchesRoute && matchesStatus;
+    // Filtro por data da rota (verifica se a data está nos dias da semana selecionados)
+    let matchesRouteDate = true;
+    if (routeDateFilter) {
+      const selectedDate = new Date(routeDateFilter);
+      const dayOfWeek = selectedDate.getDay(); // 0=domingo, 1=segunda, etc.
+      const weekdayMapping = {
+        0: 'sunday',
+        1: 'monday', 
+        2: 'tuesday',
+        3: 'wednesday',
+        4: 'thursday',
+        5: 'friday',
+        6: 'saturday'
+      };
+      const dayString = weekdayMapping[dayOfWeek as keyof typeof weekdayMapping];
+      const customerWeekdays = JSON.parse(customer.weekdays || '[]');
+      matchesRouteDate = customerWeekdays.includes(dayString);
+    }
+    
+    return matchesSearch && matchesRoute && matchesStatus && matchesSeller && matchesRouteDate;
   }) || [];
 
   const formatCurrency = (value: number) => {
@@ -187,7 +214,7 @@ export default function CustomerManagement() {
       {/* Filters and Search */}
       <Card>
         <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <Input
               placeholder="Buscar cliente..."
               value={searchTerm}
@@ -216,6 +243,25 @@ export default function CustomerManagement() {
                 <SelectItem value="inactive">Inativo</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={sellerFilter} onValueChange={setSellerFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Todos os vendedores" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os vendedores</SelectItem>
+                {users?.map((user: User) => (
+                  <SelectItem key={user.id} value={user.id}>
+                    {user.firstName} {user.lastName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              type="date"
+              placeholder="Data da rota"
+              value={routeDateFilter}
+              onChange={(e) => setRouteDateFilter(e.target.value)}
+            />
             <div className="text-sm text-gray-600 flex items-center">
               {filteredCustomers.length} cliente(s) encontrado(s)
             </div>
