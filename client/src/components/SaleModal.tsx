@@ -14,6 +14,7 @@ import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import honestLogo from '@/assets/honest-logo.png';
 import { apiRequest } from "@/lib/queryClient";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
@@ -115,6 +116,13 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   // Função para gerar PDF do orçamento
   const generateQuotePDF = () => {
     const pdf = new jsPDF();
+    
+    // Adicionar logomarca no canto superior direito
+    try {
+      pdf.addImage(honestLogo, 'PNG', 150, 10, 40, 40);
+    } catch (error) {
+      console.log('Erro ao carregar logomarca:', error);
+    }
     
     // Configurações da página
     pdf.setFontSize(20);
