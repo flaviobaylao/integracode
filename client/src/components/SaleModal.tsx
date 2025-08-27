@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { apiRequest } from "@/lib/queryClient";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
@@ -158,7 +158,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       `R$ ${item.totalPrice.toFixed(2)}`
     ]);
     
-    (pdf as any).autoTable({
+    autoTable(pdf, {
       head: [tableColumn],
       body: tableRows,
       startY: 190,
@@ -173,7 +173,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     });
     
     // Total da venda
-    const finalY = (pdf as any).lastAutoTable.finalY || 250;
+    const finalY = (pdf as any).lastAutoTable?.finalY || 250;
     pdf.setFontSize(14);
     pdf.text(`TOTAL GERAL: R$ ${totalSale.toFixed(2)}`, 20, finalY + 20);
     
