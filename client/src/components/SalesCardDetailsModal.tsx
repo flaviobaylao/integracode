@@ -467,7 +467,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         </div>
 
         {/* Botões de Ação */}
-        {card.status === 'pending' && (
+        {(card.status === 'pending' || card.status === 'in_progress') && (
           <div className="border-t pt-4">
             <div className="flex flex-wrap justify-center gap-3">
               <Button
