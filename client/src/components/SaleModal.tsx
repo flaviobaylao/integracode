@@ -10,8 +10,10 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import { apiRequest } from "@/lib/queryClient";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
@@ -109,6 +111,92 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const shouldBlockOrder = useMemo(() => {
     return paymentMethod === 'boleto' && boletoDays !== 7;
   }, [paymentMethod, boletoDays]);
+
+  // Função para gerar PDF do orçamento
+  const generateQuotePDF = () => {
+    const pdf = new jsPDF();
+    
+    // Configurações da página
+    pdf.setFontSize(20);
+    pdf.text('ORÇAMENTO DE VENDA', 20, 30);
+    
+    // Informações da empresa
+    pdf.setFontSize(12);
+    pdf.text('Honest Sucos', 20, 50);
+    pdf.text('Sucos Naturais e Saudáveis', 20, 60);
+    
+    // Informações do cliente
+    const customer = (salesCard as any)?.customer;
+    if (customer) {
+      pdf.text(`Cliente: ${customer.fantasyName || customer.name}`, 20, 80);
+      if (customer.cnpj) pdf.text(`CNPJ: ${customer.cnpj}`, 20, 90);
+      if (customer.cpf) pdf.text(`CPF: ${customer.cpf}`, 20, 90);
+      if (customer.phone) pdf.text(`Telefone: ${customer.phone}`, 20, 100);
+    }
+    
+    // Informações do vendedor
+    const seller = (salesCard as any)?.seller;
+    if (seller) {
+      pdf.text(`Vendedor: ${seller.firstName} ${seller.lastName}`, 20, 110);
+    }
+    
+    // Informações do pedido
+    pdf.text(`Número do Orçamento: HS-${Date.now()}`, 20, 130);
+    pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
+    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
+    if (paymentMethod === 'boleto') {
+      pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
+    }
+    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    
+    // Tabela de produtos
+    const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
+    const tableRows = saleItems.map(item => [
+      item.name,
+      item.quantity.toString(),
+      `R$ ${item.unitPrice.toFixed(2)}`,
+      `R$ ${item.totalPrice.toFixed(2)}`
+    ]);
+    
+    (pdf as any).autoTable({
+      head: [tableColumn],
+      body: tableRows,
+      startY: 190,
+      styles: {
+        fontSize: 10,
+        cellPadding: 3
+      },
+      headStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255
+      }
+    });
+    
+    // Total da venda
+    const finalY = (pdf as any).lastAutoTable.finalY || 250;
+    pdf.setFontSize(14);
+    pdf.text(`TOTAL GERAL: R$ ${totalSale.toFixed(2)}`, 20, finalY + 20);
+    
+    // Observações
+    pdf.setFontSize(10);
+    pdf.text('Observações:', 20, finalY + 40);
+    pdf.text('- Este orçamento tem validade de 15 dias.', 20, finalY + 50);
+    pdf.text('- Preços sujeitos a alteração sem aviso prévio.', 20, finalY + 60);
+    pdf.text('- Produtos naturais, sem conservantes.', 20, finalY + 70);
+    
+    if (shouldBlockOrder) {
+      pdf.text('- Este pedido requer aprovação manual.', 20, finalY + 80);
+    }
+    
+    // Salvar o PDF
+    const fileName = `orcamento-${customer?.name || 'cliente'}-${Date.now()}.pdf`;
+    pdf.save(fileName);
+    
+    toast({
+      title: "PDF Gerado",
+      description: "O orçamento foi gerado e baixado com sucesso!",
+    });
+  };
 
   // Carregar preferências do card
   useEffect(() => {
@@ -415,6 +503,19 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                       </p>
                     </div>
                   )}
+                  
+                  {/* Botão para gerar PDF do orçamento */}
+                  <div className="pt-4">
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={generateQuotePDF}
+                      data-testid="button-generate-pdf"
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      Gerar PDF do Orçamento
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
