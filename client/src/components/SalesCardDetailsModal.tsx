@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,10 @@ import {
   ShoppingCart,
   Navigation,
   CircleDollarSign,
-  Ban
+  Ban,
+  LogIn,
+  LogOut,
+  Loader2
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -40,9 +44,104 @@ interface SalesCardDetailsModalProps {
 export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale }: SalesCardDetailsModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
   
   // Log para debug
   console.log('SalesCardDetailsModal opened:', { isOpen, cardStatus: card?.status, cardId: card?.id });
+
+  // Função para calcular distância entre duas coordenadas (fórmula de Haversine)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371000; // Raio da Terra em metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; // Distância em metros
+  };
+
+  // Função para capturar localização
+  const getCurrentLocation = (): Promise<{latitude: number, longitude: number}> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocalização não é suportada neste navegador'));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          });
+        },
+        (error) => {
+          reject(new Error('Erro ao obter localização: ' + error.message));
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000
+        }
+      );
+    });
+  };
+
+  // Mutation para check-in
+  const checkInMutation = useMutation({
+    mutationFn: async (data: { cardId: string, latitude: number, longitude: number, distance: number }) => {
+      await apiRequest('POST', `/api/sales-cards/${data.cardId}/check-in`, {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        distance: data.distance
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      setIsCheckingIn(false);
+      toast({
+        title: "Check-in Realizado",
+        description: "Check-in registrado com sucesso!",
+      });
+    },
+    onError: (error) => {
+      setIsCheckingIn(false);
+      toast({
+        title: "Erro no Check-in",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para check-out
+  const checkOutMutation = useMutation({
+    mutationFn: async (data: { cardId: string, latitude: number, longitude: number }) => {
+      await apiRequest('POST', `/api/sales-cards/${data.cardId}/check-out`, {
+        latitude: data.latitude,
+        longitude: data.longitude
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      setIsCheckingOut(false);
+      toast({
+        title: "Check-out Realizado",
+        description: "Check-out registrado com sucesso!",
+      });
+    },
+    onError: (error) => {
+      setIsCheckingOut(false);
+      toast({
+        title: "Erro no Check-out",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
@@ -74,6 +173,69 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
       return;
     }
     sendToOmieMutation.mutate(card.id);
+  };
+
+  // Função para realizar check-in
+  const handleCheckIn = async () => {
+    if (!card) return;
+    
+    setIsCheckingIn(true);
+    try {
+      const location = await getCurrentLocation();
+      
+      // Calcular distância se o cliente tem coordenadas
+      let distance = 0;
+      if (card.customerLatitude && card.customerLongitude) {
+        distance = calculateDistance(
+          location.latitude,
+          location.longitude,
+          parseFloat(card.customerLatitude),
+          parseFloat(card.customerLongitude)
+        );
+        
+        toast({
+          title: "Localização Capturada",
+          description: `Distância até o cliente: ${distance.toFixed(0)}m`,
+        });
+      }
+      
+      checkInMutation.mutate({
+        cardId: card.id,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        distance
+      });
+    } catch (error) {
+      setIsCheckingIn(false);
+      toast({
+        title: "Erro na Localização",
+        description: error instanceof Error ? error.message : "Erro ao capturar localização",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Função para realizar check-out
+  const handleCheckOut = async () => {
+    if (!card) return;
+    
+    setIsCheckingOut(true);
+    try {
+      const location = await getCurrentLocation();
+      
+      checkOutMutation.mutate({
+        cardId: card.id,
+        latitude: location.latitude,
+        longitude: location.longitude
+      });
+    } catch (error) {
+      setIsCheckingOut(false);
+      toast({
+        title: "Erro na Localização",
+        description: error instanceof Error ? error.message : "Erro ao capturar localização",
+        variant: "destructive",
+      });
+    }
   };
 
   const openWhatsApp = (phone: string, customerName: string) => {
@@ -468,7 +630,65 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
         {/* Botões de Ação */}
         {(card.status === 'pending' || card.status === 'in_progress') && (
-          <div className="border-t pt-4">
+          <div className="border-t pt-4 space-y-4">
+            {/* Botões de Check-in e Check-out */}
+            <div className="flex flex-wrap justify-center gap-3">
+              <Button
+                onClick={handleCheckIn}
+                disabled={isCheckingIn || !!card.checkInTime}
+                variant="outline"
+                className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                data-testid="button-check-in"
+              >
+                {isCheckingIn ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4 mr-2" />
+                )}
+                {card.checkInTime ? 'Check-in Realizado' : 'Check-in'}
+              </Button>
+              
+              <Button
+                onClick={handleCheckOut}
+                disabled={isCheckingOut || !card.checkInTime || !!card.checkOutTime}
+                variant="outline"
+                className="border-purple-600 text-purple-600 hover:bg-purple-50"
+                data-testid="button-check-out"
+              >
+                {isCheckingOut ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <LogOut className="h-4 w-4 mr-2" />
+                )}
+                {card.checkOutTime ? 'Check-out Realizado' : 'Check-out'}
+              </Button>
+            </div>
+
+            {/* Informações de Check-in/Check-out */}
+            {(card.checkInTime || card.checkOutTime) && (
+              <div className="bg-gray-50 p-3 rounded-lg text-sm">
+                {card.checkInTime && (
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-blue-600 font-medium">Check-in:</span>
+                    <span>{new Date(card.checkInTime).toLocaleString('pt-BR')}</span>
+                  </div>
+                )}
+                {card.checkOutTime && (
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-purple-600 font-medium">Check-out:</span>
+                    <span>{new Date(card.checkOutTime).toLocaleString('pt-BR')}</span>
+                  </div>
+                )}
+                {card.distanceToCustomer && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 font-medium">Distância:</span>
+                    <span>{parseFloat(card.distanceToCustomer).toFixed(0)}m do cliente</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Botões de Venda */}
             <div className="flex flex-wrap justify-center gap-3">
               <Button
                 onClick={() => {

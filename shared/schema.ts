@@ -208,6 +208,15 @@ export const salesCards = pgTable("sales_cards", {
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }), // Latitude da localização do cliente
   customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }), // Longitude da localização do cliente
   
+  // Controle de check-in e check-out do vendedor
+  checkInTime: timestamp("check_in_time"), // Horário de check-in do vendedor
+  checkOutTime: timestamp("check_out_time"), // Horário de check-out do vendedor
+  checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }), // Latitude do vendedor no check-in
+  checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }), // Longitude do vendedor no check-in
+  checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }), // Latitude do vendedor no check-out
+  checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }), // Longitude do vendedor no check-out
+  distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

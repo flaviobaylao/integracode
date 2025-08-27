@@ -2251,6 +2251,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Route for check-in
+  app.post('/api/sales-cards/:id/check-in', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude, distance } = req.body;
+
+      const updateData = {
+        checkInTime: new Date(),
+        checkInLatitude: latitude.toString(),
+        checkInLongitude: longitude.toString(),
+        distanceToCustomer: distance.toString()
+      };
+
+      const salesCard = await storage.updateSalesCard(id, updateData);
+      
+      res.json({
+        success: true,
+        message: 'Check-in realizado com sucesso',
+        checkInTime: updateData.checkInTime,
+        distance
+      });
+    } catch (error) {
+      console.error("Error during check-in:", error);
+      res.status(500).json({ message: "Failed to perform check-in" });
+    }
+  });
+
+  // Route for check-out
+  app.post('/api/sales-cards/:id/check-out', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+
+      const updateData = {
+        checkOutTime: new Date(),
+        checkOutLatitude: latitude.toString(),
+        checkOutLongitude: longitude.toString()
+      };
+
+      const salesCard = await storage.updateSalesCard(id, updateData);
+      
+      res.json({
+        success: true,
+        message: 'Check-out realizado com sucesso',
+        checkOutTime: updateData.checkOutTime
+      });
+    } catch (error) {
+      console.error("Error during check-out:", error);
+      res.status(500).json({ message: "Failed to perform check-out" });
+    }
+  });
+
   // Route to finalize sale with Omie integration
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
     try {
