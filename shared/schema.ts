@@ -50,6 +50,11 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").notNull().default('vendedor'),
   route: varchar("route"),
   isActive: boolean("is_active").notNull().default(true),
+  
+  // Geolocalização da casa do vendedor
+  homeLatitude: decimal("home_latitude", { precision: 10, scale: 8 }),
+  homeLongitude: decimal("home_longitude", { precision: 11, scale: 8 }),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

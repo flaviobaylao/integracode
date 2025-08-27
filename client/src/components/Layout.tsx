@@ -5,6 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { User } from "@shared/schema";
+import UserProfileModal from "./UserProfileModal";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -17,6 +18,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
   const [orderStepsOpen, setOrderStepsOpen] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
@@ -107,9 +109,18 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => window.location.href = '/api/logout'}
+              onClick={() => setShowProfileModal(true)}
+              title="Meu Perfil"
             >
-              <i className="fas fa-chevron-down"></i>
+              <i className="fas fa-cog text-gray-600"></i>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.location.href = '/api/logout'}
+              title="Sair"
+            >
+              <i className="fas fa-sign-out-alt text-gray-600"></i>
             </Button>
           </div>
         </div>
@@ -182,6 +193,15 @@ export default function Layout({ children, activeView, setActiveView, user }: La
           {children}
         </main>
       </div>
+
+      {/* User Profile Modal */}
+      {showProfileModal && user && (
+        <UserProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          user={user}
+        />
+      )}
     </div>
   );
 }

@@ -110,6 +110,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put('/api/users/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const userId = req.params.id;
+      const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
+      
+      // Usuários só podem editar seu próprio perfil
+      if (userId !== currentUserId) {
+        return res.status(403).json({ message: "Não autorizado a editar este perfil" });
+      }
+
+      const updateData = req.body;
+      const updatedUser = await storage.updateUser(userId, updateData);
+      
+      res.json(updatedUser);
+    } catch (error) {
+      console.error("Error updating user:", error);
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
   // Customer routes
   app.get('/api/customers', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
