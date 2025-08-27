@@ -31,7 +31,6 @@ interface SaleModalProps {
 }
 
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
-  console.log('SaleModal rendered:', { isOpen, salesCard: salesCard?.id, showConfirmation: false });
   
   // Estados principais
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
@@ -79,15 +78,18 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     return saleItems.reduce((sum, item) => sum + item.totalPrice, 0);
   }, [saleItems]);
 
-  // Agrupar produtos por tamanho
+  // Agrupar produtos por tamanho (apenas produtos ativos)
   const groupedProducts = useMemo(() => {
     if (!products || !Array.isArray(products)) return { '350ml': [], '900ml': [], outros: [] };
     
-    const groups = products.reduce((acc: any, product: Product) => {
+    // Filtrar apenas produtos ativos
+    const activeProducts = products.filter((product: Product) => product.isActive);
+    
+    const groups = activeProducts.reduce((acc: any, product: Product) => {
       const name = product.name.toLowerCase();
       if (name.includes('350ml')) {
         acc['350ml'].push(product);
-      } else if (name.includes('900ml')) {
+      } else if (name.includes('900ml') || name.includes('500ml')) {
         acc['900ml'].push(product);
       } else {
         acc.outros.push(product);
@@ -333,11 +335,13 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden">
+      <DialogContent className="w-full max-w-[95vw] lg:max-w-6xl h-[95vh] lg:max-h-[90vh] overflow-hidden p-3 lg:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShoppingCart className="h-5 w-5" />
-            Finalizar Venda - {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}
+          <DialogTitle className="flex items-center gap-2 text-base lg:text-lg">
+            <ShoppingCart className="h-4 w-4 lg:h-5 lg:w-5" />
+            <span className="truncate">
+              Finalizar Venda - {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}
+            </span>
           </DialogTitle>
         </DialogHeader>
 
@@ -416,14 +420,14 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
           </div>
         ) : (
           // Tela de Seleção de Produtos
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
+          <div className="flex flex-col lg:grid lg:grid-cols-3 gap-4 lg:gap-6 h-auto lg:h-[600px]">
             {/* Lista de Produtos */}
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 order-2 lg:order-1">
               <div className="mb-4">
                 <h3 className="text-lg font-semibold mb-2">Seleção de Produtos</h3>
               </div>
               
-              <ScrollArea className="h-[500px]">
+              <ScrollArea className="h-[300px] lg:h-[500px]">
                 {productsLoading ? (
                   <div className="text-center py-8">Carregando produtos...</div>
                 ) : !products || !Array.isArray(products) ? (
@@ -596,7 +600,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             </div>
 
             {/* Painel Lateral - Configurações */}
-            <div className="space-y-4">
+            <div className="space-y-4 order-1 lg:order-2">
               {/* Resumo da Venda */}
               <Card>
                 <CardHeader>
@@ -708,43 +712,73 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   </Button>
                 </div>
 
-                {/* Entrega aos Sábados */}
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="saturday-delivery"
-                      checked={enableSaturdayDelivery}
-                      onCheckedChange={(checked) => setEnableSaturdayDelivery(checked === true)}
-                    />
-                    <Label htmlFor="saturday-delivery" className="text-sm">
-                      Habilitar entrega aos sábados
-                    </Label>
-                  </div>
+                {/* Dias de Entrega */}
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Dias e Horários de Entrega:</Label>
                   
-                  {enableSaturdayDelivery && (
-                    <div className="space-y-2 pl-6">
-                      <Label className="text-sm font-medium">Horários aos sábados:</Label>
-                      {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
-                        <div key={slot} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`saturday-${slot}`}
-                            checked={selectedSaturdaySlots.includes(`${slot} aos sábados`)}
-                            onCheckedChange={(checked) => {
-                              const slotWithSuffix = `${slot} aos sábados`;
-                              if (checked) {
-                                setSelectedSaturdaySlots(prev => [...prev, slotWithSuffix]);
-                              } else {
-                                setSelectedSaturdaySlots(prev => prev.filter(s => s !== slotWithSuffix));
-                              }
-                            }}
-                          />
-                          <Label htmlFor={`saturday-${slot}`} className="text-sm">
-                            {slot} aos sábados
-                          </Label>
-                        </div>
-                      ))}
+                  {/* Dias de semana (segunda a sexta) */}
+                  <div className="space-y-3">
+                    <Label className="text-sm text-gray-600">Dias de semana:</Label>
+                    {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
+                      <div key={slot} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`weekday-${slot}`}
+                          checked={selectedWeekdaySlots.includes(slot)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedWeekdaySlots(prev => [...prev, slot]);
+                            } else {
+                              setSelectedWeekdaySlots(prev => prev.filter(s => s !== slot));
+                            }
+                          }}
+                        />
+                        <Label htmlFor={`weekday-${slot}`} className="text-sm">
+                          {slot}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Separator />
+
+                  {/* Entrega aos Sábados */}
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="saturday-delivery"
+                        checked={enableSaturdayDelivery}
+                        onCheckedChange={(checked) => setEnableSaturdayDelivery(checked === true)}
+                      />
+                      <Label htmlFor="saturday-delivery" className="text-sm font-medium">
+                        Habilitar entrega aos sábados
+                      </Label>
                     </div>
-                  )}
+                    
+                    {enableSaturdayDelivery && (
+                      <div className="space-y-2 pl-6">
+                        <Label className="text-sm text-gray-600">Horários aos sábados:</Label>
+                        {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
+                          <div key={slot} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`saturday-${slot}`}
+                              checked={selectedSaturdaySlots.includes(`${slot} aos sábados`)}
+                              onCheckedChange={(checked) => {
+                                const slotWithSuffix = `${slot} aos sábados`;
+                                if (checked) {
+                                  setSelectedSaturdaySlots(prev => [...prev, slotWithSuffix]);
+                                } else {
+                                  setSelectedSaturdaySlots(prev => prev.filter(s => s !== slotWithSuffix));
+                                }
+                              }}
+                            />
+                            <Label htmlFor={`saturday-${slot}`} className="text-sm">
+                              {slot} aos sábados
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Alerta de Bloqueio */}
