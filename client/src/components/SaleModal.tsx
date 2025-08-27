@@ -33,6 +33,9 @@ interface SaleModalProps {
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  
+  // Log para debug
+  console.log('SaleModal opened:', { isOpen, salesCard: salesCard?.id, showConfirmation });
   const [selectedProducts, setSelectedProducts] = useState<{[key: string]: number}>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('a_vista');
   const [operationType, setOperationType] = useState<OperationType>('venda');
