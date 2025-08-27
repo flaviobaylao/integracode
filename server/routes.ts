@@ -2255,7 +2255,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { products, totalValue, orderNumber, paymentMethod, operationType, shouldBlock } = req.body;
+      const { 
+        items, 
+        totalValue, 
+        orderNumber, 
+        paymentMethod, 
+        operationType, 
+        shouldBlock,
+        deliveryTimeSlots,
+        deliverySaturdayTimeSlots,
+        customerLatitude,
+        customerLongitude,
+        boletoDays,
+        saveForReuse
+      } = req.body;
+      
+      // Use items as products for backward compatibility
+      const products = items || req.body.products;
 
       console.log('Finalizing sale for card:', id);
       console.log('Sale data:', { products, totalValue, orderNumber, operationType });
@@ -2316,6 +2332,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           saleValue: totalValue.toString(),
           paymentMethod: paymentMethod || 'a_vista',
           operationType: operationType || 'venda',
+          boletoDays: boletoDays || 7,
+          deliveryTimeSlots: deliveryTimeSlots || [],
+          deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
+          customerLatitude: customerLatitude,
+          customerLongitude: customerLongitude,
           notes: (await storage.getSalesCard(id))?.notes + `\n\nPedido bloqueado: ${blockDetails}`
         };
 
@@ -2337,6 +2358,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         products: products,
         paymentMethod: paymentMethod || 'a_vista',
         operationType: operationType || 'venda',
+        boletoDays: boletoDays || 7,
+        deliveryTimeSlots: deliveryTimeSlots || [],
+        deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
+        customerLatitude: customerLatitude,
+        customerLongitude: customerLongitude,
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);

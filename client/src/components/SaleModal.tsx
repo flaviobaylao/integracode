@@ -130,6 +130,17 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
           longitude: card.customerLongitude.toString()
         });
       }
+
+      // Carregar produtos salvos do pedido anterior
+      if (card.products && Array.isArray(card.products) && card.products.length > 0) {
+        const savedProducts: {[key: string]: number} = {};
+        card.products.forEach((item: any) => {
+          if (item.id && item.quantity > 0) {
+            savedProducts[item.id] = item.quantity;
+          }
+        });
+        setSelectedProducts(savedProducts);
+      }
     }
   }, [salesCard, isOpen]);
 
@@ -224,6 +235,14 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       deliverySaturdayTimeSlots: selectedSaturdaySlots,
       customerLatitude: customerLocation.latitude ? parseFloat(customerLocation.latitude) : null,
       customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
+      // Salvar produtos selecionados para reutilização
+      products: saleItems.map(item => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice
+      }))
     };
     
     try {
@@ -311,7 +330,9 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       customerLatitude: customerLocation.latitude ? parseFloat(customerLocation.latitude) : null,
       customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
       totalValue: totalSale,
-      shouldBlock: shouldBlockOrder
+      shouldBlock: shouldBlockOrder,
+      // Salvar configurações para reutilização
+      saveForReuse: true
     };
 
     finalizeSaleMutation.mutate(saleData);
