@@ -699,6 +699,11 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                         Localização: {parseFloat(card.checkOutLatitude).toFixed(6)}, {parseFloat(card.checkOutLongitude).toFixed(6)}
                       </div>
                     )}
+                    {card.checkOutDistanceToCustomer && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Distância até o cliente: {parseFloat(card.checkOutDistanceToCustomer).toFixed(0)}m
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -512,6 +512,11 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                     Localização: {parseFloat((salesCard as any).checkOutLatitude).toFixed(6)}, {parseFloat((salesCard as any).checkOutLongitude).toFixed(6)}
                                   </div>
                                 )}
+                                {(salesCard as any).checkOutDistanceToCustomer && (
+                                  <div className="text-xs text-gray-500">
+                                    Distância: {parseFloat((salesCard as any).checkOutDistanceToCustomer).toFixed(0)}m do cliente
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

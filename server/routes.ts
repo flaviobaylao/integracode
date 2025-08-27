@@ -2284,10 +2284,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
 
+      // Buscar dados do card para calcular distância até o cliente
+      const currentCard = await storage.getSalesCard(id);
+      let checkOutDistance = null;
+
+      if (currentCard && currentCard.customerLatitude && currentCard.customerLongitude) {
+        const customerLat = parseFloat(currentCard.customerLatitude);
+        const customerLon = parseFloat(currentCard.customerLongitude);
+        
+        // Calcular distância usando fórmula de Haversine
+        const R = 6371000; // Raio da Terra em metros
+        const dLat = (customerLat - latitude) * Math.PI / 180;
+        const dLon = (customerLon - longitude) * Math.PI / 180;
+        const a = 
+          Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(latitude * Math.PI / 180) * Math.cos(customerLat * Math.PI / 180) * 
+          Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        checkOutDistance = R * c; // Distância em metros
+      }
+
       const updateData = {
         checkOutTime: new Date(),
         checkOutLatitude: latitude.toString(),
-        checkOutLongitude: longitude.toString()
+        checkOutLongitude: longitude.toString(),
+        ...(checkOutDistance !== null && { checkOutDistanceToCustomer: checkOutDistance.toString() })
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);
@@ -2295,7 +2316,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         message: 'Check-out realizado com sucesso',
-        checkOutTime: updateData.checkOutTime
+        checkOutTime: updateData.checkOutTime,
+        checkOutDistance
       });
     } catch (error) {
       console.error("Error during check-out:", error);

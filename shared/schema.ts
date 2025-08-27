@@ -215,7 +215,8 @@ export const salesCards = pgTable("sales_cards", {
   checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }), // Longitude do vendedor no check-in
   checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }), // Latitude do vendedor no check-out
   checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }), // Longitude do vendedor no check-out
-  distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente
+  distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-in
+  checkOutDistanceToCustomer: decimal("check_out_distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-out
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -469,6 +470,7 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   checkOutLatitude: z.union([z.string(), z.number()]).optional().nullable(),
   checkOutLongitude: z.union([z.string(), z.number()]).optional().nullable(),
   distanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
+  checkOutDistanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
 });
 
 export const insertMessageTemplateSchema = createInsertSchema(messageTemplates).omit({
