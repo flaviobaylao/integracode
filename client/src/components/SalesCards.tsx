@@ -613,9 +613,11 @@ export default function SalesCards() {
         }}
         card={selectedCardForDetails}
         onStartSale={(card) => {
+          console.log('onStartSale called with card:', card.id);
           setShowDetailsModal(false);
           setSelectedCardForSale(card);
           setShowSaleModal(true);
+          console.log('Set showSaleModal to true');
         }}
         onStartNoSale={(card) => {
           setShowDetailsModal(false);

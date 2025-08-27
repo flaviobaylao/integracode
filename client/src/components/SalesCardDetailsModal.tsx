@@ -40,6 +40,9 @@ interface SalesCardDetailsModalProps {
 export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale }: SalesCardDetailsModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // Log para debug
+  console.log('SalesCardDetailsModal opened:', { isOpen, cardStatus: card?.status, cardId: card?.id });
 
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
@@ -468,7 +471,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           <div className="border-t pt-4">
             <div className="flex flex-wrap justify-center gap-3">
               <Button
-                onClick={() => onStartSale?.(card)}
+                onClick={() => {
+                  console.log('Finalizar Venda clicked, calling onStartSale with card:', card.id);
+                  onStartSale?.(card);
+                }}
                 className="bg-green-600 hover:bg-green-700 text-white"
                 data-testid="button-start-sale"
               >
