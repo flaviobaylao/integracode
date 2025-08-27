@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
-import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock } from "lucide-react";
+import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface CustomerModalProps {
@@ -79,6 +79,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       route: '',
       sellerId: '',
       weekdays: '[]',
+      visitPeriodicity: 'semanal',
       isActive: true,
       latitude: '',
       longitude: '',
@@ -107,6 +108,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         route: customer.route || '',
         sellerId: customer.sellerId || '',
         weekdays: customer.weekdays || '[]',
+        visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
@@ -129,6 +131,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         route: '',
         sellerId: '',
         weekdays: '[]',
+        visitPeriodicity: 'semanal',
         isActive: true,
         latitude: '',
         longitude: '',
@@ -847,6 +850,38 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             );
                           })}
                         </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="visitPeriodicity"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Clock className="h-4 w-4" />
+                          <span>Periodicidade de Visita</span>
+                        </FormLabel>
+                        <Select 
+                          value={field.value} 
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione a periodicidade" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="semanal">Semanal</SelectItem>
+                            <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                            <SelectItem value="mensal">Mensal</SelectItem>
+                            <SelectItem value="bimestral">Bimestral</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}

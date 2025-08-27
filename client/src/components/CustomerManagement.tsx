@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import CustomerModal from "./CustomerModal";
+import CustomerDetailsModal from "./CustomerDetailsModal";
 import OmieClientImport from "./OmieClientImport";
 import OmieSyncManager from "./OmieSyncManager";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
@@ -18,6 +19,8 @@ export default function CustomerManagement() {
   const [showOmieImport, setShowOmieImport] = useState(false);
   const [showOmieSync, setShowOmieSync] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [routeFilter, setRouteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -227,15 +230,13 @@ export default function CustomerManagement() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Cliente</th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Documento</th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Contato</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Nome Fantasia</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Rota</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Inserção</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Venda</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Ações</th>
                 </tr>
               </thead>
@@ -245,19 +246,15 @@ export default function CustomerManagement() {
                     <tr key={customer.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4">
                         <div>
-                          <p className="font-medium text-gray-800">{customer.name}</p>
-                          <p className="text-sm text-gray-600 truncate max-w-xs">{customer.address}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-sm text-gray-600">{customer.document}</span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="text-sm text-gray-800">{customer.phone}</p>
-                          {customer.email && (
-                            <p className="text-sm text-gray-600">{customer.email}</p>
-                          )}
+                          <button
+                            className="font-medium text-blue-600 hover:text-blue-800 hover:underline text-left"
+                            onClick={() => {
+                              setSelectedCustomer(customer);
+                              setShowDetailsModal(true);
+                            }}
+                          >
+                            {(customer as any).fantasyName || customer.name}
+                          </button>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -276,13 +273,23 @@ export default function CustomerManagement() {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <Badge className="bg-blue-100 text-blue-800 capitalize">
-                          {customer.route}
-                        </Badge>
+                        <div>
+                          <Badge className="bg-blue-100 text-blue-800 capitalize">
+                            {customer.route}
+                          </Badge>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {getWeekdaysLabel(customer.weekdays)}
+                          </p>
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-sm text-gray-600">
-                          {getWeekdaysLabel(customer.weekdays)}
+                          {formatDate((customer as any).lastActivityDate)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-gray-600 capitalize">
+                          {(customer as any).visitPeriodicity || 'Semanal'}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -298,18 +305,6 @@ export default function CustomerManagement() {
                       <td className="px-6 py-4 text-center">
                         <div className="flex items-center justify-center">
                           {renderLastActivityIcon(customer.lastActivityStatus)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          {customer.lastSaleValue && (
-                            <p className="text-sm font-medium text-gray-800">
-                              {formatCurrency(parseFloat(customer.lastSaleValue))}
-                            </p>
-                          )}
-                          <p className="text-sm text-gray-600">
-                            {formatDate(customer.lastSaleDate)}
-                          </p>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -392,6 +387,18 @@ export default function CustomerManagement() {
         isOpen={showOmieSync}
         onClose={() => setShowOmieSync(false)}
       />
+
+      {/* Customer Details Modal */}
+      {showDetailsModal && selectedCustomer && (
+        <CustomerDetailsModal
+          customer={selectedCustomer}
+          isOpen={showDetailsModal}
+          onClose={() => {
+            setShowDetailsModal(false);
+            setSelectedCustomer(null);
+          }}
+        />
+      )}
     </div>
   );
 }

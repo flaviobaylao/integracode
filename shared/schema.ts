@@ -57,6 +57,9 @@ export const users = pgTable("users", {
 // Customer type enum  
 export const customerTypeEnum = pgEnum('customer_type', ['pessoa_fisica', 'pessoa_juridica']);
 
+// Visit periodicity enum
+export const visitPeriodicityEnum = pgEnum('visit_periodicity', ['semanal', 'quinzenal', 'mensal', 'bimestral']);
+
 // Customers table
 export const customers = pgTable("customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -75,6 +78,7 @@ export const customers = pgTable("customers", {
   route: varchar("route").notNull(),
   sellerId: varchar("seller_id").notNull(),
   weekdays: varchar("weekdays").notNull(), // JSON string of selected days
+  visitPeriodicity: visitPeriodicityEnum("visit_periodicity").notNull().default('semanal'),
   isActive: boolean("is_active").notNull().default(true),
   lastSaleDate: timestamp("last_sale_date"),
   lastSaleValue: decimal("last_sale_value", { precision: 10, scale: 2 }),
