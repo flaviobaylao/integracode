@@ -726,8 +726,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             </div>
 
             {/* Painel Lateral - Configurações */}
-            <div className="space-y-4 order-1 lg:order-2 h-auto lg:h-[600px] overflow-y-auto">
-              {/* Resumo da Venda */}
+            <div className="order-1 lg:order-2 h-auto lg:h-[600px]">
+              <ScrollArea className="h-full pr-4">
+                <div className="space-y-4">
+                {/* Resumo da Venda */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Resumo da Venda</CardTitle>
@@ -918,20 +920,22 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                 )}
               </div>
               
-              {/* Botões de Ação */}
-              <div className="flex flex-col gap-2">
-                <Button 
-                  onClick={handleFinalizeSale}
-                  disabled={saleItems.length === 0}
-                  className="w-full"
-                >
-                  <Receipt className="h-4 w-4 mr-2" />
-                  Finalizar {OPERATION_TYPE_LABELS[operationType]}
-                </Button>
-                <Button variant="outline" onClick={onClose} className="w-full">
-                  Cancelar
-                </Button>
-              </div>
+                {/* Botões de Ação */}
+                <div className="flex flex-col gap-2">
+                  <Button 
+                    onClick={handleFinalizeSale}
+                    disabled={saleItems.length === 0}
+                    className="w-full"
+                  >
+                    <Receipt className="h-4 w-4 mr-2" />
+                    Finalizar {OPERATION_TYPE_LABELS[operationType]}
+                  </Button>
+                  <Button variant="outline" onClick={onClose} className="w-full">
+                    Cancelar
+                  </Button>
+                </div>
+                </div>
+              </ScrollArea>
             </div>
           </div>
         )}
