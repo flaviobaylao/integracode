@@ -455,72 +455,76 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         </DialogHeader>
 
         {showConfirmation ? (
-          // Tela de Confirmação
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Receipt className="h-5 w-5" />
-                  Resumo do Pedido
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div><strong>Cliente:</strong> {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}</div>
-                  <div><strong>Vendedor:</strong> {(salesCard as any).seller?.firstName} {(salesCard as any).seller?.lastName}</div>
-                  <div><strong>Número do Pedido:</strong> HS-{Date.now()}</div>
-                  <div><strong>Pagamento:</strong> {PAYMENT_METHOD_LABELS[paymentMethod]}</div>
-                  {paymentMethod === 'boleto' && <div><strong>Prazo do Boleto:</strong> {boletoDays} dias</div>}
-                  <div><strong>Tipo:</strong> {OPERATION_TYPE_LABELS[operationType]}</div>
-                  
-                  <Separator />
-                  
-                  <div className="space-y-2">
-                    <strong>Produtos:</strong>
-                    {saleItems.map((item) => (
-                      <div key={item.id} className="flex justify-between items-center py-2 border-b">
-                        <div>
-                          <div className="font-medium">{item.name}</div>
-                          <div className="text-sm text-gray-500">{item.quantity} x R$ {item.unitPrice.toFixed(2)}</div>
-                        </div>
-                        <div className="font-medium">R$ {item.totalPrice.toFixed(2)}</div>
+          // Tela de Confirmação com ScrollArea
+          <div className="flex flex-col h-full">
+            <ScrollArea className="flex-1 pr-4">
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Receipt className="h-5 w-5" />
+                      Resumo do Pedido
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <div><strong>Cliente:</strong> {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}</div>
+                      <div><strong>Vendedor:</strong> {(salesCard as any).seller?.firstName} {(salesCard as any).seller?.lastName}</div>
+                      <div><strong>Número do Pedido:</strong> HS-{Date.now()}</div>
+                      <div><strong>Pagamento:</strong> {PAYMENT_METHOD_LABELS[paymentMethod]}</div>
+                      {paymentMethod === 'boleto' && <div><strong>Prazo do Boleto:</strong> {boletoDays} dias</div>}
+                      <div><strong>Tipo:</strong> {OPERATION_TYPE_LABELS[operationType]}</div>
+                      
+                      <Separator />
+                      
+                      <div className="space-y-2">
+                        <strong>Produtos:</strong>
+                        {saleItems.map((item) => (
+                          <div key={item.id} className="flex justify-between items-center py-2 border-b">
+                            <div>
+                              <div className="font-medium">{item.name}</div>
+                              <div className="text-sm text-gray-500">{item.quantity} x R$ {item.unitPrice.toFixed(2)}</div>
+                            </div>
+                            <div className="font-medium">R$ {item.totalPrice.toFixed(2)}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  
-                  <Separator />
-                  
-                  <div className="flex justify-between items-center text-lg font-bold">
-                    <span>Total da Venda:</span>
-                    <span>R$ {totalSale.toFixed(2)}</span>
-                  </div>
+                      
+                      <Separator />
+                      
+                      <div className="flex justify-between items-center text-lg font-bold">
+                        <span>Total da Venda:</span>
+                        <span>R$ {totalSale.toFixed(2)}</span>
+                      </div>
 
-                  {shouldBlockOrder && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                      <Badge variant="outline" className="bg-yellow-100">ATENÇÃO</Badge>
-                      <p className="text-sm text-yellow-800 mt-1">
-                        Este pedido será enviado para aprovação manual devido ao prazo do boleto ser de {boletoDays} dias (diferente de 7 dias).
-                      </p>
+                      {shouldBlockOrder && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <Badge variant="outline" className="bg-yellow-100">ATENÇÃO</Badge>
+                          <p className="text-sm text-yellow-800 mt-1">
+                            Este pedido será enviado para aprovação manual devido ao prazo do boleto ser de {boletoDays} dias (diferente de 7 dias).
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Botão para gerar PDF do orçamento */}
+                      <div className="pt-4">
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={generateQuotePDF}
+                          data-testid="button-generate-pdf"
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Gerar PDF do Orçamento
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                  
-                  {/* Botão para gerar PDF do orçamento */}
-                  <div className="pt-4">
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={generateQuotePDF}
-                      data-testid="button-generate-pdf"
-                    >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Gerar PDF do Orçamento
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+              </div>
+            </ScrollArea>
 
-            <div className="flex justify-end gap-4">
+            <div className="flex justify-end gap-4 pt-4 border-t bg-white">
               <Button variant="outline" onClick={() => setShowConfirmation(false)}>
                 Voltar
               </Button>
