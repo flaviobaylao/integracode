@@ -2255,27 +2255,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { products, totalValue, orderNumber, paymentMethod, operationType } = req.body;
+      const { products, totalValue, orderNumber, paymentMethod, operationType, shouldBlock } = req.body;
 
       console.log('Finalizing sale for card:', id);
       console.log('Sale data:', { products, totalValue, orderNumber, operationType });
 
       // Check if order should be blocked
-      let shouldBlock = false;
+      let shouldBlockOrder = shouldBlock || false; // Use from frontend
       let blockReason = '';
       let blockDetails = '';
 
       // Block if operation is troca or amostra
       if (operationType === 'troca' || operationType === 'amostra') {
-        shouldBlock = true;
+        shouldBlockOrder = true;
         blockReason = 'operation_type';
         blockDetails = operationType === 'troca' 
           ? 'Pedido de troca requer aprovação manual'
           : 'Pedido de amostra requer aprovação manual';
       }
 
+      // Block if frontend indicates it should be blocked (e.g., boleto terms)
+      if (shouldBlock && !shouldBlockOrder) {
+        shouldBlockOrder = true;
+        blockReason = 'payment_terms';
+        blockDetails = 'Pedido com condições de pagamento que requerem aprovação';
+      }
+
       // Check if customer has overdue debt
-      if (!shouldBlock) {
+      if (!shouldBlockOrder) {
         try {
           const salesCard = await storage.getSalesCard(id);
           if (salesCard && salesCard.customer) {
@@ -2285,7 +2292,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (omieService) {
                 const creditInfo = await omieService.getClientCreditInfo(customerDocument);
                 if (creditInfo && creditInfo.valor_em_aberto > 0 && creditInfo.dias_em_atraso > 0) {
-                  shouldBlock = true;
+                  shouldBlockOrder = true;
                   blockReason = 'overdue_debt';
                   blockDetails = `Cliente possui débito vencido de R$ ${creditInfo.valor_em_aberto.toFixed(2)} há ${creditInfo.dias_em_atraso} dias`;
                 }
@@ -2298,7 +2305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      if (shouldBlock) {
+      if (shouldBlockOrder) {
         // Create blocked order instead of finalizing
         console.log(`Blocking order for card ${id}, reason: ${blockReason}`);
         

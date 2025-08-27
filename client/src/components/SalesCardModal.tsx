@@ -35,6 +35,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     operationType: 'venda',
     deliveryWeekdays: [] as string[],
     deliveryTimeSlots: [] as string[],
+    deliverySaturdayTimeSlots: [] as string[],
+    boletoDays: 7,
     customerLatitude: '',
     customerLongitude: '',
   });
@@ -54,6 +56,25 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
 
   // Encontrar cliente selecionado
   const selectedCustomer = customers?.find((c: any) => c.id === formData.customerId);
+
+  // Pre-carregar localização do cliente quando selecionado
+  useEffect(() => {
+    if (selectedCustomer && (!editingCard)) { // Apenas para novos cards
+      if (selectedCustomer.latitude && selectedCustomer.longitude) {
+        setFormData(prev => ({
+          ...prev,
+          customerLatitude: selectedCustomer.latitude,
+          customerLongitude: selectedCustomer.longitude,
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          customerLatitude: '',
+          customerLongitude: '',
+        }));
+      }
+    }
+  }, [selectedCustomer, editingCard]);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -75,6 +96,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         operationType: editingCard.operationType || 'venda',
         deliveryWeekdays: (editingCard as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
         deliveryTimeSlots: (editingCard as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
+        deliverySaturdayTimeSlots: (editingCard as any).deliverySaturdayTimeSlots || [],
+        boletoDays: (editingCard as any).boletoDays || 7,
         customerLatitude: (editingCard as any).customerLatitude || '',
         customerLongitude: (editingCard as any).customerLongitude || '',
       });
@@ -95,6 +118,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         operationType: 'venda',
         deliveryWeekdays: ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
         deliveryTimeSlots: ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
+        deliverySaturdayTimeSlots: [],
+        boletoDays: 7,
         customerLatitude: '',
         customerLongitude: '',
       });
@@ -202,6 +227,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         isRecurring: true,
         deliveryWeekdays: formData.deliveryWeekdays,
         deliveryTimeSlots: formData.deliveryTimeSlots,
+        deliverySaturdayTimeSlots: formData.deliverySaturdayTimeSlots,
+        boletoDays: formData.boletoDays,
         paymentMethod: formData.paymentMethod,
         operationType: formData.operationType,
         customerLatitude: formData.customerLatitude || null,
@@ -257,6 +284,16 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
       deliveryTimeSlots: checked 
         ? [...prev.deliveryTimeSlots, timeSlot]
         : prev.deliveryTimeSlots.filter(t => t !== timeSlot)
+    }));
+  };
+
+  // Função para gerenciar checkboxes de horários de sábado
+  const handleSaturdayTimeSlotChange = (timeSlot: string, checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      deliverySaturdayTimeSlots: checked
+        ? [...prev.deliverySaturdayTimeSlots, timeSlot]
+        : prev.deliverySaturdayTimeSlots.filter(slot => slot !== timeSlot)
     }));
   };
 
@@ -468,6 +505,31 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
               {errors.operationType && <p className="text-sm text-red-500 mt-1">{errors.operationType}</p>}
             </div>
           </div>
+
+          {/* Prazo para Boleto - Exibido apenas se método de pagamento for boleto */}
+          {formData.paymentMethod === 'boleto' && (
+            <div>
+              <Label htmlFor="boletoDays">Prazo do Boleto (dias) *</Label>
+              <Select 
+                value={formData.boletoDays.toString()} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, boletoDays: parseInt(value) }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o prazo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">7 dias</SelectItem>
+                  <SelectItem value="10">10 dias</SelectItem>
+                  <SelectItem value="14">14 dias</SelectItem>
+                  <SelectItem value="15">15 dias</SelectItem>
+                  <SelectItem value="21">21 dias</SelectItem>
+                  <SelectItem value="28">28 dias</SelectItem>
+                  <SelectItem value="30">30 dias</SelectItem>
+                  <SelectItem value="32">32 dias</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           
           <div>
             <Label htmlFor="notes">Observações</Label>
@@ -538,6 +600,34 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   ))}
                 </div>
               </div>
+
+              {/* Horários de Sábado - Exibido apenas se sábado estiver selecionado */}
+              {formData.deliveryWeekdays.includes('sabado') && (
+                <div className="mt-6">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Clock className="h-4 w-4 text-purple-600" />
+                    <Label className="text-sm font-medium">Horários aos Sábados</Label>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {timeSlots.map((time) => (
+                      <div key={`saturday-${time}`} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`saturday-time-${time}`}
+                          checked={formData.deliverySaturdayTimeSlots.includes(time)}
+                          onCheckedChange={(checked) => handleSaturdayTimeSlotChange(time, checked as boolean)}
+                          data-testid={`checkbox-saturday-time-${time}`}
+                        />
+                        <Label 
+                          htmlFor={`saturday-time-${time}`} 
+                          className="text-xs font-normal cursor-pointer"
+                        >
+                          {time} aos sábados
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

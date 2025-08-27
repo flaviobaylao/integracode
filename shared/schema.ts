@@ -199,6 +199,10 @@ export const salesCards = pgTable("sales_cards", {
   // Configurações de entrega - dias da semana e horários
   deliveryWeekdays: jsonb("delivery_weekdays").$type<string[]>().default([]), // dias da semana selecionados para entrega
   deliveryTimeSlots: jsonb("delivery_time_slots").$type<string[]>().default([]), // horários selecionados para entrega
+  deliverySaturdayTimeSlots: jsonb("delivery_saturday_time_slots").$type<string[]>().default([]), // horários específicos para sábados
+  
+  // Configurações de pagamento boleto
+  boletoDays: integer("boleto_days").default(7), // prazo em dias para pagamento boleto
   
   // Georreferenciamento do cliente
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }), // Latitude da localização do cliente

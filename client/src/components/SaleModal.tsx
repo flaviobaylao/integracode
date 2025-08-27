@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
@@ -32,6 +33,7 @@ interface SaleModalProps {
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [selectedProducts, setSelectedProducts] = useState<{[key: string]: number}>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('a_vista');
   const [operationType, setOperationType] = useState<OperationType>('venda');
   const { toast } = useToast();
@@ -148,6 +150,84 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     );
   };
 
+  // Controlar seleção/desmarcar produto
+  const handleProductSelect = (productId: string, isSelected: boolean) => {
+    if (isSelected) {
+      setSelectedProducts(prev => ({
+        ...prev,
+        [productId]: 1
+      }));
+    } else {
+      setSelectedProducts(prev => {
+        const newSelected = { ...prev };
+        delete newSelected[productId];
+        return newSelected;
+      });
+    }
+  };
+
+  // Atualizar quantidade do produto selecionado
+  const handleProductQuantityChange = (productId: string, quantity: number) => {
+    if (quantity > 0) {
+      setSelectedProducts(prev => ({
+        ...prev,
+        [productId]: quantity
+      }));
+    } else {
+      setSelectedProducts(prev => {
+        const newSelected = { ...prev };
+        delete newSelected[productId];
+        return newSelected;
+      });
+    }
+  };
+
+  // Sincronizar seleções com saleItems
+  useEffect(() => {
+    const newItems: SaleItem[] = [];
+    Object.entries(selectedProducts).forEach(([productId, quantity]) => {
+      const product = products?.find((p: Product) => p.id === productId);
+      if (product && quantity > 0) {
+        newItems.push({
+          id: product.id,
+          name: product.name,
+          quantity,
+          unitPrice: parseFloat(product.price),
+          totalPrice: parseFloat(product.price) * quantity
+        });
+      }
+    });
+    setSaleItems(newItems);
+  }, [selectedProducts, products]);
+
+  // Agrupar produtos por tamanho/tipo
+  const groupedProducts = useMemo(() => {
+    if (!products) return { '350ml': [], '900ml': [], outros: [] };
+    
+    return products.reduce((groups: any, product: Product) => {
+      if (product.name.toLowerCase().includes('350ml')) {
+        groups['350ml'].push(product);
+      } else if (product.name.toLowerCase().includes('900ml')) {
+        groups['900ml'].push(product);
+      } else {
+        groups.outros.push(product);
+      }
+      return groups;
+    }, { '350ml': [], '900ml': [], outros: [] });
+  }, [products]);
+
+  // Ordenar produtos alfabeticamente em cada grupo
+  Object.keys(groupedProducts).forEach(key => {
+    groupedProducts[key].sort((a: Product, b: Product) => a.name.localeCompare(b.name));
+  });
+
+  // Verificar se o pedido deve ser bloqueado
+  const shouldBlockOrder = useMemo(() => {
+    if (!salesCard) return false;
+    // Bloquear se pagamento é boleto e prazo é diferente de 7 dias
+    return salesCard.paymentMethod === 'boleto' && salesCard.boletoDays !== 7;
+  }, [salesCard]);
+
   // Finalizar venda
   const handleFinalizeSale = () => {
     if (saleItems.length === 0) {
@@ -158,6 +238,16 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       });
       return;
     }
+
+    // Verificar se pedido deve ser bloqueado
+    if (shouldBlockOrder) {
+      toast({
+        title: "Pedido Bloqueado",
+        description: `Este pedido será enviado para aprovação pois o prazo do boleto é de ${salesCard?.boletoDays} dias (diferente de 7 dias)`,
+        variant: "destructive",
+      });
+    }
+
     setShowConfirmation(true);
   };
 
@@ -190,6 +280,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             operationType,
             customerLatitude: position.coords.latitude.toString(),
             customerLongitude: position.coords.longitude.toString(),
+            shouldBlock: shouldBlockOrder,
           };
 
           toast({
@@ -209,6 +300,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             orderNumber: `HS-${Date.now()}`,
             paymentMethod,
             operationType,
+            shouldBlock: shouldBlockOrder,
           };
 
           toast({
@@ -233,6 +325,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         orderNumber: `HS-${Date.now()}`,
         paymentMethod,
         operationType,
+        shouldBlock: shouldBlockOrder,
       };
 
       toast({
@@ -348,46 +441,181 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         ) : (
           // Tela de seleção de produtos
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
-            {/* Lista de produtos */}
+            {/* Lista de produtos com checkboxes agrupados */}
             <div className="lg:col-span-2">
               <div className="mb-4">
-                <h3 className="text-lg font-semibold mb-2">Produtos Disponíveis</h3>
+                <h3 className="text-lg font-semibold mb-2">Seleção de Produtos</h3>
               </div>
               
               <ScrollArea className="h-[500px]">
                 {productsLoading ? (
                   <div className="text-center py-8">Carregando produtos...</div>
                 ) : (
-                  <div className="grid gap-3">
-                    {(products as Product[])?.map((product: Product) => (
-                      <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                        <CardContent className="p-4">
-                          <div className="flex justify-between items-center">
-                            <div className="flex-1">
-                              <h4 className="font-medium">{product.name}</h4>
-                              {product.description && (
-                                <p className="text-sm text-gray-600">{product.description}</p>
-                              )}
-                              <div className="flex items-center gap-2 mt-2">
-                                <Badge variant="secondary">
-                                  R$ {parseFloat(product.price).toFixed(2)}
-                                </Badge>
-                                <Badge variant={product.stock > 0 ? "default" : "destructive"}>
-                                  Estoque: {product.stock}
-                                </Badge>
+                  <div className="space-y-6">
+                    {/* Produtos 350ml */}
+                    {groupedProducts['350ml']?.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-lg mb-3 text-blue-700">Produtos 350ml</h4>
+                        <div className="space-y-3">
+                          {groupedProducts['350ml'].map((product: Product) => (
+                            <div key={product.id} className="border rounded-lg p-3 bg-blue-50/30">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3 flex-1">
+                                  <Checkbox
+                                    id={`product-${product.id}`}
+                                    checked={!!selectedProducts[product.id]}
+                                    onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
+                                    data-testid={`checkbox-product-${product.id}`}
+                                  />
+                                  <Label 
+                                    htmlFor={`product-${product.id}`}
+                                    className="text-sm cursor-pointer flex-1"
+                                  >
+                                    <div className="font-medium">{product.name}</div>
+                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
+                                  </Label>
+                                </div>
+                                
+                                {selectedProducts[product.id] && (
+                                  <div className="flex items-center space-x-2 ml-4">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] - 1)}
+                                      data-testid={`button-decrease-${product.id}`}
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </Button>
+                                    <span className="w-8 text-center font-medium" data-testid={`quantity-${product.id}`}>
+                                      {selectedProducts[product.id]}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] + 1)}
+                                      data-testid={`button-increase-${product.id}`}
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </div>
-                            <Button 
-                              onClick={() => addProduct(product)}
-                              disabled={!product.isActive || product.stock <= 0}
-                              size="sm"
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Produtos 900ml */}
+                    {groupedProducts['900ml']?.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-lg mb-3 text-green-700">Produtos 900ml</h4>
+                        <div className="space-y-3">
+                          {groupedProducts['900ml'].map((product: Product) => (
+                            <div key={product.id} className="border rounded-lg p-3 bg-green-50/30">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3 flex-1">
+                                  <Checkbox
+                                    id={`product-${product.id}`}
+                                    checked={!!selectedProducts[product.id]}
+                                    onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
+                                    data-testid={`checkbox-product-${product.id}`}
+                                  />
+                                  <Label 
+                                    htmlFor={`product-${product.id}`}
+                                    className="text-sm cursor-pointer flex-1"
+                                  >
+                                    <div className="font-medium">{product.name}</div>
+                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
+                                  </Label>
+                                </div>
+                                
+                                {selectedProducts[product.id] && (
+                                  <div className="flex items-center space-x-2 ml-4">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] - 1)}
+                                      data-testid={`button-decrease-${product.id}`}
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </Button>
+                                    <span className="w-8 text-center font-medium" data-testid={`quantity-${product.id}`}>
+                                      {selectedProducts[product.id]}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] + 1)}
+                                      data-testid={`button-increase-${product.id}`}
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Outros Produtos */}
+                    {groupedProducts.outros?.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-lg mb-3 text-gray-700">Outros Produtos</h4>
+                        <div className="space-y-3">
+                          {groupedProducts.outros.map((product: Product) => (
+                            <div key={product.id} className="border rounded-lg p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3 flex-1">
+                                  <Checkbox
+                                    id={`product-${product.id}`}
+                                    checked={!!selectedProducts[product.id]}
+                                    onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
+                                    data-testid={`checkbox-product-${product.id}`}
+                                  />
+                                  <Label 
+                                    htmlFor={`product-${product.id}`}
+                                    className="text-sm cursor-pointer flex-1"
+                                  >
+                                    <div className="font-medium">{product.name}</div>
+                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
+                                  </Label>
+                                </div>
+                                
+                                {selectedProducts[product.id] && (
+                                  <div className="flex items-center space-x-2 ml-4">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] - 1)}
+                                      data-testid={`button-decrease-${product.id}`}
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </Button>
+                                    <span className="w-8 text-center font-medium" data-testid={`quantity-${product.id}`}>
+                                      {selectedProducts[product.id]}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleProductQuantityChange(product.id, selectedProducts[product.id] + 1)}
+                                      data-testid={`button-increase-${product.id}`}
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </ScrollArea>
