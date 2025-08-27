@@ -392,30 +392,6 @@ export default function SalesCards() {
                     </div>
                   )}
                   
-                  {card.status === 'in_progress' && (
-                    <div className="flex items-center space-x-3">
-                      <Button
-                        className="flex-1 bg-green-500 hover:bg-green-600 text-white"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedCardForEdit(card);
-                          setShowSaleEditModal(true);
-                        }}
-                      >
-                        <i className="fas fa-shopping-cart mr-2"></i>Finalizar Venda
-                      </Button>
-                      <Button
-                        className="flex-1 bg-red-500 hover:bg-red-600 text-white"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedCardForNoSale(card);
-                          setShowNoSaleModal(true);
-                        }}
-                      >
-                        <i className="fas fa-times mr-2"></i>Não Venda
-                      </Button>
-                    </div>
-                  )}
                   
                   {card.status === 'completed' && (
                     <div className="flex items-center space-x-2">

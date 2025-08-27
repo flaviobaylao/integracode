@@ -466,6 +466,33 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           )}
         </div>
 
+        {/* Botões de Ação */}
+        {(card.status === 'pending' || card.status === 'in_progress') && (
+          <div className="border-t pt-4">
+            <div className="flex flex-wrap justify-center gap-3">
+              <Button
+                onClick={() => {
+                  console.log('Finalizar Venda clicked, calling onStartSale with card:', card.id);
+                  onStartSale?.(card);
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white"
+                data-testid="button-start-sale"
+              >
+                <CircleDollarSign className="h-4 w-4 mr-2" />
+                Finalizar Venda
+              </Button>
+              <Button
+                onClick={() => onStartNoSale?.(card)}
+                variant="outline"
+                className="border-red-600 text-red-600 hover:bg-red-50"
+                data-testid="button-start-no-sale"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Não Venda
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end space-x-3 pt-4">
           <Button variant="outline" onClick={onClose}>
