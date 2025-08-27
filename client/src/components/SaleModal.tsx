@@ -475,53 +475,6 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                       {paymentMethod === 'boleto' && <div><strong>Prazo do Boleto:</strong> {boletoDays} dias</div>}
                       <div><strong>Tipo:</strong> {OPERATION_TYPE_LABELS[operationType]}</div>
                       
-                      {/* Informações de Check-in/Check-out se disponíveis */}
-                      {((salesCard as any).checkInTime || (salesCard as any).checkOutTime) && (
-                        <>
-                          <Separator />
-                          <div className="bg-blue-50 p-3 rounded-lg">
-                            <h5 className="font-semibold text-gray-700 mb-2">Registro de Presença</h5>
-                            
-                            {(salesCard as any).checkInTime && (
-                              <div className="mb-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-blue-600 font-medium text-sm">✓ Check-in:</span>
-                                  <span className="text-xs text-gray-600">{new Date((salesCard as any).checkInTime).toLocaleString('pt-BR')}</span>
-                                </div>
-                                {((salesCard as any).checkInLatitude && (salesCard as any).checkInLongitude) && (
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    Localização: {parseFloat((salesCard as any).checkInLatitude).toFixed(6)}, {parseFloat((salesCard as any).checkInLongitude).toFixed(6)}
-                                  </div>
-                                )}
-                                {(salesCard as any).distanceToCustomer && (
-                                  <div className="text-xs text-gray-500">
-                                    Distância: {parseFloat((salesCard as any).distanceToCustomer).toFixed(0)}m do cliente
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            
-                            {(salesCard as any).checkOutTime && (
-                              <div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-purple-600 font-medium text-sm">✓ Check-out:</span>
-                                  <span className="text-xs text-gray-600">{new Date((salesCard as any).checkOutTime).toLocaleString('pt-BR')}</span>
-                                </div>
-                                {((salesCard as any).checkOutLatitude && (salesCard as any).checkOutLongitude) && (
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    Localização: {parseFloat((salesCard as any).checkOutLatitude).toFixed(6)}, {parseFloat((salesCard as any).checkOutLongitude).toFixed(6)}
-                                  </div>
-                                )}
-                                {(salesCard as any).checkOutDistanceToCustomer && (
-                                  <div className="text-xs text-gray-500">
-                                    Distância: {parseFloat((salesCard as any).checkOutDistanceToCustomer).toFixed(0)}m do cliente
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
                       
                       <Separator />
                       
