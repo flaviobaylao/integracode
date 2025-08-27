@@ -48,6 +48,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     queryKey: ['/api/products'],
     retry: false,
   });
+  
+  // Debug logs para verificar estado
+  console.log('SaleModal Debug:', {
+    paymentMethod,
+    enableSaturdayDelivery,
+    products: products?.length || 0,
+    productsLoading,
+    showConfirmation
+  });
 
   // Calcular total da venda
   const totalSale = useMemo(() => {
