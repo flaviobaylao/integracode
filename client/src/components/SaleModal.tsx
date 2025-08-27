@@ -527,6 +527,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
               <ScrollArea className="h-[500px]">
                 {productsLoading ? (
                   <div className="text-center py-8">Carregando produtos...</div>
+                ) : !products || !Array.isArray(products) ? (
+                  <div className="text-center py-8 text-red-500">Erro ao carregar produtos</div>
+                ) : products.length === 0 ? (
+                  <div className="text-center py-8">Nenhum produto encontrado</div>
                 ) : (
                   <div className="space-y-6">
                     {/* Produtos 350ml */}
