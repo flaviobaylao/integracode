@@ -36,6 +36,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: true 
     },
     { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports },
+    { 
+      id: 'sales-goals', 
+      label: user?.role === 'vendedor' ? 'Minhas Metas' : 'Metas de Vendas',
+      icon: 'fas fa-bullseye', 
+      available: true 
+    },
     { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },

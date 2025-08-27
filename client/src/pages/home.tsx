@@ -6,6 +6,7 @@ import CustomerManagement from "@/components/CustomerManagement";
 import ProductManagement from "@/components/ProductManagement";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
 import OmieIntegration from "@/components/OmieIntegration";
+import SalesGoalsManagement from "@/components/SalesGoalsManagement";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
@@ -35,6 +36,8 @@ export default function Home() {
         return <SalesCards />;
       case 'customers':
         return <CustomerManagement />;
+      case 'sales-goals':
+        return <SalesGoalsManagement user={user as any} />;
       case 'products':
         return <ProductManagement />;
       case 'whatsapp':

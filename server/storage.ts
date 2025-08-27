@@ -7,6 +7,7 @@ import {
   messageHistory,
   systemSettings,
   locations,
+  salesGoals,
   type User,
   type UpsertUser,
   type InsertCustomer,
@@ -23,6 +24,8 @@ import {
   type MessageHistory,
   type Location,
   type InsertLocation,
+  type SalesGoal,
+  type InsertSalesGoal,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -105,6 +108,17 @@ export interface IStorage {
   getLocationByCpfCnpj(cpfCnpj: string): Promise<Location | undefined>;
   bulkCreateLocations(locations: InsertLocation[]): Promise<Location[]>;
   updateCustomerCoordinatesFromLocations(): Promise<{ updated: number; matched: number; total: number }>;
+  
+  // Sales Goals operations
+  getSalesGoals(sellerId?: string, month?: number, year?: number): Promise<SalesGoal[]>;
+  getSalesGoal(id: string): Promise<SalesGoal | undefined>;
+  getSalesGoalBySeller(sellerId: string, month: number, year: number): Promise<SalesGoal | undefined>;
+  createSalesGoal(goal: InsertSalesGoal): Promise<SalesGoal>;
+  updateSalesGoal(id: string, goal: Partial<InsertSalesGoal>): Promise<SalesGoal>;
+  deleteSalesGoal(id: string): Promise<void>;
+  
+  // Sales Metrics operations
+  getSalesMetrics(sellerId?: string, month?: number, year?: number): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1353,6 +1367,175 @@ export class DatabaseStorage implements IStorage {
       };
     } catch (error) {
       console.error('Erro ao atualizar coordenadas dos clientes:', error);
+      throw error;
+    }
+  }
+
+  // Sales Goals operations
+  async getSalesGoals(sellerId?: string, month?: number, year?: number): Promise<SalesGoal[]> {
+    let query = db.select().from(salesGoals);
+    const conditions = [];
+
+    if (sellerId) {
+      conditions.push(eq(salesGoals.sellerId, sellerId));
+    }
+    if (month) {
+      conditions.push(eq(salesGoals.month, month));
+    }
+    if (year) {
+      conditions.push(eq(salesGoals.year, year));
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+
+    return await query.orderBy(desc(salesGoals.year), desc(salesGoals.month));
+  }
+
+  async getSalesGoal(id: string): Promise<SalesGoal | undefined> {
+    const [goal] = await db.select().from(salesGoals).where(eq(salesGoals.id, id));
+    return goal;
+  }
+
+  async getSalesGoalBySeller(sellerId: string, month: number, year: number): Promise<SalesGoal | undefined> {
+    const [goal] = await db.select().from(salesGoals)
+      .where(and(
+        eq(salesGoals.sellerId, sellerId),
+        eq(salesGoals.month, month),
+        eq(salesGoals.year, year)
+      ));
+    return goal;
+  }
+
+  async createSalesGoal(goalData: InsertSalesGoal): Promise<SalesGoal> {
+    const [goal] = await db.insert(salesGoals).values(goalData).returning();
+    return goal;
+  }
+
+  async updateSalesGoal(id: string, goalData: Partial<InsertSalesGoal>): Promise<SalesGoal> {
+    const [goal] = await db.update(salesGoals)
+      .set({ ...goalData, updatedAt: sql`now()` })
+      .where(eq(salesGoals.id, id))
+      .returning();
+    if (!goal) {
+      throw new Error('Meta não encontrada');
+    }
+    return goal;
+  }
+
+  async deleteSalesGoal(id: string): Promise<void> {
+    await db.delete(salesGoals).where(eq(salesGoals.id, id));
+  }
+
+  // Sales Metrics operations
+  async getSalesMetrics(sellerId?: string, month?: number, year?: number): Promise<any> {
+    try {
+      const currentDate = new Date();
+      const targetMonth = month || (currentDate.getMonth() + 1);
+      const targetYear = year || currentDate.getFullYear();
+      
+      // Calcular dias úteis do mês (excluindo domingos)
+      const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+      const workingDays = [];
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(targetYear, targetMonth - 1, day);
+        if (date.getDay() !== 0) { // 0 = Sunday
+          workingDays.push(date);
+        }
+      }
+      
+      const workingDaysInMonth = workingDays.length;
+      const workingDaysElapsed = workingDays.filter(date => date <= currentDate).length;
+      
+      // Base query conditions
+      const conditions = [];
+      
+      if (sellerId) {
+        conditions.push(eq(salesCards.sellerId, sellerId));
+      }
+      
+      // Data range for the month
+      const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+      const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+      
+      conditions.push(
+        and(
+          gte(salesCards.scheduledDate, startOfMonth),
+          lte(salesCards.scheduledDate, endOfMonth)
+        )
+      );
+
+      // Buscar cards de venda do mês
+      const salesCardsQuery = db.select({
+        id: salesCards.id,
+        status: salesCards.status,
+        totalValue: salesCards.totalValue,
+        scheduledDate: salesCards.scheduledDate,
+        customerId: salesCards.customerId,
+        sellerId: salesCards.sellerId
+      })
+      .from(salesCards)
+      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .where(and(...conditions));
+
+      const monthSalesCards = await salesCardsQuery;
+
+      // Calcular métricas
+      const totalCards = monthSalesCards.length;
+      const successfulCards = monthSalesCards.filter(card => card.status === 'success').length;
+      const positivationRate = totalCards > 0 ? (successfulCards / totalCards) * 100 : 0;
+      
+      const totalRevenue = monthSalesCards
+        .filter(card => card.status === 'success' && card.totalValue)
+        .reduce((sum, card) => sum + parseFloat(card.totalValue?.toString() || '0'), 0);
+      
+      const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
+      const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
+
+      // Para débito vencido, vamos simular por enquanto (precisa integração com dados do Omie)
+      const overdueDebtRatio = Math.random() * 10; // Temporário - deve vir dos dados reais
+
+      // Para atendimento, calcular baseado em clientes únicos atendidos vs total da rota
+      // Excluindo clientes com virtualService = true
+      const uniqueCustomersAttended = new Set(
+        monthSalesCards
+          .filter(card => card.status === 'success')
+          .map(card => card.customerId)
+      ).size;
+
+      // Contar total de clientes na rota do vendedor (excluindo virtualService)
+      let totalCustomersInRoute = 0;
+      if (sellerId) {
+        const routeCustomers = await db.select({ id: customers.id })
+          .from(customers)
+          .where(and(
+            eq(customers.sellerId, sellerId),
+            eq(customers.isActive, true),
+            eq(customers.virtualService, false)
+          ));
+        totalCustomersInRoute = routeCustomers.length;
+      }
+
+      const serviceRate = totalCustomersInRoute > 0 ? (uniqueCustomersAttended / totalCustomersInRoute) * 100 : 0;
+
+      return {
+        positivationRate,
+        totalRevenue,
+        revenueProjection,
+        overdueDebtRatio,
+        serviceRate,
+        workingDaysInMonth,
+        workingDaysElapsed,
+        totalCards,
+        successfulCards,
+        uniqueCustomersAttended,
+        totalCustomersInRoute,
+        dailyAverageRevenue
+      };
+    } catch (error) {
+      console.error('Erro ao calcular métricas de vendas:', error);
       throw error;
     }
   }

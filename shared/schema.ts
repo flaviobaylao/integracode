@@ -93,6 +93,9 @@ export const customers = pgTable("customers", {
   longitude: decimal("longitude", { precision: 11, scale: 8 }),
   coordinatesLocked: boolean("coordinates_locked").notNull().default(false),
   
+  // Atendimento virtual (não conta para meta de atendimento)
+  virtualService: boolean("virtual_service").notNull().default(false),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -361,11 +364,50 @@ export const locations = pgTable("locations", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Sales Goals table - para definição de metas mensais por vendedor
+export const salesGoals = pgTable("sales_goals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sellerId: varchar("seller_id").notNull(), // ID do vendedor
+  month: integer("month").notNull(), // Mês (1-12)
+  year: integer("year").notNull(), // Ano
+  
+  // Meta de Positivação (em percentual)
+  positivationGoal: decimal("positivation_goal", { precision: 5, scale: 2 }), // Ex: 85.50%
+  
+  // Meta de Faturamento (em reais)
+  revenueGoal: decimal("revenue_goal", { precision: 12, scale: 2 }), // Ex: 50000.00
+  
+  // Meta de Débito Vencido (relação percentual)
+  overdueDebtGoal: decimal("overdue_debt_goal", { precision: 5, scale: 2 }), // Ex: 5.00%
+  
+  // Meta de Atendimento (em percentual)
+  serviceGoal: decimal("service_goal", { precision: 5, scale: 2 }), // Ex: 90.00%
+  
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: varchar("created_by").notNull(), // ID do usuário que criou
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_sales_goals_seller_month_year").on(table.sellerId, table.month, table.year),
+]);
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   customers: many(customers),
   salesCards: many(salesCards),
   messageHistory: many(messageHistory),
+  salesGoals: many(salesGoals),
+}));
+
+export const salesGoalsRelations = relations(salesGoals, ({ one }) => ({
+  seller: one(users, {
+    fields: [salesGoals.sellerId],
+    references: [users.id],
+  }),
+  creator: one(users, {
+    fields: [salesGoals.createdBy],
+    references: [users.id],
+  }),
 }));
 
 export const customersRelations = relations(customers, ({ one, many }) => ({
@@ -506,6 +548,12 @@ export const insertLocationSchema = createInsertSchema(locations).omit({
   importedAt: true,
 });
 
+export const insertSalesGoalSchema = createInsertSchema(salesGoals).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -549,6 +597,9 @@ export type BlockedOrderWithRelations = BlockedOrder & {
 
 export type Location = typeof locations.$inferSelect;
 export type InsertLocation = z.infer<typeof insertLocationSchema>;
+
+export type SalesGoal = typeof salesGoals.$inferSelect;
+export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
 
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';

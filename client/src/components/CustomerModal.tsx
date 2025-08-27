@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
@@ -53,8 +53,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const queryClient = useQueryClient();
   const { user } = useAuth();
   
-  // Verificar se usuário pode gerenciar travamento de coordenadas
+  // Verificar se usuário pode gerenciar travamento de coordenadas e atendimento virtual
   const canManageCoordinatesLock = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canManageVirtualService = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -84,6 +85,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       latitude: '',
       longitude: '',
       coordinatesLocked: false,
+      virtualService: false,
     },
   });
 
@@ -113,6 +115,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
         coordinatesLocked: (customer as any).coordinatesLocked || false,
+        virtualService: (customer as any).virtualService || false,
       });
     } else {
       form.reset({
@@ -136,6 +139,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         latitude: '',
         longitude: '',
         coordinatesLocked: false,
+        virtualService: false,
       });
     }
   }, [customer, form]);
@@ -887,6 +891,41 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     )}
                   />
                 </div>
+
+                {/* Atendimento Virtual - apenas para admin/coordinator/administrative */}
+                {canManageVirtualService && (
+                  <div className="mt-4">
+                    <FormField
+                      control={form.control}
+                      name="virtualService"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base flex items-center space-x-2">
+                              <i className="fas fa-laptop text-blue-600"></i>
+                              <span>Atendimento Virtual</span>
+                            </FormLabel>
+                            <FormDescription>
+                              Cliente que receberá atendimento apenas de forma virtual/remota.
+                              Não será incluído no cálculo de metas de atendimento presencial.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                data-testid="checkbox-virtual-service"
+                              />
+                            </div>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
 

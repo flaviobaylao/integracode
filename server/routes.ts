@@ -13,6 +13,7 @@ import {
   insertMessageTemplateSchema,
   insertMessageHistorySchema,
   insertLocationSchema,
+  insertSalesGoalSchema,
 } from "@shared/schema";
 import { z } from "zod";
 import multer from 'multer';
@@ -315,6 +316,177 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting product:", error);
       res.status(500).json({ message: "Failed to delete product" });
+    }
+  });
+
+  // Sales Goals routes
+  app.get('/api/sales-goals', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { month, year, sellerId } = req.query;
+      
+      // Verificar permissões baseadas no role
+      let targetSellerId = undefined;
+      
+      if (user.role === 'vendedor') {
+        // Vendedores só podem ver suas próprias metas
+        targetSellerId = user.id;
+      } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        // Admins, coordinators e administrativos podem ver todas ou filtrar por vendedor
+        targetSellerId = sellerId || undefined;
+      } else {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const goals = await storage.getSalesGoals(
+        targetSellerId,
+        month ? parseInt(month as string) : undefined,
+        year ? parseInt(year as string) : undefined
+      );
+      
+      res.json(goals);
+    } catch (error) {
+      console.error("Error fetching sales goals:", error);
+      res.status(500).json({ message: "Failed to fetch sales goals" });
+    }
+  });
+
+  app.get('/api/sales-goals/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      
+      const goal = await storage.getSalesGoal(id);
+      
+      if (!goal) {
+        return res.status(404).json({ message: "Sales goal not found" });
+      }
+      
+      // Verificar permissões
+      if (user.role === 'vendedor' && goal.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      res.json(goal);
+    } catch (error) {
+      console.error("Error fetching sales goal:", error);
+      res.status(500).json({ message: "Failed to fetch sales goal" });
+    }
+  });
+
+  app.post('/api/sales-goals', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admins, coordinators e administrativos podem criar metas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied. Only admins, coordinators and administratives can create sales goals" });
+      }
+      
+      const data = insertSalesGoalSchema.parse({
+        ...req.body,
+        createdBy: user.id
+      });
+      
+      // Verificar se já existe meta para este vendedor neste mês/ano
+      const existingGoal = await storage.getSalesGoalBySeller(data.sellerId, data.month, data.year);
+      if (existingGoal && existingGoal.isActive) {
+        return res.status(409).json({ 
+          message: "Sales goal already exists for this seller in this month/year" 
+        });
+      }
+      
+      const goal = await storage.createSalesGoal(data);
+      res.json(goal);
+    } catch (error) {
+      console.error("Error creating sales goal:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create sales goal" });
+    }
+  });
+
+  app.put('/api/sales-goals/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      
+      // Apenas admins, coordinators e administrativos podem editar metas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied. Only admins, coordinators and administratives can edit sales goals" });
+      }
+      
+      const existingGoal = await storage.getSalesGoal(id);
+      if (!existingGoal) {
+        return res.status(404).json({ message: "Sales goal not found" });
+      }
+      
+      const data = insertSalesGoalSchema.partial().parse(req.body);
+      const goal = await storage.updateSalesGoal(id, data);
+      res.json(goal);
+    } catch (error) {
+      console.error("Error updating sales goal:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update sales goal" });
+    }
+  });
+
+  app.delete('/api/sales-goals/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      
+      // Apenas admins podem excluir metas
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Only admins can delete sales goals" });
+      }
+      
+      const existingGoal = await storage.getSalesGoal(id);
+      if (!existingGoal) {
+        return res.status(404).json({ message: "Sales goal not found" });
+      }
+      
+      await storage.deleteSalesGoal(id);
+      res.json({ message: "Sales goal deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting sales goal:", error);
+      res.status(500).json({ message: "Failed to delete sales goal" });
+    }
+  });
+
+  // Sales metrics routes
+  app.get('/api/sales-metrics', authenticateUser, async (req: any, res) => {
+    try {
+      const { month, year, sellerId } = req.query;
+      const user = req.currentUser;
+      
+      // Verificar se o usuário pode ver as métricas solicitadas
+      let targetSellerId = sellerId as string;
+      
+      if (user.role === 'vendedor') {
+        // Vendedores só podem ver suas próprias métricas
+        targetSellerId = user.id;
+      } else if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const metrics = await storage.getSalesMetrics(
+        targetSellerId,
+        month ? parseInt(month as string) : undefined,
+        year ? parseInt(year as string) : undefined
+      );
+
+      res.json(metrics);
+    } catch (error) {
+      console.error('Erro ao buscar métricas de vendas:', error);
+      res.status(500).json({ message: 'Failed to get sales metrics' });
     }
   });
 
