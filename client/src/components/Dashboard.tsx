@@ -268,7 +268,7 @@ export default function Dashboard() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm text-gray-800">
-                        <span className="font-medium">{client.customer.name}</span>
+                        <span className="font-medium">{client.customer?.name || 'Cliente não encontrado'}</span>
                       </p>
                       <p className="text-xs text-gray-600">
                         Agendado para {new Date(client.scheduledDate).toLocaleDateString('pt-BR')}
