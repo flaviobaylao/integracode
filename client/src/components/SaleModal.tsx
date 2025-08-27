@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -203,6 +203,131 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     toast({
       title: "PDF Gerado",
       description: "O orçamento foi gerado e baixado com sucesso!",
+    });
+  };
+
+  // Função para enviar PDF por WhatsApp
+  const sendPDFToWhatsApp = () => {
+    const customer = (salesCard as any)?.customer;
+    if (!customer?.phone) {
+      toast({
+        title: "Erro",
+        description: "Cliente não possui número de WhatsApp cadastrado.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Gerar o PDF primeiro
+    const pdf = new jsPDF();
+    
+    // Adicionar logomarca no canto superior direito
+    try {
+      pdf.addImage(honestLogo, 'PNG', 150, 10, 40, 40);
+    } catch (error) {
+      console.log('Erro ao carregar logomarca:', error);
+    }
+    
+    // Configurações da página
+    pdf.setFontSize(20);
+    pdf.text('ORÇAMENTO DE VENDA', 20, 30);
+    
+    // Informações da empresa
+    pdf.setFontSize(12);
+    pdf.text('Honest Sucos', 20, 50);
+    pdf.text('Sucos Naturais e Saudáveis', 20, 60);
+    
+    // Informações do cliente
+    if (customer) {
+      pdf.text(`Cliente: ${customer.fantasyName || customer.name}`, 20, 80);
+      if (customer.cnpj) pdf.text(`CNPJ: ${customer.cnpj}`, 20, 90);
+      if (customer.cpf) pdf.text(`CPF: ${customer.cpf}`, 20, 90);
+      if (customer.phone) pdf.text(`Telefone: ${customer.phone}`, 20, 100);
+    }
+    
+    // Informações do vendedor
+    const seller = (salesCard as any)?.seller;
+    if (seller) {
+      pdf.text(`Vendedor: ${seller.firstName} ${seller.lastName}`, 20, 110);
+    }
+    
+    // Informações do pedido
+    pdf.text(`Número do Orçamento: HS-${Date.now()}`, 20, 130);
+    pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
+    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
+    if (paymentMethod === 'boleto') {
+      pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
+    }
+    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    
+    // Tabela de produtos
+    const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
+    const tableRows = saleItems.map(item => [
+      item.name,
+      item.quantity.toString(),
+      `R$ ${item.unitPrice.toFixed(2)}`,
+      `R$ ${item.totalPrice.toFixed(2)}`
+    ]);
+    
+    autoTable(pdf, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 190,
+      styles: {
+        fontSize: 10,
+        cellPadding: 3
+      },
+      headStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255
+      }
+    });
+    
+    // Total da venda
+    const finalY = (pdf as any).lastAutoTable?.finalY || 250;
+    pdf.setFontSize(14);
+    pdf.text(`TOTAL GERAL: R$ ${totalSale.toFixed(2)}`, 20, finalY + 20);
+    
+    // Observações
+    pdf.setFontSize(10);
+    pdf.text('Observações:', 20, finalY + 40);
+    pdf.text('- Este orçamento tem validade de 15 dias.', 20, finalY + 50);
+    pdf.text('- Preços sujeitos a alteração sem aviso prévio.', 20, finalY + 60);
+    pdf.text('- Produtos naturais, sem conservantes.', 20, finalY + 70);
+    
+    if (shouldBlockOrder) {
+      pdf.text('- Este pedido requer aprovação manual.', 20, finalY + 80);
+    }
+
+    // Converter PDF para blob e enviar por WhatsApp
+    const pdfBlob = pdf.output('blob');
+    const pdfDataUrl = pdf.output('datauristring');
+    
+    // Limpar número de telefone (remover caracteres especiais)
+    const cleanPhone = customer.phone.replace(/\D/g, '');
+    
+    // Mensagem personalizada
+    const message = `Olá ${customer.fantasyName || customer.name}! 📄
+
+Segue o orçamento da Honest Sucos:
+• Total: R$ ${totalSale.toFixed(2)}
+• Produtos: ${saleItems.length} itens
+• Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}
+${paymentMethod === 'boleto' ? `• Prazo: ${boletoDays} dias` : ''}
+
+🌿 Sucos naturais e saudáveis!
+
+Qualquer dúvida, estou à disposição.`;
+
+    // Criar link do WhatsApp com mensagem
+    const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
+    
+    // Abrir WhatsApp em nova aba
+    window.open(whatsappUrl, '_blank');
+    
+    toast({
+      title: "WhatsApp Aberto",
+      description: `Mensagem preparada para ${customer.fantasyName || customer.name}. Você pode anexar o PDF manualmente.`,
     });
   };
 
@@ -515,8 +640,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                         </div>
                       )}
                       
-                      {/* Botão para gerar PDF do orçamento */}
-                      <div className="pt-4">
+                      {/* Botões para PDF e WhatsApp */}
+                      <div className="pt-4 space-y-2">
                         <Button
                           variant="outline"
                           className="w-full"
@@ -525,6 +650,16 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                         >
                           <FileText className="h-4 w-4 mr-2" />
                           Gerar PDF do Orçamento
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          className="w-full bg-green-50 hover:bg-green-100 border-green-200"
+                          onClick={sendPDFToWhatsApp}
+                          data-testid="button-send-whatsapp"
+                        >
+                          <MessageCircle className="h-4 w-4 mr-2" />
+                          Enviar por WhatsApp
                         </Button>
                       </div>
                     </div>
