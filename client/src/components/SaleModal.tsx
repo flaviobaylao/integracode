@@ -31,6 +31,8 @@ interface SaleModalProps {
 }
 
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
+  console.log('SaleModal rendered:', { isOpen, salesCard: salesCard?.id, showConfirmation: false });
+  
   // Estados principais
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
