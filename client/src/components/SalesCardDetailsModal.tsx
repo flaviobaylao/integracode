@@ -666,23 +666,39 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
             {/* Informações de Check-in/Check-out */}
             {(card.checkInTime || card.checkOutTime) && (
-              <div className="bg-gray-50 p-3 rounded-lg text-sm">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-gray-700 mb-3">Registro de Presença</h4>
+                
                 {card.checkInTime && (
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-blue-600 font-medium">Check-in:</span>
-                    <span>{new Date(card.checkInTime).toLocaleString('pt-BR')}</span>
+                  <div className="border-l-4 border-blue-500 pl-3 mb-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-blue-600 font-medium">✓ Check-in Realizado</span>
+                      <span className="text-sm text-gray-600">{new Date(card.checkInTime).toLocaleString('pt-BR')}</span>
+                    </div>
+                    {(card.checkInLatitude && card.checkInLongitude) && (
+                      <div className="text-xs text-gray-500">
+                        Localização: {parseFloat(card.checkInLatitude).toFixed(6)}, {parseFloat(card.checkInLongitude).toFixed(6)}
+                      </div>
+                    )}
+                    {card.distanceToCustomer && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Distância até o cliente: {parseFloat(card.distanceToCustomer).toFixed(0)}m
+                      </div>
+                    )}
                   </div>
                 )}
+                
                 {card.checkOutTime && (
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-purple-600 font-medium">Check-out:</span>
-                    <span>{new Date(card.checkOutTime).toLocaleString('pt-BR')}</span>
-                  </div>
-                )}
-                {card.distanceToCustomer && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600 font-medium">Distância:</span>
-                    <span>{parseFloat(card.distanceToCustomer).toFixed(0)}m do cliente</span>
+                  <div className="border-l-4 border-purple-500 pl-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-purple-600 font-medium">✓ Check-out Realizado</span>
+                      <span className="text-sm text-gray-600">{new Date(card.checkOutTime).toLocaleString('pt-BR')}</span>
+                    </div>
+                    {(card.checkOutLatitude && card.checkOutLongitude) && (
+                      <div className="text-xs text-gray-500">
+                        Localização: {parseFloat(card.checkOutLatitude).toFixed(6)}, {parseFloat(card.checkOutLongitude).toFixed(6)}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

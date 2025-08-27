@@ -2254,7 +2254,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Route for check-in
   app.post('/api/sales-cards/:id/check-in', authenticateUser, async (req: any, res) => {
     try {
-      console.log('Check-in route called - User:', req.currentUser?.id || 'undefined');
       const { id } = req.params;
       const { latitude, longitude, distance } = req.body;
 
