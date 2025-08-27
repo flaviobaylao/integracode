@@ -36,6 +36,11 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const [selectedProducts, setSelectedProducts] = useState<{[key: string]: number}>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('a_vista');
   const [operationType, setOperationType] = useState<OperationType>('venda');
+  const [boletoDays, setBoletoDays] = useState<number>(7);
+  const [enableSaturdayDelivery, setEnableSaturdayDelivery] = useState(false);
+  const [selectedSaturdaySlots, setSelectedSaturdaySlots] = useState<string[]>([]);
+  const [selectedWeekdaySlots, setSelectedWeekdaySlots] = useState<string[]>([]);
+  const [customerLocation, setCustomerLocation] = useState({ latitude: '', longitude: '' });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -200,6 +205,32 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     setSaleItems(newItems);
   }, [selectedProducts, products]);
 
+  // Salvar preferências no card
+  const saveCardPreferences = async () => {
+    if (!salesCard) return;
+    
+    const updateData = {
+      deliveryTimeSlots: selectedWeekdaySlots,
+      deliverySaturdayTimeSlots: selectedSaturdaySlots,
+      boletoDays,
+      customerLatitude: customerLocation.latitude ? parseFloat(customerLocation.latitude) : null,
+      customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
+    };
+    
+    try {
+      await fetch(`/api/sales-cards/${salesCard.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(updateData),
+      });
+    } catch (error) {
+      console.warn('Erro ao salvar preferências do card:', error);
+    }
+  };
+
   // Agrupar produtos por tamanho/tipo
   const groupedProducts = useMemo(() => {
     if (!products || !Array.isArray(products)) return { '350ml': [], '900ml': [], outros: [] };
@@ -223,10 +254,9 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Verificar se o pedido deve ser bloqueado
   const shouldBlockOrder = useMemo(() => {
-    if (!salesCard) return false;
     // Bloquear se pagamento é boleto e prazo é diferente de 7 dias
-    return salesCard.paymentMethod === 'boleto' && salesCard.boletoDays !== 7;
-  }, [salesCard]);
+    return paymentMethod === 'boleto' && boletoDays !== 7;
+  }, [paymentMethod, boletoDays]);
 
   // Finalizar venda
   const handleFinalizeSale = () => {
@@ -271,13 +301,17 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       });
 
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
+          // Salvar preferências antes de finalizar
+          await saveCardPreferences();
+          
           const saleData = {
             products: saleItems,
             totalValue: totalSale,
             orderNumber: `HS-${Date.now()}`,
             paymentMethod,
             operationType,
+            boletoDays,
             customerLatitude: position.coords.latitude.toString(),
             customerLongitude: position.coords.longitude.toString(),
             shouldBlock: shouldBlockOrder,
@@ -290,17 +324,23 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
           finalizeSaleMutation.mutate(saleData);
         },
-        (error) => {
+        async (error) => {
           console.error('Erro ao capturar GPS:', error);
           
           // Se não conseguir capturar GPS, finalizar venda mesmo assim
+          // Salvar preferências antes de finalizar
+          await saveCardPreferences();
+          
           const saleData = {
             products: saleItems,
             totalValue: totalSale,
             orderNumber: `HS-${Date.now()}`,
             paymentMethod,
             operationType,
+            boletoDays,
             shouldBlock: shouldBlockOrder,
+            customerLatitude: customerLocation.latitude || undefined,
+            customerLongitude: customerLocation.longitude || undefined,
           };
 
           toast({
@@ -341,6 +381,35 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   // Manter função de confirmação para compatibilidade
   const confirmSale = captureGPSAndFinalizeSale;
 
+  // Carregar dados existentes do card ao abrir
+  useEffect(() => {
+    if (isOpen && salesCard) {
+      // Carregar horários de sábado se existirem
+      if (salesCard.deliverySaturdayTimeSlots) {
+        setSelectedSaturdaySlots(salesCard.deliverySaturdayTimeSlots);
+        setEnableSaturdayDelivery(salesCard.deliverySaturdayTimeSlots.length > 0);
+      }
+      
+      // Carregar horários de semana se existirem
+      if (salesCard.deliveryTimeSlots) {
+        setSelectedWeekdaySlots(salesCard.deliveryTimeSlots);
+      }
+      
+      // Carregar localização do cliente se existir no card
+      if (salesCard.customerLatitude && salesCard.customerLongitude) {
+        setCustomerLocation({
+          latitude: salesCard.customerLatitude.toString(),
+          longitude: salesCard.customerLongitude.toString()
+        });
+      }
+      
+      // Carregar prazo do boleto se existir
+      if (salesCard.boletoDays) {
+        setBoletoDays(salesCard.boletoDays);
+      }
+    }
+  }, [isOpen, salesCard]);
+
   // Reset ao fechar
   useEffect(() => {
     if (!isOpen) {
@@ -349,6 +418,11 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       setShowConfirmation(false);
       setPaymentMethod('a_vista');
       setOperationType('venda');
+      setBoletoDays(7);
+      setEnableSaturdayDelivery(false);
+      setSelectedSaturdaySlots([]);
+      setSelectedWeekdaySlots([]);
+      setCustomerLocation({ latitude: '', longitude: '' });
     }
   }, [isOpen]);
 
@@ -739,6 +813,85 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  {/* Campo para prazo do boleto */}
+                  {paymentMethod === 'boleto' && (
+                    <div className="space-y-2">
+                      <Label className="text-sm">Prazo do Boleto</Label>
+                      <Select value={boletoDays.toString()} onValueChange={(value) => setBoletoDays(parseInt(value))}>
+                        <SelectTrigger className="w-full" data-testid="select-boleto-days">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[7, 10, 14, 15, 21, 28, 30, 32].map((days) => (
+                            <SelectItem key={days} value={days.toString()} data-testid={`boleto-days-${days}`}>
+                              {days} dias
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {/* Campo para localização do cliente */}
+                  <div className="space-y-2">
+                    <Label className="text-sm">Localização do Cliente (GPS)</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        placeholder="Latitude"
+                        value={customerLocation.latitude}
+                        onChange={(e) => setCustomerLocation(prev => ({ ...prev, latitude: e.target.value }))}
+                        data-testid="input-latitude"
+                      />
+                      <Input
+                        placeholder="Longitude"
+                        value={customerLocation.longitude}
+                        onChange={(e) => setCustomerLocation(prev => ({ ...prev, longitude: e.target.value }))}
+                        data-testid="input-longitude"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Checkboxes para horários de sábado */}
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="saturday-delivery"
+                        checked={enableSaturdayDelivery}
+                        onCheckedChange={(checked) => setEnableSaturdayDelivery(checked === true)}
+                        data-testid="checkbox-saturday-delivery"
+                      />
+                      <Label htmlFor="saturday-delivery" className="text-sm">
+                        Habilitar entrega aos sábados
+                      </Label>
+                    </div>
+                    
+                    {enableSaturdayDelivery && (
+                      <div className="space-y-2 pl-6">
+                        <Label className="text-sm font-medium">Horários aos sábados:</Label>
+                        {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
+                          <div key={slot} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`saturday-${slot}`}
+                              checked={selectedSaturdaySlots.includes(`${slot} aos sábados`)}
+                              onCheckedChange={(checked) => {
+                                const slotWithSuffix = `${slot} aos sábados`;
+                                if (checked) {
+                                  setSelectedSaturdaySlots(prev => [...prev, slotWithSuffix]);
+                                } else {
+                                  setSelectedSaturdaySlots(prev => prev.filter(s => s !== slotWithSuffix));
+                                }
+                              }}
+                              data-testid={`checkbox-saturday-${slot}`}
+                            />
+                            <Label htmlFor={`saturday-${slot}`} className="text-sm">
+                              {slot} aos sábados
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {shouldBlockOrder && (
