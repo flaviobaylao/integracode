@@ -186,7 +186,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   useEffect(() => {
     const newItems: SaleItem[] = [];
     Object.entries(selectedProducts).forEach(([productId, quantity]) => {
-      const product = products?.find((p: Product) => p.id === productId);
+      const product = Array.isArray(products) ? products.find((p: Product) => p.id === productId) : null;
       if (product && quantity > 0) {
         newItems.push({
           id: product.id,
@@ -202,7 +202,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Agrupar produtos por tamanho/tipo
   const groupedProducts = useMemo(() => {
-    if (!products) return { '350ml': [], '900ml': [], outros: [] };
+    if (!products || !Array.isArray(products)) return { '350ml': [], '900ml': [], outros: [] };
     
     return products.reduce((groups: any, product: Product) => {
       if (product.name.toLowerCase().includes('350ml')) {
@@ -345,7 +345,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   useEffect(() => {
     if (!isOpen) {
       setSaleItems([]);
+      setSelectedProducts({});
       setShowConfirmation(false);
+      setPaymentMethod('a_vista');
+      setOperationType('venda');
     }
   }, [isOpen]);
 
@@ -621,14 +624,14 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
               </ScrollArea>
             </div>
 
-            {/* Carrinho */}
+            {/* Carrinho e Configurações */}
             <div className="border-l pl-6">
               <div className="mb-4">
                 <h3 className="text-lg font-semibold">Carrinho</h3>
                 <Badge variant="secondary">{saleItems.length} itens</Badge>
               </div>
 
-              <ScrollArea className="h-[400px] mb-4">
+              <ScrollArea className="h-[300px] mb-4">
                 {saleItems.length === 0 ? (
                   <div className="text-center text-gray-500 py-8">
                     Nenhum produto selecionado
@@ -645,15 +648,19 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                                onClick={() => handleProductQuantityChange(item.id, item.quantity - 1)}
+                                data-testid={`cart-decrease-${item.id}`}
                               >
                                 <Minus className="h-3 w-3" />
                               </Button>
-                              <span className="w-8 text-center">{item.quantity}</span>
+                              <span className="w-8 text-center" data-testid={`cart-quantity-${item.id}`}>
+                                {item.quantity}
+                              </span>
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                                onClick={() => handleProductQuantityChange(item.id, item.quantity + 1)}
+                                data-testid={`cart-increase-${item.id}`}
                               >
                                 <Plus className="h-3 w-3" />
                               </Button>
@@ -667,12 +674,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                 value={item.unitPrice}
                                 onChange={(e) => updateUnitPrice(item.id, parseFloat(e.target.value) || 0)}
                                 className="h-8"
+                                data-testid={`cart-price-${item.id}`}
                               />
                             </div>
 
                             <div className="flex justify-between items-center pt-2 border-t">
                               <span className="text-sm font-medium">Total:</span>
-                              <span className="font-bold">R$ {item.totalPrice.toFixed(2)}</span>
+                              <span className="font-bold" data-testid={`cart-total-${item.id}`}>
+                                R$ {item.totalPrice.toFixed(2)}
+                              </span>
                             </div>
                           </div>
                         </CardContent>
@@ -702,13 +712,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                       Modo de Pagamento
                     </Label>
                     <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger className="w-full" data-testid="select-payment-method">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="a_vista">À Vista</SelectItem>
-                        <SelectItem value="boleto">Boleto</SelectItem>
-                        <SelectItem value="pix">PIX</SelectItem>
+                        {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => (
+                          <SelectItem key={key} value={key} data-testid={`payment-method-${key}`}>
+                            {label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -716,16 +728,29 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   <div className="space-y-2">
                     <Label className="text-sm">Tipo de Operação</Label>
                     <Select value={operationType} onValueChange={(value) => setOperationType(value as OperationType)}>
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger className="w-full" data-testid="select-operation-type">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="venda">Venda</SelectItem>
-                        <SelectItem value="troca">Troca</SelectItem>
-                        <SelectItem value="amostra">Amostra</SelectItem>
+                        {Object.entries(OPERATION_TYPE_LABELS).map(([key, label]) => (
+                          <SelectItem key={key} value={key} data-testid={`operation-type-${key}`}>
+                            {label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {shouldBlockOrder && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="bg-yellow-100">ATENÇÃO</Badge>
+                      </div>
+                      <p className="text-sm text-yellow-800 mt-1">
+                        Este pedido será enviado para aprovação manual devido às condições selecionadas.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="flex flex-col gap-2">
@@ -733,10 +758,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                     onClick={handleFinalizeSale}
                     disabled={saleItems.length === 0}
                     className="w-full"
+                    data-testid="button-finalize-sale"
                   >
+                    <Receipt className="h-4 w-4 mr-2" />
                     Finalizar {OPERATION_TYPE_LABELS[operationType]}
                   </Button>
-                  <Button variant="outline" onClick={onClose} className="w-full">
+                  <Button variant="outline" onClick={onClose} className="w-full" data-testid="button-cancel-sale">
                     Cancelar
                   </Button>
                 </div>
