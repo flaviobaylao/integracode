@@ -312,8 +312,8 @@ export default function SalesCards() {
                 
                 <div className="space-y-3">
                   <div>
-                    <h3 className="font-semibold text-gray-800">{card.customer.name}</h3>
-                    <p className="text-sm text-gray-600">{card.customer.address}</p>
+                    <h3 className="font-semibold text-gray-800">{card.customer?.name || 'Cliente não encontrado'}</h3>
+                    <p className="text-sm text-gray-600">{card.customer?.address || ''}</p>
                   </div>
                   
                   <div className="flex items-center space-x-4 text-sm text-gray-600">
@@ -331,7 +331,7 @@ export default function SalesCards() {
                   
                   <div className="flex items-center space-x-1">
                     <i className="fas fa-phone text-gray-400"></i>
-                    <span className="text-sm text-gray-600">{card.customer.phone}</span>
+                    <span className="text-sm text-gray-600">{card.customer?.phone || 'Telefone não disponível'}</span>
                   </div>
 
                   {/* Informações de Pagamento e Operação */}
