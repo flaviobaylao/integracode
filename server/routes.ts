@@ -2252,7 +2252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Route for check-in
-  app.post('/api/sales-cards/:id/check-in', isAuthenticated, async (req: any, res) => {
+  app.post('/api/sales-cards/:id/check-in', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { latitude, longitude, distance } = req.body;
@@ -2279,7 +2279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Route for check-out
-  app.post('/api/sales-cards/:id/check-out', isAuthenticated, async (req: any, res) => {
+  app.post('/api/sales-cards/:id/check-out', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;

@@ -460,6 +460,15 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  // Coordenadas GPS podem ser números ou strings
+  customerLatitude: z.union([z.string(), z.number()]).optional().nullable(),
+  customerLongitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkInLatitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkInLongitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkOutLatitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkOutLongitude: z.union([z.string(), z.number()]).optional().nullable(),
+  distanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
 });
 
 export const insertMessageTemplateSchema = createInsertSchema(messageTemplates).omit({
