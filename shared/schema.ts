@@ -82,6 +82,7 @@ export const customers = pgTable("customers", {
   // Geolocalização do cliente
   latitude: decimal("latitude", { precision: 10, scale: 8 }),
   longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  coordinatesLocked: boolean("coordinates_locked").notNull().default(false),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

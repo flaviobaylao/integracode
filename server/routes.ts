@@ -168,12 +168,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const data = req.body;
       
-      // Check permissions for reassigning customers
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      // Get current customer and user info
+      const currentCustomerResult = await storage.getCustomer(id);
+      if (!currentCustomerResult) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
       
+      // Extract customer data from the result
+      const currentCustomer = currentCustomerResult;
+      
+      const user = req.currentUser;
+      
+      // Check permissions for reassigning customers
       if (data.sellerId && user?.role === 'vendedor') {
         return res.status(403).json({ message: "Vendedores cannot reassign customers" });
+      }
+      
+      // Check permissions for coordinates locking/unlocking
+      if (data.coordinatesLocked !== undefined && data.coordinatesLocked !== currentCustomer.coordinatesLocked) {
+        if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+          return res.status(403).json({ 
+            message: "Apenas administradores, coordenadores e administrativos podem travar/destravar coordenadas" 
+          });
+        }
+      }
+      
+      // Check if coordinates are locked and being modified
+      if (currentCustomer.coordinatesLocked && 
+          (data.latitude !== undefined || data.longitude !== undefined) && 
+          (String(data.latitude) !== String(currentCustomer.latitude) || String(data.longitude) !== String(currentCustomer.longitude))) {
+        
+        // Only allow coordinate changes if user can manage locks or if they're unlocking simultaneously
+        if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+          return res.status(403).json({ 
+            message: "As coordenadas estão travadas e só podem ser modificadas por administradores, coordenadores ou administrativos" 
+          });
+        }
       }
       
       const customer = await storage.updateCustomer(id, data);

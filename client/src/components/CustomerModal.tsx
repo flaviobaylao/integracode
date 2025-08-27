@@ -13,7 +13,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
-import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target } from "lucide-react";
+import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CustomerModalProps {
   isOpen: boolean;
@@ -50,6 +51,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  
+  // Verificar se usuário pode gerenciar travamento de coordenadas
+  const canManageCoordinatesLock = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -77,10 +82,12 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       isActive: true,
       latitude: '',
       longitude: '',
+      coordinatesLocked: false,
     },
   });
 
   const customerType = form.watch('customerType');
+  const coordinatesLocked = form.watch('coordinatesLocked');
 
   useEffect(() => {
     if (customer) {
@@ -103,6 +110,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
+        coordinatesLocked: (customer as any).coordinatesLocked || false,
       });
     } else {
       form.reset({
@@ -124,6 +132,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         isActive: true,
         latitude: '',
         longitude: '',
+        coordinatesLocked: false,
       });
     }
   }, [customer, form]);
@@ -647,15 +656,23 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
               <CardContent className="pt-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-medium">Localização GPS</h3>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="text-lg font-medium">Localização GPS</h3>
+                      {coordinatesLocked && (
+                        <Badge variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                          <Lock className="h-3 w-3 mr-1" />
+                          Travado
+                        </Badge>
+                      )}
+                    </div>
                     <div className="flex space-x-2">
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         onClick={captureLocation}
-                        disabled={isCapturingLocation}
-                        className="text-blue-600 hover:text-blue-700"
+                        disabled={isCapturingLocation || coordinatesLocked}
+                        className="text-blue-600 hover:text-blue-700 disabled:opacity-50"
                         data-testid="button-capture-location"
                       >
                         {isCapturingLocation ? (
@@ -681,6 +698,30 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         <Navigation className="h-4 w-4 mr-2" />
                         Waze
                       </Button>
+                      {canManageCoordinatesLock && (
+                        <Button
+                          type="button"
+                          variant={coordinatesLocked ? "destructive" : "default"}
+                          size="sm"
+                          onClick={() => {
+                            const newValue = !coordinatesLocked;
+                            form.setValue('coordinatesLocked', newValue);
+                          }}
+                          data-testid="button-toggle-coordinates-lock"
+                        >
+                          {coordinatesLocked ? (
+                            <>
+                              <Unlock className="h-4 w-4 mr-2" />
+                              Destravar
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="h-4 w-4 mr-2" />
+                              Travar
+                            </>
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </div>
                   
@@ -698,6 +739,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                               placeholder="-23.5505"
                               type="number"
                               step="any"
+                              disabled={coordinatesLocked}
+                              className={coordinatesLocked ? "opacity-50 cursor-not-allowed" : ""}
                               data-testid="input-latitude"
                             />
                           </FormControl>
@@ -719,6 +762,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                               placeholder="-46.6333"
                               type="number"
                               step="any"
+                              disabled={coordinatesLocked}
+                              className={coordinatesLocked ? "opacity-50 cursor-not-allowed" : ""}
                               data-testid="input-longitude"
                             />
                           </FormControl>
