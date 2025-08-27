@@ -600,7 +600,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             </div>
 
             {/* Painel Lateral - Configurações */}
-            <div className="space-y-4 order-1 lg:order-2">
+            <div className="space-y-4 order-1 lg:order-2 h-auto lg:h-[600px] overflow-y-auto">
               {/* Resumo da Venda */}
               <Card>
                 <CardHeader>
