@@ -513,6 +513,9 @@ export type MessageHistory = typeof messageHistory.$inferSelect;
 // Extended types with relations
 export type CustomerWithSeller = Customer & {
   seller: User;
+  isPositivatedThisMonth?: boolean;
+  lastActivityStatus?: 'none' | 'success' | 'failed' | 'pending' | 'overdue' | 'scheduled';
+  lastActivityDate?: string | null;
 };
 
 export type SalesCardWithRelations = SalesCard & {

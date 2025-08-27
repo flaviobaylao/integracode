@@ -10,8 +10,8 @@ import { apiRequest } from "@/lib/queryClient";
 import CustomerModal from "./CustomerModal";
 import OmieClientImport from "./OmieClientImport";
 import OmieSyncManager from "./OmieSyncManager";
-import type { Customer, User } from "@shared/schema";
-import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle } from "lucide-react";
+import type { Customer, User, CustomerWithSeller } from "@shared/schema";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar } from "lucide-react";
 
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
@@ -94,6 +94,23 @@ export default function CustomerManagement() {
   const formatDate = (date: string | null) => {
     if (!date) return 'Nunca';
     return new Date(date).toLocaleDateString('pt-BR');
+  };
+
+  const renderLastActivityIcon = (status: string | undefined) => {
+    switch (status) {
+      case 'success':
+        return <CheckCircle className="h-4 w-4 text-green-600" title="Última venda realizada" />;
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-red-600" title="Última venda sem êxito" />;
+      case 'pending':
+        return <Clock className="h-4 w-4 text-blue-600" title="Venda em andamento" />;
+      case 'overdue':
+        return <AlertCircle className="h-4 w-4 text-purple-600" title="Card atrasado" />;
+      case 'scheduled':
+        return <Calendar className="h-4 w-4 text-orange-600" title="Card agendado" />;
+      default:
+        return <div className="h-4 w-4" />; // Espaço vazio para manter alinhamento
+    }
   };
 
   const getWeekdaysLabel = (weekdays: string) => {
@@ -216,6 +233,8 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Rota</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Venda</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Ações</th>
                 </tr>
@@ -265,6 +284,21 @@ export default function CustomerManagement() {
                         <span className="text-sm text-gray-600">
                           {getWeekdaysLabel(customer.weekdays)}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {customer.isPositivatedThisMonth ? (
+                          <Badge className="bg-green-100 text-green-800">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Positivado
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-400 text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex items-center justify-center">
+                          {renderLastActivityIcon(customer.lastActivityStatus)}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div>

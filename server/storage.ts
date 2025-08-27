@@ -167,10 +167,63 @@ export class DatabaseStorage implements IStorage {
     const query = baseQuery.where(and(...whereConditions));
     
     const result = await query;
-    return result.map(row => ({
-      ...row.customers!,
-      seller: row.users!,
-    }));
+    
+    // Para cada cliente, vamos buscar informações de positivação e última atividade
+    const customersWithExtendedInfo = await Promise.all(
+      result.map(async (row) => {
+        const customerId = row.customers!.id;
+        
+        // Verificar se cliente foi positivado no mês atual
+        const currentMonthStart = new Date();
+        currentMonthStart.setDate(1);
+        currentMonthStart.setHours(0, 0, 0, 0);
+        
+        const [positivatedThisMonth] = await db
+          .select({ count: sql`COUNT(*)`.mapWith(Number) })
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, customerId),
+              eq(salesCards.status, 'completed'),
+              gte(salesCards.completedDate, currentMonthStart),
+              gt(salesCards.saleValue, 0)
+            )
+          );
+        
+        // Buscar informações da última atividade (card mais recente)
+        const [lastActivity] = await db
+          .select()
+          .from(salesCards)
+          .where(eq(salesCards.customerId, customerId))
+          .orderBy(desc(salesCards.scheduledDate))
+          .limit(1);
+        
+        let lastActivityStatus = 'none'; // none, success, failed, pending
+        
+        if (lastActivity) {
+          if (lastActivity.status === 'completed') {
+            lastActivityStatus = lastActivity.saleValue && lastActivity.saleValue > 0 ? 'success' : 'failed';
+          } else if (lastActivity.status === 'in_progress') {
+            lastActivityStatus = 'pending';
+          } else if (lastActivity.status === 'scheduled') {
+            // Verificar se está atrasado
+            const scheduledDate = new Date(lastActivity.scheduledDate);
+            const now = new Date();
+            lastActivityStatus = scheduledDate < now ? 'overdue' : 'scheduled';
+          }
+        }
+        
+        return {
+          ...row.customers!,
+          seller: row.users!,
+          isPositivatedThisMonth: (positivatedThisMonth?.count || 0) > 0,
+          lastActivityStatus,
+          lastActivityDate: lastActivity?.scheduledDate || null,
+        };
+      })
+    );
+    
+    return customersWithExtendedInfo;
   }
 
   async getCustomer(id: string): Promise<CustomerWithSeller | undefined> {
