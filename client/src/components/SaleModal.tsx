@@ -457,7 +457,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         {showConfirmation ? (
           // Tela de Confirmação com ScrollArea
           <div className="flex flex-col h-full">
-            <ScrollArea className="flex-1 pr-4">
+            <ScrollArea className="flex-1 pr-4 max-h-[calc(95vh-200px)]">
               <div className="space-y-4">
                 <Card>
                   <CardHeader>
