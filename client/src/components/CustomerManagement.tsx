@@ -283,6 +283,7 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Status Omie</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Ações</th>
                 </tr>
               </thead>
@@ -352,6 +353,21 @@ export default function CustomerManagement() {
                         <div className="flex items-center justify-center">
                           {renderLastActivityIcon(customer.lastActivityStatus)}
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {(customer as any).omieStatus ? (
+                          <Badge 
+                            className={
+                              (customer as any).omieStatus === 'ativo' 
+                                ? "bg-green-100 text-green-800" 
+                                : "bg-red-100 text-red-800"
+                            }
+                          >
+                            {(customer as any).omieStatus === 'ativo' ? 'Ativo' : 'Inativo'}
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-400 text-xs">N/A</span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center space-x-2">

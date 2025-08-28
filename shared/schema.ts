@@ -96,6 +96,9 @@ export const customers = pgTable("customers", {
   // Atendimento virtual (não conta para meta de atendimento)
   virtualService: boolean("virtual_service").notNull().default(false),
   
+  // Status no Omie (ativo/inativo)
+  omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

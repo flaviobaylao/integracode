@@ -489,6 +489,7 @@ export class OmieService {
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
       isActive: omieClient.inativo !== 'S',
+      omieStatus: omieClient.inativo === 'S' ? 'inativo' : 'ativo',
       document: documento || null // Documento original apenas se houver
     };
   }
