@@ -1233,6 +1233,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Rota para sincronizar todos os clientes do Omie
   app.post('/api/omie/sync-all-clients', authenticateUser, async (req: any, res) => {
+    // Aumentar timeout da requisição para 10 minutos
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+    
     try {
       const { defaultSellerId } = req.body;
       
@@ -1264,8 +1268,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const pageData = await omieService.getAllClients(currentPage, 100, false); // false = apenas ativos
         console.log(`  → Encontrados ${pageData.clients.length} clientes ativos na página ${currentPage}`);
         
-        for (const omieClient of pageData.clients) {
+        for (let i = 0; i < pageData.clients.length; i++) {
+          const omieClient = pageData.clients[i];
           result.totalProcessed++;
+          
+          // Log a cada 25 clientes para monitorar progresso
+          if (result.totalProcessed % 25 === 0) {
+            console.log(`⏳ Processados ${result.totalProcessed} clientes até agora...`);
+          }
           
           try {
             // Converter para formato do sistema
