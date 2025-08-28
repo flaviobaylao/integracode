@@ -403,19 +403,28 @@ export class OmieService {
     }
   }
 
-  // Listar todos os clientes do Omie
-  async getAllClients(page = 1, pageSize = 50): Promise<{
+  // Listar todos os clientes do Omie (ativos e inativos)
+  async getAllClients(page = 1, pageSize = 50, includeInactive = false): Promise<{
     clients: OmieClient[];
     totalPages: number;
     totalRecords: number;
     currentPage: number;
   }> {
     try {
-      const response = await this.makeRequest('/geral/clientes/', 'ListarClientes', {
+      const requestParams: any = {
         pagina: page,
         registros_por_pagina: pageSize,
         apenas_importado_api: 'N'
-      });
+      };
+
+      // Se queremos incluir inativos, adicionar filtro específico
+      if (includeInactive) {
+        requestParams.clientesFiltrar = {
+          inativo: 'S'
+        };
+      }
+
+      const response = await this.makeRequest('/geral/clientes/', 'ListarClientes', requestParams);
 
       const clients = response.clientes_cadastro || [];
       
@@ -494,7 +503,7 @@ export class OmieService {
     };
   }
 
-  // Sincronizar todos os clientes do Omie
+  // Sincronizar todos os clientes do Omie (ativos + inativos)
   async syncAllClients(): Promise<{
     totalProcessed: number;
     imported: number;
@@ -509,11 +518,15 @@ export class OmieService {
         errors: []
       };
 
+      console.log('Iniciando sincronização COMPLETA de clientes (ativos + inativos)...');
+
+      // PRIMEIRA PASSADA: Clientes ATIVOS (padrão)
+      console.log('Sincronizando clientes ATIVOS...');
       let currentPage = 1;
       let hasMorePages = true;
 
       while (hasMorePages) {
-        const pageData = await this.getAllClients(currentPage, 100);
+        const pageData = await this.getAllClients(currentPage, 100, false); // false = apenas ativos
         
         for (const client of pageData.clients) {
           result.totalProcessed++;
@@ -524,6 +537,28 @@ export class OmieService {
         currentPage++;
         hasMorePages = currentPage <= pageData.totalPages;
       }
+
+      console.log(`Clientes ativos processados: ${result.totalProcessed}`);
+
+      // SEGUNDA PASSADA: Clientes INATIVOS 
+      console.log('Sincronizando clientes INATIVOS...');
+      currentPage = 1;
+      hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await this.getAllClients(currentPage, 100, true); // true = apenas inativos
+        
+        for (const client of pageData.clients) {
+          result.totalProcessed++;
+          // Este método retorna apenas os dados formatados
+          // A lógica de salvamento será feita na rota
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      console.log(`Total de clientes processados (ativos + inativos): ${result.totalProcessed}`);
 
       return result;
     } catch (error) {

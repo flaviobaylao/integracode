@@ -1252,11 +1252,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         errors: [] as string[]
       };
 
+      console.log('Iniciando sincronização COMPLETA (ativos + inativos)...');
+
+      // PRIMEIRA PASSADA: Clientes ATIVOS
+      console.log('Sincronizando clientes ATIVOS...');
       let currentPage = 1;
       let hasMorePages = true;
 
       while (hasMorePages) {
-        const pageData = await omieService.getAllClients(currentPage, 100);
+        const pageData = await omieService.getAllClients(currentPage, 100, false); // false = apenas ativos
         
         for (const omieClient of pageData.clients) {
           result.totalProcessed++;
@@ -1294,7 +1298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 address: systemClient.address,
                 city: systemClient.city,
                 state: systemClient.state,
-                isActive: systemClient.isActive
+                omieStatus: systemClient.omieStatus // Importante: atualizar status do Omie
               });
               result.updated++;
             } else {
@@ -1315,7 +1319,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                         address: systemClient.address,
                         city: systemClient.city,
                         state: systemClient.state,
-                        isActive: systemClient.isActive
+                        omieStatus: systemClient.omieStatus
                       });
                       result.updated++;
                     }
@@ -1337,6 +1341,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentPage++;
         hasMorePages = currentPage <= pageData.totalPages;
       }
+
+      console.log(`Clientes ativos processados: ${result.totalProcessed}`);
+
+      // SEGUNDA PASSADA: Clientes INATIVOS
+      console.log('Sincronizando clientes INATIVOS...');
+      currentPage = 1;
+      hasMorePages = true;
+
+      while (hasMorePages) {
+        const pageData = await omieService.getAllClients(currentPage, 100, true); // true = apenas inativos
+        
+        for (const omieClient of pageData.clients) {
+          result.totalProcessed++;
+          
+          try {
+            // Converter para formato do sistema
+            const systemClient = {
+              ...omieService.convertClientToSystemFormat(omieClient),
+              sellerId: defaultSellerId || '',
+              weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão para todos
+            };
+
+            // Verificar se cliente já existe pelo ID primeiro (mais eficiente)
+            let existingCustomer = await storage.getCustomer(systemClient.id);
+            
+            // Se não existir por ID, verificar por documento
+            if (!existingCustomer) {
+              const existingCustomers = await storage.getCustomers();
+              existingCustomer = existingCustomers.find(customer => {
+                // Verificar por documento
+                if (systemClient.cpf && (customer as any).cpf === systemClient.cpf) return true;
+                if (systemClient.cnpj && (customer as any).cnpj === systemClient.cnpj) return true;
+                // Verificar por código do Omie se disponível
+                if ((customer as any).omieId === omieClient.codigo_cliente_omie) return true;
+                return false;
+              });
+            }
+
+            if (existingCustomer) {
+              // Atualizar cliente existente
+              await storage.updateCustomer(existingCustomer.id, {
+                name: systemClient.name,
+                phone: systemClient.phone,
+                email: systemClient.email,
+                address: systemClient.address,
+                city: systemClient.city,
+                state: systemClient.state,
+                omieStatus: systemClient.omieStatus // Importante: atualizar status do Omie
+              });
+              result.updated++;
+            } else {
+              // Criar novo cliente com proteção contra duplicatas
+              try {
+                await storage.createCustomer(systemClient);
+                result.imported++;
+              } catch (createError: any) {
+                // Se ainda assim der erro de chave duplicada, tentar atualizar
+                if (createError.code === '23505') {
+                  try {
+                    const existingById = await storage.getCustomer(systemClient.id);
+                    if (existingById) {
+                      await storage.updateCustomer(existingById.id, {
+                        name: systemClient.name,
+                        phone: systemClient.phone,
+                        email: systemClient.email,
+                        address: systemClient.address,
+                        city: systemClient.city,
+                        state: systemClient.state,
+                        omieStatus: systemClient.omieStatus
+                      });
+                      result.updated++;
+                    }
+                  } catch (updateError) {
+                    throw createError; // Re-lança o erro original se falhar
+                  }
+                } else {
+                  throw createError; // Re-lança se não for erro de duplicata
+                }
+              }
+            }
+
+          } catch (error: any) {
+            console.error(`Erro ao processar cliente inativo ${omieClient.codigo_cliente_omie}:`, error);
+            result.errors.push(`Erro ao processar cliente inativo ${omieClient.razao_social || omieClient.nome_fantasia}: ${error?.message || 'Erro desconhecido'}`);
+          }
+        }
+
+        currentPage++;
+        hasMorePages = currentPage <= pageData.totalPages;
+      }
+
+      console.log(`Total final de clientes processados (ativos + inativos): ${result.totalProcessed}`);
 
       res.json(result);
 
