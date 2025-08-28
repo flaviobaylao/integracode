@@ -88,7 +88,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
         });
         
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
         
         const result = await response.json() as SyncResult;
@@ -96,9 +97,12 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
         clearInterval(progressInterval);
         setSyncProgress(100);
         
+        console.log('✅ Sincronização concluída:', result);
         return result;
       } catch (error) {
+        console.error('❌ Erro na sincronização:', error);
         clearInterval(progressInterval);
+        setSyncProgress(0); // Reset progress on error
         throw error;
       } finally {
         setIsSyncing(false);

@@ -399,7 +399,7 @@ export class OmieService {
 
     } catch (error) {
       console.error('Erro ao criar pedido no Omie:', error);
-      throw new Error(`Falha ao criar pedido no Omie: ${error.message}`);
+      throw new Error(`Falha ao criar pedido no Omie: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
 

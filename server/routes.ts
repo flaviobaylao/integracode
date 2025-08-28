@@ -1444,7 +1444,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🎉 SINCRONIZAÇÃO COMPLETA: ${result.totalProcessed} clientes processados (${result.imported} novos, ${result.updated} atualizados)`);
 
-      res.json(result);
+      // Forçar resposta para garantir que o frontend receba
+      res.status(200).json({
+        ...result,
+        message: 'Sincronização concluída com sucesso'
+      });
 
     } catch (error) {
       console.error("Error syncing all clients from Omie:", error);
