@@ -126,18 +126,11 @@ export default function OmieClientImport({ isOpen, onClose }: OmieClientImportPr
       return;
     }
 
-    if (!selectedSeller) {
-      toast({
-        title: "Erro", 
-        description: "Selecione uma opção de vendedor",
-        variant: "destructive",
-      });
-      return;
-    }
+    // Validação removida: não é mais obrigatório selecionar vendedor
 
     importMutation.mutate({
       clientIds: Array.from(selectedClients),
-      sellerId: selectedSeller === 'no-seller' ? null : selectedSeller
+      sellerId: selectedSeller === 'no-seller' || !selectedSeller ? null : selectedSeller
     });
   };
 
@@ -410,7 +403,7 @@ export default function OmieClientImport({ isOpen, onClose }: OmieClientImportPr
             </Button>
             <Button
               onClick={handleImport}
-              disabled={selectedClients.size === 0 || !selectedSeller || importMutation.isPending}
+              disabled={selectedClients.size === 0 || importMutation.isPending}
               className="bg-honest-blue hover:bg-honest-blue/90"
             >
               {importMutation.isPending ? (
