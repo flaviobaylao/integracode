@@ -1219,11 +1219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { defaultSellerId } = req.body;
       
-      if (!defaultSellerId) {
-        return res.status(400).json({ 
-          message: "ID do vendedor padrão é obrigatório" 
-        });
-      }
+      // defaultSellerId pode ser null para não atribuir vendedor
 
       const omieService = getOmieService();
       if (!omieService) {
@@ -1252,7 +1248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Converter para formato do sistema
             const systemClient = {
               ...omieService.convertClientToSystemFormat(omieClient),
-              sellerId: defaultSellerId,
+              sellerId: defaultSellerId || '',
               weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão para todos
             };
 

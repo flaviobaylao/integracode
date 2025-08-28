@@ -69,7 +69,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
 
   // Mutation para sincronizar todos os clientes
   const syncAllClientsMutation = useMutation({
-    mutationFn: async (sellerId: string): Promise<SyncResult> => {
+    mutationFn: async (sellerId: string | null): Promise<SyncResult> => {
       setIsSyncing(true);
       setSyncProgress(0);
       
@@ -228,16 +228,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
   });
 
   const handleSyncAllClients = () => {
-    if (!selectedSeller) {
-      toast({
-        title: "Erro",
-        description: "Selecione um vendedor padrão para os clientes",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    syncAllClientsMutation.mutate(selectedSeller);
+    const sellerId = selectedSeller === 'no-seller' || !selectedSeller ? null : selectedSeller;
+    syncAllClientsMutation.mutate(sellerId);
   };
 
   const handleSyncVendors = () => {
@@ -357,6 +349,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                           <SelectValue placeholder="Selecione o vendedor" />
                         </SelectTrigger>
                         <SelectContent>
+                          <SelectItem value="no-seller">Sem vendedor atribuído</SelectItem>
                           {users && Array.isArray(users) && (users as any[])
                             .filter((user: any) => user.role === 'vendedor')
                             .map((user: any) => (
@@ -371,7 +364,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                     <div className="flex items-end">
                       <Button
                         onClick={handleSyncAllClients}
-                        disabled={!selectedSeller || isSyncing}
+                        disabled={isSyncing}
                         className="bg-honest-blue hover:bg-honest-blue/90 w-full"
                       >
                         {isSyncing ? (
