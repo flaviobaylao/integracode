@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function Dashboard() {
   const { toast } = useToast();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
 
   // Redirect to home if not authenticated
   useEffect(() => {
@@ -38,6 +38,13 @@ export default function Dashboard() {
 
   const { data: overdueClients, isLoading: overdueClientsLoading } = useQuery({
     queryKey: ['/api/dashboard/overdue-clients'],
+    retry: false,
+  });
+
+  // Query para estatísticas dos vendedores (apenas para admin e coordinator)
+  const { data: sellersStats, isLoading: sellersStatsLoading } = useQuery({
+    queryKey: ['/api/dashboard/sellers-stats'],
+    enabled: user && ['admin', 'coordinator'].includes(user.role),
     retry: false,
   });
 
@@ -172,6 +179,86 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Quadro de Vendedores (apenas para admin e coordinator) */}
+      {user && ['admin', 'coordinator'].includes(user.role) && (
+        <Card>
+          <CardHeader className="border-b border-gray-200">
+            <CardTitle className="text-lg font-semibold text-gray-800">
+              Performance dos Vendedores - {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            {sellersStatsLoading ? (
+              <div className="animate-pulse">
+                <div className="h-64 bg-gray-200 rounded"></div>
+              </div>
+            ) : sellersStats && sellersStats.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full" data-testid="sellers-stats-table">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Vendedor</th>
+                      <th className="text-center py-3 px-4 font-semibold text-gray-700">Tamanho da Carteira</th>
+                      <th className="text-center py-3 px-4 font-semibold text-gray-700">Clientes Positivados</th>
+                      <th className="text-center py-3 px-4 font-semibold text-gray-700">% Positivação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sellersStats.map((seller: any) => (
+                      <tr key={seller.sellerId} className="border-b border-gray-100 hover:bg-gray-50" data-testid={`seller-row-${seller.sellerId}`}>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-honest-blue rounded-full flex items-center justify-center">
+                              <i className="fas fa-user text-white text-sm"></i>
+                            </div>
+                            <span className="font-medium text-gray-800" data-testid={`seller-name-${seller.sellerId}`}>{seller.sellerName}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className="text-lg font-semibold text-gray-800" data-testid={`active-clients-${seller.sellerId}`}>
+                            {seller.activeClients}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className="text-lg font-semibold text-green-600" data-testid={`positivated-clients-${seller.sellerId}`}>
+                            {seller.positivatedThisMonth}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center space-x-2">
+                            <span className={`text-lg font-semibold ${
+                              seller.positivationRate >= 30 ? 'text-green-600' :
+                              seller.positivationRate >= 15 ? 'text-yellow-600' :
+                              'text-red-600'
+                            }`} data-testid={`positivation-rate-${seller.sellerId}`}>
+                              {seller.positivationRate}%
+                            </span>
+                            <div className="w-16 bg-gray-200 rounded-full h-2">
+                              <div 
+                                className={`h-2 rounded-full ${
+                                  seller.positivationRate >= 30 ? 'bg-green-500' :
+                                  seller.positivationRate >= 15 ? 'bg-yellow-500' :
+                                  'bg-red-500'
+                                }`}
+                                style={{ width: `${Math.min(seller.positivationRate, 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-center py-8">
+                Nenhum vendedor encontrado
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Today's Route and Priority Clients */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

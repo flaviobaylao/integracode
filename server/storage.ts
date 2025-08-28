@@ -200,7 +200,7 @@ export class DatabaseStorage implements IStorage {
               eq(salesCards.customerId, customerId),
               eq(salesCards.status, 'completed'),
               gte(salesCards.completedDate, currentMonthStart),
-              gt(salesCards.saleValue, 0)
+              sql`${salesCards.saleValue} > 0`
             )
           );
         
@@ -868,6 +868,75 @@ export class DatabaseStorage implements IStorage {
       overdueClients: overdueCards.length,
       conversionRate,
     };
+  }
+
+  async getSellersStats(): Promise<Array<{
+    sellerId: string;
+    sellerName: string;
+    activeClients: number;
+    positivatedThisMonth: number;
+    positivationRate: number;
+  }>> {
+    // Buscar todos os vendedores ativos
+    const activeUsers = await db
+      .select()
+      .from(users)
+      .where(
+        and(
+          eq(users.isActive, true),
+          inArray(users.role, ['vendedor', 'coordinator', 'admin'])
+        )
+      );
+
+    // Definir início do mês atual
+    const currentMonthStart = new Date();
+    currentMonthStart.setDate(1);
+    currentMonthStart.setHours(0, 0, 0, 0);
+
+    const sellersStats = [];
+
+    for (const user of activeUsers) {
+      // Contar clientes ativos do vendedor
+      const [activeClientsCount] = await db
+        .select({ count: sql`COUNT(*)`.mapWith(Number) })
+        .from(customers)
+        .where(
+          and(
+            eq(customers.sellerId, user.id),
+            eq(customers.isActive, true)
+          )
+        );
+
+      // Contar clientes positivados no mês atual
+      const [positivatedCount] = await db
+        .select({ count: sql`COUNT(DISTINCT ${salesCards.customerId})`.mapWith(Number) })
+        .from(salesCards)
+        .innerJoin(customers, eq(salesCards.customerId, customers.id))
+        .where(
+          and(
+            eq(customers.sellerId, user.id),
+            eq(salesCards.status, 'completed'),
+            gte(salesCards.completedDate, currentMonthStart),
+            sql`${salesCards.saleValue} > 0`
+          )
+        );
+
+      const activeClients = activeClientsCount?.count || 0;
+      const positivatedThisMonth = positivatedCount?.count || 0;
+      const positivationRate = activeClients > 0 
+        ? Math.round((positivatedThisMonth / activeClients) * 100) 
+        : 0;
+
+      sellersStats.push({
+        sellerId: user.id,
+        sellerName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || user.id,
+        activeClients,
+        positivatedThisMonth,
+        positivationRate
+      });
+    }
+
+    return sellersStats;
   }
 
   // ===== DELIVERY OPERATIONS =====

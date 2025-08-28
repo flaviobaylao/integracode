@@ -861,6 +861,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/dashboard/sellers-stats', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas administradores e coordenadores podem ver estatísticas de todos os vendedores
+      if (!['admin', 'coordinator'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied. Admin or coordinator role required." });
+      }
+      
+      const sellersStats = await storage.getSellersStats();
+      res.json(sellersStats);
+    } catch (error) {
+      console.error("Error fetching sellers stats:", error);
+      res.status(500).json({ message: "Failed to fetch sellers stats" });
+    }
+  });
+
   // Endpoint para buscar cards por dia da semana e período
   app.get('/api/sales-cards/by-day/:routeDay', authenticateUser, async (req: any, res) => {
     try {
