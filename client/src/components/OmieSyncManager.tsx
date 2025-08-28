@@ -74,8 +74,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       setSyncProgress(0);
       
       const progressInterval = setInterval(() => {
-        setSyncProgress(prev => Math.min(prev + 5, 95));
-      }, 2000);
+        setSyncProgress(prev => Math.min(prev + 2, 95));
+      }, 1000);
 
       try {
         const response = await fetch('/api/omie/sync-all-clients', {
@@ -83,7 +83,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ defaultSellerId: sellerId })
+          body: JSON.stringify({ defaultSellerId: sellerId }),
+          signal: AbortSignal.timeout(300000) // 5 minutos de timeout
         });
         
         if (!response.ok) {

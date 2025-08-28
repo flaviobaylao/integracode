@@ -1252,15 +1252,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         errors: [] as string[]
       };
 
-      console.log('Iniciando sincronização COMPLETA (ativos + inativos)...');
+      console.log('🚀 Iniciando sincronização COMPLETA (ativos + inativos)...');
 
       // PRIMEIRA PASSADA: Clientes ATIVOS
-      console.log('Sincronizando clientes ATIVOS...');
+      console.log('📈 FASE 1: Sincronizando clientes ATIVOS...');
       let currentPage = 1;
       let hasMorePages = true;
 
       while (hasMorePages) {
+        console.log(`📄 Processando página ${currentPage} de clientes ATIVOS...`);
         const pageData = await omieService.getAllClients(currentPage, 100, false); // false = apenas ativos
+        console.log(`  → Encontrados ${pageData.clients.length} clientes ativos na página ${currentPage}`);
         
         for (const omieClient of pageData.clients) {
           result.totalProcessed++;
@@ -1342,15 +1344,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasMorePages = currentPage <= pageData.totalPages;
       }
 
-      console.log(`Clientes ativos processados: ${result.totalProcessed}`);
+      console.log(`✅ FASE 1 COMPLETA: ${result.totalProcessed} clientes ativos processados`);
 
       // SEGUNDA PASSADA: Clientes INATIVOS
-      console.log('Sincronizando clientes INATIVOS...');
+      console.log('📉 FASE 2: Sincronizando clientes INATIVOS...');
       currentPage = 1;
       hasMorePages = true;
 
       while (hasMorePages) {
+        console.log(`📄 Processando página ${currentPage} de clientes INATIVOS...`);
         const pageData = await omieService.getAllClients(currentPage, 100, true); // true = apenas inativos
+        console.log(`  → Encontrados ${pageData.clients.length} clientes inativos na página ${currentPage}`);
+        
+        // Se não encontrou nenhum cliente inativo, pode não haver mais páginas
+        if (pageData.clients.length === 0 && currentPage === 1) {
+          console.log(`ℹ️ Nenhum cliente inativo encontrado no Omie`);
+          break;
+        }
         
         for (const omieClient of pageData.clients) {
           result.totalProcessed++;
@@ -1432,7 +1442,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasMorePages = currentPage <= pageData.totalPages;
       }
 
-      console.log(`Total final de clientes processados (ativos + inativos): ${result.totalProcessed}`);
+      console.log(`🎉 SINCRONIZAÇÃO COMPLETA: ${result.totalProcessed} clientes processados (${result.imported} novos, ${result.updated} atualizados)`);
 
       res.json(result);
 
