@@ -1344,103 +1344,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasMorePages = currentPage <= pageData.totalPages;
       }
 
-      console.log(`✅ FASE 1 COMPLETA: ${result.totalProcessed} clientes ativos processados`);
+      console.log(`✅ SINCRONIZAÇÃO DE ATIVOS COMPLETA: ${result.totalProcessed} clientes processados`);
 
-      // SEGUNDA PASSADA: Clientes INATIVOS
-      console.log('📉 FASE 2: Sincronizando clientes INATIVOS...');
-      currentPage = 1;
-      hasMorePages = true;
-
-      while (hasMorePages) {
-        console.log(`📄 Processando página ${currentPage} de clientes INATIVOS...`);
-        const pageData = await omieService.getAllClients(currentPage, 100, true); // true = apenas inativos
-        console.log(`  → Encontrados ${pageData.clients.length} clientes inativos na página ${currentPage}`);
-        
-        // Se não encontrou nenhum cliente inativo, pode não haver mais páginas
-        if (pageData.clients.length === 0 && currentPage === 1) {
-          console.log(`ℹ️ Nenhum cliente inativo encontrado no Omie`);
-          break;
-        }
-        
-        for (const omieClient of pageData.clients) {
-          result.totalProcessed++;
-          
-          try {
-            // Converter para formato do sistema
-            const systemClient = {
-              ...omieService.convertClientToSystemFormat(omieClient),
-              sellerId: defaultSellerId || '',
-              weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão para todos
-            };
-
-            // Verificar se cliente já existe pelo ID primeiro (mais eficiente)
-            let existingCustomer = await storage.getCustomer(systemClient.id);
-            
-            // Se não existir por ID, verificar por documento
-            if (!existingCustomer) {
-              const existingCustomers = await storage.getCustomers();
-              existingCustomer = existingCustomers.find(customer => {
-                // Verificar por documento
-                if (systemClient.cpf && (customer as any).cpf === systemClient.cpf) return true;
-                if (systemClient.cnpj && (customer as any).cnpj === systemClient.cnpj) return true;
-                // Verificar por código do Omie se disponível
-                if ((customer as any).omieId === omieClient.codigo_cliente_omie) return true;
-                return false;
-              });
-            }
-
-            if (existingCustomer) {
-              // Atualizar cliente existente
-              await storage.updateCustomer(existingCustomer.id, {
-                name: systemClient.name,
-                phone: systemClient.phone,
-                email: systemClient.email,
-                address: systemClient.address,
-                city: systemClient.city,
-                state: systemClient.state,
-                omieStatus: systemClient.omieStatus // Importante: atualizar status do Omie
-              });
-              result.updated++;
-            } else {
-              // Criar novo cliente com proteção contra duplicatas
-              try {
-                await storage.createCustomer(systemClient);
-                result.imported++;
-              } catch (createError: any) {
-                // Se ainda assim der erro de chave duplicada, tentar atualizar
-                if (createError.code === '23505') {
-                  try {
-                    const existingById = await storage.getCustomer(systemClient.id);
-                    if (existingById) {
-                      await storage.updateCustomer(existingById.id, {
-                        name: systemClient.name,
-                        phone: systemClient.phone,
-                        email: systemClient.email,
-                        address: systemClient.address,
-                        city: systemClient.city,
-                        state: systemClient.state,
-                        omieStatus: systemClient.omieStatus
-                      });
-                      result.updated++;
-                    }
-                  } catch (updateError) {
-                    throw createError; // Re-lança o erro original se falhar
-                  }
-                } else {
-                  throw createError; // Re-lança se não for erro de duplicata
-                }
-              }
-            }
-
-          } catch (error: any) {
-            console.error(`Erro ao processar cliente inativo ${omieClient.codigo_cliente_omie}:`, error);
-            result.errors.push(`Erro ao processar cliente inativo ${omieClient.razao_social || omieClient.nome_fantasia}: ${error?.message || 'Erro desconhecido'}`);
-          }
-        }
-
-        currentPage++;
-        hasMorePages = currentPage <= pageData.totalPages;
-      }
+      // TEMPORARIAMENTE REMOVENDO FASE 2 (INATIVOS) PARA DIAGNOSTICAR O PROBLEMA
+      console.log('⚠️ Pulando clientes inativos temporariamente para diagnosticar travamento...');
 
       console.log(`🎉 SINCRONIZAÇÃO COMPLETA: ${result.totalProcessed} clientes processados (${result.imported} novos, ${result.updated} atualizados)`);
 
