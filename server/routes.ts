@@ -1144,11 +1144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (!sellerId) {
-        return res.status(400).json({ 
-          message: "ID do vendedor é obrigatório" 
-        });
-      }
+      // sellerId pode ser null para importar sem vendedor atribuído
 
       const omieService = getOmieService();
       if (!omieService) {
@@ -1173,7 +1169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Converter para formato do sistema
           const systemClient = {
             ...omieService.convertClientToSystemFormat(omieClient),
-            sellerId: sellerId,
+            sellerId: sellerId || '', // Deixar vazio se não houver vendedor atribuído
             weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão
           };
 

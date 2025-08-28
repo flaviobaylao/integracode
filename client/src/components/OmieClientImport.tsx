@@ -129,7 +129,7 @@ export default function OmieClientImport({ isOpen, onClose }: OmieClientImportPr
     if (!selectedSeller) {
       toast({
         title: "Erro", 
-        description: "Selecione um vendedor para atribuir aos clientes",
+        description: "Selecione uma opção de vendedor",
         variant: "destructive",
       });
       return;
@@ -137,7 +137,7 @@ export default function OmieClientImport({ isOpen, onClose }: OmieClientImportPr
 
     importMutation.mutate({
       clientIds: Array.from(selectedClients),
-      sellerId: selectedSeller
+      sellerId: selectedSeller === 'no-seller' ? null : selectedSeller
     });
   };
 
@@ -261,6 +261,7 @@ export default function OmieClientImport({ isOpen, onClose }: OmieClientImportPr
                   <SelectValue placeholder="Selecione o vendedor" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="no-seller">Sem vendedor atribuído</SelectItem>
                   {users && Array.isArray(users) && users
                     .filter((user: User) => user.role === 'vendedor')
                     .map((user: User) => (
