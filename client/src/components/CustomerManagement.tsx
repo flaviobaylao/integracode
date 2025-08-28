@@ -88,8 +88,8 @@ export default function CustomerManagement() {
                          customer.phone.includes(searchTerm);
     const matchesRoute = routeFilter === 'all' || customer.route === routeFilter;
     const matchesStatus = statusFilter === 'all' || 
-                         (statusFilter === 'active' && customer.isActive) ||
-                         (statusFilter === 'inactive' && !customer.isActive);
+                         (statusFilter === 'active' && customer.omieStatus === 'ativo') ||
+                         (statusFilter === 'inactive' && customer.omieStatus === 'inativo');
     const matchesSeller = sellerFilter === 'all' || customer.sellerId === sellerFilter;
     
     // Filtro por data da rota (verifica se a data está nos dias da semana selecionados)

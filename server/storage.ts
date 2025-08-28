@@ -173,7 +173,7 @@ export class DatabaseStorage implements IStorage {
       .from(customers)
       .leftJoin(users, eq(customers.sellerId, users.id));
     
-    const whereConditions = [eq(customers.isActive, true)];
+    const whereConditions = [eq(customers.omieStatus, 'ativo')];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
@@ -270,25 +270,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCustomer(id: string): Promise<void> {
-    await db.update(customers).set({ isActive: false }).where(eq(customers.id, id));
+    await db.update(customers).set({ omieStatus: 'inativo' }).where(eq(customers.id, id));
   }
 
   async getCustomersByRoute(route: string): Promise<Customer[]> {
     return await db
       .select()
       .from(customers)
-      .where(and(eq(customers.route, route), eq(customers.isActive, true)));
+      .where(and(eq(customers.route, route), eq(customers.omieStatus, 'ativo')));
   }
 
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
     let whereConditions = and(
-      eq(customers.isActive, true),
+      eq(customers.omieStatus, 'ativo'),
       sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
     );
     
     if (sellerId) {
       whereConditions = and(
-        eq(customers.isActive, true),
+        eq(customers.omieStatus, 'ativo'),
         eq(customers.sellerId, sellerId),
         sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
       );
@@ -1404,7 +1404,7 @@ export class DatabaseStorage implements IStorage {
           .from(customers)
           .where(
             and(
-              eq(customers.isActive, true),
+              eq(customers.omieStatus, 'ativo'),
               or(
                 eq(customers.cpf, location.cpfCnpj),
                 eq(customers.cnpj, location.cpfCnpj)
@@ -1581,7 +1581,7 @@ export class DatabaseStorage implements IStorage {
           .from(customers)
           .where(and(
             eq(customers.sellerId, sellerId),
-            eq(customers.isActive, true),
+            eq(customers.omieStatus, 'ativo'),
             eq(customers.virtualService, false)
           ));
         totalCustomersInRoute = routeCustomers.length;
