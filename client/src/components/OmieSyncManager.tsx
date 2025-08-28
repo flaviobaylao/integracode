@@ -74,8 +74,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       setSyncProgress(0);
       
       const progressInterval = setInterval(() => {
-        setSyncProgress(prev => Math.min(prev + 10, 90));
-      }, 1000);
+        setSyncProgress(prev => Math.min(prev + 5, 95));
+      }, 2000);
 
       try {
         const response = await fetch('/api/omie/sync-all-clients', {
@@ -128,8 +128,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       setSyncProgress(0);
       
       const progressInterval = setInterval(() => {
-        setSyncProgress(prev => Math.min(prev + 10, 90));
-      }, 1000);
+        setSyncProgress(prev => Math.min(prev + 5, 95));
+      }, 2000);
 
       try {
         const response = await fetch('/api/omie/sync-vendors', {
@@ -181,8 +181,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       setSyncProgress(0);
       
       const progressInterval = setInterval(() => {
-        setSyncProgress(prev => Math.min(prev + 10, 90));
-      }, 1000);
+        setSyncProgress(prev => Math.min(prev + 5, 95));
+      }, 2000);
 
       try {
         const response = await fetch('/api/omie/sync-products', {
