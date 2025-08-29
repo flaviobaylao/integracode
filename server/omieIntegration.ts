@@ -506,8 +506,9 @@ export class OmieService {
       state: omieClient.estado || '',
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
-      isActive: omieClient.inativo !== 'S',
-      omieStatus: omieClient.inativo === 'S' ? 'inativo' : 'ativo',
+      // Usar campo 'situacao' como critério correto (se disponível) ou fallback para 'inativo'
+      isActive: omieClient.situacao ? omieClient.situacao === 'ativo' : omieClient.inativo !== 'S',
+      omieStatus: omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo'),
       document: documento || null // Documento original apenas se houver
     };
   }

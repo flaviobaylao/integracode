@@ -1248,11 +1248,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         imported: 0,
         updated: 0,
         errors: [] as string[],
-        expectedTotal: 1053 // Total conhecido de clientes ativos
+        expectedTotal: 0 // Será calculado dinamicamente durante a sincronização
       };
 
-      console.log('🚀 NOVA SINCRONIZAÇÃO - APENAS CLIENTES ATIVOS');
-      console.log(`📊 Meta: ${result.expectedTotal} clientes ativos esperados`);
+      console.log('🚀 NOVA SINCRONIZAÇÃO - APENAS CLIENTES ATIVOS (CRITÉRIO: campo situacao)');
+      console.log('📊 Calculando total de clientes ativos dinamicamente...');
 
       let currentPage = 1;
       let hasMorePages = true;
@@ -1261,24 +1261,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📄 Página ${currentPage}...`);
         
         try {
-          // Usar método correto para buscar clientes ativos
+          // Buscar todos os clientes da página
           const pageData = await omieService.getAllClients(currentPage, 100, false);
-          const clients = pageData.clients || [];
+          const allClients = pageData.clients || [];
           
-          console.log(`   → ${clients.length} clientes na página ${currentPage}`);
+          // Filtrar apenas clientes REALMENTE ativos usando o critério correto
+          const activeClients = allClients.filter(client => {
+            if (client.situacao) {
+              return client.situacao === 'ativo'; // Usar situacao se disponível
+            }
+            return client.inativo !== 'S'; // Fallback para inativo
+          });
+          
+          console.log(`   → ${allClients.length} clientes total, ${activeClients.length} ativos na página ${currentPage}`);
 
-          if (clients.length === 0) {
+          if (allClients.length === 0) {
             console.log('✅ Nenhum cliente na página, finalizando');
             break;
           }
 
-          // Processar cada cliente
-          for (const omieClient of clients) {
+          // Processar apenas clientes ATIVOS
+          for (const omieClient of activeClients) {
             result.totalProcessed++;
             
             // Log a cada 100 clientes
             if (result.totalProcessed % 100 === 0) {
-              console.log(`⏳ ${result.totalProcessed}/${result.expectedTotal} clientes processados...`);
+              console.log(`⏳ ${result.totalProcessed} clientes ativos processados...`);
             }
             
             try {
@@ -1330,8 +1338,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Atualizar expectedTotal com o real
+      result.expectedTotal = result.totalProcessed;
+
       console.log(`🎉 SINCRONIZAÇÃO FINALIZADA!`);
-      console.log(`📊 Processados: ${result.totalProcessed}/${result.expectedTotal}`);
+      console.log(`📊 Total de clientes ATIVOS processados: ${result.totalProcessed}`);
       console.log(`📥 Importados: ${result.imported}`);
       console.log(`🔄 Atualizados: ${result.updated}`);
       console.log(`❌ Erros: ${result.errors.length}`);
