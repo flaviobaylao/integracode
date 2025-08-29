@@ -1,15 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { RefreshCw } from "lucide-react";
 
 export default function Dashboard() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading } = useAuth();
+  const queryClient = useQueryClient();
+  const [isRefreshingSellers, setIsRefreshingSellers] = useState(false);
 
   // Redirect to home if not authenticated
   useEffect(() => {
@@ -69,6 +72,28 @@ export default function Dashboard() {
       style: 'currency',
       currency: 'BRL',
     }).format(value);
+  };
+
+  // Função para atualizar dados dos vendedores
+  const handleRefreshSellers = async () => {
+    setIsRefreshingSellers(true);
+    try {
+      await queryClient.invalidateQueries({
+        queryKey: ['/api/dashboard/sellers-stats']
+      });
+      toast({
+        title: "Dados atualizados",
+        description: "Performance dos vendedores atualizada com sucesso!",
+      });
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Falha ao atualizar dados dos vendedores",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshingSellers(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -184,9 +209,22 @@ export default function Dashboard() {
       {user && ['admin', 'coordinator'].includes(user.role) && (
         <Card>
           <CardHeader className="border-b border-gray-200">
-            <CardTitle className="text-lg font-semibold text-gray-800">
-              Performance dos Vendedores - {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-semibold text-gray-800">
+                Performance dos Vendedores - {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+              </CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshSellers}
+                disabled={isRefreshingSellers || sellersStatsLoading}
+                data-testid="button-refresh-sellers"
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshingSellers ? 'animate-spin' : ''}`} />
+                {isRefreshingSellers ? 'Atualizando...' : 'Atualizar'}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-6">
             {sellersStatsLoading ? (
