@@ -1261,9 +1261,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📄 Página ${currentPage}...`);
         
         try {
-          // Usar método direto do Omie para clientes ativos
-          const pageData = await omieService.listarClientesPaginado(currentPage, 100);
-          const clients = pageData.clientes_cadastro || [];
+          // Usar método correto para buscar clientes ativos
+          const pageData = await omieService.getAllClients(currentPage, 100, false);
+          const clients = pageData.clients || [];
           
           console.log(`   → ${clients.length} clientes na página ${currentPage}`);
 
