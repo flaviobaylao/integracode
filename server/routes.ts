@@ -1309,7 +1309,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   address: systemClient.address,
                   city: systemClient.city,
                   state: systemClient.state,
-                  omieStatus: 'ativo'
+                  omieStatus: systemClient.omieStatus,
+                  situacao: systemClient.situacao
                 });
                 result.updated++;
               } else {
