@@ -896,14 +896,14 @@ export class DatabaseStorage implements IStorage {
     const sellersStats = [];
 
     for (const user of activeUsers) {
-      // Contar clientes ativos do vendedor (baseado no omieStatus, não isActive)
+      // Contar clientes ativos do vendedor (baseado no campo situacao do Omie)
       const [activeClientsCount] = await db
         .select({ count: sql`COUNT(*)`.mapWith(Number) })
         .from(customers)
         .where(
           and(
             eq(customers.sellerId, user.id),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.situacao, 'ativo')
           )
         );
 
