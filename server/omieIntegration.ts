@@ -18,6 +18,7 @@ const OmieClientSchema = z.object({
   cep: z.string().optional(),
   bloqueado: z.string().optional(),
   inativo: z.string().optional(),
+  situacao: z.string().optional(), // Campo situacao para determinar se cliente está ativo
   limite_credito: z.number().optional(),
 });
 
@@ -430,6 +431,13 @@ export class OmieService {
       
       return {
         clients: clients.map((client: any) => {
+          // Log para verificar campos disponíveis no primeiro cliente
+          if (clients.indexOf(client) === 0) {
+            console.log('📋 Campos disponíveis no cliente Omie:', Object.keys(client));
+            console.log('📋 Situação do cliente:', client.situacao);
+            console.log('📋 Inativo do cliente:', client.inativo);
+          }
+          
           // Garantir que todos os campos obrigatórios estão presentes
           return {
             codigo_cliente_omie: client.codigo_cliente_omie,
@@ -447,6 +455,7 @@ export class OmieService {
             cep: client.cep,
             bloqueado: client.bloqueado,
             inativo: client.inativo,
+            situacao: client.situacao, // Adicionar campo situacao
             limite_credito: client.limite_credito
           };
         }),
