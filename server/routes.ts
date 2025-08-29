@@ -1321,6 +1321,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           currentPage++;
           hasMorePages = currentPage <= pageData.totalPages;
           
+          console.log(`📊 Página ${currentPage-1}: totalPages=${pageData.totalPages}, próximaPágina=${currentPage}, hasMorePages=${hasMorePages}`);
+          
         } catch (pageError: any) {
           console.error(`❌ Erro na página ${currentPage}:`, pageError);
           result.errors.push(`Erro na página ${currentPage}: ${pageError instanceof Error ? pageError.message : 'Erro desconhecido'}`);
