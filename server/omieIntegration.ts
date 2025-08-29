@@ -509,7 +509,7 @@ export class OmieService {
       // Usar campo 'situacao' como critério correto (se disponível) ou fallback para 'inativo'
       isActive: omieClient.situacao ? omieClient.situacao === 'ativo' : omieClient.inativo !== 'S',
       omieStatus: omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo'),
-      situacao: omieClient.situacao || null, // Campo direto do Omie
+      situacao: omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo'), // Campo direto do Omie com fallback
       document: documento || null // Documento original apenas se houver
     };
   }
