@@ -78,7 +78,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
       }, 2000);
 
       try {
-        const response = await fetch('/api/omie/sync-all-clients', {
+        const response = await fetch('/api/omie/sync-active-clients', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -336,11 +336,11 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
               {/* Controles */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Sincronização Completa de Clientes</CardTitle>
+                  <CardTitle>Sincronização de Clientes Ativos</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-gray-600">
-                    Esta operação irá buscar todos os clientes do Omie e importar/atualizar no sistema.
+                    Esta operação irá buscar APENAS clientes ATIVOS do Omie (esperados: 1053).
                     Clientes existentes serão atualizados, novos clientes serão criados.
                   </p>
                   
@@ -380,7 +380,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                         ) : (
                           <>
                             <RefreshCw className="h-4 w-4 mr-2" />
-                            Sincronizar Todos
+                            Sincronizar Ativos
                           </>
                         )}
                       </Button>

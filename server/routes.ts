@@ -1231,17 +1231,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota para sincronizar todos os clientes do Omie
-  app.post('/api/omie/sync-all-clients', authenticateUser, async (req: any, res) => {
-    // Aumentar timeout da requisição para 10 minutos
-    req.setTimeout(600000);
-    res.setTimeout(600000);
-    
+  // Rota NOVA e SIMPLES para sincronizar APENAS CLIENTES ATIVOS do Omie
+  app.post('/api/omie/sync-active-clients', authenticateUser, async (req: any, res) => {
     try {
       const { defaultSellerId } = req.body;
       
-      // defaultSellerId pode ser null para não atribuir vendedor
-
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(503).json({ 
@@ -1253,124 +1247,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalProcessed: 0,
         imported: 0,
         updated: 0,
-        errors: [] as string[]
+        errors: [] as string[],
+        expectedTotal: 1053 // Total conhecido de clientes ativos
       };
 
-      console.log('🚀 Iniciando sincronização COMPLETA (ativos + inativos)...');
+      console.log('🚀 NOVA SINCRONIZAÇÃO - APENAS CLIENTES ATIVOS');
+      console.log(`📊 Meta: ${result.expectedTotal} clientes ativos esperados`);
 
-      // PRIMEIRA PASSADA: Clientes ATIVOS
-      console.log('📈 FASE 1: Sincronizando clientes ATIVOS...');
       let currentPage = 1;
       let hasMorePages = true;
 
       while (hasMorePages) {
-        console.log(`📄 Processando página ${currentPage} de clientes ATIVOS...`);
-        const pageData = await omieService.getAllClients(currentPage, 100, false); // false = apenas ativos
-        console.log(`  → Encontrados ${pageData.clients.length} clientes ativos na página ${currentPage}`);
+        console.log(`📄 Página ${currentPage}...`);
         
-        for (let i = 0; i < pageData.clients.length; i++) {
-          const omieClient = pageData.clients[i];
-          result.totalProcessed++;
+        try {
+          // Usar método direto do Omie para clientes ativos
+          const pageData = await omieService.listarClientesPaginado(currentPage, 100);
+          const clients = pageData.clientes_cadastro || [];
           
-          // Log a cada 25 clientes para monitorar progresso
-          if (result.totalProcessed % 25 === 0) {
-            console.log(`⏳ Processados ${result.totalProcessed} clientes até agora...`);
+          console.log(`   → ${clients.length} clientes na página ${currentPage}`);
+
+          if (clients.length === 0) {
+            console.log('✅ Nenhum cliente na página, finalizando');
+            break;
           }
-          
-          try {
-            // Converter para formato do sistema
-            const systemClient = {
-              ...omieService.convertClientToSystemFormat(omieClient),
-              sellerId: defaultSellerId || '',
-              weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão para todos
-            };
 
-            // Verificar se cliente já existe pelo ID primeiro (mais eficiente)
-            let existingCustomer = await storage.getCustomer(systemClient.id);
+          // Processar cada cliente
+          for (const omieClient of clients) {
+            result.totalProcessed++;
             
-            // Se não existir por ID, verificar por documento
-            if (!existingCustomer) {
-              const existingCustomers = await storage.getCustomers();
-              existingCustomer = existingCustomers.find(customer => {
-                // Verificar por documento
-                if (systemClient.cpf && (customer as any).cpf === systemClient.cpf) return true;
-                if (systemClient.cnpj && (customer as any).cnpj === systemClient.cnpj) return true;
-                // Verificar por código do Omie se disponível
-                if ((customer as any).omieId === omieClient.codigo_cliente_omie) return true;
-                return false;
-              });
+            // Log a cada 100 clientes
+            if (result.totalProcessed % 100 === 0) {
+              console.log(`⏳ ${result.totalProcessed}/${result.expectedTotal} clientes processados...`);
             }
+            
+            try {
+              // Converter cliente do Omie para formato do sistema
+              const systemClient = {
+                ...omieService.convertClientToSystemFormat(omieClient),
+                sellerId: defaultSellerId || '',
+                weekdays: "segunda,terça,quarta,quinta,sexta"
+              };
 
-            if (existingCustomer) {
-              // Atualizar cliente existente
-              await storage.updateCustomer(existingCustomer.id, {
-                name: systemClient.name,
-                phone: systemClient.phone,
-                email: systemClient.email,
-                address: systemClient.address,
-                city: systemClient.city,
-                state: systemClient.state,
-                omieStatus: systemClient.omieStatus // Importante: atualizar status do Omie
-              });
-              result.updated++;
-            } else {
-              // Criar novo cliente com proteção contra duplicatas
-              try {
+              // Verificar se cliente já existe
+              let existingCustomer = await storage.getCustomer(systemClient.id);
+              
+              if (existingCustomer) {
+                // Atualizar cliente existente
+                await storage.updateCustomer(existingCustomer.id, {
+                  name: systemClient.name,
+                  phone: systemClient.phone,
+                  email: systemClient.email,
+                  address: systemClient.address,
+                  city: systemClient.city,
+                  state: systemClient.state,
+                  omieStatus: 'ativo'
+                });
+                result.updated++;
+              } else {
+                // Criar novo cliente
                 await storage.createCustomer(systemClient);
                 result.imported++;
-              } catch (createError: any) {
-                // Se ainda assim der erro de chave duplicada, tentar atualizar
-                if (createError.code === '23505') {
-                  try {
-                    const existingById = await storage.getCustomer(systemClient.id);
-                    if (existingById) {
-                      await storage.updateCustomer(existingById.id, {
-                        name: systemClient.name,
-                        phone: systemClient.phone,
-                        email: systemClient.email,
-                        address: systemClient.address,
-                        city: systemClient.city,
-                        state: systemClient.state,
-                        omieStatus: systemClient.omieStatus
-                      });
-                      result.updated++;
-                    }
-                  } catch (updateError) {
-                    throw createError; // Re-lança o erro original se falhar
-                  }
-                } else {
-                  throw createError; // Re-lança se não for erro de duplicata
-                }
               }
+              
+            } catch (clientError: any) {
+              const errorMsg = clientError instanceof Error ? clientError.message : 'Erro desconhecido';
+              console.error(`❌ Erro cliente ${omieClient.codigo_cliente_omie}:`, errorMsg);
+              result.errors.push(`Cliente ${omieClient.razao_social}: ${errorMsg}`);
             }
-
-          } catch (error: any) {
-            console.error(`Erro ao processar cliente ${omieClient.codigo_cliente_omie}:`, error);
-            result.errors.push(`Erro ao processar cliente ${omieClient.razao_social || omieClient.nome_fantasia}: ${error?.message || 'Erro desconhecido'}`);
           }
-        }
 
-        currentPage++;
-        hasMorePages = currentPage <= pageData.totalPages;
+          // Próxima página
+          currentPage++;
+          hasMorePages = currentPage <= pageData.totalPages;
+          
+        } catch (pageError: any) {
+          console.error(`❌ Erro na página ${currentPage}:`, pageError);
+          result.errors.push(`Erro na página ${currentPage}: ${pageError instanceof Error ? pageError.message : 'Erro desconhecido'}`);
+          break;
+        }
       }
 
-      console.log(`✅ SINCRONIZAÇÃO DE ATIVOS COMPLETA: ${result.totalProcessed} clientes processados`);
+      console.log(`🎉 SINCRONIZAÇÃO FINALIZADA!`);
+      console.log(`📊 Processados: ${result.totalProcessed}/${result.expectedTotal}`);
+      console.log(`📥 Importados: ${result.imported}`);
+      console.log(`🔄 Atualizados: ${result.updated}`);
+      console.log(`❌ Erros: ${result.errors.length}`);
 
-      // TEMPORARIAMENTE REMOVENDO FASE 2 (INATIVOS) PARA DIAGNOSTICAR O PROBLEMA
-      console.log('⚠️ Pulando clientes inativos temporariamente para diagnosticar travamento...');
-
-      console.log(`🎉 SINCRONIZAÇÃO COMPLETA: ${result.totalProcessed} clientes processados (${result.imported} novos, ${result.updated} atualizados)`);
-
-      // Forçar resposta para garantir que o frontend receba
-      res.status(200).json({
+      res.json({
         ...result,
-        message: 'Sincronização concluída com sucesso'
+        message: `Sincronização concluída: ${result.totalProcessed} clientes processados`
       });
 
     } catch (error) {
-      console.error("Error syncing all clients from Omie:", error);
+      console.error("❌ Erro na sincronização:", error);
       res.status(500).json({ 
-        message: "Erro ao sincronizar clientes do Omie",
+        message: "Erro ao sincronizar clientes ativos do Omie",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
       });
     }
