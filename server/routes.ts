@@ -870,6 +870,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied. Admin or coordinator role required." });
       }
       
+      // Adicionar headers para evitar cache
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
       const sellersStats = await storage.getSellersStats();
       res.json(sellersStats);
     } catch (error) {

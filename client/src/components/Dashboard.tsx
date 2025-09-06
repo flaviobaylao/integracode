@@ -80,13 +80,29 @@ export default function Dashboard() {
   const handleRefreshSellers = async () => {
     setIsRefreshingSellers(true);
     try {
-      // Invalidar tanto a query quanto forçar refetch
-      await queryClient.invalidateQueries({
+      // Remover completamente do cache e forçar nova busca
+      await queryClient.removeQueries({
         queryKey: ['/api/dashboard/sellers-stats']
       });
-      await queryClient.refetchQueries({
-        queryKey: ['/api/dashboard/sellers-stats']
+      
+      // Fazer nova busca ignorando cache
+      await queryClient.fetchQuery({
+        queryKey: ['/api/dashboard/sellers-stats'],
+        queryFn: async () => {
+          const response = await fetch('/api/dashboard/sellers-stats', {
+            method: 'GET',
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          });
+          if (!response.ok) {
+            throw new Error('Failed to fetch sellers stats');
+          }
+          return response.json();
+        }
       });
+      
       toast({
         title: "Dados atualizados",
         description: "Performance dos vendedores atualizada com sucesso!",
