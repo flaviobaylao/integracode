@@ -824,48 +824,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dashboard routes
-  // Debug endpoint para verificar totais de clientes
-  app.get('/api/debug/client-totals', authenticateUser, async (req: any, res) => {
-    try {
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
-      
-      if (!['admin', 'coordinator'].includes(user?.role || '')) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-
-      // Total de clientes ativos
-      const [totalActiveClients] = await db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(customers)
-        .where(eq(customers.omieStatus, 'ativo'));
-
-      // Total por vendedor
-      const clientsByVendor = await db
-        .select({
-          sellerId: customers.sellerId,
-          sellerName: sql<string>`COALESCE(CONCAT(${users.firstName}, ' ', ${users.lastName}), ${users.email})`,
-          count: sql<number>`COUNT(*)`
-        })
-        .from(customers)
-        .leftJoin(users, eq(customers.sellerId, users.id))
-        .where(eq(customers.omieStatus, 'ativo'))
-        .groupBy(customers.sellerId, users.firstName, users.lastName, users.email);
-
-      const totalFromVendors = clientsByVendor.reduce((sum, vendor) => sum + vendor.count, 0);
-
-      res.json({
-        totalActiveClients: totalActiveClients.count,
-        totalFromVendors,
-        clientsByVendor,
-        matches: totalActiveClients.count === totalFromVendors
-      });
-    } catch (error) {
-      console.error("Error fetching client totals:", error);
-      res.status(500).json({ message: "Failed to fetch client totals" });
-    }
-  });
-
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
       const user = req.currentUser;
