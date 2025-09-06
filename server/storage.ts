@@ -927,13 +927,16 @@ export class DatabaseStorage implements IStorage {
         ? Math.round((positivatedThisMonth / activeClients) * 100) 
         : 0;
 
-      sellersStats.push({
-        sellerId: user.id,
-        sellerName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || user.id,
-        activeClients,
-        positivatedThisMonth,
-        positivationRate
-      });
+      // Só inclui vendedores que têm pelo menos 1 cliente ativo
+      if (activeClients > 0) {
+        sellersStats.push({
+          sellerId: user.id,
+          sellerName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || user.id,
+          activeClients,
+          positivatedThisMonth,
+          positivationRate
+        });
+      }
     }
 
     return sellersStats;
