@@ -896,15 +896,14 @@ export class DatabaseStorage implements IStorage {
     const sellersStats = [];
 
     for (const user of activeUsers) {
-      // Contar apenas clientes sincronizados do Omie com situação ativa
+      // Contar clientes ativos usando o mesmo critério da listagem de clientes
       const [activeClientsCount] = await db
         .select({ count: sql`COUNT(*)`.mapWith(Number) })
         .from(customers)
         .where(
           and(
             eq(customers.sellerId, user.id),
-            eq(customers.situacao, 'ativo'),
-            sql`${customers.id} LIKE 'omie-client-%'`
+            eq(customers.omieStatus, 'ativo')
           )
         );
 
