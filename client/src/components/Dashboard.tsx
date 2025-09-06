@@ -46,8 +46,9 @@ export default function Dashboard() {
   });
 
   // Query para estatísticas dos vendedores (apenas para admin e coordinator)
+  const [sellersStatsKey, setSellersStatsKey] = useState(Date.now());
   const { data: sellersStats, isLoading: sellersStatsLoading } = useQuery({
-    queryKey: ['/api/dashboard/sellers-stats'],
+    queryKey: ['/api/dashboard/sellers-stats', sellersStatsKey],
     enabled: user && ['admin', 'coordinator'].includes(user.role),
     retry: false,
   });
@@ -80,28 +81,14 @@ export default function Dashboard() {
   const handleRefreshSellers = async () => {
     setIsRefreshingSellers(true);
     try {
-      // Remover completamente do cache e forçar nova busca
+      // Limpar cache anterior
       await queryClient.removeQueries({
         queryKey: ['/api/dashboard/sellers-stats']
       });
       
-      // Fazer nova busca ignorando cache
-      await queryClient.fetchQuery({
-        queryKey: ['/api/dashboard/sellers-stats'],
-        queryFn: async () => {
-          const response = await fetch('/api/dashboard/sellers-stats', {
-            method: 'GET',
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          });
-          if (!response.ok) {
-            throw new Error('Failed to fetch sellers stats');
-          }
-          return response.json();
-        }
-      });
+      // Forçar nova busca com timestamp único
+      const newTimestamp = Date.now();
+      setSellersStatsKey(newTimestamp);
       
       toast({
         title: "Dados atualizados",
