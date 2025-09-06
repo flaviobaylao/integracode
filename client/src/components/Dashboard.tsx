@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { RefreshCw } from "lucide-react";
+import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -74,11 +75,16 @@ export default function Dashboard() {
     }).format(value);
   };
 
+
   // Função para atualizar dados dos vendedores
   const handleRefreshSellers = async () => {
     setIsRefreshingSellers(true);
     try {
+      // Invalidar tanto a query quanto forçar refetch
       await queryClient.invalidateQueries({
+        queryKey: ['/api/dashboard/sellers-stats']
+      });
+      await queryClient.refetchQueries({
         queryKey: ['/api/dashboard/sellers-stats']
       });
       toast({
@@ -86,6 +92,7 @@ export default function Dashboard() {
         description: "Performance dos vendedores atualizada com sucesso!",
       });
     } catch (error) {
+      console.error('Erro ao atualizar dados dos vendedores:', error);
       toast({
         title: "Erro",
         description: "Falha ao atualizar dados dos vendedores",
@@ -247,8 +254,8 @@ export default function Dashboard() {
                       <tr key={seller.sellerId} className="border-b border-gray-100 hover:bg-gray-50" data-testid={`seller-row-${seller.sellerId}`}>
                         <td className="py-3 px-4">
                           <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-honest-blue rounded-full flex items-center justify-center">
-                              <i className="fas fa-user text-white text-sm"></i>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs ${getVendorColor(seller.sellerId)}`}>
+                              {getVendorInitials(seller.sellerName)}
                             </div>
                             <span className="font-medium text-gray-800" data-testid={`seller-name-${seller.sellerId}`}>{seller.sellerName}</span>
                           </div>
