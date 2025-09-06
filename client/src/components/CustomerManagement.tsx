@@ -279,7 +279,6 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Nome Fantasia</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Rota</th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Inserção</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
@@ -328,11 +327,6 @@ export default function CustomerManagement() {
                             {getWeekdaysLabel(customer.weekdays)}
                           </p>
                         </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-sm text-gray-600">
-                          {formatDate((customer as any).lastActivityDate)}
-                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-sm text-gray-600 capitalize">
