@@ -927,9 +927,6 @@ export class DatabaseStorage implements IStorage {
         ? Math.round((positivatedThisMonth / activeClients) * 100) 
         : 0;
 
-      // Log temporário para debug
-      console.log(`👤 ${user.firstName} ${user.lastName}: ${activeClients} clientes ativos (omieStatus='ativo')`);
-
       // Só inclui vendedores que têm pelo menos 1 cliente ativo
       if (activeClients > 0) {
         sellersStats.push({
