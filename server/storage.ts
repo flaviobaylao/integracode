@@ -939,6 +939,10 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
+    // Debug: verificar totais
+    const totalClientsSum = sellersStats.reduce((sum, seller) => sum + seller.activeClients, 0);
+    console.log(`📊 Debug Carteiras: ${sellersStats.length} vendedores, soma das carteiras: ${totalClientsSum}`);
+    
     return sellersStats;
   }
 
