@@ -25,6 +25,7 @@ import {
   TrendingUp,
   History
 } from "lucide-react";
+import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 
 interface CustomerDetailsModalProps {
   isOpen: boolean;
@@ -319,7 +320,14 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Vendedor Responsável</p>
-                      <p className="font-medium">{(customer as any).seller?.firstName} {(customer as any).seller?.lastName}</p>
+                      <div className="flex items-center space-x-3 mt-1">
+                        {(customer as any).sellerId && (customer as any).seller && (
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs ${getVendorColor((customer as any).sellerId)}`}>
+                            {getVendorInitials(`${(customer as any).seller?.firstName} ${(customer as any).seller?.lastName}`)}
+                          </div>
+                        )}
+                        <p className="font-medium">{(customer as any).seller?.firstName} {(customer as any).seller?.lastName}</p>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
