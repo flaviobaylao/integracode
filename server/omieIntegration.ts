@@ -68,11 +68,15 @@ export class OmieService {
   private config: OmieConfig;
   private baseUrl: string;
   private storage: any;
+  private appKey: string;
+  private appSecret: string;
 
   constructor(config: OmieConfig, storage?: any) {
     this.config = config;
     this.baseUrl = config.baseUrl || 'https://app.omie.com.br/api/v1';
     this.storage = storage;
+    this.appKey = config.appKey;
+    this.appSecret = config.appSecret;
   }
 
   static createFromEnv(storage?: any): OmieService {
