@@ -160,6 +160,7 @@ export class OmieService {
   async getInvoiceByNumber(invoiceNumber: string): Promise<any> {
     try {
       console.log(`🔍 Buscando NF ${invoiceNumber} na API do Omie usando ConsultarNF...`);
+      console.log(`🔐 Chaves Omie: app_key=${this.appKey ? 'PRESENTE' : 'AUSENTE'}, app_secret=${this.appSecret ? 'PRESENTE' : 'AUSENTE'}`);
       
       // Usar ConsultarNF diretamente com o número da NF
       const payload = {
