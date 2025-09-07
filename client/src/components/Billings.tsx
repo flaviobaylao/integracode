@@ -3,9 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
-import { RefreshCw, FileText, Calendar, DollarSign } from "lucide-react";
+import { useState, useMemo } from "react";
+import { RefreshCw, FileText, Calendar, DollarSign, Search, Filter } from "lucide-react";
 
 interface Billing {
   id: string;
@@ -35,6 +37,14 @@ export default function Billings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSyncing, setIsSyncing] = useState(false);
+  
+  // Estados dos filtros
+  const [filters, setFilters] = useState({
+    startDate: '',
+    endDate: '',
+    customerName: '',
+    sellerName: ''
+  });
 
   // Buscar faturamentos
   const { data: billings = [], isLoading, error } = useQuery<Billing[]>({
@@ -110,10 +120,61 @@ export default function Billings() {
     );
   };
 
-  const totalBillings = billings.length;
-  const totalValue = billings.reduce((sum, billing) => sum + billing.totalValue, 0);
-  const salesCount = billings.filter(b => b.billingType === 'venda').length;
-  const exchangesCount = billings.filter(b => b.billingType === 'troca').length;
+  // Aplicar filtros
+  const filteredBillings = useMemo(() => {
+    return billings.filter((billing) => {
+      // Filtro por data de início
+      if (filters.startDate) {
+        const billingDate = new Date(billing.invoiceDate);
+        const startDate = new Date(filters.startDate);
+        if (billingDate < startDate) return false;
+      }
+      
+      // Filtro por data final
+      if (filters.endDate) {
+        const billingDate = new Date(billing.invoiceDate);
+        const endDate = new Date(filters.endDate);
+        if (billingDate > endDate) return false;
+      }
+      
+      // Filtro por nome do cliente
+      if (filters.customerName) {
+        const customerName = billing.customerFantasyName.toLowerCase();
+        const searchTerm = filters.customerName.toLowerCase();
+        if (!customerName.includes(searchTerm)) return false;
+      }
+      
+      // Filtro por vendedor
+      if (filters.sellerName) {
+        const sellerName = (billing.sellerName || '').toLowerCase();
+        const searchTerm = filters.sellerName.toLowerCase();
+        if (!sellerName.includes(searchTerm)) return false;
+      }
+      
+      return true;
+    });
+  }, [billings, filters]);
+
+  const totalBillings = filteredBillings.length;
+  const totalValue = filteredBillings.reduce((sum, billing) => sum + billing.totalValue, 0);
+  const salesCount = filteredBillings.filter(b => b.billingType === 'venda').length;
+  const exchangesCount = filteredBillings.filter(b => b.billingType === 'troca').length;
+
+  const handleFilterChange = (field: string, value: string) => {
+    setFilters(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      startDate: '',
+      endDate: '',
+      customerName: '',
+      sellerName: ''
+    });
+  };
 
   if (isLoading) {
     return (
@@ -221,6 +282,83 @@ export default function Billings() {
         </Card>
       </div>
 
+      {/* Filtros */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Filter className="h-5 w-5" />
+            Filtros
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <div className="space-y-2">
+              <Label htmlFor="start-date">Data Inicial</Label>
+              <Input
+                id="start-date"
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                data-testid="input-start-date"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="end-date">Data Final</Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                data-testid="input-end-date"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="customer-search">Nome do Cliente</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  id="customer-search"
+                  type="text"
+                  placeholder="Buscar por cliente..."
+                  value={filters.customerName}
+                  onChange={(e) => handleFilterChange('customerName', e.target.value)}
+                  className="pl-9"
+                  data-testid="input-customer-search"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="seller-search">Nome do Vendedor</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  id="seller-search"
+                  type="text"
+                  placeholder="Buscar por vendedor..."
+                  value={filters.sellerName}
+                  onChange={(e) => handleFilterChange('sellerName', e.target.value)}
+                  className="pl-9"
+                  data-testid="input-seller-search"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-gray-600">
+              Mostrando {totalBillings} de {billings.length} faturamentos
+            </p>
+            <Button 
+              onClick={clearFilters} 
+              variant="outline" 
+              size="sm"
+              data-testid="button-clear-filters"
+            >
+              Limpar Filtros
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Billings Table */}
       <Card>
         <CardHeader>
@@ -230,14 +368,25 @@ export default function Billings() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {billings.length === 0 ? (
+          {filteredBillings.length === 0 ? (
             <div className="text-center py-10">
               <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500 mb-4">Nenhum faturamento encontrado</p>
-              <Button onClick={handleSync} variant="outline" data-testid="button-sync-empty">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Sincronizar do Omie
-              </Button>
+              <p className="text-gray-500 mb-4">
+                {billings.length === 0 
+                  ? "Nenhum faturamento encontrado" 
+                  : "Nenhum faturamento corresponde aos filtros aplicados"
+                }
+              </p>
+              {billings.length === 0 ? (
+                <Button onClick={handleSync} variant="outline" data-testid="button-sync-empty">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Sincronizar do Omie
+                </Button>
+              ) : (
+                <Button onClick={clearFilters} variant="outline" data-testid="button-clear-filters-empty">
+                  Limpar Filtros
+                </Button>
+              )}
             </div>
           ) : (
             <Table>
@@ -253,7 +402,7 @@ export default function Billings() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {billings.map((billing) => (
+                {filteredBillings.map((billing) => (
                   <TableRow key={billing.id} data-testid={`row-billing-${billing.id}`}>
                     <TableCell className="font-medium">
                       <div>

@@ -795,8 +795,7 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            dDtEmiIni: '01/01/2025',
-            dDtEmiFin: ''
+            dDtEmiIni: '01/01/2025'
           });
           
           const invoices = response.nfCadastro || [];
