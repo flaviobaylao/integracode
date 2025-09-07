@@ -824,16 +824,18 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
-          // Debug: verificar estrutura da primeira nota para identificar campo de data
-          if (invoices.length > 0 && page === 1) {
-            const firstInvoice = invoices[0];
-            console.log('📋 Estrutura da primeira nota:', {
-              numeroNF: firstInvoice.ide?.nNF,
-              dEmi: firstInvoice.ide?.dEmi,
-              dSaiEnt: firstInvoice.ide?.dSaiEnt,
-              dReg: firstInvoice.ide?.dReg,
-              dInc: firstInvoice.info?.dInc,
-              dAlt: firstInvoice.info?.dAlt
+          // Debug: verificar estrutura de todas as notas da primeira página
+          if (page === 1) {
+            console.log('📋 DEBUG - Primeiras 5 notas encontradas:');
+            invoices.slice(0, 5).forEach((inv, idx) => {
+              console.log(`Nota ${idx + 1}:`, {
+                numero: inv.ide?.nNF,
+                dEmi: inv.ide?.dEmi,
+                dSaiEnt: inv.ide?.dSaiEnt,
+                dReg: inv.ide?.dReg,
+                dInc: inv.info?.dInc,
+                dAlt: inv.info?.dAlt
+              });
             });
           }
           
