@@ -824,7 +824,7 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
-          // Debug: verificar TODOS os campos de data disponíveis
+          // Debug: verificar campos de data e cliente
           if (page === 1 && invoices.length > 0) {
             const firstInvoice = invoices[0];
             console.log('📋 DEBUG - TODOS os campos de data da primeira nota:');
@@ -843,8 +843,11 @@ export class OmieService {
               dDtVenc: t.dDtVenc,
               dReg: t.dReg
             })));
-            console.log('ESTRUTURA COMPLETA IDE:', Object.keys(firstInvoice.ide || {}));
-            console.log('ESTRUTURA COMPLETA INFO:', Object.keys(firstInvoice.info || {}));
+            console.log('🏢 DEBUG - TODOS os campos do cliente:');
+            console.log('nfDestInt:', firstInvoice.nfDestInt);
+            console.log('dest:', firstInvoice.dest);
+            console.log('ESTRUTURA COMPLETA nfDestInt:', Object.keys(firstInvoice.nfDestInt || {}));
+            console.log('ESTRUTURA COMPLETA dest:', Object.keys(firstInvoice.dest || {}));
           }
           
           if (invoices.length === 0) {
