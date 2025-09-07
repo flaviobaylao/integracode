@@ -1505,6 +1505,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para debug de uma NF específica
+  app.get('/api/omie/debug-invoice/:invoiceNumber', isAuthenticated, async (req, res) => {
+    try {
+      const { invoiceNumber } = req.params;
+      console.log(`🔍 Buscando dados da NF ${invoiceNumber} para debug...`);
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+      
+      const invoiceData = await omieService.getInvoiceByNumber(invoiceNumber);
+      
+      if (!invoiceData) {
+        return res.status(404).json({ 
+          error: `NF ${invoiceNumber} não encontrada` 
+        });
+      }
+      
+      console.log(`✅ NF ${invoiceNumber} encontrada para debug`);
+      res.json(invoiceData);
+    } catch (error: any) {
+      console.error('❌ Erro no debug da NF:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        details: error.message 
+      });
+    }
+  });
+
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
       // Evitar cache

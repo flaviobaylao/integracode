@@ -156,6 +156,58 @@ export class OmieService {
     }
   }
 
+  // Método para buscar uma nota fiscal específica pelo número
+  async getInvoiceByNumber(invoiceNumber: string): Promise<any> {
+    try {
+      console.log(`🔍 Buscando NF ${invoiceNumber} na API do Omie...`);
+      
+      // Buscar notas fiscais usando filtro de número
+      const response = await fetch('https://app.omie.com.br/api/v1/produtos/nfconsultar/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          call: 'ListarNF',
+          app_key: this.appKey,
+          app_secret: this.appSecret,
+          param: [{
+            nPagina: 1,
+            nRegPorPagina: 100,
+            filtrar_apenas_omiepdv: 'N',
+            // Buscar nas últimas semanas para encontrar a NF
+            dEmiIni: '01/09/2025',
+            dEmiFim: '07/09/2025'
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro HTTP: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.nfCadastro && data.nfCadastro.length > 0) {
+        // Procurar pela NF específica
+        const invoice = data.nfCadastro.find((inv: any) => 
+          inv.ide?.nNF?.toString() === invoiceNumber.toString()
+        );
+        
+        if (invoice) {
+          console.log(`✅ NF ${invoiceNumber} encontrada!`);
+          return invoice;
+        }
+      }
+      
+      console.log(`❌ NF ${invoiceNumber} não encontrada`);
+      return null;
+    } catch (error: any) {
+      console.error(`❌ Erro ao buscar NF ${invoiceNumber}:`, error);
+      throw error;
+    }
+  }
+
   // Buscar cliente por código interno Omie
   async getClientByCode(codigoCliente: number): Promise<OmieClient | null> {
     try {

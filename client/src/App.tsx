@@ -11,6 +11,7 @@ import AdminLogin from "@/pages/admin-login";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
+import InvoiceDebugger from "@/pages/InvoiceDebugger";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -26,6 +27,7 @@ function Router() {
           <Route path="/sellers" component={Sellers} />
           <Route path="/telemarketing" component={TelemarketingPage} />
           <Route path="/sales-schedule" component={SalesSchedule} />
+          <Route path="/debug-invoice" component={InvoiceDebugger} />
         </>
       )}
       <Route component={NotFound} />
