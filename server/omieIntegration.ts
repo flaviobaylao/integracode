@@ -802,7 +802,7 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxRecordsPerSync = 100; // Limitar a 100 registros por sincronização para reduzir tempo
+      const maxRecordsPerSync = 500; // Processar até 500 notas por vez
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
       const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados válidos
@@ -817,8 +817,10 @@ export class OmieService {
             apenas_importado_api: 'N',
             filtrar_por_data_de: '01/01/2025',
             filtrar_por_data_ate: '31/12/2025',
-            ordenar_por: 'DATA',
-            ordem_decrescente: 'S' // Ordem decrescente para pegar notas mais recentes primeiro
+            ordenar_por: 'NUMERO',
+            ordem_decrescente: 'S', // Ordem decrescente por número
+            filtrar_numero_nf_de: '24735', // Primeira nota de 2025
+            filtrar_numero_nf_ate: '27467' // Última nota até agora
           });
           
           const invoices = response.nfCadastro || [];
