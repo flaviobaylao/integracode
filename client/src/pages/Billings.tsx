@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, Sync, TrendingUp } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -214,7 +214,7 @@ export default function Billings() {
           <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
             <DialogTrigger asChild>
               <Button data-testid="button-sync">
-                <Sync className="w-4 h-4 mr-2" />
+                <RotateCw className="w-4 h-4 mr-2" />
                 Sincronizar
               </Button>
             </DialogTrigger>

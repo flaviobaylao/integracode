@@ -11,11 +11,11 @@ interface InvoiceData {
 }
 
 export default function InvoiceDebugger() {
-  const [invoiceNumber, setInvoiceNumber] = useState('23369');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   
   const { data: invoiceData, isLoading, error, refetch } = useQuery<InvoiceData>({
     queryKey: ['/api/omie/debug-invoice', invoiceNumber],
-    enabled: !!invoiceNumber,
+    enabled: !!invoiceNumber && invoiceNumber.length > 0,
     retry: false,
   });
 
