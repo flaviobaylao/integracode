@@ -793,7 +793,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2024...');
+      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2025...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -813,7 +813,10 @@ export class OmieService {
           const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
             pagina: page,
             registros_por_pagina: 50,
-            apenas_importado_api: 'N'
+            apenas_importado_api: 'N',
+            filtrar_por_data_de: '01/01/2025',
+            ordenar_por: 'CODIGO',
+            ordem_decrescente: 'S'
           });
           
           const invoices = response.nfCadastro || [];
@@ -847,11 +850,11 @@ export class OmieService {
                 continue;
               }
               
-              // Filtrar apenas notas fiscais a partir de 01/01/2024 (ajustado para trazer dados mais recentes)
-              const minDate = new Date('2024-01-01');
+              // Filtrar apenas notas fiscais a partir de 01/01/2025
+              const minDate = new Date('2025-01-01');
               
               if (invoiceDateObj < minDate) {
-                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2024, pulando...`);
+                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2025, pulando...`);
                 continue;
               }
               
