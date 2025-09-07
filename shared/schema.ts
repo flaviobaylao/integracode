@@ -329,6 +329,41 @@ export const overdueDebts = pgTable("overdue_debts", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Billing type enum  
+export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra']);
+
+// Billing/Invoice table - Notas fiscais e faturamentos do Omie
+export const billings = pgTable("billings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  omieInvoiceId: varchar("omie_invoice_id").unique(), // ID único da nota fiscal no Omie
+  invoiceNumber: varchar("invoice_number").notNull(), // Número da nota fiscal
+  customerFantasyName: varchar("customer_fantasy_name").notNull(), // Nome fantasia do cliente
+  billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
+  totalValue: decimal("total_value", { precision: 10, scale: 2 }).notNull(), // Valor total
+  invoiceDate: timestamp("invoice_date").notNull(), // Data de faturamento
+  sellerId: varchar("seller_id"), // ID do vendedor
+  sellerName: varchar("seller_name"), // Nome do vendedor
+  paymentMethod: varchar("payment_method"), // Método de pagamento
+  dueDate: timestamp("due_date"), // Data de vencimento
+  
+  // Dados adicionais do Omie
+  omieCustomerCode: varchar("omie_customer_code"), // Código do cliente no Omie
+  customerDocument: varchar("customer_document"), // CPF/CNPJ do cliente
+  invoiceStatus: varchar("invoice_status"), // Status da nota fiscal no Omie
+  
+  // Produtos da nota fiscal
+  products: jsonb("products").$type<Array<{
+    code: string;
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>>(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Blocked orders table - para pedidos bloqueados
 export const blockedOrders = pgTable("blocked_orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -558,6 +593,12 @@ export const insertSalesGoalSchema = createInsertSchema(salesGoals).omit({
   updatedAt: true,
 });
 
+export const insertBillingSchema = createInsertSchema(billings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -604,6 +645,9 @@ export type InsertLocation = z.infer<typeof insertLocationSchema>;
 
 export type SalesGoal = typeof salesGoals.$inferSelect;
 export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
+
+export type Billing = typeof billings.$inferSelect;
+export type InsertBilling = z.infer<typeof insertBillingSchema>;
 
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
