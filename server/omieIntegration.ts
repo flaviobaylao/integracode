@@ -824,31 +824,6 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
-          // Debug: verificar campos de data e cliente
-          if (page === 1 && invoices.length > 0) {
-            const firstInvoice = invoices[0];
-            console.log('📋 DEBUG - TODOS os campos de data da primeira nota:');
-            console.log('IDE:', {
-              dEmi: firstInvoice.ide?.dEmi,
-              dSaiEnt: firstInvoice.ide?.dSaiEnt,
-              dReg: firstInvoice.ide?.dReg
-            });
-            console.log('INFO:', {
-              dInc: firstInvoice.info?.dInc,
-              dAlt: firstInvoice.info?.dAlt
-            });
-            console.log('TÍTULOS:', firstInvoice.titulos?.map(t => ({
-              dDtEmissao: t.dDtEmissao,
-              dDtPrevisao: t.dDtPrevisao,
-              dDtVenc: t.dDtVenc,
-              dReg: t.dReg
-            })));
-            console.log('🏢 DEBUG - TODOS os campos do cliente:');
-            console.log('nfDestInt:', firstInvoice.nfDestInt);
-            console.log('dest:', firstInvoice.dest);
-            console.log('ESTRUTURA COMPLETA nfDestInt:', Object.keys(firstInvoice.nfDestInt || {}));
-            console.log('ESTRUTURA COMPLETA dest:', Object.keys(firstInvoice.dest || {}));
-          }
           
           if (invoices.length === 0) {
             hasMorePages = false;
@@ -862,8 +837,16 @@ export class OmieService {
               // Validar campos obrigatórios
               const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
-              // Buscar data de faturamento nos diferentes campos possíveis
-              const invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || invoice.info?.dInc || '';
+              // Buscar data de faturamento - usar data de emissão do título que representa melhor o faturamento
+              let invoiceDate = '';
+              if (invoice.titulos && invoice.titulos.length > 0) {
+                // Usar data de emissão do primeiro título (representa o faturamento)
+                invoiceDate = invoice.titulos[0].dDtEmissao || invoice.titulos[0].dReg || '';
+              }
+              // Fallback para campos da nota se não houver títulos
+              if (!invoiceDate) {
+                invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || invoice.info?.dInc || '';
+              }
               const totalValue = parseFloat(invoice.total?.vNF || '0');
               
               // Pular se não tiver ID ou número da nota
@@ -892,8 +875,8 @@ export class OmieService {
                 try {
                   const clientData = await this.getClientByCode(parseInt(clientCode.toString()));
                   customerFantasyName = clientData?.nome_fantasia || clientData?.razao_social || invoice.nfDestInt?.cRazao || 'Cliente não identificado';
-                } catch (error) {
-                  console.log(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, error.message);
+                } catch (error: any) {
+                  console.log(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, error?.message || error);
                   customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
                 }
               } else {
