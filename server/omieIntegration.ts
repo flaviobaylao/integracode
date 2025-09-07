@@ -777,7 +777,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos...');
+      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2025...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -837,6 +837,15 @@ export class OmieService {
               
               // Reset contador de datas inválidas quando encontra uma válida
               consecutiveInvalidDates = 0;
+              
+              // Filtrar apenas notas fiscais a partir de 01/01/2025
+              const invoiceDateObj = new Date(invoiceDate);
+              const minDate = new Date('2025-01-01');
+              
+              if (invoiceDateObj < minDate) {
+                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2025, pulando...`);
+                continue;
+              }
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie;
