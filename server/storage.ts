@@ -130,6 +130,16 @@ export interface IStorage {
   createBilling(billing: InsertBilling): Promise<Billing>;
   updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing>;
   deleteBilling(id: string): Promise<void>;
+  getBillingsWithFilters(filters: {
+    sellerId?: string;
+    startDate?: Date;
+    endDate?: Date;
+    customerDocument?: string;
+    invoiceNumber?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ billings: Billing[]; total: number }>;
+  upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1672,6 +1682,83 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(billings)
       .where(eq(billings.id, id));
+  }
+
+  async getBillingsWithFilters(filters: {
+    sellerId?: string;
+    startDate?: Date;
+    endDate?: Date;
+    customerDocument?: string;
+    invoiceNumber?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ billings: Billing[]; total: number }> {
+    const { sellerId, startDate, endDate, customerDocument, invoiceNumber, page = 1, pageSize = 50 } = filters;
+    
+    let conditions: any[] = [];
+    
+    if (sellerId) {
+      conditions.push(eq(billings.sellerId, sellerId));
+    }
+    
+    if (startDate) {
+      conditions.push(gte(billings.invoiceDate, startDate));
+    }
+    
+    if (endDate) {
+      conditions.push(lte(billings.invoiceDate, endDate));
+    }
+    
+    if (customerDocument) {
+      conditions.push(eq(billings.customerDocument, customerDocument));
+    }
+    
+    if (invoiceNumber) {
+      conditions.push(eq(billings.invoiceNumber, invoiceNumber));
+    }
+    
+    // Query com filtros
+    let query = db.select().from(billings);
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+    
+    // Contar total de registros
+    const totalQuery = db.select({ count: sql`count(*)` }).from(billings);
+    const totalWithConditions = conditions.length > 0 ? 
+      totalQuery.where(and(...conditions)) : 
+      totalQuery;
+    
+    const [{ count: totalCount }] = await totalWithConditions;
+    const total = parseInt(totalCount.toString());
+    
+    // Aplicar paginação e ordenação
+    const offset = (page - 1) * pageSize;
+    const paginatedQuery = query
+      .orderBy(desc(billings.invoiceDate))
+      .limit(pageSize)
+      .offset(offset);
+    
+    const result = await paginatedQuery;
+    
+    return {
+      billings: result,
+      total
+    };
+  }
+
+  async upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing> {
+    // Verificar se já existe
+    const existing = await this.getBillingByOmieId(billing.omieInvoiceId);
+    
+    if (existing) {
+      // Atualizar existente
+      return this.updateBilling(existing.id, billing);
+    } else {
+      // Criar novo
+      return this.createBilling(billing as InsertBilling);
+    }
   }
 }
 
