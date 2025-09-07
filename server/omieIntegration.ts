@@ -802,7 +802,7 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxRecordsPerSync = 500; // Processar até 500 notas por vez
+      const maxRecordsPerSync = 10000; // Processar até 10.000 notas por vez (sem limite prático)
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
       const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados válidos
@@ -847,7 +847,13 @@ export class OmieService {
               if (!invoiceDate) {
                 invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || invoice.info?.dInc || '';
               }
-              const totalValue = parseFloat(invoice.total?.vNF || '0');
+              // Buscar valor total nos diferentes campos possíveis
+              const totalValue = parseFloat(
+                invoice.total?.ICMSTot?.vNF || 
+                invoice.total?.vNF || 
+                invoice.titulos?.[0]?.nValorTitulo?.toString() || 
+                '0'
+              );
               
               // Pular se não tiver ID ou número da nota
               if (!omieInvoiceId || !invoiceNumber) {
