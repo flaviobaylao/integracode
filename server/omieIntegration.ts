@@ -802,9 +802,10 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxPages = 100;
+      const maxRecordsPerSync = 500; // Limitar a 500 registros por sincronização
+      let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 10; // Parar se 10 páginas consecutivas sem dados válidos
+      const maxPagesWithoutData = 5; // Parar se 10 páginas consecutivas sem dados válidos
       
       while (hasMorePages && page <= maxPages) {
         try {
@@ -816,7 +817,7 @@ export class OmieService {
             apenas_importado_api: 'N',
             filtrar_por_data_de: '01/01/2025',
             ordenar_por: 'CODIGO',
-            ordem_decrescente: 'S'
+            ordem_decrescente: 'N' // Ordem crescente para sincronização incremental
           });
           
           const invoices = response.nfCadastro || [];
@@ -962,6 +963,14 @@ export class OmieService {
               }
               
               totalProcessed++;
+              recordsProcessedThisSync++;
+              
+              // Parar se já processamos o suficiente nesta sincronização
+              if (recordsProcessedThisSync >= maxRecordsPerSync) {
+                console.log(`🛑 Limite de ${maxRecordsPerSync} registros atingido nesta sincronização. Próxima sincronização continuará de onde parou.`);
+                hasMorePages = false;
+                break;
+              }
               
               // Log a cada 10 notas processadas para acompanhamento
               if (totalProcessed % 10 === 0) {
@@ -979,7 +988,7 @@ export class OmieService {
           
           // Verificar se há mais páginas
           const totalPages = response.total_de_paginas || 1;
-          hasMorePages = page < totalPages && page < maxPages;
+          hasMorePages = page < totalPages && recordsProcessedThisSync < maxRecordsPerSync;
           page++;
           
           // Verificar se esta página teve dados válidos
