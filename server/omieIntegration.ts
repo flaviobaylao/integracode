@@ -798,7 +798,7 @@ export class OmieService {
           });
           
           const invoices = response.nfCadastro || [];
-          console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais`);
+          console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
           if (invoices.length === 0) {
             hasMorePages = false;
@@ -825,37 +825,18 @@ export class OmieService {
                 continue;
               }
               
-              // Buscar dados do cliente
+              // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie;
-              let customerFantasyName = '';
-              let customerDocument = '';
+              const customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
+              const customerDocument = invoice.nfDestInt?.cnpj_cpf || invoice.dest?.CNPJ || invoice.dest?.CPF || '';
+              
+              // Extrair vendedor dos títulos (se disponível)
               let sellerId = '';
               let sellerName = '';
-              
-              if (clientCode) {
-                try {
-                  const clientResponse = await this.makeRequest('/geral/clientes/', 'ConsultarCliente', {
-                    codigo_cliente_omie: clientCode
-                  });
-                  customerFantasyName = clientResponse.nome_fantasia || clientResponse.razao_social || '';
-                  customerDocument = clientResponse.cnpj_cpf || '';
-                } catch (clientError) {
-                  console.warn(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, clientError);
-                  customerFantasyName = invoice.dest?.xNome || 'Cliente não identificado';
-                }
-              }
-              
-              // Buscar dados do vendedor se disponível
-              const vendorCode = invoice.vendedor?.codigo_vendedor;
-              if (vendorCode) {
-                try {
-                  const vendorResponse = await this.makeRequest('/geral/vendedores/', 'ConsultarVendedor', {
-                    codigo: vendorCode
-                  });
-                  sellerId = vendorCode.toString();
-                  sellerName = vendorResponse.nome || '';
-                } catch (vendorError) {
-                  console.warn(`⚠️ Erro ao buscar dados do vendedor ${vendorCode}:`, vendorError);
+              if (invoice.titulos && invoice.titulos.length > 0) {
+                const firstTitle = invoice.titulos[0];
+                if (firstTitle.nCodVendedor) {
+                  sellerId = firstTitle.nCodVendedor.toString();
                 }
               }
               
@@ -946,6 +927,11 @@ export class OmieService {
               }
               
               totalProcessed++;
+              
+              // Log a cada 10 notas processadas para acompanhamento
+              if (totalProcessed % 10 === 0) {
+                console.log(`📈 Processadas ${totalProcessed} notas fiscais...`);
+              }
               
             } catch (error) {
               console.error(`❌ Erro ao processar nota fiscal:`, error);
