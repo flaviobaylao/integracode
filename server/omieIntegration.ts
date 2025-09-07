@@ -176,7 +176,7 @@ export class OmieService {
             nRegPorPagina: 100,
             filtrar_apenas_omiepdv: 'N',
             // Buscar nas últimas semanas para encontrar a NF
-            dEmiIni: '01/09/2025',
+            dEmiIni: '01/08/2025',
             dEmiFim: '07/09/2025'
           }]
         })

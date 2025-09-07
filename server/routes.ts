@@ -1506,7 +1506,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para debug de uma NF específica
-  app.get('/api/omie/debug-invoice/:invoiceNumber', isAuthenticated, async (req, res) => {
+  app.get('/api/omie/debug-invoice/:invoiceNumber', authenticateUser, async (req, res) => {
     try {
       const { invoiceNumber } = req.params;
       console.log(`🔍 Buscando dados da NF ${invoiceNumber} para debug...`);
