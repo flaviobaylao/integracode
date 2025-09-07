@@ -837,6 +837,35 @@ export class OmieService {
               // Validar campos obrigatórios
               const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
+              
+              // DEBUG: Capturar detalhes da NF 23369 para análise
+              if (invoiceNumber === '23369') {
+                console.log('\n🔍 DEBUG NF 23369 - ESTRUTURA COMPLETA:');
+                console.log('='.repeat(60));
+                console.log('📋 CAMPOS IDE (identificação):');
+                console.log('ide.dEmi:', invoice.ide?.dEmi);
+                console.log('ide.dSaiEnt:', invoice.ide?.dSaiEnt);
+                console.log('ide.dhEmi:', invoice.ide?.dhEmi);
+                console.log('ide.dhSaiEnt:', invoice.ide?.dhSaiEnt);
+                
+                console.log('\n📋 CAMPOS TITULOS (financeiro):');
+                if (invoice.titulos?.length > 0) {
+                  invoice.titulos.forEach((titulo, idx) => {
+                    console.log(`titulo[${idx}].dDtEmissao:`, titulo.dDtEmissao);
+                    console.log(`titulo[${idx}].dReg:`, titulo.dReg);
+                    console.log(`titulo[${idx}].dDtVencimento:`, titulo.dDtVencimento);
+                  });
+                }
+                
+                console.log('\n📋 CAMPOS INFO (meta-dados):');
+                console.log('info.dInc:', invoice.info?.dInc);
+                console.log('info.dAlt:', invoice.info?.dAlt);
+                
+                console.log('\n📋 TODOS OS CAMPOS DO INVOICE:');
+                console.log(JSON.stringify(invoice, null, 2));
+                console.log('='.repeat(60));
+              }
+              
               // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
               let invoiceDate = '';
               // Usar PRIMEIRO a data de emissão da nota fiscal (dEmi)
