@@ -837,15 +837,17 @@ export class OmieService {
               // Validar campos obrigatórios
               const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
-              // Buscar data de faturamento - usar data de emissão do título que representa melhor o faturamento
+              // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
               let invoiceDate = '';
-              if (invoice.titulos && invoice.titulos.length > 0) {
-                // Usar data de emissão do primeiro título (representa o faturamento)
+              // Usar PRIMEIRO a data de emissão da nota fiscal (dEmi)
+              invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || '';
+              // Fallback para datas dos títulos apenas se não houver dEmi
+              if (!invoiceDate && invoice.titulos && invoice.titulos.length > 0) {
                 invoiceDate = invoice.titulos[0].dDtEmissao || invoice.titulos[0].dReg || '';
               }
-              // Fallback para campos da nota se não houver títulos
+              // Fallback final para outros campos
               if (!invoiceDate) {
-                invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || invoice.info?.dInc || '';
+                invoiceDate = invoice.info?.dInc || '';
               }
               // Buscar valor total nos diferentes campos possíveis
               const totalValue = parseFloat(
