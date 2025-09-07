@@ -769,6 +769,22 @@ export class OmieService {
     }
   }
 
+  // Função auxiliar para converter data brasileira DD/MM/YYYY para Date
+  private parseBrazilianDate(dateStr: string): Date | null {
+    if (!dateStr) return null;
+    
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) return null;
+    
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1; // JavaScript mês começa em 0
+    const year = parseInt(parts[2], 10);
+    
+    if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+    
+    return new Date(year, month, day);
+  }
+
   // Método para sincronizar faturamentos/notas fiscais do Omie
   async syncBillings(): Promise<{
     totalProcessed: number;
@@ -786,8 +802,7 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxPages = 20; // Limitar a 20 páginas para evitar processamento excessivo
-      let consecutiveInvalidDates = 0;
+      const maxPages = 100; // Aumentar limite para buscar notas de 2025
       
       while (hasMorePages && page <= maxPages) {
         try {
@@ -821,25 +836,14 @@ export class OmieService {
                 continue;
               }
               
-              // Validar data
-              if (!invoiceDate || isNaN(Date.parse(invoiceDate))) {
-                console.warn(`⚠️ Data inválida para nota ${invoiceNumber}, pulando...`);
-                consecutiveInvalidDates++;
-                
-                // Se muitas datas inválidas consecutivas, parar processamento
-                if (consecutiveInvalidDates > 20) {
-                  console.log(`🛑 Muitas datas inválidas consecutivas (${consecutiveInvalidDates}), parando sincronização...`);
-                  hasMorePages = false;
-                  break;
-                }
+              // Validar e converter data brasileira
+              const invoiceDateObj = this.parseBrazilianDate(invoiceDate);
+              if (!invoiceDateObj) {
+                console.warn(`⚠️ Data inválida para nota ${invoiceNumber} (${invoiceDate}), pulando...`);
                 continue;
               }
               
-              // Reset contador de datas inválidas quando encontra uma válida
-              consecutiveInvalidDates = 0;
-              
               // Filtrar apenas notas fiscais a partir de 01/01/2025
-              const invoiceDateObj = new Date(invoiceDate);
               const minDate = new Date('2025-01-01');
               
               if (invoiceDateObj < minDate) {
