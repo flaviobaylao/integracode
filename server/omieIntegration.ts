@@ -818,9 +818,7 @@ export class OmieService {
             filtrar_por_data_de: '01/01/2025',
             filtrar_por_data_ate: '31/12/2025',
             ordenar_por: 'NUMERO',
-            ordem_decrescente: 'S', // Ordem decrescente por número
-            filtrar_numero_nf_de: '24735', // Primeira nota de 2025
-            filtrar_numero_nf_ate: '27467' // Última nota até agora
+            ordem_decrescente: 'S'
           });
           
           const invoices = response.nfCadastro || [];
@@ -854,7 +852,12 @@ export class OmieService {
                 continue;
               }
               
-              // Remover log excessivo para acelerar processamento
+              // Verificar se é nota de 2025 (faixa 24735-27467)
+              const noteNumber = parseInt(invoiceNumber.replace(/\D/g, ''), 10);
+              if (noteNumber < 24735 || noteNumber > 27467) {
+                console.log(`📅 Nota ${invoiceNumber} (${noteNumber}) fora da faixa 2025, pulando...`);
+                continue;
+              }
               
               pageHasValidData = true;
               
