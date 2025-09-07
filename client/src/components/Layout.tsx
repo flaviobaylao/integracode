@@ -45,6 +45,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
     { id: 'billings', label: 'Faturamentos', icon: 'fas fa-file-invoice-dollar', available: canAccessReports },
+    { id: 'debug-invoice', label: 'Debug NF', icon: 'fas fa-bug', available: canAccessReports },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },

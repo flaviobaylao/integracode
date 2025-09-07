@@ -15,6 +15,7 @@ import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
 import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
 import LocationsManagement from "@/pages/LocationsManagement";
 import OrderSteps from "@/components/OrderSteps";
+import InvoiceDebugger from "@/pages/InvoiceDebugger";
 import { useState } from "react";
 
 export default function Home() {
@@ -43,6 +44,8 @@ export default function Home() {
         return <ProductManagement />;
       case 'billings':
         return <Billings />;
+      case 'debug-invoice':
+        return <InvoiceDebugger />;
       case 'whatsapp':
         return <WhatsAppIntegration />;
       case 'omie':
