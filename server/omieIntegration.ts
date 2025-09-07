@@ -171,7 +171,12 @@ export class OmieService {
         }]
       };
       
-      console.log(`📤 Enviando payload:`, JSON.stringify(payload, null, 2));
+      console.log(`📤 Enviando payload:`, JSON.stringify({
+        call: payload.call,
+        app_key: payload.app_key ? 'HIDDEN' : 'MISSING',
+        app_secret: payload.app_secret ? 'HIDDEN' : 'MISSING',
+        param: payload.param
+      }, null, 2));
       
       const response = await fetch('https://app.omie.com.br/api/v1/produtos/nfconsultar/', {
         method: 'POST',
