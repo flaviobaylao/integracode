@@ -884,8 +884,22 @@ export class OmieService {
               pageHasValidData = true;
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
-              const clientCode = invoice.dest?.codigo_cliente_omie;
-              const customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
+              const clientCode = invoice.dest?.codigo_cliente_omie || invoice.nfDestInt?.nCodCli;
+              
+              // Buscar nome fantasia do cliente
+              let customerFantasyName = 'Cliente não identificado';
+              if (clientCode) {
+                try {
+                  const clientData = await this.getClientByCode(parseInt(clientCode.toString()));
+                  customerFantasyName = clientData?.nome_fantasia || clientData?.razao_social || invoice.nfDestInt?.cRazao || 'Cliente não identificado';
+                } catch (error) {
+                  console.log(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, error.message);
+                  customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
+                }
+              } else {
+                customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
+              }
+              
               const customerDocument = invoice.nfDestInt?.cnpj_cpf || invoice.dest?.CNPJ || invoice.dest?.CPF || '';
               
               // Extrair vendedor dos títulos (se disponível)
