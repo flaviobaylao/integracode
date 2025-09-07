@@ -160,6 +160,207 @@ export class OmieService {
     }
   }
 
+  // ==================== MÉTODOS DE FATURAMENTO ====================
+  
+  // Método para listar todas as notas fiscais com paginação
+  async listInvoices(page: number = 1, pageSize: number = 50): Promise<any> {
+    try {
+      console.log(`🔍 Listando notas fiscais - Página ${page} (${pageSize} registros)...`);
+      
+      const payload = {
+        call: 'ListarNF',
+        param: [{
+          pagina: page,
+          registros_por_pagina: pageSize,
+          filtrar_apenas_inclusao: 'N',
+          filtrar_por_data_de: '', // Deixar vazio para buscar todas
+          filtrar_por_data_ate: '' // Deixar vazio para buscar todas
+        }]
+      };
+
+      console.log(`📤 Enviando payload ListarNF:`, JSON.stringify(payload, null, 2));
+      
+      const response = await this.makeRequest('/produtos/nfconsultar/', payload.call, payload.param[0]);
+      console.log(`✅ Resposta ListarNF recebida: ${response.nfCadastro?.length || 0} notas encontradas`);
+      
+      return response;
+    } catch (error) {
+      console.error('❌ Erro ao listar notas fiscais:', error);
+      throw error;
+    }
+  }
+
+  // Método para sincronizar faturamentos com período específico  
+  async syncBillingsInRange(startDate: string, endDate: string): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    errors: any[];
+  }> {
+    try {
+      console.log(`🔄 Sincronizando faturamentos de ${startDate} até ${endDate}...`);
+      
+      let totalProcessed = 0;
+      let imported = 0;
+      let updated = 0;
+      const errors: any[] = [];
+      
+      let page = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        try {
+          console.log(`📄 Processando página ${page}...`);
+          
+          const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+            pagina: page,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N',
+            filtrar_por_data_de: startDate,
+            filtrar_por_data_ate: endDate,
+            ordenar_por: 'DATA',
+            ordem_decrescente: 'S'
+          });
+          
+          const invoices = response.nfCadastro || [];
+          console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais`);
+          
+          if (invoices.length === 0) {
+            hasMorePages = false;
+            break;
+          }
+          
+          for (const invoice of invoices) {
+            try {
+              const billingData = this.transformInvoiceToBilling(invoice);
+              if (billingData) {
+                // Aqui será implementado o save no storage
+                totalProcessed++;
+                imported++; // Por enquanto considerando como importado
+              }
+            } catch (error: any) {
+              console.error(`❌ Erro ao processar nota ${invoice.ide?.nNF}:`, error);
+              errors.push({ 
+                invoiceNumber: invoice.ide?.nNF, 
+                error: error.message 
+              });
+            }
+          }
+          
+          page++;
+          
+          // Limite para evitar loop infinito
+          if (page > 1000) {
+            console.log('⚠️ Limite de 1000 páginas atingido, parando sincronização');
+            hasMorePages = false;
+          }
+          
+        } catch (error: any) {
+          console.error(`❌ Erro na página ${page}:`, error);
+          errors.push({ 
+            page, 
+            error: error.message 
+          });
+          hasMorePages = false;
+        }
+      }
+      
+      console.log(`✅ Sincronização concluída: ${totalProcessed} processadas, ${imported} importadas, ${updated} atualizadas`);
+      
+      return {
+        totalProcessed,
+        imported,
+        updated,
+        errors
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao sincronizar faturamentos:', error);
+      throw error;
+    }
+  }
+
+  // Método para transformar dados da API Omie para formato do sistema
+  private transformInvoiceToBilling(invoice: any): any {
+    try {
+      // Extrair campos conforme mapeamento do debug NF 23369
+      const omieInvoiceId = invoice.ide?.nIdNF?.toString();
+      const invoiceNumber = invoice.ide?.nNF?.toString();
+      const customerFantasyName = invoice.dest?.xNome || '';
+      const customerDocument = invoice.dest?.cCNPJCPF || '';
+      
+      // CFOP - pegar do primeiro produto
+      const cfop = invoice.det?.[0]?.prod?.CFOP || '';
+      
+      // Data de emissão
+      const invoiceDate = invoice.ide?.dEmi ? this.parseOmieDate(invoice.ide.dEmi) : null;
+      
+      // Valor total da nota
+      const totalValue = invoice.total?.ICMSTot?.vNF || 0;
+      
+      // Dados do título/financeiro
+      const titulo = invoice.titulos?.[0] || {};
+      const dueDate = titulo.dDtVenc ? this.parseOmieDate(titulo.dDtVenc) : null;
+      const paymentMethod = titulo.cDoc || '';
+      
+      // Vendedor
+      const sellerCode = titulo.nCodVendedor?.toString();
+      const sellerName = ''; // Nome do vendedor precisa ser buscado separadamente
+      
+      if (!omieInvoiceId || !invoiceNumber) {
+        console.log('⚠️ Nota fiscal sem ID ou número válido, ignorando');
+        return null;
+      }
+      
+      const billingData = {
+        omieInvoiceId,
+        invoiceNumber,
+        customerFantasyName,
+        customerDocument,
+        cfop,
+        invoiceDate,
+        totalValue: parseFloat(totalValue.toString()),
+        dueDate,
+        paymentMethod,
+        sellerName,
+        sellerId: null, // Será preenchido após buscar vendedor
+        billingType: 'venda' as const,
+        invoiceStatus: 'emitida',
+        
+        // Produtos da nota
+        products: invoice.det?.map((item: any) => ({
+          code: item.prod?.cProd || '',
+          description: item.prod?.xProd || '',
+          quantity: parseFloat(item.prod?.qCom || '0'),
+          unitPrice: parseFloat(item.prod?.vUnCom || '0'),
+          totalPrice: parseFloat(item.prod?.vProd || '0')
+        })) || []
+      };
+      
+      return billingData;
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao transformar dados da nota fiscal:', error);
+      return null;
+    }
+  }
+
+  // Método auxiliar para converter data do Omie (DD/MM/YYYY) para Date
+  private parseOmieDate(omieDate: string): Date | null {
+    try {
+      if (!omieDate) return null;
+      
+      // Formato esperado: DD/MM/YYYY
+      const [day, month, year] = omieDate.split('/');
+      if (!day || !month || !year) return null;
+      
+      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } catch (error) {
+      console.error('❌ Erro ao converter data do Omie:', omieDate, error);
+      return null;
+    }
+  }
+
   // Método para buscar uma nota fiscal específica pelo número
   async getInvoiceByNumber(invoiceNumber: string): Promise<any> {
     try {
