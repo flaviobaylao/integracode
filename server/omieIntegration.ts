@@ -816,7 +816,8 @@ export class OmieService {
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
             filtrar_por_data_de: '01/01/2025',
-            ordenar_por: 'CODIGO',
+            filtrar_por_data_ate: '31/12/2025',
+            ordenar_por: 'DATA',
             ordem_decrescente: 'S' // Ordem decrescente para pegar notas mais recentes primeiro
           });
           
@@ -851,13 +852,8 @@ export class OmieService {
                 continue;
               }
               
-              // Filtrar apenas notas fiscais a partir de 01/01/2025
-              const minDate = new Date('2025-01-01');
-              
-              if (invoiceDateObj < minDate) {
-                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2025, pulando...`);
-                continue;
-              }
+              // Log da data para debug
+              console.log(`📅 Processando nota ${invoiceNumber} de ${invoiceDate}`);
               
               pageHasValidData = true;
               
