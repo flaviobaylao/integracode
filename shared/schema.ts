@@ -364,6 +364,20 @@ export const billings = pgTable("billings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Sync state table for Omie integrations
+export const syncStates = pgTable("sync_states", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  syncType: varchar("sync_type").notNull().unique(), // 'billings', 'customers', etc.
+  lastSyncedId: varchar("last_synced_id"), // ID da última nota/cliente sincronizado
+  lastSyncedDate: timestamp("last_synced_date"), // Data da última sincronização
+  totalProcessed: integer("total_processed").notNull().default(0), // Total de registros processados
+  syncStatus: varchar("sync_status").notNull().default('active'), // 'active', 'completed', 'error'
+  errorMessage: text("error_message"), // Mensagem de erro, se houver
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Blocked orders table - para pedidos bloqueados
 export const blockedOrders = pgTable("blocked_orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -599,6 +613,12 @@ export const insertBillingSchema = createInsertSchema(billings).omit({
   updatedAt: true,
 });
 
+export const insertSyncStateSchema = createInsertSchema(syncStates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -648,6 +668,9 @@ export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
 
 export type Billing = typeof billings.$inferSelect;
 export type InsertBilling = z.infer<typeof insertBillingSchema>;
+
+export type SyncState = typeof syncStates.$inferSelect;
+export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
 
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
