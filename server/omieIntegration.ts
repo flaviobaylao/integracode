@@ -802,7 +802,7 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxRecordsPerSync = 500; // Limitar a 500 registros por sincronização
+      const maxRecordsPerSync = 100; // Limitar a 100 registros por sincronização para reduzir tempo
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
       const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados válidos
@@ -847,13 +847,12 @@ export class OmieService {
               
               // Validar e converter data brasileira
               const invoiceDateObj = this.parseBrazilianDate(invoiceDate);
-              if (!invoiceDateObj) {
+              if (!invoiceDateObj || isNaN(invoiceDateObj.getTime())) {
                 console.warn(`⚠️ Data inválida para nota ${invoiceNumber} (${invoiceDate}), pulando...`);
                 continue;
               }
               
-              // Log da data para debug
-              console.log(`📅 Processando nota ${invoiceNumber} de ${invoiceDate}`);
+              // Remover log excessivo para acelerar processamento
               
               pageHasValidData = true;
               
@@ -918,12 +917,15 @@ export class OmieService {
                 }
               }
               
-              // Data de vencimento (se houver)
+              // Data de vencimento (se houver) - validação robusta
               let dueDate = null;
               if (invoice.cobr?.dup && invoice.cobr.dup.length > 0) {
                 const firstDup = Array.isArray(invoice.cobr.dup) ? invoice.cobr.dup[0] : invoice.cobr.dup;
-                if (firstDup.dVenc && !isNaN(Date.parse(firstDup.dVenc))) {
-                  dueDate = new Date(firstDup.dVenc);
+                if (firstDup.dVenc) {
+                  const dueDateParsed = this.parseBrazilianDate(firstDup.dVenc);
+                  if (dueDateParsed && !isNaN(dueDateParsed.getTime())) {
+                    dueDate = dueDateParsed;
+                  }
                 }
               }
               
@@ -936,11 +938,11 @@ export class OmieService {
                 customerFantasyName: customerFantasyName || 'Cliente não identificado',
                 billingType,
                 totalValue,
-                invoiceDate: new Date(invoiceDate),
+                invoiceDate: invoiceDateObj,
                 sellerId: sellerId || '',
                 sellerName: sellerName || '',
                 paymentMethod: paymentMethod || '',
-                dueDate,
+                dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
                 omieCustomerCode: clientCode?.toString() || '',
                 customerDocument: customerDocument || '',
                 invoiceStatus: invoice.ide?.cStat || '',
@@ -974,11 +976,12 @@ export class OmieService {
               }
               
             } catch (error) {
-              console.error(`❌ Erro ao processar nota fiscal:`, error);
+              // Pular apenas este registro específico em caso de erro
               errors.push({
                 invoice: invoice.ide?.nNF || 'Desconhecida',
                 error: error instanceof Error ? error.message : 'Erro desconhecido'
               });
+              continue; // Continuar com próxima nota
             }
           }
           
