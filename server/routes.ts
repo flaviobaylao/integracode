@@ -1571,6 +1571,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Sincronizar TODAS as notas fiscais do Omie
+  app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      console.log(`🔄 Iniciando sincronização de TODAS as notas fiscais do Omie...`);
+      
+      const result = await omieService.syncBillingsInRange('', '');
+      
+      console.log('✅ Sincronização completa de faturamentos concluída:', result);
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização completa de faturamentos:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Sincronizar faturamentos do Omie por período
   app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {

@@ -68,10 +68,6 @@ export default function Billings() {
     page: 1,
     pageSize: 50,
   });
-  const [syncPeriod, setSyncPeriod] = useState({
-    startDate: '',
-    endDate: ''
-  });
   const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -102,10 +98,9 @@ export default function Billings() {
 
   // Mutation para sincronização
   const syncMutation = useMutation({
-    mutationFn: (data: { startDate: string; endDate: string }) =>
-      apiRequest('/api/billings/sync', {
+    mutationFn: () =>
+      apiRequest('/api/billings/sync-all', {
         method: 'POST',
-        body: JSON.stringify(data),
       }),
     onSuccess: (result) => {
       toast({
@@ -126,15 +121,7 @@ export default function Billings() {
   });
 
   const handleSync = () => {
-    if (!syncPeriod.startDate || !syncPeriod.endDate) {
-      toast({
-        title: 'Erro',
-        description: 'Por favor, selecione o período para sincronização',
-        variant: 'destructive',
-      });
-      return;
-    }
-    syncMutation.mutate(syncPeriod);
+    syncMutation.mutate();
   };
 
   const handleFilterChange = (key: keyof BillingFilters, value: string | number) => {
@@ -222,31 +209,14 @@ export default function Billings() {
               <DialogHeader>
                 <DialogTitle>Sincronizar Faturamentos</DialogTitle>
                 <DialogDescription>
-                  Selecione o período para sincronizar notas fiscais do Omie ERP
+                  Esta operação irá buscar e sincronizar TODAS as notas fiscais do Omie ERP
                 </DialogDescription>
               </DialogHeader>
               
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="start-date">Data Inicial</Label>
-                  <Input
-                    id="start-date"
-                    type="date"
-                    value={syncPeriod.startDate}
-                    onChange={(e) => setSyncPeriod(prev => ({ ...prev, startDate: e.target.value }))}
-                    data-testid="input-start-date"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="end-date">Data Final</Label>
-                  <Input
-                    id="end-date"
-                    type="date"
-                    value={syncPeriod.endDate}
-                    onChange={(e) => setSyncPeriod(prev => ({ ...prev, endDate: e.target.value }))}
-                    data-testid="input-end-date"
-                  />
-                </div>
+              <div className="py-4">
+                <p className="text-sm text-muted-foreground">
+                  ⚠️ Esta sincronização pode demorar alguns minutos, pois irá processar todas as notas fiscais disponíveis no Omie ERP.
+                </p>
               </div>
               
               <div className="flex gap-2 justify-end">
@@ -259,7 +229,7 @@ export default function Billings() {
                   data-testid="button-execute-sync"
                 >
                   {syncMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
-                  Sincronizar
+                  Sincronizar Todas
                 </Button>
               </div>
             </DialogContent>

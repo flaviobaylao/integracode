@@ -198,7 +198,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log(`🔄 Sincronizando faturamentos de ${startDate} até ${endDate}...`);
+      console.log(`🔄 Sincronizando TODAS as notas fiscais do Omie (sem filtro de data)...`);
       
       let totalProcessed = 0;
       let imported = 0;
@@ -216,8 +216,8 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: startDate,
-            filtrar_por_data_ate: endDate,
+            filtrar_por_data_de: '', // SEM FILTRO - busca todas as notas
+            filtrar_por_data_ate: '', // SEM FILTRO - busca todas as notas
             ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
@@ -234,9 +234,19 @@ export class OmieService {
             try {
               const billingData = this.transformInvoiceToBilling(invoice);
               if (billingData) {
-                // Aqui será implementado o save no storage
+                // Salvar no storage
+                const storage = new (await import('./storage.js')).DatabaseStorage();
+                const existingBilling = await storage.getBillingByOmieId(billingData.omieInvoiceId);
+                
+                if (existingBilling) {
+                  await storage.updateBilling(existingBilling.id, billingData);
+                  updated++;
+                } else {
+                  await storage.createBilling(billingData);
+                  imported++;
+                }
+                
                 totalProcessed++;
-                imported++; // Por enquanto considerando como importado
               }
             } catch (error: any) {
               console.error(`❌ Erro ao processar nota ${invoice.ide?.nNF}:`, error);
