@@ -807,10 +807,23 @@ export class OmieService {
           
           for (const invoice of invoices) {
             try {
-              const omieInvoiceId = invoice.ide?.nIdNF?.toString();
+              // Validar campos obrigatórios
+              const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
               const invoiceDate = invoice.ide?.dEmi || '';
               const totalValue = parseFloat(invoice.total?.vNF || '0');
+              
+              // Pular se não tiver ID ou número da nota
+              if (!omieInvoiceId || !invoiceNumber) {
+                console.warn(`⚠️ Nota fiscal sem ID ou número válido, pulando...`);
+                continue;
+              }
+              
+              // Validar data
+              if (!invoiceDate || isNaN(Date.parse(invoiceDate))) {
+                console.warn(`⚠️ Data inválida para nota ${invoiceNumber}, pulando...`);
+                continue;
+              }
               
               // Buscar dados do cliente
               const clientCode = invoice.dest?.codigo_cliente_omie;
@@ -896,7 +909,7 @@ export class OmieService {
               let dueDate = null;
               if (invoice.cobr?.dup && invoice.cobr.dup.length > 0) {
                 const firstDup = Array.isArray(invoice.cobr.dup) ? invoice.cobr.dup[0] : invoice.cobr.dup;
-                if (firstDup.dVenc) {
+                if (firstDup.dVenc && !isNaN(Date.parse(firstDup.dVenc))) {
                   dueDate = new Date(firstDup.dVenc);
                 }
               }
@@ -907,16 +920,16 @@ export class OmieService {
               const billingData = {
                 omieInvoiceId,
                 invoiceNumber,
-                customerFantasyName,
+                customerFantasyName: customerFantasyName || 'Cliente não identificado',
                 billingType,
                 totalValue,
                 invoiceDate: new Date(invoiceDate),
-                sellerId,
-                sellerName,
-                paymentMethod,
+                sellerId: sellerId || '',
+                sellerName: sellerName || '',
+                paymentMethod: paymentMethod || '',
                 dueDate,
                 omieCustomerCode: clientCode?.toString() || '',
-                customerDocument,
+                customerDocument: customerDocument || '',
                 invoiceStatus: invoice.ide?.cStat || '',
                 products
               };
