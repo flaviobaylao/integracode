@@ -824,19 +824,27 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
-          // Debug: verificar estrutura de todas as notas da primeira página
-          if (page === 1) {
-            console.log('📋 DEBUG - Primeiras 5 notas encontradas:');
-            invoices.slice(0, 5).forEach((inv, idx) => {
-              console.log(`Nota ${idx + 1}:`, {
-                numero: inv.ide?.nNF,
-                dEmi: inv.ide?.dEmi,
-                dSaiEnt: inv.ide?.dSaiEnt,
-                dReg: inv.ide?.dReg,
-                dInc: inv.info?.dInc,
-                dAlt: inv.info?.dAlt
-              });
+          // Debug: verificar TODOS os campos de data disponíveis
+          if (page === 1 && invoices.length > 0) {
+            const firstInvoice = invoices[0];
+            console.log('📋 DEBUG - TODOS os campos de data da primeira nota:');
+            console.log('IDE:', {
+              dEmi: firstInvoice.ide?.dEmi,
+              dSaiEnt: firstInvoice.ide?.dSaiEnt,
+              dReg: firstInvoice.ide?.dReg
             });
+            console.log('INFO:', {
+              dInc: firstInvoice.info?.dInc,
+              dAlt: firstInvoice.info?.dAlt
+            });
+            console.log('TÍTULOS:', firstInvoice.titulos?.map(t => ({
+              dDtEmissao: t.dDtEmissao,
+              dDtPrevisao: t.dDtPrevisao,
+              dDtVenc: t.dDtVenc,
+              dReg: t.dReg
+            })));
+            console.log('ESTRUTURA COMPLETA IDE:', Object.keys(firstInvoice.ide || {}));
+            console.log('ESTRUTURA COMPLETA INFO:', Object.keys(firstInvoice.info || {}));
           }
           
           if (invoices.length === 0) {
