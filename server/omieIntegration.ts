@@ -805,9 +805,9 @@ export class OmieService {
       const maxRecordsPerSync = 500; // Limitar a 500 registros por sincronização
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 5; // Parar se 10 páginas consecutivas sem dados válidos
+      const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados válidos
       
-      while (hasMorePages && page <= maxPages) {
+      while (hasMorePages) {
         try {
           console.log(`📄 Processando página ${page}...`);
           
@@ -1024,11 +1024,15 @@ export class OmieService {
       console.log(`🔄 Atualizados: ${updated}`);
       console.log(`❌ Erros: ${errors.length}`);
       
+      const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
+      
       return {
         totalProcessed,
         imported,
         updated,
-        errors
+        errors,
+        isComplete,
+        message: `Sincronização concluída. ${recordsProcessedThisSync} registros processados nesta execução.`
       };
       
     } catch (error) {
