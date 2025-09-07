@@ -98,10 +98,21 @@ export default function Billings() {
 
   // Mutation para sincronização
   const syncMutation = useMutation({
-    mutationFn: () =>
-      apiRequest('/api/billings/sync-all', {
+    mutationFn: async () => {
+      const response = await fetch('/api/billings/sync-all', {
         method: 'POST',
-      }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+      }
+      
+      return response.json();
+    },
     onSuccess: (result) => {
       toast({
         title: 'Sincronização concluída',
