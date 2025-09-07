@@ -824,6 +824,19 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
+          // Debug: verificar estrutura da primeira nota para identificar campo de data
+          if (invoices.length > 0 && page === 1) {
+            const firstInvoice = invoices[0];
+            console.log('📋 Estrutura da primeira nota:', {
+              numeroNF: firstInvoice.ide?.nNF,
+              dEmi: firstInvoice.ide?.dEmi,
+              dSaiEnt: firstInvoice.ide?.dSaiEnt,
+              dReg: firstInvoice.ide?.dReg,
+              dInc: firstInvoice.info?.dInc,
+              dAlt: firstInvoice.info?.dAlt
+            });
+          }
+          
           if (invoices.length === 0) {
             hasMorePages = false;
             break;
@@ -836,7 +849,8 @@ export class OmieService {
               // Validar campos obrigatórios
               const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
-              const invoiceDate = invoice.ide?.dEmi || '';
+              // Buscar data de faturamento nos diferentes campos possíveis
+              const invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || invoice.info?.dInc || '';
               const totalValue = parseFloat(invoice.total?.vNF || '0');
               
               // Pular se não tiver ID ou número da nota
