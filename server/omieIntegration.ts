@@ -767,6 +767,214 @@ export class OmieService {
     }
   }
 
+  // Método para sincronizar faturamentos/notas fiscais do Omie
+  async syncBillings(): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    errors: any[];
+  }> {
+    try {
+      console.log('🔄 Iniciando sincronização de faturamentos...');
+      
+      let totalProcessed = 0;
+      let imported = 0;
+      let updated = 0;
+      const errors: any[] = [];
+      
+      let page = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        try {
+          console.log(`📄 Processando página ${page}...`);
+          
+          const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+            pagina: page,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N'
+          });
+          
+          const invoices = response.nfCadastro || [];
+          console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais`);
+          
+          if (invoices.length === 0) {
+            hasMorePages = false;
+            break;
+          }
+          
+          for (const invoice of invoices) {
+            try {
+              const omieInvoiceId = invoice.ide?.nIdNF?.toString();
+              const invoiceNumber = invoice.ide?.nNF || '';
+              const invoiceDate = invoice.ide?.dEmi || '';
+              const totalValue = parseFloat(invoice.total?.vNF || '0');
+              
+              // Buscar dados do cliente
+              const clientCode = invoice.dest?.codigo_cliente_omie;
+              let customerFantasyName = '';
+              let customerDocument = '';
+              let sellerId = '';
+              let sellerName = '';
+              
+              if (clientCode) {
+                try {
+                  const clientResponse = await this.makeRequest('/geral/clientes/', 'ConsultarCliente', {
+                    codigo_cliente_omie: clientCode
+                  });
+                  customerFantasyName = clientResponse.nome_fantasia || clientResponse.razao_social || '';
+                  customerDocument = clientResponse.cnpj_cpf || '';
+                } catch (clientError) {
+                  console.warn(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, clientError);
+                  customerFantasyName = invoice.dest?.xNome || 'Cliente não identificado';
+                }
+              }
+              
+              // Buscar dados do vendedor se disponível
+              const vendorCode = invoice.vendedor?.codigo_vendedor;
+              if (vendorCode) {
+                try {
+                  const vendorResponse = await this.makeRequest('/geral/vendedores/', 'ConsultarVendedor', {
+                    codigo: vendorCode
+                  });
+                  sellerId = vendorCode.toString();
+                  sellerName = vendorResponse.nome || '';
+                } catch (vendorError) {
+                  console.warn(`⚠️ Erro ao buscar dados do vendedor ${vendorCode}:`, vendorError);
+                }
+              }
+              
+              // Determinar tipo de faturamento (simplificado)
+              let billingType: 'venda' | 'troca' | 'amostra' = 'venda';
+              const operationDescription = invoice.ide?.xJust || invoice.infAdic?.infCpl || '';
+              if (operationDescription.toLowerCase().includes('troca')) {
+                billingType = 'troca';
+              } else if (operationDescription.toLowerCase().includes('amostra')) {
+                billingType = 'amostra';
+              }
+              
+              // Extrair produtos da nota fiscal
+              const products = (invoice.det || []).map((item: any) => ({
+                code: item.prod?.cProd || '',
+                description: item.prod?.xProd || '',
+                quantity: parseFloat(item.prod?.qCom || '0'),
+                unitPrice: parseFloat(item.prod?.vUnCom || '0'),
+                totalPrice: parseFloat(item.prod?.vProd || '0')
+              }));
+              
+              // Determinar método de pagamento
+              let paymentMethod = '';
+              if (invoice.pag?.detPag) {
+                const paymentDetail = Array.isArray(invoice.pag.detPag) ? invoice.pag.detPag[0] : invoice.pag.detPag;
+                switch (paymentDetail.tPag) {
+                  case '01':
+                    paymentMethod = 'Dinheiro';
+                    break;
+                  case '03':
+                    paymentMethod = 'Cartão de Crédito';
+                    break;
+                  case '04':
+                    paymentMethod = 'Cartão de Débito';
+                    break;
+                  case '05':
+                    paymentMethod = 'Crédito Loja';
+                    break;
+                  case '15':
+                    paymentMethod = 'Boleto Bancário';
+                    break;
+                  case '17':
+                    paymentMethod = 'PIX';
+                    break;
+                  default:
+                    paymentMethod = 'Outros';
+                }
+              }
+              
+              // Data de vencimento (se houver)
+              let dueDate = null;
+              if (invoice.cobr?.dup && invoice.cobr.dup.length > 0) {
+                const firstDup = Array.isArray(invoice.cobr.dup) ? invoice.cobr.dup[0] : invoice.cobr.dup;
+                if (firstDup.dVenc) {
+                  dueDate = new Date(firstDup.dVenc);
+                }
+              }
+              
+              // Verificar se já existe
+              const existing = await this.storage.getBillingByOmieId(omieInvoiceId);
+              
+              const billingData = {
+                omieInvoiceId,
+                invoiceNumber,
+                customerFantasyName,
+                billingType,
+                totalValue,
+                invoiceDate: new Date(invoiceDate),
+                sellerId,
+                sellerName,
+                paymentMethod,
+                dueDate,
+                omieCustomerCode: clientCode?.toString() || '',
+                customerDocument,
+                invoiceStatus: invoice.ide?.cStat || '',
+                products
+              };
+              
+              if (existing) {
+                await this.storage.updateBilling(existing.id, {
+                  ...billingData,
+                  updatedAt: new Date()
+                });
+                updated++;
+              } else {
+                await this.storage.createBilling(billingData);
+                imported++;
+              }
+              
+              totalProcessed++;
+              
+            } catch (error) {
+              console.error(`❌ Erro ao processar nota fiscal:`, error);
+              errors.push({
+                invoice: invoice.ide?.nNF || 'Desconhecida',
+                error: error instanceof Error ? error.message : 'Erro desconhecido'
+              });
+            }
+          }
+          
+          // Verificar se há mais páginas
+          const totalPages = response.total_de_paginas || 1;
+          hasMorePages = page < totalPages;
+          page++;
+          
+        } catch (pageError) {
+          console.error(`❌ Erro ao processar página ${page}:`, pageError);
+          errors.push({
+            page,
+            error: pageError instanceof Error ? pageError.message : 'Erro desconhecido'
+          });
+          hasMorePages = false;
+        }
+      }
+      
+      console.log(`✅ Sincronização de faturamentos concluída:`);
+      console.log(`📊 Total processado: ${totalProcessed}`);
+      console.log(`📥 Importados: ${imported}`);
+      console.log(`🔄 Atualizados: ${updated}`);
+      console.log(`❌ Erros: ${errors.length}`);
+      
+      return {
+        totalProcessed,
+        imported,
+        updated,
+        errors
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro na sincronização de faturamentos:', error);
+      throw error;
+    }
+  }
+
   // Listar todos os vendedores ativos do Omie - buscar TODAS as páginas
   async getAllVendors(page = 1, pageSize = 50): Promise<{
     vendors: OmieVendor[];
