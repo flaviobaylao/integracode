@@ -793,7 +793,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2025...');
+      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2024...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -802,7 +802,9 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxPages = 100; // Aumentar limite para buscar notas de 2025
+      const maxPages = 100;
+      let pagesWithoutValidData = 0;
+      const maxPagesWithoutData = 10; // Parar se 10 páginas consecutivas sem dados válidos
       
       while (hasMorePages && page <= maxPages) {
         try {
@@ -821,6 +823,8 @@ export class OmieService {
             hasMorePages = false;
             break;
           }
+          
+          let pageHasValidData = false;
           
           for (const invoice of invoices) {
             try {
@@ -843,13 +847,15 @@ export class OmieService {
                 continue;
               }
               
-              // Filtrar apenas notas fiscais a partir de 01/01/2025
-              const minDate = new Date('2025-01-01');
+              // Filtrar apenas notas fiscais a partir de 01/01/2024 (ajustado para trazer dados mais recentes)
+              const minDate = new Date('2024-01-01');
               
               if (invoiceDateObj < minDate) {
-                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2025, pulando...`);
+                console.log(`📅 Nota ${invoiceNumber} de ${invoiceDate} anterior a 01/01/2024, pulando...`);
                 continue;
               }
+              
+              pageHasValidData = true;
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie;
@@ -972,6 +978,20 @@ export class OmieService {
           const totalPages = response.total_de_paginas || 1;
           hasMorePages = page < totalPages && page < maxPages;
           page++;
+          
+          // Verificar se esta página teve dados válidos
+          if (!pageHasValidData) {
+            pagesWithoutValidData++;
+            console.log(`⚠️ Página ${page-1} sem dados válidos (${pagesWithoutValidData}/${maxPagesWithoutData})`);
+            
+            if (pagesWithoutValidData >= maxPagesWithoutData) {
+              console.log(`🛑 ${maxPagesWithoutData} páginas consecutivas sem dados válidos, parando sincronização...`);
+              hasMorePages = false;
+              break;
+            }
+          } else {
+            pagesWithoutValidData = 0; // Reset contador
+          }
           
           // Log de progresso
           console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
