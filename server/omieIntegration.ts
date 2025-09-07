@@ -777,7 +777,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos...');
+      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2025...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -794,7 +794,9 @@ export class OmieService {
           const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
             pagina: page,
             registros_por_pagina: 50,
-            apenas_importado_api: 'N'
+            apenas_importado_api: 'N',
+            dDtEmiIni: '01/01/2025',
+            dDtEmiFin: ''
           });
           
           const invoices = response.nfCadastro || [];
