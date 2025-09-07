@@ -67,13 +67,15 @@ export interface OmieConfig {
 export class OmieService {
   private config: OmieConfig;
   private baseUrl: string;
+  private storage: any;
 
-  constructor(config: OmieConfig) {
+  constructor(config: OmieConfig, storage?: any) {
     this.config = config;
     this.baseUrl = config.baseUrl || 'https://app.omie.com.br/api/v1';
+    this.storage = storage;
   }
 
-  static createFromEnv(): OmieService {
+  static createFromEnv(storage?: any): OmieService {
     const appKey = process.env.OMIE_APP_KEY;
     const appSecret = process.env.OMIE_APP_SECRET;
     
@@ -84,7 +86,7 @@ export class OmieService {
     return new OmieService({
       appKey,
       appSecret
-    });
+    }, storage);
   }
 
   private async makeRequest(endpoint: string, call: string, params: any = {}) {
@@ -1406,14 +1408,15 @@ export class OmieService {
 // Singleton instance - configuração será feita via variáveis de ambiente
 let omieService: OmieService | null = null;
 
-export function getOmieService(): OmieService | null {
-  if (!omieService && process.env.OMIE_APP_KEY && process.env.OMIE_APP_SECRET) {
-    omieService = new OmieService({
-      appKey: process.env.OMIE_APP_KEY,
-      appSecret: process.env.OMIE_APP_SECRET,
-    });
+export function getOmieService(storage?: any): OmieService | null {
+  if (!process.env.OMIE_APP_KEY || !process.env.OMIE_APP_SECRET) {
+    return null;
   }
-  return omieService;
+  
+  return new OmieService({
+    appKey: process.env.OMIE_APP_KEY,
+    appSecret: process.env.OMIE_APP_SECRET,
+  }, storage);
 }
 
 export function isOmieConfigured(): boolean {

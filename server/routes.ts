@@ -1059,7 +1059,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1081,7 +1081,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { cnpjCpf } = req.params;
       
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1109,7 +1109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { cnpjCpf } = req.params;
       
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1139,7 +1139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const page = parseInt(req.query.page as string) || 1;
       const pageSize = parseInt(req.query.pageSize as string) || 50;
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1170,7 +1170,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // sellerId pode ser null para importar sem vendedor atribuído
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1243,7 +1243,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { defaultSellerId } = req.body;
       
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1373,7 +1373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get available stages from Omie
   app.get('/api/omie/stages', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1396,7 +1396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { step } = req.params;
       
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1453,7 +1453,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { step } = req.params;
       
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1514,7 +1514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Expires': '0'
       });
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1550,7 +1550,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Arquivo Excel é obrigatório" });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         console.log('Omie service not configured');
         return res.status(503).json({ 
@@ -1672,7 +1672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para buscar vendedores
   app.get('/api/omie/vendedores', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1738,7 +1738,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para sincronizar todos os vendedores do Omie
   app.post('/api/omie/sync-vendors', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1812,7 +1812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para sincronizar todos os produtos do Omie
   app.post('/api/omie/sync-products', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: "Integração Omie não configurada" 
@@ -1888,7 +1888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para sincronizar faturamentos do Omie
   app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ message: 'Serviço Omie não configurado' });
       }
@@ -2111,7 +2111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Se o sales card tem um pedido no Omie, atualizar com informações de entrega
       if (salesCard.omieOrderId) {
         try {
-          const omieService = getOmieService();
+          const omieService = getOmieService(storage);
           if (omieService) {
             const updatedSalesCard = await storage.getSalesCard(salesCard.id);
             await omieService.updateOrderDeliveryStatus(salesCard.omieOrderId, updatedSalesCard);
@@ -2223,7 +2223,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Sales card not found' });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: 'Omie integration not configured' 
@@ -2281,7 +2281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sincronizar status de entrega de todos os pedidos para o Omie
   app.post('/api/omie/sync-delivery-status', isAuthenticated, async (req, res) => {
     try {
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: 'Omie integration not configured' 
@@ -2387,7 +2387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
           message: 'Omie integration not configured' 
@@ -2687,7 +2687,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (salesCard && salesCard.customer) {
             const customerDocument = salesCard.customer.cnpj || salesCard.customer.cpf;
             if (customerDocument) {
-              const omieService = getOmieService();
+              const omieService = getOmieService(storage);
               if (omieService) {
                 const creditInfo = await omieService.getClientCreditInfo(customerDocument);
                 if (creditInfo && creditInfo.valor_em_aberto > 0 && creditInfo.dias_em_atraso > 0) {
