@@ -12,6 +12,7 @@ import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
 import InvoiceDebugger from "@/pages/InvoiceDebugger";
+import Billings from "@/pages/Billings";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -28,6 +29,7 @@ function Router() {
           <Route path="/telemarketing" component={TelemarketingPage} />
           <Route path="/sales-schedule" component={SalesSchedule} />
           <Route path="/debug-invoice" component={InvoiceDebugger} />
+          <Route path="/billings" component={Billings} />
         </>
       )}
       <Route component={NotFound} />

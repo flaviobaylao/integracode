@@ -4,7 +4,7 @@ import Dashboard from "@/components/Dashboard";
 import SalesCards from "@/components/SalesCards";
 import CustomerManagement from "@/components/CustomerManagement";
 import ProductManagement from "@/components/ProductManagement";
-import Billings from "@/components/Billings";
+import Billings from "@/pages/Billings";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
 import OmieIntegration from "@/components/OmieIntegration";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
