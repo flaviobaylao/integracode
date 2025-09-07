@@ -817,7 +817,7 @@ export class OmieService {
             apenas_importado_api: 'N',
             filtrar_por_data_de: '01/01/2025',
             ordenar_por: 'CODIGO',
-            ordem_decrescente: 'N' // Ordem crescente para sincronização incremental
+            ordem_decrescente: 'S' // Ordem decrescente para pegar notas mais recentes primeiro
           });
           
           const invoices = response.nfCadastro || [];
