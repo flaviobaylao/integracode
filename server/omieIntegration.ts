@@ -159,45 +159,47 @@ export class OmieService {
   // Método para buscar uma nota fiscal específica pelo número
   async getInvoiceByNumber(invoiceNumber: string): Promise<any> {
     try {
-      console.log(`🔍 Buscando NF ${invoiceNumber} na API do Omie...`);
+      console.log(`🔍 Buscando NF ${invoiceNumber} na API do Omie usando ConsultarNF...`);
       
-      // Buscar notas fiscais usando filtro de número
+      // Usar ConsultarNF diretamente com o número da NF
+      const payload = {
+        call: 'ConsultarNF',
+        app_key: this.appKey,
+        app_secret: this.appSecret,
+        param: [{
+          nNF: invoiceNumber
+        }]
+      };
+      
+      console.log(`📤 Enviando payload:`, JSON.stringify(payload, null, 2));
+      
       const response = await fetch('https://app.omie.com.br/api/v1/produtos/nfconsultar/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          call: 'ListarNF',
-          app_key: this.appKey,
-          app_secret: this.appSecret,
-          param: [{
-            nPagina: 1,
-            nRegPorPagina: 100,
-            filtrar_apenas_omiepdv: 'N',
-            // Buscar nas últimas semanas para encontrar a NF
-            dEmiIni: '01/08/2025',
-            dEmiFim: '07/09/2025'
-          }]
-        })
+        body: JSON.stringify(payload)
       });
 
+      console.log(`📥 Status da resposta: ${response.status}`);
+      
       if (!response.ok) {
-        throw new Error(`Erro HTTP: ${response.status}`);
+        const errorText = await response.text();
+        console.log(`❌ Resposta de erro: ${errorText}`);
+        throw new Error(`Erro HTTP: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
+      console.log(`📋 Dados recebidos:`, JSON.stringify(data, null, 2));
       
-      if (data.nfCadastro && data.nfCadastro.length > 0) {
-        // Procurar pela NF específica
-        const invoice = data.nfCadastro.find((inv: any) => 
-          inv.ide?.nNF?.toString() === invoiceNumber.toString()
-        );
-        
-        if (invoice) {
-          console.log(`✅ NF ${invoiceNumber} encontrada!`);
-          return invoice;
-        }
+      if (data.faultstring) {
+        console.log(`❌ Erro da API Omie: ${data.faultstring}`);
+        throw new Error(`Erro da API Omie: ${data.faultstring}`);
+      }
+      
+      if (data) {
+        console.log(`✅ NF ${invoiceNumber} encontrada com ConsultarNF!`);
+        return data;
       }
       
       console.log(`❌ NF ${invoiceNumber} não encontrada`);

@@ -1,0 +1,382 @@
+
+Aplicativos
+Lista das API's
+Ajuda
+
+NFConsultar
+Endpoint
+WSDL
+PHP SOAP
+JSON
+Endpoint URI
+https://app.omie.com.br/api/v1/produtos/nfconsultar/
+Métodos
+Veja abaixo a documentação de cada método disponível para este serviço.
+
+ConsultarNF
+Consulta um Nota Fiscal
+
+Parâmetros:
+ 	nfChave	nfChave	
+Chave de pesquisa da Nota Fiscal 
+Retorno nfCadastro: Dados da Nota Fiscal&nbsp;
+Exemplo:
+{
+  "nCodNF": 0,
+  "nNF": "1"
+}
+ListarNF
+Listar as Notas Fiscais cadastradas.
+
+Parâmetros:
+ 	nfListarRequest	nfListarRequest	
+Solicitação de Listagem de Notas Fiscais
+Retorno nfListarResponse: Resposta da listagem de Notas Fiscais
+Exemplo:
+{
+  "pagina": 1,
+  "registros_por_pagina": 20,
+  "apenas_importado_api": "N",
+  "ordenar_por": "CODIGO"
+}
+Tipos Complexos
+Categorias
+cCodigoCategoria	string20	Código do Categoria.
+nPercentualDistribuicao	decimal	Percentual da distribuição.
+nValorDistribuicao	decimal	Valor da distribuição.
+nValorFixo	string1	Indica que o valor foi fixado na distribuição (S/N).
+CategoriasArray
+Este parâmetro é um array do tipo Categorias
+
+Lista de Categorias
+
+Departamentos
+cCodigoDepartamento	string40	Código do Departamento.
+nPercentualDistribuicao	decimal	Percentual da distribuição.
+nValorDistribuicao	decimal	Valor da distribuição.
+nValorFixo	string1	Indica que o valor foi fixado na distribuição (S/N).
+DepartamentosArray
+Este parâmetro é um array do tipo Departamentos
+
+Lista de Departamentos
+
+ICMSTot
+Grupo de Valores Totais referentes ao ICMS
+
+vBC	decimal	Base de Cálculo do ICMS
+vICMS	decimal	Valor Total do ICMS
+vBCST	decimal	Base de Cálculo do ICMS ST
+vST	decimal	Valor Total do ICMS ST
+vProd	decimal	Valor Total dos produtos e serviços
+vFrete	decimal	Valor Total do Frete
+vSeg	decimal	Valor Total do Seguro
+vDesc	decimal	Valor Total do Desconto
+vII	decimal	Valor Total do II
+vIPI	decimal	Valor Total do IPI
+vPIS	decimal	Valor Retido de PIS
+vCOFINS	decimal	Valor Retido de COFINS
+vOutro	decimal	Outras Despesas acessórias
+vNF	decimal	Valor Total da NF-e
+vTotTrib	decimal	Valor aproximado total de tributos federais, estaduais e municipais
+vICMSDesonerado	decimal	Valor do ICMS Desonerado.
+vBCFCP	decimal	Base de Cálculo do Fundo de Combate a Pobreza
+vFCP	decimal	Valor do Fundo de Combate a Pobreza
+vBCFCPST	decimal	Base de Cálculo do Fundo de Combate a Pobreza ST
+vFCPST	decimal	Valor do Fundo de Combate a Pobreza ST
+ISSQNtot
+Grupo de Valores Totais referentes ao ISSQN
+
+vServ	decimal	Valor Total dos Serviços sob não-incidência ou não tributados pelo ICMS
+vBC	decimal	Base de Cálculo do ISS
+vISS	decimal	Valor Total do ISS
+vPIS	decimal	Valor Retido de PIS
+vCOFINS	decimal	Valor Retido de COFINS
+compl
+Dados complementares da NF
+
+nIdNF	integer	Código da Nota Fiscal.+
+nIdPedido	integer	Código de identificação do pedido.+
+cCodCateg	string20	Código da categoria.
+cChaveNFe	string44	Chave da NF-e
+nIdReceb	integer	Identificação do Recebimento.+
+nIdTransp	integer	Identificação da Transportadora.+
+cModFrete	string1	Código da modalidade do frete.
+det
+Detalhes dos itens da Nota Fiscal.
+
+prod	prod	TAG de grupo do detalhamento de Produtos e Serviços da NF-e
+nfProdInt	nfProdInt	Informações de Integração dos itens da NF
+itemPedido	itemPedido	Dados do Item do Pedido de Venda
+rastreabilidade	rastreabilidade	Dados específicos para rastreabilidade do produto
+detArray
+Este parâmetro é um array do tipo det
+
+Lista de det
+
+ide
+indPag	string1	Indicador da forma de pagamento:+
+mod	text	Código do Modelo do Documento Fiscal:+
+serie	string5	Série do Documento Fiscal
+nNF	string10	Número do Documento Fiscal
+dEmi	string10	Data de emissão.
+hEmi	string8	Hora de Emissão.
+dSaiEnt	string10	Data de saida.
+hSaiEnt	string8	Hora de Saída ou da Entrada da Mercadoria/Produto
+tpNF	string1	Tipo de Operação: 0-entrada / 1-saída
+tpAmb	string1	Tipo de Ambiente = 1-Produção / 2-Homologação
+finNFe	string1	Finalidade de emissão da NFe: +
+dReg	string10	Data de Registro.
+dCan	string10	Data de cancelamento.
+dInut	string10	Data de Inutilização.
+cDeneg	string1	Indica que a Nota Fiscal foi Denegada
+info
+dInc	string10	Data da Inclusão.+
+hInc	string8	Hora da Inclusão.+
+uInc	string10	Usuário da Inclusão.+
+dAlt	string10	Data da Alteração.+
+hAlt	string8	Hora da Alteração.+
+uAlt	string10	Usuário da Alteração.+
+cImpAPI	string1	Importado pela API.+
+itemPedido
+Dados do Item do Pedido de Venda
+
+nIdItemPedido	integer	Id do item do Pedido de Venda.
+cItemDevolvido	string1	Indica se o Item do Pedido de Vendas foi devolvido (S/N).
+nItemQtdDevolvida	decimal	Quantidade devolvida do Item do Pedido de Vendas.
+nfCadastro
+Dados da Nota Fiscal
+
+ide	ide	Identificação da NF-e
+nfEmitInt	nfEmitInt	Dados da Integração do Emitente
+nfDestInt	nfDestInt	Dados de Integração do Destinatário da Nota Fiscal
+det	detArray	Detalhes dos itens da Nota Fiscal. 
+total	total	Total da Nota Fiscal
+info	info	Informações complementares.
+compl	compl	Dados complementares da NF 
+titulos	titulosArray	Titulos gerados para a nota fiscal.
+pedido	pedido	Dados do pedido.
+nfCadastroArray
+Este parâmetro é um array do tipo nfCadastro
+
+Lista de nfCadastro
+
+nfChave
+Chave de pesquisa da Nota Fiscal
+
+cCodNFInt	string20	Código de Integração da NF (DEPRECATED)
+nCodNF	integer	Código da Nota Fiscal.+
+nNF	string10	Número do Documento Fiscal
+serie	string5	Série do Documento Fiscal
+dEmi	string10	Data de emissão.
+tpNF	string1	Tipo de Operação: 0-entrada / 1-saída
+cChaveNFe	string44	Chave da NF-e
+nIdPedido	integer	Código de identificação do pedido.+
+nIdCliente	integer	ID do Cliente.
+cnpj_cpf	string100	CNPJ / CPF.
+cDetalhesPedido	string1	Exibe os detalhes do pedido que originou a Nota Fiscal.+
+tpAmb	string1	Tipo de Ambiente = 1-Produção / 2-Homologação
+nfDestInt
+nCodCli	integer	Código do cliente
+cCodCliInt	string60	Código de integração do cliente Fornecedor. 
+cRazao	string60	Razão Social
+cnpj_cpf	string20	CNPJ / CPF+
+nfEmitInt
+nCodEmp	integer	Código da Empresa
+cCodEmpInt	string20	Código de integração da empresa.
+nfListarRequest
+pagina	integer	Número da página que será listada.
+registros_por_pagina	integer	Número de registros retornados
+apenas_importado_api	string1	Exibir apenas os registros gerados pela API
+ordenar_por	string100	Ordenar o resultado da página por:+
+ordem_decrescente	string1	Ordem decrescente.
+filtrar_por_data_de	string10	Filtra os registros a partir da data.
+filtrar_por_data_ate	string10	Filtrar lançamentos incluídos e/ou alterados até a data
+filtrar_apenas_inclusao	string1	Filtrar apenas registros incluídos (S/N)
+filtrar_apenas_alteracao	string1	Filtrar apenas registros alterados (S/N)
+filtrar_por_status	string1	Status da NF:+
+dEmiInicial	string10	Data de Emissão inicial.
+hEmiInicial	string8	Hora de Emissão inicial.
+dEmiFinal	string10	Data de Emissão final.
+hEmiFinal	string8	Hora de Emissão final.
+dSaiEntInicial	string10	Data de Saida inicial.
+dSaiEntFinal	string10	Data de Saida final.
+dRegInicial	string10	Data de Registro inicial.
+dRegFinal	string10	Data de Registro final.
+dCanInicial	string10	Data de Cancelamento inicial.
+dCanFinal	string10	Data de Cancelamento final.
+dInutInicial	string10	Data de Inutilização inicial.
+dInutFinal	string10	Data de Inutilização final.
+tpNF	string1	Tipo de Operação: 0-entrada / 1-saída
+tpAmb	string1	Tipo de Ambiente = 1-Produção / 2-Homologação
+cSerie	string5	Série da NF-e
+nNFInicial	integer	Número da Nota Fiscal inicial.
+nNFFinal	integer	Número da Nota Fiscal final.
+cDetalhesPedido	string1	Exibe os detalhes do pedido que originou a Nota Fiscal.+
+cApenasResumo	string1	Exibe apenas a resumo da Nota Fiscal.+
+opPedido	string2	Operação do Pedido de venda que originou a NF.+
+cNumeroPedidoCliente	string30	Pesquisa pelo numero do Pedido do Cliente.
+nIdCliente	integer	ID do Cliente.
+cnpj_cpf	string100	CNPJ / CPF.
+ordem_descrescente	string1	DEPRECATED
+nfListarResponse
+Resposta da listagem de Notas Fiscais
+
+pagina	integer	Número da página que será listada.
+total_de_paginas	integer	Total de páginas encontradas.
+registros	integer	Número de registros retornados
+total_de_registros	integer	Total de registros encontrados.
+nfCadastro	nfCadastroArray	Dados da Nota Fiscal 
+nfProdInt
+nCodProd	integer	Código do Produto
+cCodProdInt	string60	Código de Integração do produto.
+nCodItem	integer	Código do item
+cCodItemInt	string20	Código de Integração do Item.
+omie_fail
+code	integer	Codigo do erro
+description	text	Descricao do erro
+referer	text	Origem do erro
+fatal	boolean	Indica se eh um erro fatal
+pedido
+Dados do pedido.
+
+cNumPedido	string15	Número do Pedido do Venda.+
+dIncPedido	string10	Data da Inclusão do Pedido de Venda.+
+hIncPedido	string8	Hora da Inclusão do Pedido de Venda.+
+uIncPedido	string10	Usuário da Inclusão do Pedido de Venda.+
+dAltPedido	string10	Data da Alteração do Pedido de Venda.+
+hAltPedido	string8	Hora da Alteração do Pedido de Venda.+
+uAltPedido	string10	Usuário da Alteração do Pedido de Venda.+
+cCancelado	string1	Indica que o Pedido de Venda foi cancelado.+
+dCanPedido	string10	Data de Cancelamento do Pedido de Venda.+
+hCanPedido	string8	Hora de Cancelamento do Pedido de Venda.+
+uCanPedido	string10	Usuário de Cancelamento do Pedido de Venda.+
+cDevolvido	string1	Indica que o Pedido de Venda foi devolvido.+
+cDevParcial	string1	Indica que o Pedido de Venda se foi uma devolução parcial.+
+dDevPedido	string10	Data de Cancelamento do Pedido de Venda.+
+hDevPedido	string8	Hora de Cancelamento do Pedido de Venda.+
+uDevPedido	string10	Usuário de Cancelamento do Pedido de Venda.+
+nIdVendedor	integer	Código do Vendedor no Pedido.
+nIdProjeto	integer	Código do Projeto no Pedido.
+opPedido	string2	Operação do Pedido de venda que originou a NF.+
+nIdPedDev	integer	Id do Pedido de venda devolvido.
+Departamentos	DepartamentosArray	Distribuição por Departamentos.
+Categorias	CategoriasArray	Distribuição por Categorias.
+prod
+cProd	string60	Código do produto ou serviço
+cEAN	string14	GTIN (Global Trade Item Number) da unidade tributável, antigo código EAN ou código de barras
+xProd	string120	Descrição do produto ou serviço
+NCM	string13	Código do NCM
+EXTIPI	string3	DEPRECATED.
+CFOP	string10	Código Fiscal de Operações e Prestações
+uCom	string6	Unidade Tributável
+qCom	decimal	Quantidade Comercial
+vUnCom	decimal	Valor Unitário de tributação
+vProd	decimal	Valor total do item.
+cEANTrib	string14	GTIN (Global Trade Item Number) da unidade tributável, antigo código EAN ou código de barras
+uTrib	string6	Unidade Tributável
+qTrib	decimal	Quantidade Tributável
+vUnTrib	decimal	Valor Unitário de tributação
+vFrete	decimal	Valor Total do Frete
+vSeg	decimal	Valor Total do Seguro
+vDesc	decimal	Valor do Desconto
+vOutro	decimal	Outras despesas acessórias
+vII	decimal	Valor Total do II
+indTot	decimal	Indica se valor do Item (vProd) entra no valor total da NF-e (vProd)
+cProdOrig	string60	Código do produto conforme informado na Nota Fiscal.
+xProdOrig	string120	Descrição original do produto conforme informado na Nota Fiscal.
+nCMCUnitario	decimal	CMC Unitário
+nCMCTotal	decimal	CMC Total.
+vTotItem	decimal	Valor total do item.
+vFCP	decimal	Valor do ICMS relativo ao Fundo de Combate à Pobreza (FCP) da UF de Destino
+pCOFINS	decimal	Alíquota de COFINS
+vCOFINS	decimal	Valor de COFINS
+pPIS	decimal	Alíquota de PIS
+vPIS	decimal	Valor do PIS
+pISS	decimal	Alíquota de ISS
+vISS	decimal	Valor de ISS
+pIPI	decimal	Alíquota de IPI
+vIPI	decimal	Valor de IPI
+pIR	decimal	Alíquota de IR
+vIR	decimal	Valor de IR
+pINSS	decimal	Alíquota de INSS
+vINSS	decimal	Valor de INSS
+pCSLL	decimal	Alíquota de Contribuição Social sobre Lucro Líquido
+vCSLL	decimal	Valor da Contribuição Social sobre Lucro Líquido
+pICMS	decimal	Alíquota de ICMS
+vICMS	decimal	Valor de ICMS
+pICMSST	decimal	Alíquota de ICMSST
+vICMSST	decimal	Valor de ICMSST
+codigo_local_estoque	integer	Código do local do estoque.
+cCOFINSRetido	string1	Indica se houve retenção de COFINS+
+cPISRetido	string1	Indica se houve retenção de PIS+
+cINSSRetido	string1	Indica se houve retenção de INSS+
+cIRRetido	string1	Indica se houve retenção de IR+
+cISSRetido	string1	Indica se houve retenção de ISS+
+cICMSRetido	string1	Indica se houve retenção de ICMS+
+cCSLLRetido	string1	Indica se houve retenção de CSLL+
+pFCPST	decimal	Alíquota de FCPST
+vFCPST	decimal	Valor do FCPST
+pFCP	decimal	Alíquota de FCP.
+pMVAST	decimal	Percentual da margem do valor adicionado da base de cálculo do ICMS ST.
+pRedBC	decimal	Percentual de Redução da Base de Cálculo do ICMS.
+vBCCOFINS	decimal	Base de Cálculo do COFINS.
+vBCST	decimal	Base de Cálculo do ICMS ST.
+vBCIPI	decimal	Base de Cálculo do IPI.
+vBCISS	decimal	Base de Cálculo do ISS.
+vBCPIS	decimal	Base de Cálculo do PIS.
+vBCUFDest	decimal	Base de Cálculo do ICMS na UF de Destino.
+vBC	decimal	Base de Cálculo do ICMS.
+cOrigem	string1	Código da Origem da Mercadoria ou Serviço
+pIcmsUfDest	decimal	Alíquota interna da UF de Destino
+pIcmsInterest	decimal	Alíquota Interestadual das UF envolvidas
+pRedBcICMDest	decimal	Percentual de Redução da Base de Cálculo do ICMS Destino
+vICMDest	decimal	Valor do ICMS Interestadual para a UF de Destino
+vICMRemet	decimal	Valor do ICMS Interestadual para a UF do Remetente
+rastreabilidade
+numeroLote	string20	Número do Lote
+qtdeProdutoLote	decimal	Quantidade de Produto
+dataFabricacaoLote	string10	Data de Fabricação/Produção
+dataValidadeLote	string10	Data de Validade
+codigoAgregacaoLote	string20	Código de Agregação
+retTrib
+vRetPIS	decimal	Valor Retido de PIS
+vRetCOFINS	decimal	Valor Retido de COFINS
+vRetCSLL	decimal	Valor Retido de CSLL
+vBCIRRF	decimal	Base de Cálculo do IRRF
+vIRRF	decimal	Valor Retido do IRRF
+vBCRetPrev	decimal	Base de Cálculo da Retenção da Previdência Social
+vRetPrev	decimal	Valor da Retenção da Previdência Social
+titulos
+Titulos gerados para a nota fiscal.
+
+nCodTitulo	integer	Código do titulo.+
+cCodIntTitulo	string60	Código de integração do título.+
+cNumTitulo	string20	Número do título.+
+dDtEmissao	string10	Data de emissão do título.
+dDtVenc	string10	Data de vencimento do título.+
+dDtPrevisao	string10	Data de previsão de Pagamento/Recebimento.
+nValorTitulo	decimal	Valor do título.
+cCodCateg	string20	Código da Categoria.
+dReg	string10	Data de Registro.
+nParcela	integer	Número da parcela.
+nTotParc	integer	Número total de parcelas
+nCodProjeto	integer	Código do Projeto
+nCodVendedor	integer	Código do Vendedor
+nCodComprador	integer	Número do Comprador
+nCodTitRepet	integer	Código do título da repetição.+
+cDoc	string5	Código para o Tipo de Documento
+cPagForma	string3	Forma de Pagamento
+titulosArray
+Este parâmetro é um array do tipo titulos
+
+Lista de titulos
+
+total
+Total da Nota Fiscal
+
+ICMSTot	ICMSTot	Grupo de Valores Totais referentes ao ICMS
+ISSQNtot	ISSQNtot	Grupo de Valores Totais referentes ao ISSQN
+retTrib	retTrib	Grupo de Retenções de Tributos
+Métodos
+ConsultarNF
+ListarNF
