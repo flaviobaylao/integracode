@@ -786,8 +786,10 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
+      const maxPages = 20; // Limitar a 20 páginas para evitar processamento excessivo
+      let consecutiveInvalidDates = 0;
       
-      while (hasMorePages) {
+      while (hasMorePages && page <= maxPages) {
         try {
           console.log(`📄 Processando página ${page}...`);
           
@@ -822,8 +824,19 @@ export class OmieService {
               // Validar data
               if (!invoiceDate || isNaN(Date.parse(invoiceDate))) {
                 console.warn(`⚠️ Data inválida para nota ${invoiceNumber}, pulando...`);
+                consecutiveInvalidDates++;
+                
+                // Se muitas datas inválidas consecutivas, parar processamento
+                if (consecutiveInvalidDates > 20) {
+                  console.log(`🛑 Muitas datas inválidas consecutivas (${consecutiveInvalidDates}), parando sincronização...`);
+                  hasMorePages = false;
+                  break;
+                }
                 continue;
               }
+              
+              // Reset contador de datas inválidas quando encontra uma válida
+              consecutiveInvalidDates = 0;
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie;
@@ -944,8 +957,11 @@ export class OmieService {
           
           // Verificar se há mais páginas
           const totalPages = response.total_de_paginas || 1;
-          hasMorePages = page < totalPages;
+          hasMorePages = page < totalPages && page < maxPages;
           page++;
+          
+          // Log de progresso
+          console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
           
         } catch (pageError) {
           console.error(`❌ Erro ao processar página ${page}:`, pageError);
