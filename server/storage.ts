@@ -8,6 +8,7 @@ import {
   systemSettings,
   locations,
   salesGoals,
+  billings,
   type User,
   type UpsertUser,
   type InsertCustomer,
@@ -26,6 +27,8 @@ import {
   type InsertLocation,
   type SalesGoal,
   type InsertSalesGoal,
+  type Billing,
+  type InsertBilling,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -119,6 +122,14 @@ export interface IStorage {
   
   // Sales Metrics operations
   getSalesMetrics(sellerId?: string, month?: number, year?: number): Promise<any>;
+  
+  // Billing operations
+  getBillings(sellerId?: string): Promise<Billing[]>;
+  getBilling(id: string): Promise<Billing | undefined>;
+  getBillingByOmieId(omieInvoiceId: string): Promise<Billing | undefined>;
+  createBilling(billing: InsertBilling): Promise<Billing>;
+  updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing>;
+  deleteBilling(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1610,6 +1621,57 @@ export class DatabaseStorage implements IStorage {
       console.error('Erro ao calcular métricas de vendas:', error);
       throw error;
     }
+  }
+
+  // Billing operations
+  async getBillings(sellerId?: string): Promise<Billing[]> {
+    let query = db.select().from(billings);
+    
+    if (sellerId) {
+      query = query.where(eq(billings.sellerId, sellerId));
+    }
+    
+    const result = await query.orderBy(desc(billings.invoiceDate));
+    return result;
+  }
+
+  async getBilling(id: string): Promise<Billing | undefined> {
+    const [billing] = await db
+      .select()
+      .from(billings)
+      .where(eq(billings.id, id));
+    return billing;
+  }
+
+  async getBillingByOmieId(omieInvoiceId: string): Promise<Billing | undefined> {
+    const [billing] = await db
+      .select()
+      .from(billings)
+      .where(eq(billings.omieInvoiceId, omieInvoiceId));
+    return billing;
+  }
+
+  async createBilling(billing: InsertBilling): Promise<Billing> {
+    const [newBilling] = await db
+      .insert(billings)
+      .values(billing)
+      .returning();
+    return newBilling;
+  }
+
+  async updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing> {
+    const [updatedBilling] = await db
+      .update(billings)
+      .set({ ...billing, updatedAt: new Date() })
+      .where(eq(billings.id, id))
+      .returning();
+    return updatedBilling;
+  }
+
+  async deleteBilling(id: string): Promise<void> {
+    await db
+      .delete(billings)
+      .where(eq(billings.id, id));
   }
 }
 
