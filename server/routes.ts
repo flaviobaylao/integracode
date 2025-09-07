@@ -1885,6 +1885,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para sincronizar faturamentos do Omie
+  app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const result = await omieService.syncBillings();
+      res.json(result);
+    } catch (error) {
+      console.error('Erro na sincronização de faturamentos:', error);
+      res.status(500).json({ message: 'Erro interno do servidor' });
+    }
+  });
+
+  // Rota para buscar faturamentos
+  app.get('/api/billings', authenticateUser, checkSellerAccess, async (req: any, res) => {
+    try {
+      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      const billings = await storage.getBillings(sellerId);
+      res.json(billings);
+    } catch (error) {
+      console.error('Erro ao buscar faturamentos:', error);
+      res.status(500).json({ message: 'Erro interno do servidor' });
+    }
+  });
+
   // Receita Federal Integration routes
   app.post('/api/receita/cnpj', authenticateUser, async (req: any, res) => {
     try {
