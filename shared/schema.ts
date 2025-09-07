@@ -338,17 +338,18 @@ export const billings = pgTable("billings", {
   omieInvoiceId: varchar("omie_invoice_id").unique(), // ID único da nota fiscal no Omie
   invoiceNumber: varchar("invoice_number").notNull(), // Número da nota fiscal
   customerFantasyName: varchar("customer_fantasy_name").notNull(), // Nome fantasia do cliente
-  billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
-  totalValue: decimal("total_value", { precision: 10, scale: 2 }).notNull(), // Valor total
+  customerDocument: varchar("customer_document"), // CPF/CNPJ do cliente
+  cfop: varchar("cfop"), // CFOP da nota fiscal
   invoiceDate: timestamp("invoice_date").notNull(), // Data de faturamento
-  sellerId: varchar("seller_id"), // ID do vendedor
-  sellerName: varchar("seller_name"), // Nome do vendedor
-  paymentMethod: varchar("payment_method"), // Método de pagamento
+  totalValue: decimal("total_value", { precision: 10, scale: 2 }).notNull(), // Valor total
   dueDate: timestamp("due_date"), // Data de vencimento
+  paymentMethod: varchar("payment_method"), // Método de pagamento
+  sellerName: varchar("seller_name"), // Nome do vendedor
   
   // Dados adicionais do Omie
   omieCustomerCode: varchar("omie_customer_code"), // Código do cliente no Omie
-  customerDocument: varchar("customer_document"), // CPF/CNPJ do cliente
+  sellerId: varchar("seller_id"), // ID do vendedor
+  billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
   invoiceStatus: varchar("invoice_status"), // Status da nota fiscal no Omie
   
   // Produtos da nota fiscal
