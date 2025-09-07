@@ -1537,6 +1537,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== ROTAS DE FATURAMENTO ====================
+  
+  // Listar faturamentos com filtros avançados
+  app.get('/api/billings', authenticateUser, async (req, res) => {
+    try {
+      const {
+        sellerId,
+        startDate,
+        endDate,
+        customerDocument,
+        invoiceNumber,
+        page = '1',
+        pageSize = '50'
+      } = req.query;
+      
+      const filters = {
+        sellerId: sellerId as string,
+        startDate: startDate ? new Date(startDate as string) : undefined,
+        endDate: endDate ? new Date(endDate as string) : undefined,
+        customerDocument: customerDocument as string,
+        invoiceNumber: invoiceNumber as string,
+        page: parseInt(page as string),
+        pageSize: parseInt(pageSize as string)
+      };
+      
+      const result = await storage.getBillingsWithFilters(filters);
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar faturamentos:', error);
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  });
+  
+  // Sincronizar faturamentos do Omie por período
+  app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const { startDate, endDate } = req.body;
+      
+      if (!startDate || !endDate) {
+        return res.status(400).json({
+          error: 'startDate e endDate são obrigatórios'
+        });
+      }
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      console.log(`🔄 Iniciando sincronização de faturamentos de ${startDate} até ${endDate}...`);
+      
+      const result = await omieService.syncBillingsInRange(startDate, endDate);
+      
+      console.log('✅ Sincronização de faturamentos concluída:', result);
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização de faturamentos:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+  
+  // Obter estatísticas de faturamentos
+  app.get('/api/billings/stats', authenticateUser, async (req, res) => {
+    try {
+      const { sellerId, month, year } = req.query;
+      
+      // Calcular período do mês se especificado
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (month && year) {
+        const monthNum = parseInt(month as string);
+        const yearNum = parseInt(year as string);
+        startDate = new Date(yearNum, monthNum - 1, 1);
+        endDate = new Date(yearNum, monthNum, 0); // Último dia do mês
+      }
+      
+      const { billings, total } = await storage.getBillingsWithFilters({
+        sellerId: sellerId as string,
+        startDate,
+        endDate,
+        page: 1,
+        pageSize: 10000 // Buscar todos para cálculos
+      });
+      
+      // Calcular estatísticas
+      const totalValue = billings.reduce((sum, bill) => sum + parseFloat(bill.totalValue.toString()), 0);
+      const averageValue = total > 0 ? totalValue / total : 0;
+      
+      // Agrupar por método de pagamento
+      const paymentMethods = billings.reduce((acc: any, bill) => {
+        const method = bill.paymentMethod || 'Não informado';
+        if (!acc[method]) {
+          acc[method] = { count: 0, total: 0 };
+        }
+        acc[method].count++;
+        acc[method].total += parseFloat(bill.totalValue.toString());
+        return acc;
+      }, {});
+      
+      const stats = {
+        totalInvoices: total,
+        totalValue: totalValue,
+        averageValue: averageValue,
+        paymentMethods,
+        period: month && year ? `${month}/${year}` : 'Todos os períodos'
+      };
+      
+      res.json(stats);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao obter estatísticas de faturamentos:', error);
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  });
+  
+  // Buscar faturamento específico
+  app.get('/api/billings/:id', authenticateUser, async (req, res) => {
+    try {
+      const billing = await storage.getBilling(req.params.id);
+      if (!billing) {
+        return res.status(404).json({ error: 'Faturamento não encontrado' });
+      }
+      res.json(billing);
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar faturamento:', error);
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  });
+
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
       // Evitar cache
