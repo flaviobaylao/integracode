@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useMemo } from "react";
-import { RefreshCw, FileText, Calendar, DollarSign, Search, Filter } from "lucide-react";
+import { RefreshCw, FileText, Calendar, DollarSign, Search, Filter, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 interface Billing {
   id: string;
@@ -44,6 +44,15 @@ export default function Billings() {
     endDate: '',
     customerName: '',
     sellerName: ''
+  });
+
+  // Estado da ordenação
+  const [sorting, setSorting] = useState<{
+    field: keyof Billing | null;
+    direction: 'asc' | 'desc';
+  }>({
+    field: null,
+    direction: 'asc'
   });
 
   // Buscar faturamentos
@@ -120,9 +129,9 @@ export default function Billings() {
     );
   };
 
-  // Aplicar filtros
+  // Aplicar filtros e ordenação
   const filteredBillings = useMemo(() => {
-    return billings.filter((billing) => {
+    let filtered = billings.filter((billing) => {
       // Filtro por data de início
       if (filters.startDate) {
         const billingDate = new Date(billing.invoiceDate);
@@ -153,7 +162,40 @@ export default function Billings() {
       
       return true;
     });
-  }, [billings, filters]);
+
+    // Aplicar ordenação
+    if (sorting.field) {
+      filtered.sort((a, b) => {
+        let aValue = a[sorting.field!];
+        let bValue = b[sorting.field!];
+
+        // Tratamento especial para diferentes tipos de dados
+        if (sorting.field === 'totalValue') {
+          aValue = Number(aValue) || 0;
+          bValue = Number(bValue) || 0;
+        } else if (sorting.field === 'invoiceDate') {
+          aValue = new Date(aValue as string).getTime();
+          bValue = new Date(bValue as string).getTime();
+        } else if (sorting.field === 'invoiceNumber') {
+          // Para número da nota fiscal, ordenar numericamente se possível
+          const aNum = Number(String(aValue).replace(/\D/g, '')) || 0;
+          const bNum = Number(String(bValue).replace(/\D/g, '')) || 0;
+          aValue = aNum;
+          bValue = bNum;
+        } else {
+          // Para strings, converter para lowercase
+          aValue = String(aValue || '').toLowerCase();
+          bValue = String(bValue || '').toLowerCase();
+        }
+
+        if (aValue < bValue) return sorting.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sorting.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [billings, filters, sorting]);
 
   const totalBillings = filteredBillings.length;
   const totalValue = filteredBillings.reduce((sum, billing) => sum + billing.totalValue, 0);
@@ -174,6 +216,35 @@ export default function Billings() {
       customerName: '',
       sellerName: ''
     });
+  };
+
+  // Função para lidar com ordenação
+  const handleSort = (field: keyof Billing) => {
+    setSorting(prev => {
+      if (prev.field === field) {
+        // Se é o mesmo campo, alterna a direção
+        return {
+          field,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc'
+        };
+      } else {
+        // Se é um novo campo, começa com ascendente
+        return {
+          field,
+          direction: 'asc'
+        };
+      }
+    });
+  };
+
+  // Função para renderizar ícone de ordenação
+  const getSortIcon = (field: keyof Billing) => {
+    if (sorting.field !== field) {
+      return <ChevronsUpDown className="h-4 w-4 text-gray-400" />;
+    }
+    return sorting.direction === 'asc' 
+      ? <ChevronUp className="h-4 w-4 text-honest-blue" />
+      : <ChevronDown className="h-4 w-4 text-honest-blue" />;
   };
 
   if (isLoading) {
@@ -392,13 +463,76 @@ export default function Billings() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nota Fiscal</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Valor</TableHead>
-                  <TableHead>Data</TableHead>
-                  <TableHead>Vendedor</TableHead>
-                  <TableHead>Pagamento</TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('invoiceNumber')}
+                    data-testid="header-invoice-number"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Nota Fiscal</span>
+                      {getSortIcon('invoiceNumber')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('customerFantasyName')}
+                    data-testid="header-customer"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Cliente</span>
+                      {getSortIcon('customerFantasyName')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('billingType')}
+                    data-testid="header-billing-type"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Tipo</span>
+                      {getSortIcon('billingType')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('totalValue')}
+                    data-testid="header-total-value"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Valor</span>
+                      {getSortIcon('totalValue')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('invoiceDate')}
+                    data-testid="header-invoice-date"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Data</span>
+                      {getSortIcon('invoiceDate')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('sellerName')}
+                    data-testid="header-seller-name"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Vendedor</span>
+                      {getSortIcon('sellerName')}
+                    </div>
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none hover:bg-gray-50 transition-colors"
+                    onClick={() => handleSort('paymentMethod')}
+                    data-testid="header-payment-method"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Pagamento</span>
+                      {getSortIcon('paymentMethod')}
+                    </div>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
