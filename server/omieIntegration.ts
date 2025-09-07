@@ -817,7 +817,7 @@ export class OmieService {
             apenas_importado_api: 'N',
             filtrar_por_data_de: '01/01/2025',
             filtrar_por_data_ate: '31/12/2025',
-            ordenar_por: 'NUMERO',
+            ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
           
@@ -852,12 +852,7 @@ export class OmieService {
                 continue;
               }
               
-              // Verificar se é nota de 2025 (faixa 24735-27467)
-              const noteNumber = parseInt(invoiceNumber.replace(/\D/g, ''), 10);
-              if (noteNumber < 24735 || noteNumber > 27467) {
-                console.log(`📅 Nota ${invoiceNumber} (${noteNumber}) fora da faixa 2025, pulando...`);
-                continue;
-              }
+              // Processar todas as notas filtradas por data
               
               pageHasValidData = true;
               
