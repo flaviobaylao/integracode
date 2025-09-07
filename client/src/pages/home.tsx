@@ -4,6 +4,7 @@ import Dashboard from "@/components/Dashboard";
 import SalesCards from "@/components/SalesCards";
 import CustomerManagement from "@/components/CustomerManagement";
 import ProductManagement from "@/components/ProductManagement";
+import Billings from "@/components/Billings";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
 import OmieIntegration from "@/components/OmieIntegration";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
@@ -40,6 +41,8 @@ export default function Home() {
         return <SalesGoalsManagement user={user as any} />;
       case 'products':
         return <ProductManagement />;
+      case 'billings':
+        return <Billings />;
       case 'whatsapp':
         return <WhatsAppIntegration />;
       case 'omie':
