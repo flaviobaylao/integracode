@@ -1599,6 +1599,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint de debug para testar sincronização de uma página
+  app.post('/api/billings/debug-sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      console.log('🔍 DEBUG: Executando sincronização de UMA página para análise...');
+      
+      // Fazer request para uma página apenas
+      const response = await (omieService as any).makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+        pagina: 1,
+        registros_por_pagina: 5, // Apenas 5 registros para debug
+        apenas_importado_api: 'N',
+        filtrar_por_data_de: '',
+        filtrar_por_data_ate: '',
+        ordenar_por: 'DATA',
+        ordem_decrescente: 'S'
+      });
+
+      const invoices = response.nfCadastro || [];
+      console.log('🔍 DEBUG: Total de notas encontradas:', invoices.length);
+      
+      if (invoices.length > 0) {
+        console.log('🔍 DEBUG: Estrutura da primeira nota:', JSON.stringify(invoices[0], null, 2));
+        
+        // Testar transformação
+        const transformedData = (omieService as any).transformInvoiceToBilling(invoices[0]);
+        console.log('🔍 DEBUG: Dados transformados:', JSON.stringify(transformedData, null, 2));
+      }
+      
+      res.json({
+        success: true,
+        totalFound: invoices.length,
+        firstInvoice: invoices[0] || null,
+        transformed: invoices.length > 0 ? (omieService as any).transformInvoiceToBilling(invoices[0]) : null
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro no debug de sincronização:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Sincronizar faturamentos do Omie por período
   app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
