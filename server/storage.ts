@@ -1728,7 +1728,25 @@ export class DatabaseStorage implements IStorage {
     }
     
     if (cfop) {
-      conditions.push(eq(billings.cfop, cfop));
+      // Mapear tipos para múltiplos CFOPs
+      const cfopGroups: Record<string, string[]> = {
+        'VENDA': ['5.102', '5.101', '6.102', '6.101'],
+        'TROCA': ['5.949', '6.949'],
+        'AMOSTRA': ['5.911', '6.911'],
+        'BONIFICAÇÃO': ['5.910', '6.910', '5.915'],
+        'ENTRADA': ['1.102', '1.202'],
+        'DEVOLUÇÃO': ['2.556', '1.556']
+      };
+
+      const cfopCodes = cfopGroups[cfop];
+      if (cfopCodes) {
+        // Filtrar por múltiplos CFOPs (OR condition)
+        const cfopConditions = cfopCodes.map(code => eq(billings.cfop, code));
+        conditions.push(or(...cfopConditions));
+      } else {
+        // Filtro direto por CFOP específico
+        conditions.push(eq(billings.cfop, cfop));
+      }
     }
     
     // Query com filtros

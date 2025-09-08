@@ -392,15 +392,12 @@ export default function Billings() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="5.102">VENDA (5.102)</SelectItem>
-                  <SelectItem value="5.101">VENDA (5.101)</SelectItem>
-                  <SelectItem value="6.102">VENDA (6.102)</SelectItem>
-                  <SelectItem value="5.949">TROCA (5.949)</SelectItem>
-                  <SelectItem value="6.949">TROCA (6.949)</SelectItem>
-                  <SelectItem value="5.911">AMOSTRA (5.911)</SelectItem>
-                  <SelectItem value="5.910">BONIFICAÇÃO (5.910)</SelectItem>
-                  <SelectItem value="1.102">ENTRADA (1.102)</SelectItem>
-                  <SelectItem value="2.556">DEVOLUÇÃO (2.556)</SelectItem>
+                  <SelectItem value="VENDA">VENDA</SelectItem>
+                  <SelectItem value="TROCA">TROCA</SelectItem>
+                  <SelectItem value="AMOSTRA">AMOSTRA</SelectItem>
+                  <SelectItem value="BONIFICAÇÃO">BONIFICAÇÃO</SelectItem>
+                  <SelectItem value="ENTRADA">ENTRADA</SelectItem>
+                  <SelectItem value="DEVOLUÇÃO">DEVOLUÇÃO</SelectItem>
                 </SelectContent>
               </Select>
             </div>
