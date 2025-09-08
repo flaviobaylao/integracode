@@ -56,13 +56,13 @@ export default function DeliveryDashboard() {
   });
 
   // Query para entregas pendentes
-  const { data: pendingDeliveries, isLoading: isLoadingPending } = useQuery({
+  const { data: pendingDeliveries, isLoading: isLoadingPending } = useQuery<any[]>({
     queryKey: ['/api/deliveries/pending'],
     refetchInterval: 15000, // Atualiza a cada 15 segundos
   });
 
   // Query para motoristas ativos
-  const { data: activeDrivers, isLoading: isLoadingDrivers } = useQuery({
+  const { data: activeDrivers, isLoading: isLoadingDrivers } = useQuery<any[]>({
     queryKey: ['/api/delivery-drivers/active'],
     refetchInterval: 60000, // Atualiza a cada 1 minuto
   });

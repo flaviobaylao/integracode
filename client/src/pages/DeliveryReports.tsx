@@ -78,11 +78,11 @@ export default function DeliveryReports() {
   // Query para dados do relatório
   const { data: reportData, isLoading: isLoadingReport } = useQuery<DeliveryReport>({
     queryKey: ['/api/deliveries/reports', selectedPeriod, customStartDate, customEndDate],
-    enabled: selectedPeriod !== "custom" || (customStartDate && customEndDate),
+    enabled: selectedPeriod !== "custom" || Boolean(customStartDate && customEndDate),
   });
 
   // Query para comparação com período anterior
-  const { data: comparisonData } = useQuery({
+  const { data: comparisonData } = useQuery<DeliveryReport>({
     queryKey: ['/api/deliveries/reports/comparison', selectedPeriod],
     enabled: selectedPeriod !== "custom",
   });

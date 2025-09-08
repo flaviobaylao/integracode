@@ -18,6 +18,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
   const [orderStepsOpen, setOrderStepsOpen] = useState(false);
+  const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
   const menuItems = [
@@ -53,6 +54,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'overdue-debts', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports },
     { id: 'blocked-orders', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
+  ];
+
+  const deliveryMenuItems = [
+    { id: 'delivery-dashboard', label: 'Dashboard de Entregas', icon: 'fas fa-tachometer-alt' },
+    { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast' },
+    { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie' },
+    { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
   ];
 
   const orderStepsItems = [
@@ -158,6 +166,41 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   </li>
                 ))}
               
+              {/* Menu Sistema de Entregas */}
+              {canAccessReports && (
+                <li>
+                  <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                      >
+                        <i className="fas fa-truck"></i>
+                        <span className="font-medium">Sistema de Entregas</span>
+                        {deliveryMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                      {deliveryMenuItems.map(item => (
+                        <Button
+                          key={item.id}
+                          variant="ghost"
+                          className={`w-full justify-start space-x-3 text-sm ${
+                            activeView === item.id
+                              ? 'text-honest-blue bg-blue-50'
+                              : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                          onClick={() => setActiveView(item.id)}
+                        >
+                          <i className={item.icon}></i>
+                          <span>{item.label}</span>
+                        </Button>
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                </li>
+              )}
+
               {/* Menu Etapas dos Pedidos */}
               {canAccessReports && (
                 <li>

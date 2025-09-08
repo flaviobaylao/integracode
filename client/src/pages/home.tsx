@@ -16,6 +16,10 @@ import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
 import LocationsManagement from "@/pages/LocationsManagement";
 import OrderSteps from "@/components/OrderSteps";
 import InvoiceDebugger from "@/pages/InvoiceDebugger";
+import DeliveryDashboard from "@/pages/DeliveryDashboard";
+import DeliveryManagement from "@/pages/DeliveryManagement";
+import DriverManagement from "@/pages/DriverManagement";
+import DeliveryReports from "@/pages/DeliveryReports";
 import { useState } from "react";
 
 export default function Home() {
@@ -72,6 +76,14 @@ export default function Home() {
         return <OrderSteps step="in-route" />;
       case 'locations':
         return <LocationsManagement />;
+      case 'delivery-dashboard':
+        return <DeliveryDashboard />;
+      case 'delivery-management':
+        return <DeliveryManagement />;
+      case 'driver-management':
+        return <DriverManagement />;
+      case 'delivery-reports':
+        return <DeliveryReports />;
       default:
         return <Dashboard />;
     }

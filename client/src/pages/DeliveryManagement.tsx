@@ -96,7 +96,7 @@ export default function DeliveryManagement() {
   });
 
   // Query para buscar motoristas ativos
-  const { data: drivers, isLoading: isLoadingDrivers } = useQuery({
+  const { data: drivers, isLoading: isLoadingDrivers } = useQuery<any[]>({
     queryKey: ['/api/delivery-drivers/active'],
   });
 
