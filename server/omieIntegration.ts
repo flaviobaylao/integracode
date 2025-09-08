@@ -358,13 +358,25 @@ export class OmieService {
   // Método auxiliar para converter data do Omie (DD/MM/YYYY) para Date
   private parseOmieDate(omieDate: string): Date | null {
     try {
-      if (!omieDate) return null;
+      if (!omieDate || typeof omieDate !== 'string') return null;
       
       // Formato esperado: DD/MM/YYYY
-      const [day, month, year] = omieDate.split('/');
-      if (!day || !month || !year) return null;
+      const parts = omieDate.split('/');
+      if (parts.length !== 3) return null;
       
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      const [day, month, year] = parts;
+      const dayNum = parseInt(day);
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+      
+      // Validações para evitar datas inválidas
+      if (isNaN(dayNum) || isNaN(monthNum) || isNaN(yearNum)) return null;
+      if (yearNum < 1900 || yearNum > 2100) return null;
+      if (monthNum < 1 || monthNum > 12) return null;
+      if (dayNum < 1 || dayNum > 31) return null;
+      
+      const date = new Date(yearNum, monthNum - 1, dayNum);
+      return isNaN(date.getTime()) ? null : date;
     } catch (error) {
       console.error('❌ Erro ao converter data do Omie:', omieDate, error);
       return null;
@@ -1090,8 +1102,8 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '01/01/2025',
-            filtrar_por_data_ate: '31/12/2025',
+            filtrar_por_data_de: '', // SEM FILTRO - busca TODAS as notas de TODOS os anos
+            filtrar_por_data_ate: '', // SEM FILTRO - busca TODAS as notas de TODOS os anos
             ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
