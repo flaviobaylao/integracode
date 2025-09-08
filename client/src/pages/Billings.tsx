@@ -66,11 +66,23 @@ interface BillingFilters {
 // Função para converter código CFOP para nome amigável
 function getCfopDisplayName(cfop: string): string {
   const cfopMap: Record<string, string> = {
-    '5101': 'VENDA',
-    '6101': 'VENDA',
-    '5949': 'TROCA',
-    '5911': 'AMOSTRA',
-    '5910': 'BONIFICAÇÃO'
+    // CFOPs reais encontrados no sistema
+    '5.102': 'VENDA',
+    '5.101': 'VENDA',
+    '6.102': 'VENDA', 
+    '6.101': 'VENDA',
+    '5.949': 'TROCA',
+    '6.949': 'TROCA',
+    '5.911': 'AMOSTRA',
+    '6.911': 'AMOSTRA',
+    '5.910': 'BONIFICAÇÃO',
+    '6.910': 'BONIFICAÇÃO',
+    '5.915': 'BONIFICAÇÃO',
+    // Outros códigos comuns
+    '1.102': 'ENTRADA',
+    '1.202': 'ENTRADA',
+    '2.556': 'DEVOLUÇÃO',
+    '1.556': 'DEVOLUÇÃO'
   };
   
   return cfopMap[cfop] || cfop;
@@ -380,11 +392,15 @@ export default function Billings() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="5101">VENDA (5101)</SelectItem>
-                  <SelectItem value="6101">VENDA (6101)</SelectItem>
-                  <SelectItem value="5949">TROCA (5949)</SelectItem>
-                  <SelectItem value="5911">AMOSTRA (5911)</SelectItem>
-                  <SelectItem value="5910">BONIFICAÇÃO (5910)</SelectItem>
+                  <SelectItem value="5.102">VENDA (5.102)</SelectItem>
+                  <SelectItem value="5.101">VENDA (5.101)</SelectItem>
+                  <SelectItem value="6.102">VENDA (6.102)</SelectItem>
+                  <SelectItem value="5.949">TROCA (5.949)</SelectItem>
+                  <SelectItem value="6.949">TROCA (6.949)</SelectItem>
+                  <SelectItem value="5.911">AMOSTRA (5.911)</SelectItem>
+                  <SelectItem value="5.910">BONIFICAÇÃO (5.910)</SelectItem>
+                  <SelectItem value="1.102">ENTRADA (1.102)</SelectItem>
+                  <SelectItem value="2.556">DEVOLUÇÃO (2.556)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
