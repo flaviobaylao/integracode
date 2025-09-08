@@ -415,12 +415,13 @@ export default function Billings() {
                     <SortableHeader field="dueDate">Vencimento</SortableHeader>
                     <SortableHeader field="paymentMethod">Pagamento</SortableHeader>
                     <SortableHeader field="sellerName">Vendedor</SortableHeader>
+                    <TableHead>Etapa</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sortedBillings.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                         Nenhum faturamento encontrado
                       </TableCell>
                     </TableRow>
@@ -453,6 +454,9 @@ export default function Billings() {
                         </TableCell>
                         <TableCell data-testid={`cell-seller-${billing.id}`}>
                           {billing.sellerName || '-'}
+                        </TableCell>
+                        <TableCell data-testid={`cell-stage-${billing.id}`}>
+                          <Badge variant="outline">{(billing as any).invoiceStage || '-'}</Badge>
                         </TableCell>
                       </TableRow>
                     ))

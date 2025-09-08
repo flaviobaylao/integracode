@@ -317,6 +317,9 @@ export class OmieService {
       const sellerCode = titulo.nCodVendedor?.toString();
       const sellerName = ''; // Nome do vendedor precisa ser buscado separadamente
       
+      // Etapa da nota fiscal (cEtapa)
+      const invoiceStage = invoice.ide?.cEtapa || '';
+      
       // LOG para debug - ver estrutura dos dados rejeitados
       if (!omieInvoiceId && !invoiceNumber) {
         console.log('🔍 DEBUG - Estrutura da nota rejeitada:', JSON.stringify({
@@ -351,6 +354,7 @@ export class OmieService {
         sellerId: null, // Será preenchido após buscar vendedor
         billingType: 'venda' as const,
         invoiceStatus: 'emitida',
+        invoiceStage, // Etapa da nota fiscal do Omie
         
         // Produtos da nota
         products: invoice.det?.map((item: any) => ({

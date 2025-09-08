@@ -351,6 +351,7 @@ export const billings = pgTable("billings", {
   sellerId: varchar("seller_id"), // ID do vendedor
   billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
   invoiceStatus: varchar("invoice_status"), // Status da nota fiscal no Omie
+  invoiceStage: varchar("invoice_stage"), // Etapa da nota fiscal (cEtapa do Omie)
   
   // Produtos da nota fiscal
   products: jsonb("products").$type<Array<{
