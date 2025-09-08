@@ -58,8 +58,22 @@ interface BillingFilters {
   endDate?: string;
   customerDocument?: string;
   invoiceNumber?: string;
+  cfop?: string;
   page: number;
   pageSize: number;
+}
+
+// Função para converter código CFOP para nome amigável
+function getCfopDisplayName(cfop: string): string {
+  const cfopMap: Record<string, string> = {
+    '5101': 'VENDA',
+    '6101': 'VENDA',
+    '5949': 'TROCA',
+    '5911': 'AMOSTRA',
+    '5910': 'BONIFICAÇÃO'
+  };
+  
+  return cfopMap[cfop] || cfop;
 }
 
 export default function Billings() {
@@ -354,6 +368,26 @@ export default function Billings() {
                 data-testid="filter-end-date"
               />
             </div>
+
+            <div className="space-y-2">
+              <Label>CFOP</Label>
+              <Select 
+                value={filters.cfop || ''}
+                onValueChange={(value) => handleFilterChange('cfop', value === 'all' ? '' : value)}
+              >
+                <SelectTrigger data-testid="filter-cfop">
+                  <SelectValue placeholder="Selecionar CFOP" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="5101">VENDA (5101)</SelectItem>
+                  <SelectItem value="6101">VENDA (6101)</SelectItem>
+                  <SelectItem value="5949">TROCA (5949)</SelectItem>
+                  <SelectItem value="5911">AMOSTRA (5911)</SelectItem>
+                  <SelectItem value="5910">BONIFICAÇÃO (5910)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             
             <div className="space-y-2">
               <Label>Itens por página</Label>
@@ -438,7 +472,7 @@ export default function Billings() {
                           {billing.customerDocument}
                         </TableCell>
                         <TableCell data-testid={`cell-cfop-${billing.id}`}>
-                          <Badge variant="outline">{billing.cfop}</Badge>
+                          <Badge variant="outline">{getCfopDisplayName(billing.cfop)}</Badge>
                         </TableCell>
                         <TableCell data-testid={`cell-date-${billing.id}`}>
                           {formatDate(billing.invoiceDate)}
