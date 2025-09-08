@@ -456,7 +456,6 @@ export default function Billings() {
                   <TableRow>
                     <SortableHeader field="invoiceNumber">Nota Fiscal</SortableHeader>
                     <SortableHeader field="customerFantasyName">Cliente</SortableHeader>
-                    <SortableHeader field="customerDocument">CNPJ/CPF</SortableHeader>
                     <SortableHeader field="cfop">CFOP</SortableHeader>
                     <SortableHeader field="invoiceDate">Data Fat.</SortableHeader>
                     <SortableHeader field="totalValue">Valor</SortableHeader>
@@ -469,7 +468,7 @@ export default function Billings() {
                 <TableBody>
                   {sortedBillings.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                         Nenhum faturamento encontrado
                       </TableCell>
                     </TableRow>
@@ -480,10 +479,7 @@ export default function Billings() {
                           {billing.invoiceNumber}
                         </TableCell>
                         <TableCell data-testid={`cell-customer-${billing.id}`}>
-                          {billing.customerFantasyName}
-                        </TableCell>
-                        <TableCell data-testid={`cell-document-${billing.id}`}>
-                          {billing.customerDocument}
+                          {billing.customerFantasyName || '-'}
                         </TableCell>
                         <TableCell data-testid={`cell-cfop-${billing.id}`}>
                           <Badge variant="outline">{getCfopDisplayName(billing.cfop)}</Badge>

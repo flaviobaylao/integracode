@@ -316,7 +316,14 @@ export class OmieService {
       // Extrair campos conforme mapeamento do debug NF 23369
       const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
-      const customerFantasyName = invoice.dest?.xNome || '';
+      // Tentar múltiplas opções para nome do cliente
+      const customerFantasyName = invoice.dest?.xNome || 
+                                  invoice.dest?.razao_social || 
+                                  invoice.destinatario?.xNome || 
+                                  invoice.destinatario?.razao_social ||
+                                  invoice.cliente?.nome ||
+                                  invoice.cliente?.razao_social ||
+                                  '';
       const customerDocument = invoice.dest?.cCNPJCPF || '';
       
       console.log(`🔧 IDs extraídos: omieId=${omieInvoiceId}, number=${invoiceNumber}`);
@@ -342,7 +349,7 @@ export class OmieService {
       // Etapa da nota fiscal (cEtapa)
       const invoiceStage = invoice.ide?.cEtapa || '';
       
-      // LOG para debug - ver estrutura dos dados rejeitados
+      // LOG para debug - ver estrutura dos dados rejeitados e dados do cliente
       if (!omieInvoiceId && !invoiceNumber) {
         console.log('🔍 DEBUG - Estrutura da nota rejeitada:', JSON.stringify({
           ide: invoice.ide,
@@ -350,6 +357,14 @@ export class OmieService {
           nNF: invoice.ide?.nNF,
           cNF: invoice.ide?.cNF
         }, null, 2));
+      }
+      
+      // Debug para nome do cliente se estiver vazio
+      if (!customerFantasyName && finalInvoiceNumber) {
+        console.log('🔍 DEBUG - Dados do destinatário vazios para NF:', finalInvoiceNumber);
+        console.log('  dest:', JSON.stringify(invoice.dest, null, 2));
+        console.log('  destinatario:', JSON.stringify(invoice.destinatario, null, 2));
+        console.log('  cliente:', JSON.stringify(invoice.cliente, null, 2));
       }
       
       // Validação mais flexível - aceitar qualquer ID válido
