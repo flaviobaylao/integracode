@@ -199,6 +199,7 @@ export class OmieService {
   }> {
     try {
       console.log(`🔄 Sincronizando TODAS as notas fiscais do Omie (sem filtro de data)...`);
+      console.log(`🔐 Chaves configuradas: app_key=${this.appKey ? 'SIM' : 'NÃO'}, app_secret=${this.appSecret ? 'SIM' : 'NÃO'}`);
       
       let totalProcessed = 0;
       let imported = 0;
@@ -225,7 +226,22 @@ export class OmieService {
           const invoices = response.nfCadastro || [];
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais`);
           
+          // Debug: mostrar estrutura da resposta na primeira página
+          if (page === 1) {
+            console.log(`🔍 DEBUG: Estrutura da resposta da API:`, JSON.stringify({
+              hasNfCadastro: !!response.nfCadastro,
+              totalRegistros: response.total_de_registros,
+              pagina: response.pagina,
+              keys: Object.keys(response)
+            }, null, 2));
+            
+            if (invoices.length > 0) {
+              console.log(`🔍 DEBUG: Primeira nota fiscal:`, JSON.stringify(invoices[0], null, 2));
+            }
+          }
+          
           if (invoices.length === 0) {
+            console.log(`⚠️ Página ${page}: Nenhuma nota fiscal encontrada. Parando sincronização.`);
             hasMorePages = false;
             break;
           }
@@ -235,7 +251,7 @@ export class OmieService {
               const billingData = this.transformInvoiceToBilling(invoice);
               if (billingData) {
                 // Salvar no storage
-                const storage = new (await import('./storage.js')).DatabaseStorage();
+                const { storage } = await import('./storage');
                 const existingBilling = await storage.getBillingByOmieId(billingData.omieInvoiceId);
                 
                 if (existingBilling) {
@@ -267,9 +283,11 @@ export class OmieService {
           
         } catch (error: any) {
           console.error(`❌ Erro na página ${page}:`, error);
+          console.error(`❌ Stack trace:`, error.stack);
           errors.push({ 
             page, 
-            error: error.message 
+            error: error.message,
+            details: error.response?.data || error.toString()
           });
           hasMorePages = false;
         }
@@ -293,11 +311,15 @@ export class OmieService {
   // Método para transformar dados da API Omie para formato do sistema
   private transformInvoiceToBilling(invoice: any): any {
     try {
+      console.log(`🔧 Transformando nota fiscal: ${invoice.ide?.nNF || 'SEM_NUMERO'}`);
+      
       // Extrair campos conforme mapeamento do debug NF 23369
       const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const customerFantasyName = invoice.dest?.xNome || '';
       const customerDocument = invoice.dest?.cCNPJCPF || '';
+      
+      console.log(`🔧 IDs extraídos: omieId=${omieInvoiceId}, number=${invoiceNumber}`);
       
       // CFOP - pegar do primeiro produto
       const cfop = invoice.det?.[0]?.prod?.CFOP || '';
@@ -333,6 +355,7 @@ export class OmieService {
       // Validação mais flexível - aceitar qualquer ID válido
       if (!omieInvoiceId && !invoiceNumber) {
         console.log('⚠️ Nota fiscal sem ID ou número válido, ignorando');
+        console.log('🔍 DEBUG - Estrutura ide:', JSON.stringify(invoice.ide, null, 2));
         return null;
       }
       
@@ -340,9 +363,11 @@ export class OmieService {
       const finalOmieId = omieInvoiceId || invoiceNumber;
       const finalInvoiceNumber = invoiceNumber || omieInvoiceId;
       
+      console.log(`✅ Nota validada: ID=${finalOmieId}, Número=${finalInvoiceNumber}`);
+      
       const billingData = {
-        omieInvoiceId,
-        invoiceNumber,
+        omieInvoiceId: finalOmieId,
+        invoiceNumber: finalInvoiceNumber,
         customerFantasyName,
         customerDocument,
         cfop,
