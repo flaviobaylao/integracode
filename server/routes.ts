@@ -2211,6 +2211,138 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== DELIVERY INTEGRATION APIS =====
   
+  // Estatísticas de entregas
+  app.get("/api/deliveries/stats", async (req, res) => {
+    try {
+      const { period = 'today' } = req.query;
+      const stats = await storage.getDeliveryStats(period as string);
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching delivery stats:", error);
+      res.status(500).json({ message: "Failed to fetch delivery stats" });
+    }
+  });
+
+  // Métricas de entregas
+  app.get("/api/deliveries/metrics", async (req, res) => {
+    try {
+      const { period = 'today' } = req.query;
+      const metrics = await storage.getDeliveryMetrics(period as string);
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error fetching delivery metrics:", error);
+      res.status(500).json({ message: "Failed to fetch delivery metrics" });
+    }
+  });
+
+  // Buscar todas as entregas
+  app.get("/api/deliveries/all", async (req, res) => {
+    try {
+      const deliveries = await storage.getAllDeliveries();
+      res.json(deliveries);
+    } catch (error) {
+      console.error("Error fetching all deliveries:", error);
+      res.status(500).json({ message: "Failed to fetch deliveries" });
+    }
+  });
+
+  // Relatórios de entregas
+  app.get("/api/deliveries/reports", async (req, res) => {
+    try {
+      const { period = 'month', startDate, endDate } = req.query;
+      const report = await storage.getDeliveryReport(period as string, startDate as string, endDate as string);
+      res.json(report);
+    } catch (error) {
+      console.error("Error fetching delivery report:", error);
+      res.status(500).json({ message: "Failed to fetch delivery report" });
+    }
+  });
+
+  // Comparação de relatórios
+  app.get("/api/deliveries/reports/comparison", async (req, res) => {
+    try {
+      const { period = 'month' } = req.query;
+      const comparison = await storage.getDeliveryReportComparison(period as string);
+      res.json(comparison);
+    } catch (error) {
+      console.error("Error fetching delivery report comparison:", error);
+      res.status(500).json({ message: "Failed to fetch delivery report comparison" });
+    }
+  });
+
+  // ===== DELIVERY DRIVERS APIS =====
+  
+  // Buscar todos os motoristas
+  app.get("/api/delivery-drivers", async (req, res) => {
+    try {
+      const drivers = await storage.getDeliveryDrivers();
+      res.json(drivers);
+    } catch (error) {
+      console.error("Error fetching delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch delivery drivers" });
+    }
+  });
+
+  // Buscar motoristas ativos
+  app.get("/api/delivery-drivers/active", async (req, res) => {
+    try {
+      const activeDrivers = await storage.getActiveDeliveryDrivers();
+      res.json(activeDrivers);
+    } catch (error) {
+      console.error("Error fetching active delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch active delivery drivers" });
+    }
+  });
+
+  // Criar motorista
+  app.post("/api/delivery-drivers", async (req, res) => {
+    try {
+      const driverData = req.body;
+      const driver = await storage.createDeliveryDriver(driverData);
+      res.json(driver);
+    } catch (error) {
+      console.error("Error creating delivery driver:", error);
+      res.status(500).json({ message: "Failed to create delivery driver" });
+    }
+  });
+
+  // Atualizar motorista
+  app.put("/api/delivery-drivers/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const driverData = req.body;
+      const driver = await storage.updateDeliveryDriver(id, driverData);
+      res.json(driver);
+    } catch (error) {
+      console.error("Error updating delivery driver:", error);
+      res.status(500).json({ message: "Failed to update delivery driver" });
+    }
+  });
+
+  // Alternar status do motorista
+  app.put("/api/delivery-drivers/:id/toggle-status", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+      const driver = await storage.updateDeliveryDriver(id, { isActive });
+      res.json(driver);
+    } catch (error) {
+      console.error("Error toggling driver status:", error);
+      res.status(500).json({ message: "Failed to toggle driver status" });
+    }
+  });
+
+  // Estatísticas de motoristas
+  app.get("/api/delivery-drivers/stats", async (req, res) => {
+    try {
+      const stats = await storage.getDeliveryDriverStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching driver stats:", error);
+      res.status(500).json({ message: "Failed to fetch driver stats" });
+    }
+  });
+
   // Atualizar status de entrega
   app.put("/api/deliveries/:salesCardId/status", async (req, res) => {
     try {

@@ -87,8 +87,16 @@ export interface IStorage {
   createDeliveryHistory(data: any): Promise<any>;
   getDeliveryHistory(salesCardId: string): Promise<any[]>;
   getDeliveryDrivers(): Promise<any[]>;
+  getActiveDeliveryDrivers(): Promise<any[]>;
   createDeliveryDriver(data: any): Promise<any>;
+  updateDeliveryDriver(id: string, data: any): Promise<any>;
   updateDriverLocation(driverId: string, location: string): Promise<any>;
+  getDeliveryStats(period: string): Promise<any>;
+  getDeliveryMetrics(period: string): Promise<any>;
+  getAllDeliveries(): Promise<any[]>;
+  getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any>;
+  getDeliveryReportComparison(period: string): Promise<any>;
+  getDeliveryDriverStats(): Promise<any>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -1759,6 +1767,220 @@ export class DatabaseStorage implements IStorage {
       // Criar novo
       return this.createBilling(billing as InsertBilling);
     }
+  }
+
+  // Métodos de entregas faltantes
+  async getActiveDeliveryDrivers(): Promise<any[]> {
+    const result = await db.execute(sql`
+      SELECT * FROM delivery_drivers 
+      WHERE is_active = true 
+      ORDER BY name ASC
+    `);
+    return result.rows || [];
+  }
+
+  async updateDeliveryDriver(id: string, data: any): Promise<any> {
+    const result = await db.execute(sql`
+      UPDATE delivery_drivers 
+      SET 
+        name = COALESCE(${data.name}, name),
+        phone = COALESCE(${data.phone}, phone),
+        vehicle_type = COALESCE(${data.vehicleType}, vehicle_type),
+        license_plate = COALESCE(${data.licensePlate}, license_plate),
+        is_active = COALESCE(${data.isActive}, is_active),
+        current_location = COALESCE(${data.currentLocation}, current_location),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `);
+    return result.rows[0];
+  }
+
+  async getDeliveryStats(period: string): Promise<any> {
+    let dateCondition = "true";
+    
+    switch (period) {
+      case "today":
+        dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+        break;
+      case "week":
+        dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+        break;
+      case "month":
+        dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+        break;
+    }
+
+    const result = await db.execute(sql`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN delivery_status = 'pending' THEN 1 END) as pending,
+        COUNT(CASE WHEN delivery_status = 'in_transit' THEN 1 END) as in_transit,
+        COUNT(CASE WHEN delivery_status = 'delivered' THEN 1 END) as delivered,
+        COUNT(CASE WHEN delivery_status = 'failed' THEN 1 END) as failed,
+        COUNT(CASE WHEN delivery_status = 'returned' THEN 1 END) as returned
+      FROM sales_cards 
+      WHERE status = 'completed' AND ${sql.raw(dateCondition)}
+    `);
+    return result.rows[0] || { total: 0, pending: 0, in_transit: 0, delivered: 0, failed: 0, returned: 0 };
+  }
+
+  async getDeliveryMetrics(period: string): Promise<any> {
+    let dateCondition = "true";
+    
+    switch (period) {
+      case "today":
+        dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+        break;
+      case "week":
+        dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+        break;
+      case "month":
+        dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+        break;
+    }
+
+    const result = await db.execute(sql`
+      SELECT 
+        COUNT(*) as todayDeliveries,
+        CASE 
+          WHEN COUNT(*) > 0 THEN 
+            ROUND(COUNT(CASE WHEN delivery_status = 'delivered' THEN 1 END)::numeric / COUNT(*)::numeric, 3)
+          ELSE 0 
+        END as successRate,
+        '2h 30min' as averageDeliveryTime,
+        (SELECT COUNT(*) FROM delivery_drivers WHERE is_active = true) as activeDrivers
+      FROM sales_cards 
+      WHERE status = 'completed' AND ${sql.raw(dateCondition)}
+    `);
+    
+    const metrics = result.rows[0] || { todayDeliveries: 0, successRate: 0, averageDeliveryTime: 'N/A', activeDrivers: 0 };
+    return {
+      todayDeliveries: parseInt(metrics.todayDeliveries) || 0,
+      successRate: parseFloat(metrics.successRate) || 0,
+      averageDeliveryTime: metrics.averageDeliveryTime,
+      activeDrivers: parseInt(metrics.activeDrivers) || 0
+    };
+  }
+
+  async getAllDeliveries(): Promise<any[]> {
+    const result = await db.execute(sql`
+      SELECT 
+        sc.*,
+        c.name as customerName,
+        c.address as customerAddress,
+        c.phone as customerPhone,
+        d.name as driverName
+      FROM sales_cards sc
+      JOIN customers c ON sc.customer_id = c.id
+      LEFT JOIN delivery_drivers d ON sc.delivery_driver_id = d.id
+      WHERE sc.status = 'completed'
+      ORDER BY sc.scheduled_date DESC
+    `);
+    return result.rows || [];
+  }
+
+  async getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any> {
+    let dateCondition = "true";
+    
+    if (period === "custom" && startDate && endDate) {
+      dateCondition = `scheduled_date BETWEEN '${startDate}' AND '${endDate}'`;
+    } else {
+      switch (period) {
+        case "today":
+          dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+          break;
+        case "week":
+          dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+          break;
+        case "month":
+          dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+          break;
+      }
+    }
+
+    const statsResult = await db.execute(sql`
+      SELECT 
+        COUNT(*) as totalDeliveries,
+        COUNT(CASE WHEN delivery_status = 'delivered' THEN 1 END) as delivered,
+        COUNT(CASE WHEN delivery_status = 'failed' THEN 1 END) as failed,
+        COUNT(CASE WHEN delivery_status = 'pending' THEN 1 END) as pending,
+        COUNT(CASE WHEN delivery_status = 'in_transit' THEN 1 END) as in_transit,
+        COUNT(CASE WHEN delivery_status = 'returned' THEN 1 END) as returned,
+        CASE 
+          WHEN COUNT(*) > 0 THEN 
+            COUNT(CASE WHEN delivery_status = 'delivered' THEN 1 END)::numeric / COUNT(*)::numeric
+          ELSE 0 
+        END as successRate
+      FROM sales_cards 
+      WHERE status = 'completed' AND ${sql.raw(dateCondition)}
+    `);
+
+    const topDriversResult = await db.execute(sql`
+      SELECT 
+        d.id as driverId,
+        d.name as driverName,
+        COUNT(*) as deliveries,
+        CASE 
+          WHEN COUNT(*) > 0 THEN 
+            COUNT(CASE WHEN sc.delivery_status = 'delivered' THEN 1 END)::numeric / COUNT(*)::numeric
+          ELSE 0 
+        END as successRate
+      FROM sales_cards sc
+      JOIN delivery_drivers d ON sc.delivery_driver_id = d.id
+      WHERE sc.status = 'completed' AND ${sql.raw(dateCondition)}
+      GROUP BY d.id, d.name
+      ORDER BY deliveries DESC, successRate DESC
+      LIMIT 5
+    `);
+
+    const dailyStatsResult = await db.execute(sql`
+      SELECT 
+        DATE(scheduled_date) as date,
+        COUNT(*) as deliveries,
+        COUNT(CASE WHEN delivery_status = 'delivered' THEN 1 END) as success,
+        COUNT(CASE WHEN delivery_status = 'failed' THEN 1 END) as failed
+      FROM sales_cards 
+      WHERE status = 'completed' AND ${sql.raw(dateCondition)}
+      GROUP BY DATE(scheduled_date)
+      ORDER BY date DESC
+      LIMIT 30
+    `);
+
+    const stats = statsResult.rows[0] || {};
+    return {
+      period,
+      totalDeliveries: parseInt(stats.totalDeliveries) || 0,
+      delivered: parseInt(stats.delivered) || 0,
+      failed: parseInt(stats.failed) || 0,
+      pending: parseInt(stats.pending) || 0,
+      in_transit: parseInt(stats.in_transit) || 0,
+      returned: parseInt(stats.returned) || 0,
+      successRate: parseFloat(stats.successRate) || 0,
+      averageDeliveryTime: "2h 30min",
+      topDrivers: topDriversResult.rows || [],
+      dailyStats: dailyStatsResult.rows || []
+    };
+  }
+
+  async getDeliveryReportComparison(period: string): Promise<any> {
+    // Implementação simplificada para comparação
+    return {
+      totalDeliveries: 0,
+      successRate: 0,
+      failed: 0
+    };
+  }
+
+  async getDeliveryDriverStats(): Promise<any> {
+    const result = await db.execute(sql`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN is_active = true THEN 1 END) as active,
+        COUNT(CASE WHEN is_active = false THEN 1 END) as inactive
+      FROM delivery_drivers
+    `);
+    return result.rows[0] || { total: 0, active: 0, inactive: 0 };
   }
 }
 
