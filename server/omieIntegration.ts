@@ -359,6 +359,10 @@ export class OmieService {
         }, null, 2));
       }
       
+      // Usar número da NF como fallback para ID se necessário
+      const finalOmieId = omieInvoiceId || invoiceNumber;
+      const finalInvoiceNumber = invoiceNumber || omieInvoiceId;
+
       // Debug para nome do cliente se estiver vazio
       if (!customerFantasyName && finalInvoiceNumber) {
         console.log('🔍 DEBUG - Dados do destinatário vazios para NF:', finalInvoiceNumber);
@@ -373,10 +377,6 @@ export class OmieService {
         console.log('🔍 DEBUG - Estrutura ide:', JSON.stringify(invoice.ide, null, 2));
         return null;
       }
-      
-      // Usar número da NF como fallback para ID se necessário
-      const finalOmieId = omieInvoiceId || invoiceNumber;
-      const finalInvoiceNumber = invoiceNumber || omieInvoiceId;
       
       console.log(`✅ Nota validada: ID=${finalOmieId}, Número=${finalInvoiceNumber}`);
       
