@@ -294,8 +294,8 @@ export class OmieService {
   private transformInvoiceToBilling(invoice: any): any {
     try {
       // Extrair campos conforme mapeamento do debug NF 23369
-      const omieInvoiceId = invoice.ide?.nIdNF?.toString();
-      const invoiceNumber = invoice.ide?.nNF?.toString();
+      const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.cNF?.toString() || '';
+      const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const customerFantasyName = invoice.dest?.xNome || '';
       const customerDocument = invoice.dest?.cCNPJCPF || '';
       
@@ -317,10 +317,25 @@ export class OmieService {
       const sellerCode = titulo.nCodVendedor?.toString();
       const sellerName = ''; // Nome do vendedor precisa ser buscado separadamente
       
-      if (!omieInvoiceId || !invoiceNumber) {
+      // LOG para debug - ver estrutura dos dados rejeitados
+      if (!omieInvoiceId && !invoiceNumber) {
+        console.log('🔍 DEBUG - Estrutura da nota rejeitada:', JSON.stringify({
+          ide: invoice.ide,
+          nIdNF: invoice.ide?.nIdNF,
+          nNF: invoice.ide?.nNF,
+          cNF: invoice.ide?.cNF
+        }, null, 2));
+      }
+      
+      // Validação mais flexível - aceitar qualquer ID válido
+      if (!omieInvoiceId && !invoiceNumber) {
         console.log('⚠️ Nota fiscal sem ID ou número válido, ignorando');
         return null;
       }
+      
+      // Usar número da NF como fallback para ID se necessário
+      const finalOmieId = omieInvoiceId || invoiceNumber;
+      const finalInvoiceNumber = invoiceNumber || omieInvoiceId;
       
       const billingData = {
         omieInvoiceId,
