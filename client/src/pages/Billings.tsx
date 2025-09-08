@@ -82,7 +82,8 @@ function getCfopDisplayName(cfop: string): string {
     '1.102': 'ENTRADA',
     '1.202': 'ENTRADA',
     '2.556': 'DEVOLUÇÃO',
-    '1.556': 'DEVOLUÇÃO'
+    '1.556': 'DEVOLUÇÃO',
+    '1.201': 'DEVOLUÇÃO'
   };
   
   return cfopMap[cfop] || cfop;

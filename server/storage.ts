@@ -1735,7 +1735,7 @@ export class DatabaseStorage implements IStorage {
         'AMOSTRA': ['5.911', '6.911'],
         'BONIFICAÇÃO': ['5.910', '6.910', '5.915'],
         'ENTRADA': ['1.102', '1.202'],
-        'DEVOLUÇÃO': ['2.556', '1.556']
+        'DEVOLUÇÃO': ['2.556', '1.556', '1.201']
       };
 
       const cfopCodes = cfopGroups[cfop];
