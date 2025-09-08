@@ -317,7 +317,7 @@ export class OmieService {
           
           for (const invoice of invoices) {
             try {
-              const billingData = this.transformInvoiceToBilling(invoice);
+              const billingData = await this.transformInvoiceToBilling(invoice);
               if (billingData) {
                 // Salvar no storage
                 const { storage } = await import('./storage');
@@ -378,7 +378,7 @@ export class OmieService {
   }
 
   // Método para transformar dados da API Omie para formato do sistema
-  private transformInvoiceToBilling(invoice: any): any {
+  private async transformInvoiceToBilling(invoice: any): Promise<any> {
     try {
       console.log(`🔧 Transformando nota fiscal: ${invoice.ide?.nNF || 'SEM_NUMERO'}`);
       
