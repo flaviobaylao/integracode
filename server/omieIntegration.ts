@@ -160,6 +160,75 @@ export class OmieService {
     }
   }
 
+  // ==================== MÉTODOS AUXILIARES PARA VENDEDORES E ETAPAS ====================
+  
+  // Cache para vendedores e etapas (para evitar múltiplas requisições)
+  private sellersCache: Map<string, any> = new Map();
+  private stagesCache: Map<string, any> = new Map();
+
+  // Método para buscar dados de um vendedor específico
+  async fetchSellerData(sellerCode: string): Promise<{name: string, id: string} | null> {
+    if (!sellerCode) return null;
+    
+    // Verificar cache primeiro
+    if (this.sellersCache.has(sellerCode)) {
+      return this.sellersCache.get(sellerCode);
+    }
+
+    try {
+      console.log(`🔍 Buscando dados do vendedor: ${sellerCode}`);
+      
+      const response = await this.makeRequest('/geral/vendedores/', 'ConsultarVendedor', {
+        codigo: parseInt(sellerCode)
+      });
+      
+      const sellerData = {
+        name: response.nome || '',
+        id: response.codigo?.toString() || sellerCode
+      };
+      
+      // Armazenar no cache
+      this.sellersCache.set(sellerCode, sellerData);
+      return sellerData;
+      
+    } catch (error) {
+      console.log(`⚠️ Erro ao buscar vendedor ${sellerCode}:`, error);
+      return null;
+    }
+  }
+
+  // Método para buscar etapa de um pedido específico
+  async fetchPedidoStage(pedidoId: string): Promise<string | null> {
+    if (!pedidoId) return null;
+    
+    // Verificar cache primeiro
+    if (this.stagesCache.has(pedidoId)) {
+      return this.stagesCache.get(pedidoId);
+    }
+
+    try {
+      console.log(`🔍 Buscando etapa do pedido: ${pedidoId}`);
+      
+      const response = await this.makeRequest('/produtos/pedidoetapas/', 'ListarEtapasPedido', {
+        nPagina: 1,
+        nRegPorPagina: 50,
+        nCodPed: parseInt(pedidoId)
+      });
+      
+      // Pegar a etapa mais recente
+      const etapas = response.etapasPedido || [];
+      const ultimaEtapa = etapas.length > 0 ? etapas[0].cEtapa : '';
+      
+      // Armazenar no cache
+      this.stagesCache.set(pedidoId, ultimaEtapa);
+      return ultimaEtapa;
+      
+    } catch (error) {
+      console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
+      return null;
+    }
+  }
+
   // ==================== MÉTODOS DE FATURAMENTO ====================
   
   // Método para listar todas as notas fiscais com paginação
@@ -316,13 +385,11 @@ export class OmieService {
       // Extrair campos conforme mapeamento do debug NF 23369
       const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
-      // Tentar múltiplas opções para nome do cliente
-      const customerFantasyName = invoice.dest?.xNome || 
-                                  invoice.dest?.razao_social || 
-                                  invoice.destinatario?.xNome || 
-                                  invoice.destinatario?.razao_social ||
-                                  invoice.cliente?.nome ||
-                                  invoice.cliente?.razao_social ||
+      // Nome fantasia do cliente usando campo correto da API Omie
+      const customerFantasyName = invoice.nfDestInt?.cRazao ||           // Campo correto da API
+                                  invoice.dest?.xNome ||                  // Fallback 1
+                                  invoice.destinatario?.razao_social ||   // Fallback 2
+                                  invoice.cliente?.razao_social ||        // Fallback 3
                                   '';
       const customerDocument = invoice.dest?.cCNPJCPF || '';
       
@@ -342,12 +409,37 @@ export class OmieService {
       const dueDate = titulo.dDtVenc ? this.parseOmieDate(titulo.dDtVenc) : null;
       const paymentMethod = titulo.cDoc || '';
       
-      // Vendedor
+      // Vendedor - buscar dados do vendedor usando API específica
       const sellerCode = titulo.nCodVendedor?.toString();
-      const sellerName = ''; // Nome do vendedor precisa ser buscado separadamente
+      let sellerName = '';
+      let sellerId = null;
       
-      // Etapa da nota fiscal (cEtapa)
-      const invoiceStage = invoice.ide?.cEtapa || '';
+      if (sellerCode) {
+        try {
+          const sellerData = await this.fetchSellerData(sellerCode);
+          if (sellerData) {
+            sellerName = sellerData.name;
+            sellerId = sellerData.id;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+        }
+      }
+      
+      // Etapa da nota fiscal - buscar do pedido relacionado
+      let invoiceStage = invoice.ide?.cEtapa || '';
+      const pedidoId = invoice.compl?.nIdPedido?.toString();
+      
+      if (pedidoId && !invoiceStage) {
+        try {
+          const stageData = await this.fetchPedidoStage(pedidoId);
+          if (stageData) {
+            invoiceStage = stageData;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
+        }
+      }
       
       // LOG para debug - ver estrutura dos dados rejeitados e dados do cliente
       if (!omieInvoiceId && !invoiceNumber) {
@@ -366,6 +458,7 @@ export class OmieService {
       // Debug para nome do cliente se estiver vazio
       if (!customerFantasyName && finalInvoiceNumber) {
         console.log('🔍 DEBUG - Dados do destinatário vazios para NF:', finalInvoiceNumber);
+        console.log('  nfDestInt:', JSON.stringify(invoice.nfDestInt, null, 2));
         console.log('  dest:', JSON.stringify(invoice.dest, null, 2));
         console.log('  destinatario:', JSON.stringify(invoice.destinatario, null, 2));
         console.log('  cliente:', JSON.stringify(invoice.cliente, null, 2));
@@ -391,7 +484,7 @@ export class OmieService {
         dueDate,
         paymentMethod,
         sellerName,
-        sellerId: null, // Será preenchido após buscar vendedor
+        sellerId,
         billingType: 'venda' as const,
         invoiceStatus: 'emitida',
         invoiceStage, // Etapa da nota fiscal do Omie
