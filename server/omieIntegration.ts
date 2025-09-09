@@ -168,6 +168,15 @@ export class OmieService {
   private clientsCache: Map<string, any> = new Map();
   private stageNamesCache: Map<string, string> = new Map(); // Cache para nomes das etapas
 
+  // Limpar cache
+  public clearCache(): void {
+    this.sellersCache.clear();
+    this.stagesCache.clear();
+    this.clientsCache.clear();
+    this.stageNamesCache.clear();
+    console.log('🧹 Cache limpo!');
+  }
+
   // Método para buscar dados de um vendedor específico
   async fetchSellerData(sellerCode: string): Promise<{name: string, id: string} | null> {
     if (!sellerCode) return null;
@@ -605,24 +614,37 @@ export class OmieService {
   // Método para transformar dados de PEDIDOS do Omie para formato do sistema
   private async transformOrderToBilling(order: any): Promise<any> {
     try {
-      const orderNumber = order.numero_pedido?.toString() || '';
-      console.log(`🔧 Transformando pedido: ${orderNumber}`);
+      // DEBUG: Mostrar estrutura do pedido
+      console.log(`🔧 DEBUG: Estrutura do pedido recebido:`, JSON.stringify({
+        cabecalho: order.cabecalho,
+        keys: Object.keys(order)
+      }, null, 2));
       
-      // Extrair dados do pedido
-      const omieOrderId = order.codigo_pedido?.toString() || '';
-      const clientCode = order.codigo_cliente?.toString();
+      // ESTRUTURA CORRETA da API do Omie (baseado na documentação oficial)
+      const orderNumber = order.cabecalho?.numero_pedido?.toString() || '';
+      const omieOrderId = order.cabecalho?.codigo_pedido?.toString() || '';
+      const clientCode = order.cabecalho?.codigo_cliente?.toString() || '';
+      const etapa = order.cabecalho?.etapa || '';
+      
+      console.log(`🔧 Transformando pedido: ${orderNumber} (ID: ${omieOrderId})`);
+      
+      if (!orderNumber && !omieOrderId) {
+        console.log('⚠️ Pedido sem número ou ID válido, ignorando...');
+        console.log('🔧 DEBUG: Dados do cabeçalho:', JSON.stringify(order.cabecalho, null, 2));
+        return null;
+      }
       
       // Verificar se tem nota fiscal vinculada
       let omieInvoiceId = '';
       let invoiceNumber = '';
       let invoiceDate = null;
       
-      // Se o pedido foi faturado, buscar dados da nota fiscal
-      if (order.faturado === 'S' && order.numero_nota_fiscal) {
-        omieInvoiceId = order.codigo_nota_fiscal?.toString() || '';
-        invoiceNumber = order.numero_nota_fiscal?.toString() || '';
-        if (order.data_faturamento) {
-          invoiceDate = this.parseOmieDate(order.data_faturamento);
+      // Buscar dados da NF se existir
+      if (order.faturamento?.numero_nfe) {
+        omieInvoiceId = order.faturamento?.numero_nfe || '';
+        invoiceNumber = order.faturamento?.numero_nfe || '';
+        if (order.faturamento?.data_fatura) {
+          invoiceDate = this.parseOmieDate(order.faturamento.data_fatura);
         }
       }
       
@@ -644,8 +666,8 @@ export class OmieService {
       if (!customerFantasyName) {
         customerFantasyName = order.cliente?.razao_social ||
                              order.cliente?.nome_fantasia ||
-                             order.razao_social ||
-                             '';
+                             order.cabecalho?.cliente ||
+                             'Cliente não encontrado';
       }
       const customerDocument = order.cliente?.cnpj_cpf || '';
       
@@ -655,17 +677,23 @@ export class OmieService {
       const cfop = order.det?.[0]?.produto?.cfop || '';
       
       // Data do pedido
-      const orderDate = order.data_previsao ? this.parseOmieDate(order.data_previsao) : new Date();
+      const orderDate = order.cabecalho?.data_previsao ? 
+        this.parseOmieDate(order.cabecalho.data_previsao) : 
+        new Date();
       
       // Valor total do pedido
-      const totalValue = order.total_geral || order.valor_total || 0;
+      const totalValue = order.total_pedido?.valor_total_pedido || 
+                        order.total_pedido?.valor_mercadorias || 
+                        order.cabecalho?.valor_total || 0;
       
       // Dados do título/financeiro
-      const dueDate = order.data_vencimento ? this.parseOmieDate(order.data_vencimento) : null;
-      const paymentMethod = order.forma_pagamento || '';
+      const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? 
+        this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
+      const paymentMethod = order.cabecalho?.forma_pagamento || '';
       
-      // Vendedor 
-      const sellerCode = order.codigo_vendedor?.toString();
+      // Vendedor - buscar do cabeçalho ou informações adicionais
+      const sellerCode = order.cabecalho?.codigo_vendedor?.toString() || 
+                        order.informacoes_adicionais?.codigo_vendedor?.toString();
       let sellerName = '';
       let sellerId = null;
       
@@ -692,35 +720,26 @@ export class OmieService {
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar etapa do pedido ${omieOrderId}:`, error);
+          // Usar etapa do cabeçalho como fallback
+          invoiceStage = etapa || '';
         }
-      }
-      
-      // Validação: verificar se temos dados mínimos necessários
-      if (!omieOrderId && !orderNumber) {
-        console.log('⚠️ Pedido sem ID ou número válido, ignorando...');
-        return null;
-      }
-      
-      if (!customerFantasyName) {
-        console.log(`⚠️ Pedido ${orderNumber} sem nome do cliente, ignorando...`);
-        return null;
       }
       
       // Determinar tipo de faturamento
       let billingType = 'venda';
-      if (order.tipo_operacao) {
-        const tipoOp = order.tipo_operacao.toLowerCase();
+      if (order.informacoes_adicionais?.tipo_operacao) {
+        const tipoOp = order.informacoes_adicionais.tipo_operacao.toLowerCase();
         if (tipoOp.includes('troca')) billingType = 'troca';
         else if (tipoOp.includes('amostra')) billingType = 'amostra';
       }
       
       // Produtos do pedido
       const products = (order.det || []).map((item: any) => ({
-        code: item.produto?.codigo || '',
+        code: item.produto?.codigo_produto || '',
         description: item.produto?.descricao || '',
-        quantity: item.quantidade || 0,
-        unitPrice: item.valor_unitario || 0,
-        totalPrice: item.valor_total || 0,
+        quantity: item.produto?.quantidade || 0,
+        unitPrice: item.produto?.valor_unitario || 0,
+        totalPrice: item.produto?.valor_total || 0,
       }));
       
       console.log(`✅ Pedido validado: ID=${omieOrderId}, Número=${orderNumber}, Cliente=${customerFantasyName}`);
@@ -735,20 +754,21 @@ export class OmieService {
         cfop,
         invoiceDate,
         orderDate,
-        totalValue: parseFloat(totalValue.toString()),
+        totalValue: parseFloat(totalValue.toString()) || 0,
         dueDate,
         paymentMethod,
         sellerName,
         omieCustomerCode: clientCode,
         sellerId,
         billingType,
-        invoiceStatus: order.status_pedido || '',
+        invoiceStatus: order.cabecalho?.situacao_pedido || '',
         invoiceStage,
         products
       };
       
     } catch (error) {
       console.error(`❌ Erro ao transformar pedido:`, error);
+      console.error(`❌ Dados do pedido que causou erro:`, JSON.stringify(order, null, 2));
       return null;
     }
   }
