@@ -59,6 +59,7 @@ interface BillingFilters {
   customerDocument?: string;
   invoiceNumber?: string;
   cfop?: string;
+  invoiceStage?: string;
   page: number;
   pageSize: number;
 }
@@ -399,6 +400,30 @@ export default function Billings() {
                   <SelectItem value="BONIFICAÇÃO">BONIFICAÇÃO</SelectItem>
                   <SelectItem value="ENTRADA">ENTRADA</SelectItem>
                   <SelectItem value="DEVOLUÇÃO">DEVOLUÇÃO</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Etapa</Label>
+              <Select 
+                value={filters.invoiceStage || ''}
+                onValueChange={(value) => handleFilterChange('invoiceStage', value === 'all' ? '' : value)}
+              >
+                <SelectTrigger data-testid="filter-invoice-stage">
+                  <SelectValue placeholder="Selecionar Etapa" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="Proposta/Orçamento">Proposta/Orçamento</SelectItem>
+                  <SelectItem value="Pedido">Pedido</SelectItem>
+                  <SelectItem value="Faturar">Faturar</SelectItem>
+                  <SelectItem value="A Faturar">A Faturar</SelectItem>
+                  <SelectItem value="Expedição">Expedição</SelectItem>
+                  <SelectItem value="Faturado">Faturado</SelectItem>
+                  <SelectItem value="Entregue">Entregue</SelectItem>
+                  <SelectItem value="Cancelado">Cancelado</SelectItem>
+                  <SelectItem value="Finalizado">Finalizado</SelectItem>
                 </SelectContent>
               </Select>
             </div>
