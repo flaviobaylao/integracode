@@ -617,6 +617,7 @@ export class OmieService {
       // DEBUG: Mostrar estrutura do pedido
       console.log(`🔧 DEBUG: Estrutura do pedido recebido:`, JSON.stringify({
         cabecalho: order.cabecalho,
+        faturamento: order.faturamento,
         keys: Object.keys(order)
       }, null, 2));
       
@@ -639,12 +640,17 @@ export class OmieService {
       let invoiceNumber = '';
       let invoiceDate = null;
       
-      // Buscar dados da NF se existir
-      if (order.faturamento?.numero_nfe) {
-        omieInvoiceId = order.faturamento?.numero_nfe || '';
-        invoiceNumber = order.faturamento?.numero_nfe || '';
-        if (order.faturamento?.data_fatura) {
-          invoiceDate = this.parseOmieDate(order.faturamento.data_fatura);
+      // Buscar dados da NF se existir - estrutura correta da API
+      if (order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf) {
+        // Priorizar dados do faturamento
+        omieInvoiceId = order.faturamento?.cNumNFE || order.informacoes_adicionais?.codigo_nf?.toString() || '';
+        invoiceNumber = order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf || '';
+        
+        // Data de faturamento
+        if (order.faturamento?.dDtFat) {
+          invoiceDate = this.parseOmieDate(order.faturamento.dDtFat);
+        } else if (order.informacoes_adicionais?.data_faturamento) {
+          invoiceDate = this.parseOmieDate(order.informacoes_adicionais.data_faturamento);
         }
       }
       
