@@ -2150,6 +2150,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint temporário para limpar cache de etapas e forçar nova sincronização
+  app.post("/api/omie/clear-stage-cache", authenticateUser, async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+      
+      // Limpar caches de etapas
+      (omieService as any).stagesCache.clear();
+      (omieService as any).stageNamesCache.clear();
+      
+      console.log("🧹 Cache de etapas limpo. Forçando nova sincronização...");
+      
+      res.json({ 
+        success: true, 
+        message: "Cache de etapas limpo. Nova sincronização será feita automaticamente." 
+      });
+    } catch (error) {
+      console.error("Erro ao limpar cache de etapas:", error);
+      res.status(500).json({ error: "Erro interno do servidor" });
+    }
+  });
+
   // Rota para buscar faturamentos
   app.get('/api/billings', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {

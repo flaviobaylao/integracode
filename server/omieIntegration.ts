@@ -281,9 +281,24 @@ export class OmieService {
         nCodPed: parseInt(pedidoId)
       });
       
-      // Pegar a etapa mais recente
+      // Pegar a etapa mais recente ordenando por data e hora
       const etapas = response.etapasPedido || [];
-      const ultimaEtapaCode = etapas.length > 0 ? etapas[0].cEtapa : '';
+      
+      if (etapas.length === 0) {
+        console.log(`⚠️ Nenhuma etapa encontrada para o pedido ${pedidoId}`);
+        return null;
+      }
+      
+      // Ordenar etapas por data e hora (mais recente primeiro)
+      const etapasOrdenadas = etapas.sort((a: any, b: any) => {
+        const dateTimeA = new Date(`${a.dDtEtapa} ${a.cHrEtapa}`);
+        const dateTimeB = new Date(`${b.dDtEtapa} ${b.cHrEtapa}`);
+        return dateTimeB.getTime() - dateTimeA.getTime(); // Mais recente primeiro
+      });
+      
+      const ultimaEtapaCode = etapasOrdenadas[0].cEtapa;
+      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora...`);
+      console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${etapasOrdenadas[0].dDtEtapa} ${etapasOrdenadas[0].cHrEtapa}`);
       
       // Armazenar código no cache
       this.stagesCache.set(pedidoId, ultimaEtapaCode);
