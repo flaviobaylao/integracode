@@ -334,7 +334,6 @@ export class OmieService {
           filtrar_por_data_de: '', // Deixar vazio para buscar todos
           filtrar_por_data_ate: '', // Deixar vazio para buscar todos
           filtrar_por_status: 'T', // T = Todos os status
-          filtrar_por_etapa: '', // Vazio = todas as etapas
           ordenar_por: 'DATA',
           ordem_decrescente: 'S'
         }]
