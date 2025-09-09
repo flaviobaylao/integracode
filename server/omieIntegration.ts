@@ -166,6 +166,7 @@ export class OmieService {
   private sellersCache: Map<string, any> = new Map();
   private stagesCache: Map<string, any> = new Map();
   private clientsCache: Map<string, any> = new Map();
+  private stageNamesCache: Map<string, string> = new Map(); // Cache para nomes das etapas
 
   // Método para buscar dados de um vendedor específico
   async fetchSellerData(sellerCode: string): Promise<{name: string, id: string} | null> {
@@ -229,13 +230,49 @@ export class OmieService {
     }
   }
 
-  // Método para buscar etapa de um pedido específico
+  // Método para buscar configurações das etapas e seus nomes
+  async fetchStageNames(): Promise<void> {
+    if (this.stageNamesCache.size > 0) return; // Já carregado
+    
+    try {
+      console.log('🔍 Carregando nomes das etapas do sistema...');
+      
+      const response = await this.makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
+      const etapas = response.etapas || [];
+      
+      // Mapear códigos para nomes
+      for (const etapa of etapas) {
+        const codigo = etapa.cCodigo;
+        const nome = etapa.cDescricao || etapa.cDescrPadrao || `Etapa ${codigo}`;
+        this.stageNamesCache.set(codigo, nome);
+        console.log(`📝 Etapa mapeada: ${codigo} -> ${nome}`);
+      }
+      
+    } catch (error) {
+      console.log('⚠️ Erro ao carregar nomes das etapas:', error);
+      // Mapeamento de fallback para códigos comuns
+      this.stageNamesCache.set('00', 'Proposta/Orçamento');
+      this.stageNamesCache.set('10', 'Pedido');
+      this.stageNamesCache.set('20', 'Faturar');
+      this.stageNamesCache.set('30', 'A Faturar');
+      this.stageNamesCache.set('40', 'Expedição');
+      this.stageNamesCache.set('50', 'Faturado');
+      this.stageNamesCache.set('60', 'Entregue');
+      this.stageNamesCache.set('70', 'Cancelado');
+      this.stageNamesCache.set('80', 'Finalizado');
+    }
+  }
+
+  // Método para buscar etapa de um pedido específico com nome
   async fetchPedidoStage(pedidoId: string): Promise<string | null> {
     if (!pedidoId) return null;
     
     // Verificar cache primeiro
     if (this.stagesCache.has(pedidoId)) {
-      return this.stagesCache.get(pedidoId);
+      const stageCode = this.stagesCache.get(pedidoId);
+      // Garantir que os nomes das etapas estão carregados
+      await this.fetchStageNames();
+      return this.stageNamesCache.get(stageCode) || stageCode;
     }
 
     try {
@@ -249,11 +286,19 @@ export class OmieService {
       
       // Pegar a etapa mais recente
       const etapas = response.etapasPedido || [];
-      const ultimaEtapa = etapas.length > 0 ? etapas[0].cEtapa : '';
+      const ultimaEtapaCode = etapas.length > 0 ? etapas[0].cEtapa : '';
       
-      // Armazenar no cache
-      this.stagesCache.set(pedidoId, ultimaEtapa);
-      return ultimaEtapa;
+      // Armazenar código no cache
+      this.stagesCache.set(pedidoId, ultimaEtapaCode);
+      
+      // Garantir que os nomes das etapas estão carregados
+      await this.fetchStageNames();
+      
+      // Retornar nome da etapa
+      const stageName = this.stageNamesCache.get(ultimaEtapaCode) || ultimaEtapaCode;
+      console.log(`📝 Etapa encontrada: ${ultimaEtapaCode} -> ${stageName}`);
+      
+      return stageName;
       
     } catch (error) {
       console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
