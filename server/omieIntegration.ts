@@ -291,7 +291,7 @@ export class OmieService {
       });
       
       // Pegar a etapa mais recente ordenando por data e hora
-      const etapas = response.etapas || [];
+      const etapas = response.etapasPedido || [];
       
       if (etapas.length === 0) {
         console.log(`⚠️ Nenhuma etapa encontrada para o pedido ${pedidoId}`);
@@ -311,16 +311,24 @@ export class OmieService {
       
       // NOVO: Buscar dados de faturamento das etapas
       let stageInvoiceData = null;
+      console.log(`🔍 DEBUG: Verificando faturamento em ${etapasOrdenadas.length} etapas...`);
+      
       for (const etapa of etapasOrdenadas) {
-        if (etapa.faturamento && etapa.faturamento.cFaturado === 'S') {
+        console.log(`🔍 DEBUG: Etapa ${etapa.cEtapa} - faturamento:`, JSON.stringify(etapa.faturamento, null, 2));
+        
+        if (etapa.faturamento && etapa.faturamento.cFaturado === 'S' && etapa.faturamento.cNumNFE) {
           stageInvoiceData = {
             omieInvoiceId: etapa.faturamento.cNumNFE || '',
             invoiceNumber: etapa.faturamento.cNumNFE || '',
             invoiceDate: etapa.faturamento.dDtFat ? this.parseOmieDate(etapa.faturamento.dDtFat) : null
           };
-          console.log(`📋 Dados de faturamento encontrados nas etapas: NF=${stageInvoiceData.invoiceNumber}, Data=${etapa.faturamento.dDtFat}`);
+          console.log(`📋 ✅ Dados de faturamento encontrados nas etapas: NF=${stageInvoiceData.invoiceNumber}, Data=${etapa.faturamento.dDtFat}`);
           break; // Pegar o primeiro encontrado (mais recente com faturamento)
         }
+      }
+      
+      if (!stageInvoiceData) {
+        console.log(`⚠️ Nenhum dado de faturamento encontrado nas etapas do pedido ${pedidoId}`);
       }
       
       // Armazenar código no cache
