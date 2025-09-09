@@ -29,11 +29,14 @@ import { apiRequest } from '@/lib/queryClient';
 interface Billing {
   id: string;
   omieInvoiceId: string;
+  omieOrderId?: string;
+  orderNumber?: string;
   invoiceNumber: string;
   customerFantasyName: string;
   customerDocument: string;
   cfop: string;
   invoiceDate: string;
+  orderDate?: string;
   totalValue: number;
   dueDate: string;
   paymentMethod: string;
@@ -124,7 +127,42 @@ export default function Billings() {
     }
   });
 
-  // Mutation para sincronização
+  // Mutation para sincronização de pedidos (NOVO)
+  const syncOrdersMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/omie/sync-all-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+      }
+      
+      return response.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: 'Sincronização de pedidos concluída',
+        description: `${result.totalProcessed} pedidos processados. ${result.imported} importados, ${result.updated} atualizados.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+      setShowSyncDialog(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro na sincronização de pedidos',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
+  // Mutation para sincronização de notas fiscais (LEGADO)
   const syncMutation = useMutation({
     mutationFn: async () => {
       const response = await fetch('/api/billings/sync-all', {
@@ -143,8 +181,8 @@ export default function Billings() {
     },
     onSuccess: (result) => {
       toast({
-        title: 'Sincronização concluída',
-        description: `${result.totalProcessed} faturamentos processados. ${result.imported} importados, ${result.updated} atualizados.`,
+        title: 'Sincronização de NFs concluída',
+        description: `${result.totalProcessed} notas fiscais processadas. ${result.imported} importadas, ${result.updated} atualizadas.`,
       });
       queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
@@ -152,7 +190,7 @@ export default function Billings() {
     },
     onError: (error: any) => {
       toast({
-        title: 'Erro na sincronização',
+        title: 'Erro na sincronização de NFs',
         description: error.message || 'Erro desconhecido',
         variant: 'destructive',
       });
@@ -161,6 +199,10 @@ export default function Billings() {
 
   const handleSync = () => {
     syncMutation.mutate();
+  };
+
+  const handleSyncOrders = () => {
+    syncOrdersMutation.mutate();
   };
 
   const handleFilterChange = (key: keyof BillingFilters, value: string | number) => {
@@ -248,27 +290,48 @@ export default function Billings() {
               <DialogHeader>
                 <DialogTitle>Sincronizar Faturamentos</DialogTitle>
                 <DialogDescription>
-                  Esta operação irá buscar e sincronizar TODAS as notas fiscais do Omie ERP
+                  Escolha o tipo de sincronização com o Omie ERP
                 </DialogDescription>
               </DialogHeader>
               
-              <div className="py-4">
-                <p className="text-sm text-muted-foreground">
-                  ⚠️ Esta sincronização pode demorar alguns minutos, pois irá processar todas as notas fiscais disponíveis no Omie ERP.
-                </p>
+              <div className="py-4 space-y-4">
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-medium text-green-700 mb-2">✅ Recomendado: Sincronizar Todos os Pedidos</h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Sincroniza TODOS os pedidos (faturados e não faturados) incluindo números de pedido e notas fiscais.
+                  </p>
+                  <Button 
+                    onClick={handleSyncOrders} 
+                    disabled={syncOrdersMutation.isPending || syncMutation.isPending}
+                    className="w-full bg-green-600 hover:bg-green-700"
+                    data-testid="button-sync-all-orders"
+                  >
+                    {syncOrdersMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
+                    Sincronizar Todos os Pedidos
+                  </Button>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-medium text-amber-700 mb-2">⚠️ Legado: Apenas Notas Fiscais</h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Sincroniza apenas notas fiscais já emitidas (não inclui pedidos pendentes).
+                  </p>
+                  <Button 
+                    onClick={handleSync} 
+                    disabled={syncMutation.isPending || syncOrdersMutation.isPending}
+                    variant="outline"
+                    className="w-full"
+                    data-testid="button-execute-sync"
+                  >
+                    {syncMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
+                    Sincronizar Apenas NFs
+                  </Button>
+                </div>
               </div>
               
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => setShowSyncDialog(false)}>
                   Cancelar
-                </Button>
-                <Button 
-                  onClick={handleSync} 
-                  disabled={syncMutation.isPending}
-                  data-testid="button-execute-sync"
-                >
-                  {syncMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
-                  Sincronizar Todas
                 </Button>
               </div>
             </DialogContent>
@@ -476,7 +539,8 @@ export default function Billings() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <SortableHeader field="invoiceNumber">Nota Fiscal</SortableHeader>
+                    <SortableHeader field="orderNumber">Nº Pedido</SortableHeader>
+                    <SortableHeader field="invoiceNumber">Nº NF</SortableHeader>
                     <SortableHeader field="customerFantasyName">Cliente</SortableHeader>
                     <SortableHeader field="cfop">CFOP</SortableHeader>
                     <SortableHeader field="invoiceDate">Data Fat.</SortableHeader>
@@ -490,15 +554,18 @@ export default function Billings() {
                 <TableBody>
                   {sortedBillings.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                         Nenhum faturamento encontrado
                       </TableCell>
                     </TableRow>
                   ) : (
                     sortedBillings.map((billing) => (
                       <TableRow key={billing.id} data-testid={`row-billing-${billing.id}`}>
-                        <TableCell className="font-medium" data-testid={`cell-invoice-${billing.invoiceNumber}`}>
-                          {billing.invoiceNumber}
+                        <TableCell className="font-mono text-sm" data-testid={`cell-order-${billing.id}`}>
+                          {billing.orderNumber || '-'}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm" data-testid={`cell-invoice-${billing.invoiceNumber}`}>
+                          {billing.invoiceNumber || '-'}
                         </TableCell>
                         <TableCell data-testid={`cell-customer-${billing.id}`}>
                           {billing.customerFantasyName || '-'}

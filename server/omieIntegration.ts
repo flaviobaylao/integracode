@@ -380,7 +380,117 @@ export class OmieService {
     }
   }
 
-  // Método para sincronizar faturamentos com período específico  
+  // Método NOVO para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
+  async syncAllOrders(): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    errors: any[];
+  }> {
+    try {
+      console.log(`🔄 Sincronizando TODOS os pedidos do Omie (faturados e não faturados)...`);
+      console.log(`🔐 Chaves configuradas: app_key=${this.appKey ? 'SIM' : 'NÃO'}, app_secret=${this.appSecret ? 'SIM' : 'NÃO'}`);
+      
+      let totalProcessed = 0;
+      let imported = 0;
+      let updated = 0;
+      const errors: any[] = [];
+      
+      let page = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        try {
+          console.log(`📄 Processando página ${page}...`);
+          
+          const response = await this.listOrders(page, 50);
+          
+          const orders = response.pedido_venda_produto || [];
+          console.log(`📊 Página ${page}: Encontrados ${orders.length} pedidos`);
+          
+          // Debug: mostrar estrutura da resposta na primeira página
+          if (page === 1) {
+            console.log(`🔍 DEBUG: Estrutura da resposta da API:`, JSON.stringify({
+              hasPedidos: !!response.pedido_venda_produto,
+              totalRegistros: response.total_de_registros,
+              pagina: response.pagina,
+              keys: Object.keys(response)
+            }, null, 2));
+            
+            if (orders.length > 0) {
+              console.log(`🔍 DEBUG: Primeiro pedido:`, JSON.stringify(orders[0], null, 2));
+            }
+          }
+          
+          if (orders.length === 0) {
+            console.log(`⚠️ Página ${page}: Nenhum pedido encontrado. Parando sincronização.`);
+            hasMorePages = false;
+            break;
+          }
+          
+          for (const order of orders) {
+            try {
+              const billingData = await this.transformOrderToBilling(order);
+              if (billingData) {
+                // Salvar no storage
+                const { storage } = await import('./storage');
+                const existingBilling = await storage.getBillingByOrderId(billingData.omieOrderId);
+                
+                if (existingBilling) {
+                  await storage.updateBilling(existingBilling.id, billingData);
+                  updated++;
+                } else {
+                  await storage.createBilling(billingData);
+                  imported++;
+                }
+                
+                totalProcessed++;
+              }
+            } catch (error: any) {
+              console.error(`❌ Erro ao processar pedido ${order.numero_pedido}:`, error);
+              errors.push({ 
+                orderNumber: order.numero_pedido, 
+                error: error.message 
+              });
+            }
+          }
+          
+          page++;
+          
+          // Limite para evitar loop infinito
+          if (page > 1000) {
+            console.log('⚠️ Limite de 1000 páginas atingido, parando sincronização');
+            hasMorePages = false;
+          }
+          
+        } catch (error: any) {
+          console.error(`❌ Erro na página ${page}:`, error);
+          console.error(`❌ Stack trace:`, error.stack);
+          errors.push({ 
+            page, 
+            error: error.message,
+            details: error.response?.data || error.toString()
+          });
+          hasMorePages = false;
+        }
+      }
+      
+      console.log(`✅ Sincronização de pedidos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados`);
+      
+      return {
+        totalProcessed,
+        imported,
+        updated,
+        errors
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao sincronizar pedidos:', error);
+      throw error;
+    }
+  }
+
+  // Método LEGADO para sincronizar apenas notas fiscais 
   async syncBillingsInRange(startDate: string, endDate: string): Promise<{
     totalProcessed: number;
     imported: number;
@@ -498,7 +608,158 @@ export class OmieService {
     }
   }
 
-  // Método para transformar dados da API Omie para formato do sistema
+  // Método para transformar dados de PEDIDOS do Omie para formato do sistema
+  private async transformOrderToBilling(order: any): Promise<any> {
+    try {
+      const orderNumber = order.numero_pedido?.toString() || '';
+      console.log(`🔧 Transformando pedido: ${orderNumber}`);
+      
+      // Extrair dados do pedido
+      const omieOrderId = order.codigo_pedido?.toString() || '';
+      const clientCode = order.codigo_cliente?.toString();
+      
+      // Verificar se tem nota fiscal vinculada
+      let omieInvoiceId = '';
+      let invoiceNumber = '';
+      let invoiceDate = null;
+      
+      // Se o pedido foi faturado, buscar dados da nota fiscal
+      if (order.faturado === 'S' && order.numero_nota_fiscal) {
+        omieInvoiceId = order.codigo_nota_fiscal?.toString() || '';
+        invoiceNumber = order.numero_nota_fiscal?.toString() || '';
+        if (order.data_faturamento) {
+          invoiceDate = this.parseOmieDate(order.data_faturamento);
+        }
+      }
+      
+      // Nome fantasia do cliente - buscar na API de clientes
+      let customerFantasyName = '';
+      
+      if (clientCode) {
+        try {
+          const clientData = await this.fetchClientData(clientCode);
+          if (clientData) {
+            customerFantasyName = clientData.fantasyName || clientData.companyName;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar nome fantasia do cliente ${clientCode}:`, error);
+        }
+      }
+      
+      // Fallbacks caso não consiga buscar pela API
+      if (!customerFantasyName) {
+        customerFantasyName = order.cliente?.razao_social ||
+                             order.cliente?.nome_fantasia ||
+                             order.razao_social ||
+                             '';
+      }
+      const customerDocument = order.cliente?.cnpj_cpf || '';
+      
+      console.log(`🔧 IDs extraídos: omieOrderId=${omieOrderId}, orderNumber=${orderNumber}, invoiceNumber=${invoiceNumber}`);
+      
+      // CFOP - pegar do primeiro produto
+      const cfop = order.det?.[0]?.produto?.cfop || '';
+      
+      // Data do pedido
+      const orderDate = order.data_previsao ? this.parseOmieDate(order.data_previsao) : new Date();
+      
+      // Valor total do pedido
+      const totalValue = order.total_geral || order.valor_total || 0;
+      
+      // Dados do título/financeiro
+      const dueDate = order.data_vencimento ? this.parseOmieDate(order.data_vencimento) : null;
+      const paymentMethod = order.forma_pagamento || '';
+      
+      // Vendedor 
+      const sellerCode = order.codigo_vendedor?.toString();
+      let sellerName = '';
+      let sellerId = null;
+      
+      if (sellerCode) {
+        try {
+          const sellerData = await this.fetchSellerData(sellerCode);
+          if (sellerData) {
+            sellerName = sellerData.name;
+            sellerId = sellerData.id;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+        }
+      }
+      
+      // Etapa do pedido
+      let invoiceStage = '';
+      
+      if (omieOrderId) {
+        try {
+          const stageData = await this.fetchPedidoStage(omieOrderId);
+          if (stageData) {
+            invoiceStage = stageData;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar etapa do pedido ${omieOrderId}:`, error);
+        }
+      }
+      
+      // Validação: verificar se temos dados mínimos necessários
+      if (!omieOrderId && !orderNumber) {
+        console.log('⚠️ Pedido sem ID ou número válido, ignorando...');
+        return null;
+      }
+      
+      if (!customerFantasyName) {
+        console.log(`⚠️ Pedido ${orderNumber} sem nome do cliente, ignorando...`);
+        return null;
+      }
+      
+      // Determinar tipo de faturamento
+      let billingType = 'venda';
+      if (order.tipo_operacao) {
+        const tipoOp = order.tipo_operacao.toLowerCase();
+        if (tipoOp.includes('troca')) billingType = 'troca';
+        else if (tipoOp.includes('amostra')) billingType = 'amostra';
+      }
+      
+      // Produtos do pedido
+      const products = (order.det || []).map((item: any) => ({
+        code: item.produto?.codigo || '',
+        description: item.produto?.descricao || '',
+        quantity: item.quantidade || 0,
+        unitPrice: item.valor_unitario || 0,
+        totalPrice: item.valor_total || 0,
+      }));
+      
+      console.log(`✅ Pedido validado: ID=${omieOrderId}, Número=${orderNumber}, Cliente=${customerFantasyName}`);
+      
+      return {
+        omieOrderId,
+        orderNumber,
+        omieInvoiceId: omieInvoiceId || null,
+        invoiceNumber: invoiceNumber || null,
+        customerFantasyName,
+        customerDocument,
+        cfop,
+        invoiceDate,
+        orderDate,
+        totalValue: parseFloat(totalValue.toString()),
+        dueDate,
+        paymentMethod,
+        sellerName,
+        omieCustomerCode: clientCode,
+        sellerId,
+        billingType,
+        invoiceStatus: order.status_pedido || '',
+        invoiceStage,
+        products
+      };
+      
+    } catch (error) {
+      console.error(`❌ Erro ao transformar pedido:`, error);
+      return null;
+    }
+  }
+
+  // Método para transformar dados da API Omie para formato do sistema (LEGADO - apenas notas fiscais)
   private async transformInvoiceToBilling(invoice: any): Promise<any> {
     try {
       console.log(`🔧 Transformando nota fiscal: ${invoice.ide?.nNF || 'SEM_NUMERO'}`);
@@ -532,9 +793,6 @@ export class OmieService {
       const customerDocument = invoice.dest?.cCNPJCPF || '';
       
       console.log(`🔧 IDs extraídos: omieId=${omieInvoiceId}, number=${invoiceNumber}`);
-      
-      // CFOP - pegar do primeiro produto
-      const cfop = invoice.det?.[0]?.prod?.CFOP || '';
       
       // Data de emissão
       const invoiceDate = invoice.ide?.dEmi ? this.parseOmieDate(invoice.ide.dEmi) : null;

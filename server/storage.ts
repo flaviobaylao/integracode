@@ -1671,6 +1671,14 @@ export class DatabaseStorage implements IStorage {
     return billing;
   }
 
+  async getBillingByOrderId(omieOrderId: string): Promise<Billing | undefined> {
+    const [billing] = await db
+      .select()
+      .from(billings)
+      .where(eq(billings.omieOrderId, omieOrderId));
+    return billing;
+  }
+
   async createBilling(billing: InsertBilling): Promise<Billing> {
     const [newBilling] = await db
       .insert(billings)
