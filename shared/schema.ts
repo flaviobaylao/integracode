@@ -332,15 +332,18 @@ export const overdueDebts = pgTable("overdue_debts", {
 // Billing type enum  
 export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra']);
 
-// Billing/Invoice table - Notas fiscais e faturamentos do Omie
+// Billing/Invoice table - Pedidos e notas fiscais do Omie
 export const billings = pgTable("billings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  omieInvoiceId: varchar("omie_invoice_id").unique(), // ID único da nota fiscal no Omie
-  invoiceNumber: varchar("invoice_number").notNull(), // Número da nota fiscal
+  omieOrderId: varchar("omie_order_id").unique(), // ID único do pedido no Omie
+  orderNumber: varchar("order_number").notNull(), // Número do pedido no Omie
+  omieInvoiceId: varchar("omie_invoice_id"), // ID único da nota fiscal no Omie (quando faturado)
+  invoiceNumber: varchar("invoice_number"), // Número da nota fiscal (quando faturado)
   customerFantasyName: varchar("customer_fantasy_name").notNull(), // Nome fantasia do cliente
   customerDocument: varchar("customer_document"), // CPF/CNPJ do cliente
   cfop: varchar("cfop"), // CFOP da nota fiscal
-  invoiceDate: timestamp("invoice_date").notNull(), // Data de faturamento
+  invoiceDate: timestamp("invoice_date"), // Data de faturamento (quando aplicável)
+  orderDate: timestamp("order_date").notNull(), // Data do pedido
   totalValue: decimal("total_value", { precision: 10, scale: 2 }).notNull(), // Valor total
   dueDate: timestamp("due_date"), // Data de vencimento
   paymentMethod: varchar("payment_method"), // Método de pagamento
@@ -351,7 +354,7 @@ export const billings = pgTable("billings", {
   sellerId: varchar("seller_id"), // ID do vendedor
   billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
   invoiceStatus: varchar("invoice_status"), // Status da nota fiscal no Omie
-  invoiceStage: varchar("invoice_stage"), // Etapa da nota fiscal (cEtapa do Omie)
+  invoiceStage: varchar("invoice_stage"), // Etapa do pedido/nota fiscal (cEtapa do Omie)
   
   // Produtos da nota fiscal
   products: jsonb("products").$type<Array<{

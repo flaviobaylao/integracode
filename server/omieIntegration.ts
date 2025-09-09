@@ -320,7 +320,39 @@ export class OmieService {
 
   // ==================== MÉTODOS DE FATURAMENTO ====================
   
-  // Método para listar todas as notas fiscais com paginação
+  // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
+  async listOrders(page: number = 1, pageSize: number = 50): Promise<any> {
+    try {
+      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros)...`);
+      
+      const payload = {
+        call: 'ListarPedidos',
+        param: [{
+          pagina: page,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: 'N',
+          filtrar_por_data_de: '', // Deixar vazio para buscar todos
+          filtrar_por_data_ate: '', // Deixar vazio para buscar todos
+          filtrar_por_status: 'T', // T = Todos os status
+          filtrar_por_etapa: '', // Vazio = todas as etapas
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        }]
+      };
+
+      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify(payload, null, 2));
+      
+      const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
+      console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
+      
+      return response;
+    } catch (error) {
+      console.error('❌ Erro ao listar pedidos:', error);
+      throw error;
+    }
+  }
+
+  // Método legado para listar apenas notas fiscais (manter para compatibilidade)
   async listInvoices(page: number = 1, pageSize: number = 50): Promise<any> {
     try {
       console.log(`🔍 Listando notas fiscais - Página ${page} (${pageSize} registros)...`);
