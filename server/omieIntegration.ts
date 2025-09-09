@@ -250,16 +250,13 @@ export class OmieService {
       
     } catch (error) {
       console.log('⚠️ Erro ao carregar nomes das etapas:', error);
-      // Mapeamento de fallback para códigos comuns
-      this.stageNamesCache.set('00', 'Proposta/Orçamento');
-      this.stageNamesCache.set('10', 'Pedido');
-      this.stageNamesCache.set('20', 'Faturar');
-      this.stageNamesCache.set('30', 'A Faturar');
-      this.stageNamesCache.set('40', 'Expedição');
+      // Mapeamento de fallback para códigos comuns conforme processo da empresa
+      this.stageNamesCache.set('10', 'Pedido de Venda');
+      this.stageNamesCache.set('20', 'faturar');
       this.stageNamesCache.set('50', 'Faturado');
-      this.stageNamesCache.set('60', 'Entregue');
-      this.stageNamesCache.set('70', 'Cancelado');
-      this.stageNamesCache.set('80', 'Finalizado');
+      this.stageNamesCache.set('60', 'Aguardando Rota');
+      this.stageNamesCache.set('70', 'Em Rota');
+      this.stageNamesCache.set('80', 'ENTREGUE');
     }
   }
 
