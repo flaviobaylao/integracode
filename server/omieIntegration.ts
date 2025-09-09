@@ -167,6 +167,7 @@ export class OmieService {
   private stagesCache: Map<string, any> = new Map();
   private clientsCache: Map<string, any> = new Map();
   private stageNamesCache: Map<string, string> = new Map(); // Cache para nomes das etapas
+  private paymentMethodsCache: Map<string, string> = new Map(); // Cache para formas de pagamento
 
   // Limpar cache
   public clearCache(): void {
@@ -174,6 +175,7 @@ export class OmieService {
     this.stagesCache.clear();
     this.clientsCache.clear();
     this.stageNamesCache.clear();
+    this.paymentMethodsCache.clear();
     console.log('🧹 Cache limpo!');
   }
 
@@ -204,6 +206,65 @@ export class OmieService {
       
     } catch (error) {
       console.log(`⚠️ Erro ao buscar vendedor ${sellerCode}:`, error);
+      return null;
+    }
+  }
+
+  // Método para buscar dados de forma de pagamento
+  async fetchPaymentMethod(paymentCode: string): Promise<string | null> {
+    if (!paymentCode) return null;
+    
+    // Cache key
+    const cacheKey = `payment_${paymentCode}`;
+    if (this.paymentMethodsCache && this.paymentMethodsCache.has(cacheKey)) {
+      return this.paymentMethodsCache.get(cacheKey) || null;
+    }
+    
+    try {
+      console.log(`🔍 Buscando forma de pagamento: ${paymentCode}`);
+      
+      const response = await this.makeRequest('/produtos/formaspagvendas/', 'ListarFormasPagVendas', {
+        pagina: 1,
+        registros_por_pagina: 100
+      });
+      
+      // Procurar pelo código da forma de pagamento
+      const paymentMethods = response.cadastros || [];
+      const foundMethod = paymentMethods.find((method: any) => method.cCodigo === paymentCode);
+      
+      const paymentName = foundMethod ? foundMethod.cDescricao : paymentCode;
+      console.log(`✅ Forma de pagamento encontrada: ${paymentCode} -> ${paymentName}`);
+      
+      // Inicializar cache se não existir
+      if (!this.paymentMethodsCache) {
+        this.paymentMethodsCache = new Map<string, string>();
+      }
+      
+      // Armazenar no cache
+      this.paymentMethodsCache.set(cacheKey, paymentName);
+      
+      return paymentName;
+    } catch (error) {
+      console.log(`⚠️ Erro ao buscar forma de pagamento ${paymentCode}:`, error);
+      return null;
+    }
+  }
+
+  // Método para consultar um pedido completo
+  async fetchCompleteOrder(orderId: string): Promise<any | null> {
+    if (!orderId) return null;
+    
+    try {
+      console.log(`🔍 Consultando pedido completo: ${orderId}`);
+      
+      const response = await this.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
+        codigo_pedido: parseInt(orderId)
+      });
+      
+      console.log(`✅ Pedido completo consultado: ${orderId}`);
+      return response;
+    } catch (error) {
+      console.log(`⚠️ Erro ao consultar pedido completo ${orderId}:`, error);
       return null;
     }
   }
@@ -730,13 +791,14 @@ export class OmieService {
       // Dados do título/financeiro
       const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? 
         this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
-      const paymentMethod = order.cabecalho?.forma_pagamento || '';
+      // Nota: paymentMethod será extraído no código mais abaixo usando fetchPaymentMethod()
       
       // Vendedor - buscar do cabeçalho ou informações adicionais
       const sellerCode = order.cabecalho?.codigo_vendedor?.toString() || 
                         order.informacoes_adicionais?.codigo_vendedor?.toString();
       let sellerName = '';
       let sellerId = null;
+      let paymentMethod = '';
       
       if (sellerCode) {
         try {
@@ -744,9 +806,24 @@ export class OmieService {
           if (sellerData) {
             sellerName = sellerData.name;
             sellerId = sellerData.id;
+            console.log(`✅ Vendedor extraído: ${sellerCode} -> ${sellerName}`);
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+        }
+      }
+      
+      // NOVO: Buscar forma de pagamento baseada no código da parcela
+      const parcelaCode = cabecalho.codigo_parcela || '';
+      if (parcelaCode) {
+        try {
+          const payment = await this.fetchPaymentMethod(parcelaCode);
+          if (payment) {
+            paymentMethod = payment;
+            console.log(`✅ Forma de pagamento extraída: ${parcelaCode} -> ${paymentMethod}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar forma de pagamento ${parcelaCode}:`, error);
         }
       }
       
@@ -866,12 +943,11 @@ export class OmieService {
       // Dados do título/financeiro
       const titulo = invoice.titulos?.[0] || {};
       const dueDate = titulo.dDtVenc ? this.parseOmieDate(titulo.dDtVenc) : null;
-      const paymentMethod = titulo.cDoc || '';
-      
       // Vendedor - buscar dados do vendedor usando API específica
       const sellerCode = titulo.nCodVendedor?.toString();
       let sellerName = '';
       let sellerId = null;
+      let paymentMethod = titulo.cDoc || '';
       
       if (sellerCode) {
         try {
@@ -879,9 +955,24 @@ export class OmieService {
           if (sellerData) {
             sellerName = sellerData.name;
             sellerId = sellerData.id;
+            console.log(`✅ Vendedor extraído: ${sellerCode} -> ${sellerName}`);
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+        }
+      }
+      
+      // NOVO: Buscar forma de pagamento baseada no código da parcela
+      const parcelaCode = cabecalho.codigo_parcela || '';
+      if (parcelaCode) {
+        try {
+          const payment = await this.fetchPaymentMethod(parcelaCode);
+          if (payment) {
+            paymentMethod = payment;
+            console.log(`✅ Forma de pagamento extraída: ${parcelaCode} -> ${paymentMethod}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar forma de pagamento ${parcelaCode}:`, error);
         }
       }
       
