@@ -162,9 +162,10 @@ export class OmieService {
 
   // ==================== MÉTODOS AUXILIARES PARA VENDEDORES E ETAPAS ====================
   
-  // Cache para vendedores e etapas (para evitar múltiplas requisições)
+  // Cache para vendedores, etapas e clientes (para evitar múltiplas requisições)
   private sellersCache: Map<string, any> = new Map();
   private stagesCache: Map<string, any> = new Map();
+  private clientsCache: Map<string, any> = new Map();
 
   // Método para buscar dados de um vendedor específico
   async fetchSellerData(sellerCode: string): Promise<{name: string, id: string} | null> {
@@ -193,6 +194,37 @@ export class OmieService {
       
     } catch (error) {
       console.log(`⚠️ Erro ao buscar vendedor ${sellerCode}:`, error);
+      return null;
+    }
+  }
+
+  // Método para buscar dados completos de um cliente específico
+  async fetchClientData(clientCode: string): Promise<{fantasyName: string, companyName: string} | null> {
+    if (!clientCode) return null;
+    
+    // Verificar cache primeiro
+    if (this.clientsCache.has(clientCode)) {
+      return this.clientsCache.get(clientCode);
+    }
+
+    try {
+      console.log(`🔍 Buscando dados do cliente: ${clientCode}`);
+      
+      const response = await this.makeRequest('/geral/clientes/', 'ConsultarCliente', {
+        codigo_cliente_omie: parseInt(clientCode)
+      });
+      
+      const clientData = {
+        fantasyName: response.nome_fantasia || '',
+        companyName: response.razao_social || ''
+      };
+      
+      // Armazenar no cache
+      this.clientsCache.set(clientCode, clientData);
+      return clientData;
+      
+    } catch (error) {
+      console.log(`⚠️ Erro ao buscar cliente ${clientCode}:`, error);
       return null;
     }
   }
@@ -385,12 +417,29 @@ export class OmieService {
       // Extrair campos conforme mapeamento do debug NF 23369
       const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.cNF?.toString() || '';
       const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
-      // Nome fantasia do cliente usando campo correto da API Omie
-      const customerFantasyName = invoice.nfDestInt?.cRazao ||           // Campo correto da API
-                                  invoice.dest?.xNome ||                  // Fallback 1
-                                  invoice.destinatario?.razao_social ||   // Fallback 2
-                                  invoice.cliente?.razao_social ||        // Fallback 3
-                                  '';
+      // Nome fantasia do cliente - buscar na API de clientes
+      let customerFantasyName = '';
+      const clientCode = invoice.nfDestInt?.nCodCli?.toString();
+      
+      if (clientCode) {
+        try {
+          const clientData = await this.fetchClientData(clientCode);
+          if (clientData) {
+            customerFantasyName = clientData.fantasyName || clientData.companyName;
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar nome fantasia do cliente ${clientCode}:`, error);
+        }
+      }
+      
+      // Fallbacks caso não consiga buscar pela API
+      if (!customerFantasyName) {
+        customerFantasyName = invoice.dest?.xNome ||                  // Fallback 1
+                             invoice.destinatario?.razao_social ||   // Fallback 2
+                             invoice.cliente?.razao_social ||        // Fallback 3
+                             invoice.nfDestInt?.cRazao ||            // Fallback 4
+                             '';
+      }
       const customerDocument = invoice.dest?.cCNPJCPF || '';
       
       console.log(`🔧 IDs extraídos: omieId=${omieInvoiceId}, number=${invoiceNumber}`);
