@@ -2150,6 +2150,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota de TESTE para verificar extração de dados de um pedido específico
+  app.post('/api/omie/test-order/:orderId', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const orderId = req.params.orderId;
+      console.log(`🧪 TESTE: Buscando etapas do pedido ${orderId}...`);
+      
+      // Chamar a função diretamente para debug
+      const stageData = await omieService.fetchPedidoStage(orderId);
+      
+      res.json({ 
+        orderId,
+        stageData,
+        message: `Teste do pedido ${orderId} concluído - veja logs do servidor` 
+      });
+    } catch (error) {
+      console.error('Erro no teste:', error);
+      res.status(500).json({ message: 'Erro interno do servidor' });
+    }
+  });
+
   // Rota NOVA para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
   app.post('/api/omie/sync-all-orders', authenticateUser, async (req: any, res) => {
     try {

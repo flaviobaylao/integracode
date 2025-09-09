@@ -269,8 +269,8 @@ export class OmieService {
     }
   }
 
-  // Método para buscar etapa de um pedido específico com nome
-  async fetchPedidoStage(pedidoId: string): Promise<string | null> {
+  // Método para buscar etapa de um pedido específico com nome E dados de faturamento
+  async fetchPedidoStage(pedidoId: string): Promise<{stageName: string, invoiceData: any} | null> {
     if (!pedidoId) return null;
     
     // Verificar cache primeiro
@@ -329,6 +329,8 @@ export class OmieService {
       
       if (!stageInvoiceData) {
         console.log(`⚠️ Nenhum dado de faturamento encontrado nas etapas do pedido ${pedidoId}`);
+      } else {
+        console.log(`✅ SALVANDO dados de faturamento no cache: invoice_${pedidoId}`, stageInvoiceData);
       }
       
       // Armazenar código no cache
@@ -344,9 +346,13 @@ export class OmieService {
       // Armazenar dados de faturamento no cache também (usar um cache específico para isso)
       if (stageInvoiceData) {
         this.stagesCache.set(`invoice_${pedidoId}`, stageInvoiceData);
+        console.log(`💾 Cache atualizado com dados de faturamento para pedido ${pedidoId}:`, stageInvoiceData);
       }
       
-      return stageName;
+      return {
+        stageName: stageName,
+        invoiceData: stageInvoiceData
+      };
       
     } catch (error) {
       console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
@@ -747,19 +753,16 @@ export class OmieService {
       
       if (omieOrderId) {
         try {
-          const stageData = await this.fetchPedidoStage(omieOrderId);
-          if (stageData) {
-            invoiceStage = stageData;
+          const stageResult = await this.fetchPedidoStage(omieOrderId);
+          if (stageResult) {
+            invoiceStage = stageResult.stageName;
             
-            // NOVO: Buscar dados de faturamento das etapas se ainda não temos
-            if (!omieInvoiceId && !invoiceNumber) {
-              const cachedInvoiceData = this.stagesCache.get(`invoice_${omieOrderId}`);
-              if (cachedInvoiceData) {
-                omieInvoiceId = cachedInvoiceData.omieInvoiceId;
-                invoiceNumber = cachedInvoiceData.invoiceNumber;
-                invoiceDate = cachedInvoiceData.invoiceDate;
-                console.log(`📋 Usando dados de faturamento das etapas: NF=${invoiceNumber}, Data=${invoiceDate?.toLocaleDateString()}`);
-              }
+            // NOVO: Aplicar dados de faturamento das etapas diretamente
+            if (!omieInvoiceId && !invoiceNumber && stageResult.invoiceData) {
+              omieInvoiceId = stageResult.invoiceData.omieInvoiceId;
+              invoiceNumber = stageResult.invoiceData.invoiceNumber;
+              invoiceDate = stageResult.invoiceData.invoiceDate;
+              console.log(`📋 ✅ APLICANDO dados de faturamento das etapas DIRETO: NF=${invoiceNumber}, Data=${invoiceDate?.toLocaleDateString()}`);
             }
           }
         } catch (error) {
