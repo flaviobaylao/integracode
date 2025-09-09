@@ -1549,6 +1549,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerDocument,
         invoiceNumber,
         cfop,
+        invoiceStage,
         page = '1',
         pageSize = '50'
       } = req.query;
@@ -1560,6 +1561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerDocument: customerDocument as string,
         invoiceNumber: invoiceNumber as string,
         cfop: cfop as string,
+        invoiceStage: invoiceStage as string,
         page: parseInt(page as string),
         pageSize: parseInt(pageSize as string)
       };

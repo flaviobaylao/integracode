@@ -145,6 +145,7 @@ export interface IStorage {
     customerDocument?: string;
     invoiceNumber?: string;
     cfop?: string;
+    invoiceStage?: string;
     page?: number;
     pageSize?: number;
   }): Promise<{ billings: Billing[]; total: number }>;
@@ -1700,10 +1701,11 @@ export class DatabaseStorage implements IStorage {
     customerDocument?: string;
     invoiceNumber?: string;
     cfop?: string;
+    invoiceStage?: string;
     page?: number;
     pageSize?: number;
   }): Promise<{ billings: Billing[]; total: number }> {
-    const { sellerId, startDate, endDate, customerDocument, invoiceNumber, cfop, page = 1, pageSize = 50 } = filters;
+    const { sellerId, startDate, endDate, customerDocument, invoiceNumber, cfop, invoiceStage, page = 1, pageSize = 50 } = filters;
     
     let conditions: any[] = [];
     
@@ -1747,6 +1749,10 @@ export class DatabaseStorage implements IStorage {
         // Filtro direto por CFOP específico
         conditions.push(eq(billings.cfop, cfop));
       }
+    }
+    
+    if (invoiceStage) {
+      conditions.push(eq(billings.invoiceStage, invoiceStage));
     }
     
     // Query com filtros
