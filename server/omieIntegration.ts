@@ -330,12 +330,7 @@ export class OmieService {
         param: [{
           pagina: page,
           registros_por_pagina: pageSize,
-          apenas_importado_api: 'N',
-          filtrar_por_data_de: '', // Deixar vazio para buscar todos
-          filtrar_por_data_ate: '', // Deixar vazio para buscar todos
-          filtrar_por_status: 'T', // T = Todos os status
-          ordenar_por: 'DATA',
-          ordem_decrescente: 'S'
+          apenas_importado_api: 'N'
         }]
       };
 
