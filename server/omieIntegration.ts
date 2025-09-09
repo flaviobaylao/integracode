@@ -291,7 +291,7 @@ export class OmieService {
       });
       
       // Pegar a etapa mais recente ordenando por data e hora
-      const etapas = response.etapasPedido || [];
+      const etapas = response.etapas || [];
       
       if (etapas.length === 0) {
         console.log(`⚠️ Nenhuma etapa encontrada para o pedido ${pedidoId}`);
@@ -309,6 +309,20 @@ export class OmieService {
       console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora...`);
       console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${etapasOrdenadas[0].dDtEtapa} ${etapasOrdenadas[0].cHrEtapa}`);
       
+      // NOVO: Buscar dados de faturamento das etapas
+      let stageInvoiceData = null;
+      for (const etapa of etapasOrdenadas) {
+        if (etapa.faturamento && etapa.faturamento.cFaturado === 'S') {
+          stageInvoiceData = {
+            omieInvoiceId: etapa.faturamento.cNumNFE || '',
+            invoiceNumber: etapa.faturamento.cNumNFE || '',
+            invoiceDate: etapa.faturamento.dDtFat ? this.parseOmieDate(etapa.faturamento.dDtFat) : null
+          };
+          console.log(`📋 Dados de faturamento encontrados nas etapas: NF=${stageInvoiceData.invoiceNumber}, Data=${etapa.faturamento.dDtFat}`);
+          break; // Pegar o primeiro encontrado (mais recente com faturamento)
+        }
+      }
+      
       // Armazenar código no cache
       this.stagesCache.set(pedidoId, ultimaEtapaCode);
       
@@ -318,6 +332,11 @@ export class OmieService {
       // Retornar nome da etapa
       const stageName = this.stageNamesCache.get(ultimaEtapaCode) || ultimaEtapaCode;
       console.log(`📝 Etapa encontrada: ${ultimaEtapaCode} -> ${stageName}`);
+      
+      // Armazenar dados de faturamento no cache também (usar um cache específico para isso)
+      if (stageInvoiceData) {
+        this.stagesCache.set(`invoice_${pedidoId}`, stageInvoiceData);
+      }
       
       return stageName;
       
@@ -715,7 +734,7 @@ export class OmieService {
         }
       }
       
-      // Etapa do pedido
+      // Etapa do pedido E dados de faturamento das etapas
       let invoiceStage = '';
       
       if (omieOrderId) {
@@ -723,6 +742,17 @@ export class OmieService {
           const stageData = await this.fetchPedidoStage(omieOrderId);
           if (stageData) {
             invoiceStage = stageData;
+            
+            // NOVO: Buscar dados de faturamento das etapas se ainda não temos
+            if (!omieInvoiceId && !invoiceNumber) {
+              const cachedInvoiceData = this.stagesCache.get(`invoice_${omieOrderId}`);
+              if (cachedInvoiceData) {
+                omieInvoiceId = cachedInvoiceData.omieInvoiceId;
+                invoiceNumber = cachedInvoiceData.invoiceNumber;
+                invoiceDate = cachedInvoiceData.invoiceDate;
+                console.log(`📋 Usando dados de faturamento das etapas: NF=${invoiceNumber}, Data=${invoiceDate?.toLocaleDateString()}`);
+              }
+            }
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar etapa do pedido ${omieOrderId}:`, error);
