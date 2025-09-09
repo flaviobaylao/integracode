@@ -522,7 +522,7 @@ export default function Billings() {
                           {billing.sellerName || '-'}
                         </TableCell>
                         <TableCell data-testid={`cell-stage-${billing.id}`}>
-                          <Badge variant="outline">{(billing as any).invoiceStage || '-'}</Badge>
+                          <Badge variant="outline">{billing.invoiceStage || '-'}</Badge>
                         </TableCell>
                       </TableRow>
                     ))
