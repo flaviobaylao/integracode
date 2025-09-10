@@ -824,8 +824,19 @@ export class OmieService {
         console.log(`⚠️ Código do vendedor não encontrado para o pedido ${orderNumber}`);
       }
       
-      // Forma de pagamento já vem do título da nota fiscal
-      // paymentMethod já foi definido acima como titulo.cDoc
+      // Buscar forma de pagamento baseada no código da parcela
+      const parcelaCode = order.cabecalho?.codigo_parcela || '';
+      if (parcelaCode) {
+        try {
+          const payment = await this.fetchPaymentMethod(parcelaCode);
+          if (payment) {
+            paymentMethod = payment;
+            console.log(`✅ Forma de pagamento extraída: ${parcelaCode} -> ${paymentMethod}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar forma de pagamento ${parcelaCode}:`, error);
+        }
+      }
       
       // Etapa do pedido E dados de faturamento das etapas
       let invoiceStage = '';
@@ -909,7 +920,7 @@ export class OmieService {
       const invoiceNumber = invoice.ide?.nNF?.toString() || invoice.ide?.cNF?.toString() || '';
       // Nome fantasia do cliente - buscar na API de clientes
       let customerFantasyName = '';
-      const clientCode = invoice.nfDestInt?.nCodCli?.toString();
+      let clientCode = invoice.nfDestInt?.nCodCli?.toString();
       
       if (clientCode) {
         try {
@@ -943,31 +954,98 @@ export class OmieService {
       // Dados do título/financeiro
       const titulo = invoice.titulos?.[0] || {};
       const dueDate = titulo.dDtVenc ? this.parseOmieDate(titulo.dDtVenc) : null;
-      // Vendedor - buscar dados do vendedor usando API específica
-      const sellerCode = titulo.nCodVendedor?.toString();
+      
+      // Usar clientCode já definido anteriormente ou buscar alternativas
+      if (!clientCode) {
+        clientCode = invoice.dest?.nIdDest?.toString() || invoice.cliente?.codigo_cliente_omie?.toString();
+      }
       let sellerName = '';
       let sellerId = null;
-      let paymentMethod = titulo.cDoc || '';
+      let paymentMethod = '';
       
-      if (sellerCode) {
+      // Buscar vendedor através do cliente
+      if (clientCode) {
         try {
-          const sellerData = await this.fetchSellerData(sellerCode);
-          if (sellerData) {
-            sellerName = sellerData.name;
-            sellerId = sellerData.id;
-            console.log(`✅ Vendedor extraído: ${sellerCode} -> ${sellerName}`);
+          const clientApiData = await this.fetchClientData(clientCode);
+          if (clientApiData && clientApiData.rawData) {
+            const sellerCode = clientApiData.rawData.recomendacoes?.codigo_vendedor?.toString();
+            if (sellerCode) {
+              console.log(`🔍 Código do vendedor extraído das recomendações do cliente: ${sellerCode}`);
+              const sellerData = await this.fetchSellerData(sellerCode);
+              if (sellerData) {
+                sellerName = sellerData.name;
+                sellerId = sellerData.id;
+                console.log(`✅ Vendedor extraído: ${sellerCode} -> ${sellerName}`);
+              }
+            }
           }
         } catch (error) {
-          console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+          console.log(`⚠️ Erro ao buscar dados do cliente/vendedor ${clientCode}:`, error);
         }
       }
       
-      // Forma de pagamento já vem do título da nota fiscal
-      // paymentMethod já foi definido acima como titulo.cDoc
+      // Fallback: buscar vendedor do título se não encontrou pelo cliente
+      if (!sellerName) {
+        const sellerCode = titulo.nCodVendedor?.toString();
+        if (sellerCode) {
+          try {
+            const sellerData = await this.fetchSellerData(sellerCode);
+            if (sellerData) {
+              sellerName = sellerData.name;
+              sellerId = sellerData.id;
+              console.log(`✅ Vendedor extraído do título: ${sellerCode} -> ${sellerName}`);
+            }
+          } catch (error) {
+            console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+          }
+        }
+      }
       
-      // Etapa da nota fiscal - buscar do pedido relacionado
+      // Buscar forma de pagamento correta - primeiro do pedido relacionado se existir
+      let pedidoId = invoice.compl?.nIdPedido?.toString();
+      if (pedidoId) {
+        try {
+          console.log(`🔍 Buscando forma de pagamento do pedido relacionado: ${pedidoId}`);
+          const pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
+          if (pedidoCompleto) {
+            const parcelaCode = pedidoCompleto.cabecalho?.codigo_parcela;
+            if (parcelaCode) {
+              const payment = await this.fetchPaymentMethod(parcelaCode);
+              if (payment) {
+                paymentMethod = payment;
+                console.log(`✅ Forma de pagamento extraída do pedido: ${parcelaCode} -> ${paymentMethod}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar forma de pagamento do pedido ${pedidoId}:`, error);
+        }
+      }
+      
+      // Fallback: buscar forma de pagamento do título
+      if (!paymentMethod) {
+        const formaPagCod = titulo.cFormaPag || titulo.cCodFormaPag;
+        if (formaPagCod) {
+          try {
+            const payment = await this.fetchPaymentMethod(formaPagCod);
+            if (payment) {
+              paymentMethod = payment;
+              console.log(`✅ Forma de pagamento extraída do título: ${formaPagCod} -> ${paymentMethod}`);
+            }
+          } catch (error) {
+            console.log(`⚠️ Erro ao buscar forma de pagamento ${formaPagCod}:`, error);
+          }
+        }
+      }
+      
+      // Se ainda não encontrou, usar descrição do documento como fallback
+      if (!paymentMethod) {
+        paymentMethod = titulo.cDoc || 'Não informado';
+      }
+      
+      // Etapa da nota fiscal - buscar do pedido relacionado  
       let invoiceStage = invoice.ide?.cEtapa || '';
-      const pedidoId = invoice.compl?.nIdPedido?.toString();
+      // pedidoId já foi definido anteriormente
       
       if (pedidoId && !invoiceStage) {
         try {
