@@ -2175,6 +2175,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint temporário para sincronização de setembro 2025 (sem autenticação)
+  app.post('/api/omie/sync-september-2025', async (req, res) => {
+    try {
+      console.log('🔄 Iniciando sincronização de setembro 2025...');
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+      
+      // Limpar cache antes da sincronização
+      omieService.clearCache();
+      
+      const result = await omieService.syncAllOrders();
+      
+      console.log('✅ Sincronização de setembro 2025 concluída:', result);
+      res.json(result);
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização de setembro 2025:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Rota NOVA para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
   app.post('/api/omie/sync-all-orders', authenticateUser, async (req: any, res) => {
     try {

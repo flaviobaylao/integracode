@@ -814,7 +814,7 @@ export class OmieService {
       }
       
       // NOVO: Buscar forma de pagamento baseada no código da parcela
-      const parcelaCode = cabecalho.codigo_parcela || '';
+      const parcelaCode = order.cabecalho?.codigo_parcela || '';
       if (parcelaCode) {
         try {
           const payment = await this.fetchPaymentMethod(parcelaCode);
@@ -963,7 +963,7 @@ export class OmieService {
       }
       
       // NOVO: Buscar forma de pagamento baseada no código da parcela
-      const parcelaCode = cabecalho.codigo_parcela || '';
+      const parcelaCode = order.cabecalho?.codigo_parcela || '';
       if (parcelaCode) {
         try {
           const payment = await this.fetchPaymentMethod(parcelaCode);
