@@ -824,19 +824,8 @@ export class OmieService {
         console.log(`⚠️ Código do vendedor não encontrado para o pedido ${orderNumber}`);
       }
       
-      // NOVO: Buscar forma de pagamento baseada no código da parcela
-      const parcelaCode = order.cabecalho?.codigo_parcela || '';
-      if (parcelaCode) {
-        try {
-          const payment = await this.fetchPaymentMethod(parcelaCode);
-          if (payment) {
-            paymentMethod = payment;
-            console.log(`✅ Forma de pagamento extraída: ${parcelaCode} -> ${paymentMethod}`);
-          }
-        } catch (error) {
-          console.log(`⚠️ Erro ao buscar forma de pagamento ${parcelaCode}:`, error);
-        }
-      }
+      // Forma de pagamento já vem do título da nota fiscal
+      // paymentMethod já foi definido acima como titulo.cDoc
       
       // Etapa do pedido E dados de faturamento das etapas
       let invoiceStage = '';
@@ -973,19 +962,8 @@ export class OmieService {
         }
       }
       
-      // NOVO: Buscar forma de pagamento baseada no código da parcela
-      const parcelaCode = order.cabecalho?.codigo_parcela || '';
-      if (parcelaCode) {
-        try {
-          const payment = await this.fetchPaymentMethod(parcelaCode);
-          if (payment) {
-            paymentMethod = payment;
-            console.log(`✅ Forma de pagamento extraída: ${parcelaCode} -> ${paymentMethod}`);
-          }
-        } catch (error) {
-          console.log(`⚠️ Erro ao buscar forma de pagamento ${parcelaCode}:`, error);
-        }
-      }
+      // Forma de pagamento já vem do título da nota fiscal
+      // paymentMethod já foi definido acima como titulo.cDoc
       
       // Etapa da nota fiscal - buscar do pedido relacionado
       let invoiceStage = invoice.ide?.cEtapa || '';
