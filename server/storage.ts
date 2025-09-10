@@ -32,7 +32,7 @@ import {
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, gt, sql, inArray, or } from "drizzle-orm";
+import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -1716,6 +1716,12 @@ export class DatabaseStorage implements IStorage {
     const { sellerId, startDate, endDate, customerDocument, invoiceNumber, cfop, invoiceStage, page = 1, pageSize = 50 } = filters;
     
     let conditions: any[] = [];
+    
+    // FILTRO PRINCIPAL: Apenas pedidos JÁ FATURADOS (com nota fiscal)
+    conditions.push(and(
+      isNotNull(billings.invoiceNumber),
+      ne(billings.invoiceNumber, '')
+    ));
     
     if (sellerId) {
       conditions.push(eq(billings.sellerId, sellerId));
