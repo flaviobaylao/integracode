@@ -1107,7 +1107,7 @@ export class OmieService {
         sellerId,
         billingType: 'venda' as const,
         invoiceStatus: 'emitida',
-        invoiceStage, // Etapa da nota fiscal do Omie
+        invoiceStage: invoiceStage?.substring(0, 100), // Truncar para 100 caracteres
         
         // Produtos da nota
         products: invoice.det?.map((item: any) => ({
