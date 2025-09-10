@@ -951,6 +951,9 @@ export class OmieService {
       // Valor total da nota
       const totalValue = invoice.total?.ICMSTot?.vNF || 0;
       
+      // CFOP - extrair do primeiro produto
+      const cfop = invoice.det?.[0]?.prod?.CFOP || '5101';
+      
       // Dados do título/financeiro
       const titulo = invoice.titulos?.[0] || {};
       const dueDate = titulo.dDtVenc ? this.parseOmieDate(titulo.dDtVenc) : null;
