@@ -434,8 +434,8 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: '01/09/2025', // 🗓️ FILTRO: Apenas pedidos a partir de 01/09/2025
-          filtrar_por_data_ate: '' // Vazio = até hoje
+          filtrar_por_data_de: '01/09/2025', // 🗓️ FILTRO: Apenas pedidos de setembro 2025
+          filtrar_por_data_ate: '30/09/2025' // Final de setembro 2025
         }]
       };
 
