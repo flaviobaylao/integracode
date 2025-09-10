@@ -270,7 +270,7 @@ export class OmieService {
   }
 
   // Método para buscar dados completos de um cliente específico
-  async fetchClientData(clientCode: string): Promise<{fantasyName: string, companyName: string} | null> {
+  async fetchClientData(clientCode: string): Promise<{fantasyName: string, companyName: string, rawData?: any} | null> {
     if (!clientCode) return null;
     
     // Verificar cache primeiro
@@ -287,7 +287,8 @@ export class OmieService {
       
       const clientData = {
         fantasyName: response.nome_fantasia || '',
-        companyName: response.razao_social || ''
+        companyName: response.razao_social || '',
+        rawData: response  // Incluir dados brutos para acessar recomendações
       };
       
       // Armazenar no cache
@@ -752,12 +753,13 @@ export class OmieService {
       
       // Nome fantasia do cliente - buscar na API de clientes
       let customerFantasyName = '';
+      let clientApiData = null;
       
       if (clientCode) {
         try {
-          const clientData = await this.fetchClientData(clientCode);
-          if (clientData) {
-            customerFantasyName = clientData.fantasyName || clientData.companyName;
+          clientApiData = await this.fetchClientData(clientCode);
+          if (clientApiData) {
+            customerFantasyName = clientApiData.fantasyName || clientApiData.companyName;
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar nome fantasia do cliente ${clientCode}:`, error);
@@ -793,9 +795,16 @@ export class OmieService {
         this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
       // Nota: paymentMethod será extraído no código mais abaixo usando fetchPaymentMethod()
       
-      // Vendedor - buscar do cabeçalho ou informações adicionais
-      const sellerCode = order.cabecalho?.codigo_vendedor?.toString() || 
-                        order.informacoes_adicionais?.codigo_vendedor?.toString();
+      // Vendedor - buscar das recomendações do cliente (onde realmente está)
+      let sellerCode = order.cabecalho?.codigo_vendedor?.toString() || 
+                       order.informacoes_adicionais?.codigo_vendedor?.toString();
+      
+      // Se não encontrou no pedido, buscar das recomendações do cliente
+      if (!sellerCode && clientApiData && clientApiData.rawData) {
+        sellerCode = clientApiData.rawData.recomendacoes?.codigo_vendedor?.toString();
+        console.log(`🔍 Código do vendedor extraído das recomendações do cliente: ${sellerCode}`);
+      }
+      
       let sellerName = '';
       let sellerId = null;
       let paymentMethod = '';
@@ -811,6 +820,8 @@ export class OmieService {
         } catch (error) {
           console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
         }
+      } else {
+        console.log(`⚠️ Código do vendedor não encontrado para o pedido ${orderNumber}`);
       }
       
       // NOVO: Buscar forma de pagamento baseada no código da parcela

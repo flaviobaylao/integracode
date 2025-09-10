@@ -1537,6 +1537,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para debug de um pedido específico por número
+  app.get('/api/omie/debug-order/:orderNumber', authenticateUser, async (req, res) => {
+    try {
+      const { orderNumber } = req.params;
+      console.log(`🔍 Buscando dados do pedido ${orderNumber} para debug...`);
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+      
+      // Buscar o pedido específico
+      const orderData = await (omieService as any).makeRequest('/produtos/pedido/', 'ConsultarPedido', {
+        numero_pedido: orderNumber
+      });
+      
+      if (!orderData) {
+        return res.status(404).json({ 
+          error: `Pedido ${orderNumber} não encontrado` 
+        });
+      }
+      
+      console.log(`✅ Pedido ${orderNumber} encontrado para debug`);
+      
+      // Extrair informações de vendedor
+      const vendorInfo = {
+        cabecalho_codigo_vendedor: orderData.cabecalho?.codigo_vendedor,
+        informacoes_adicionais_codigo_vendedor: orderData.informacoes_adicionais?.codigo_vendedor,
+        cabecalho_vendedor: orderData.cabecalho?.vendedor,
+        all_keys: Object.keys(orderData)
+      };
+      
+      res.json({ 
+        orderData, 
+        vendorInfo,
+        message: `Debug do pedido ${orderNumber}` 
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro no debug do pedido:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        details: error.message 
+      });
+    }
+  });
+
   // ==================== ROTAS DE FATURAMENTO ====================
   
   // Listar faturamentos com filtros avançados
