@@ -502,6 +502,7 @@ export class OmieService {
       let totalProcessed = 0;
       let imported = 0;
       let updated = 0;
+      let skipped = 0;
       const errors: any[] = [];
       
       let page = 1;
@@ -540,25 +541,32 @@ export class OmieService {
             try {
               const billingData = await this.transformOrderToBilling(order);
               if (billingData) {
-                // Salvar no storage
-                const { storage } = await import('./storage');
-                const existingBilling = await storage.getBillingByOrderId(billingData.omieOrderId);
+                // Usar validação centralizada para salvar no storage
+                const result = await this.storage.saveBillingIfValid(billingData);
                 
-                if (existingBilling) {
-                  await storage.updateBilling(existingBilling.id, billingData);
-                  updated++;
+                if (result.success) {
+                  if (result.action === 'created') {
+                    imported++;
+                  } else if (result.action === 'updated') {
+                    updated++;
+                  }
+                  totalProcessed++;
                 } else {
-                  await storage.createBilling(billingData);
-                  imported++;
+                  // Registro rejeitado pela validação
+                  console.log(`⚠️ REJEITADO - Pedido ${order.numero_pedido}: ${result.reason}`);
+                  errors.push({ 
+                    orderNumber: order.numero_pedido, 
+                    error: `Validation failed: ${result.reason}`,
+                    type: 'validation_rejected'
+                  });
                 }
-                
-                totalProcessed++;
               }
             } catch (error: any) {
               console.error(`❌ Erro ao processar pedido ${order.numero_pedido}:`, error);
               errors.push({ 
                 orderNumber: order.numero_pedido, 
-                error: error.message 
+                error: error.message,
+                type: 'processing_error'
               });
             }
           }
@@ -583,12 +591,13 @@ export class OmieService {
         }
       }
       
-      console.log(`✅ Sincronização de pedidos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados`);
+      console.log(`✅ Sincronização de pedidos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
       
       return {
         totalProcessed,
         imported,
         updated,
+        skipped,
         errors
       };
       
@@ -612,6 +621,7 @@ export class OmieService {
       let totalProcessed = 0;
       let imported = 0;
       let updated = 0;
+      let skipped = 0;
       const errors: any[] = [];
       
       let page = 1;
@@ -658,25 +668,33 @@ export class OmieService {
             try {
               const billingData = await this.transformInvoiceToBilling(invoice);
               if (billingData) {
-                // Salvar no storage
-                const { storage } = await import('./storage');
-                const existingBilling = await storage.getBillingByOmieId(billingData.omieInvoiceId);
+                // Usar validação centralizada para salvar no storage
+                const result = await this.storage.saveBillingIfValid(billingData);
                 
-                if (existingBilling) {
-                  await storage.updateBilling(existingBilling.id, billingData);
-                  updated++;
+                if (result.success) {
+                  if (result.action === 'created') {
+                    imported++;
+                  } else if (result.action === 'updated') {
+                    updated++;
+                  }
+                  totalProcessed++;
                 } else {
-                  await storage.createBilling(billingData);
-                  imported++;
+                  // Registro rejeitado pela validação
+                  console.log(`⚠️ REJEITADO - NF ${invoice.ide?.nNF}: ${result.reason}`);
+                  skipped++;
+                  errors.push({ 
+                    invoiceNumber: invoice.ide?.nNF, 
+                    error: `Validation failed: ${result.reason}`,
+                    type: 'validation_rejected'
+                  });
                 }
-                
-                totalProcessed++;
               }
             } catch (error: any) {
               console.error(`❌ Erro ao processar nota ${invoice.ide?.nNF}:`, error);
               errors.push({ 
                 invoiceNumber: invoice.ide?.nNF, 
-                error: error.message 
+                error: error.message,
+                type: 'processing_error'
               });
             }
           }
@@ -701,12 +719,13 @@ export class OmieService {
         }
       }
       
-      console.log(`✅ Sincronização concluída: ${totalProcessed} processadas, ${imported} importadas, ${updated} atualizadas`);
+      console.log(`✅ Sincronização concluída: ${totalProcessed} processadas, ${imported} importadas, ${updated} atualizadas, ${skipped} rejeitadas`);
       
       return {
         totalProcessed,
         imported,
         updated,
+        skipped,
         errors
       };
       
@@ -1867,6 +1886,7 @@ export class OmieService {
       let totalProcessed = 0;
       let imported = 0;
       let updated = 0;
+      let skipped = 0;
       const errors: any[] = [];
       
       let page = 1;
@@ -1935,34 +1955,10 @@ export class OmieService {
                 console.log('='.repeat(60));
               }
               
-              // FILTRO DE STATUS: Aceitar APENAS notas autorizadas (whitelist)
-              const status = String(invoice.ide?.cStat ?? '').trim();
-              const statusMsg = invoice.ide?.xMotivo || '';
-              
-              // Status válidos para NF-e autorizada: APENAS 100 (autorizada) e 150 (autorizada fora do prazo)
-              if (status !== '100' && status !== '150') {
-                console.log(`⚠️ Pulando NF ${invoiceNumber} - Status não autorizado: ${status} (${statusMsg})`);
-                continue; // Aceitar apenas status 100 e 150
-              }
-              
               // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
               let invoiceDate = '';
               // Usar PRIMEIRO a data de emissão da nota fiscal (dEmi)
               invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || '';
-              
-              // VALIDAÇÃO DE DATA: só processar se tiver data de emissão >= 01/09/2025
-              if (invoiceDate) {
-                const emissionDate = this.parseBrazilianDate(invoiceDate);
-                const cutoffDate = new Date(2025, 8, 1); // 1º setembro 2025 (mês 8 = setembro)
-                
-                if (!emissionDate || emissionDate < cutoffDate) {
-                  console.log(`⚠️ Pulando NF ${invoiceNumber} - Data de emissão ${invoiceDate} anterior a 01/09/2025`);
-                  continue; // Pular notas anteriores à data de corte
-                }
-              } else {
-                console.log(`⚠️ Pulando NF ${invoiceNumber} - Sem data de emissão`);
-                continue; // Pular notas sem data de emissão
-              }
               // Buscar valor total nos diferentes campos possíveis
               const totalValue = parseFloat(
                 invoice.total?.ICMSTot?.vNF || 
@@ -2092,18 +2088,23 @@ export class OmieService {
                 products
               };
               
-              // Usar upsert para criar ou atualizar automaticamente
-              const existingBefore = await this.storage.getBillingByOmieId(omieInvoiceId);
-              await this.storage.upsertBilling(billingData);
+              // Usar validação centralizada para salvar
+              const result = await this.storage.saveBillingIfValid(billingData);
               
-              if (existingBefore) {
-                updated++;
+              if (result.success) {
+                if (result.action === 'created') {
+                  imported++;
+                } else if (result.action === 'updated') {
+                  updated++;
+                }
+                totalProcessed++;
+                recordsProcessedThisSync++;
               } else {
-                imported++;
+                // Registro rejeitado pela validação
+                console.log(`⚠️ REJEITADO - NF ${invoiceNumber}: ${result.reason}`);
+                skipped++;
+                recordsProcessedThisSync++; // Contar como processado para limite
               }
-              
-              totalProcessed++;
-              recordsProcessedThisSync++;
               
               // Parar se já processamos o suficiente nesta sincronização
               if (recordsProcessedThisSync >= maxRecordsPerSync) {
@@ -2163,6 +2164,7 @@ export class OmieService {
       console.log(`📊 Total processado: ${totalProcessed}`);
       console.log(`📥 Importados: ${imported}`);
       console.log(`🔄 Atualizados: ${updated}`);
+      console.log(`⚠️ Rejeitados: ${skipped}`);
       console.log(`❌ Erros: ${errors.length}`);
       
       const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
@@ -2171,9 +2173,10 @@ export class OmieService {
         totalProcessed,
         imported,
         updated,
+        skipped,
         errors,
         isComplete,
-        message: `Sincronização concluída. ${recordsProcessedThisSync} registros processados nesta execução.`
+        message: `Sincronização concluída. Total: ${totalProcessed}, Importados: ${imported}, Atualizados: ${updated}, Rejeitados: ${skipped}. ${recordsProcessedThisSync} registros processados nesta execução.`
       };
       
     } catch (error) {

@@ -16,6 +16,8 @@ import {
   insertSalesGoalSchema,
 } from "@shared/schema";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
+import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 
@@ -2680,7 +2682,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cardId = req.params.id;
       
       // Buscar o card com dados relacionados
-      const card = await storage.getSalesCardWithRelations(cardId);
+      const card = await storage.getSalesCard(cardId);
       
       if (!card) {
         return res.status(404).json({ message: 'Card não encontrado' });
@@ -2730,17 +2732,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Enviar para Omie
-      const omieResponse = await createOmieOrder(saleData);
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Omie integration not configured' });
+      }
+      
+      // Create simplified order data for Omie - using createSalesOrder method
+      const products = [
+        {
+          id: 'crm-sale',
+          name: `Venda via CRM - Card ${card.id}`,
+          price: parseFloat(card.saleValue),
+          quantity: 1
+        }
+      ];
+      
+      const omieResponse = await omieService.createSalesOrder(card, card.customer, products);
       
       // Atualizar card com ID do Omie
       await storage.updateSalesCard(cardId, {
-        omieOrderId: omieResponse.orderNumber || `HS-${Date.now()}`,
+        omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}`,
         notes: (card.notes || '') + `\n\nEnviado para Omie: ${new Date().toLocaleString('pt-BR')}`
       });
       
       res.json({ 
         message: 'Pedido enviado para Omie com sucesso!',
-        omieOrderId: omieResponse.orderNumber 
+        omieOrderId: omieResponse.codigo_pedido 
       });
       
     } catch (error) {
@@ -3560,7 +3577,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             // Verificar se produto já existe
-            const existingProducts = await storage.getAllProducts();
+            const existingProducts = await storage.getProducts();
             const existingProduct = existingProducts.find(p => p.omieProductId === product.codigo_produto);
             
             const productData = {

@@ -150,6 +150,12 @@ export interface IStorage {
     pageSize?: number;
   }): Promise<{ billings: Billing[]; total: number }>;
   upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing>;
+  saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
+    success: boolean;
+    billing?: Billing;
+    reason?: string;
+    action?: 'created' | 'updated' | 'skipped';
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1810,6 +1816,98 @@ export class DatabaseStorage implements IStorage {
     } else {
       // Criar novo
       return this.createBilling(billing as InsertBilling);
+    }
+  }
+
+  async saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
+    success: boolean;
+    billing?: Billing;
+    reason?: string;
+    action?: 'created' | 'updated' | 'skipped';
+  }> {
+    try {
+      console.log(`🔍 Validando billing para omieInvoiceId: ${billing.omieInvoiceId}`);
+      
+      // Validação 1: Status da nota fiscal deve ser 100 (autorizada) ou 150 (autorizada fora do prazo)
+      const invoiceStatus = billing.invoiceStatus?.toString().trim();
+      if (!invoiceStatus || (invoiceStatus !== '100' && invoiceStatus !== '150')) {
+        const reason = `Status inválido: ${invoiceStatus || 'NULL'} (deve ser 100 ou 150)`;
+        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
+      // Validação 2: Data da nota fiscal deve ser >= 01/09/2025
+      if (!billing.invoiceDate) {
+        const reason = 'Data da nota fiscal não informada';
+        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
+      const invoiceDate = new Date(billing.invoiceDate);
+      const cutoffDate = new Date(2025, 8, 1); // 1º setembro 2025 (mês 8 = setembro)
+      
+      if (isNaN(invoiceDate.getTime()) || invoiceDate < cutoffDate) {
+        const reason = `Data inválida ou anterior a 01/09/2025: ${invoiceDate.toISOString().split('T')[0]}`;
+        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
+      // Validação 3: Verificar se tem número de nota fiscal
+      if (!billing.invoiceNumber || billing.invoiceNumber.trim() === '') {
+        const reason = 'Número da nota fiscal não informado';
+        console.log(`⚠️ REJEITADO - ${billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
+      // Se passou em todas as validações, salvar no banco
+      console.log(`✅ VÁLIDO - ${billing.invoiceNumber}: Status ${invoiceStatus}, Data ${invoiceDate.toISOString().split('T')[0]}`);
+      
+      // Verificar se já existe para determinar se é criação ou atualização
+      const existing = await this.getBillingByOmieId(billing.omieInvoiceId);
+      
+      let savedBilling: Billing;
+      let action: 'created' | 'updated';
+      
+      if (existing) {
+        savedBilling = await this.updateBilling(existing.id, billing);
+        action = 'updated';
+        console.log(`📝 ATUALIZADO - ${billing.invoiceNumber}: Billing ID ${existing.id}`);
+      } else {
+        savedBilling = await this.createBilling(billing as InsertBilling);
+        action = 'created';
+        console.log(`📝 CRIADO - ${billing.invoiceNumber}: Novo billing ID ${savedBilling.id}`);
+      }
+      
+      return {
+        success: true,
+        billing: savedBilling,
+        action
+      };
+      
+    } catch (error) {
+      const reason = `Erro interno: ${error instanceof Error ? error.message : 'Erro desconhecido'}`;
+      console.error(`❌ ERRO ao processar ${billing.invoiceNumber || billing.omieInvoiceId}:`, error);
+      return {
+        success: false,
+        reason,
+        action: 'skipped'
+      };
     }
   }
 
