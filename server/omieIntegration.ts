@@ -101,11 +101,19 @@ export class OmieService {
       param: [params]
     };
 
+    // Create safe payload for logging (redacting sensitive credentials)
+    const safePayload = {
+      call,
+      app_key: this.config.appKey ? '[REDACTED]' : 'NOT_SET',
+      app_secret: this.config.appSecret ? '[REDACTED]' : 'NOT_SET',
+      param: params,
+      paramsSize: JSON.stringify(params).length
+    };
+
     console.log(`Making request to ${endpoint} with call ${call}`);
     console.log('Request URL:', `${this.baseUrl}${endpoint}`);
-    console.log('Request payload:', JSON.stringify(payload, null, 2));
-    console.log('App Key exists:', !!this.config.appKey);
-    console.log('App Secret exists:', !!this.config.appSecret);
+    console.log('Safe request payload:', JSON.stringify(safePayload, null, 2));
+    console.log('Credentials configured:', !!this.config.appKey && !!this.config.appSecret);
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'POST',
@@ -440,7 +448,7 @@ export class OmieService {
         }]
       };
 
-      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify(payload, null, 2));
+      console.log(`📤 Enviando payload ListarPedidos (parâmetros seguros):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
@@ -468,7 +476,7 @@ export class OmieService {
         }]
       };
 
-      console.log(`📤 Enviando payload ListarNF:`, JSON.stringify(payload, null, 2));
+      console.log(`📤 Enviando payload ListarNF (parâmetros seguros):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/nfconsultar/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarNF recebida: ${response.nfCadastro?.length || 0} notas encontradas`);
@@ -1850,9 +1858,11 @@ export class OmieService {
     imported: number;
     updated: number;
     errors: any[];
+    isComplete: boolean;
+    message: string;
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/01/2025...');
+      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/09/2025 (apenas NF-e autorizadas)...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -1874,8 +1884,8 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '', // SEM FILTRO - busca TODAS as notas de TODOS os anos
-            filtrar_por_data_ate: '', // SEM FILTRO - busca TODAS as notas de TODOS os anos
+            filtrar_por_data_de: '01/09/2025', // FILTRAR desde 1º de setembro
+            filtrar_por_data_ate: '', // Até hoje (sem limite superior)
             ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
@@ -1909,7 +1919,7 @@ export class OmieService {
                 
                 console.log('\n📋 CAMPOS TITULOS (financeiro):');
                 if (invoice.titulos?.length > 0) {
-                  invoice.titulos.forEach((titulo, idx) => {
+                  invoice.titulos.forEach((titulo: any, idx: number) => {
                     console.log(`titulo[${idx}].dDtEmissao:`, titulo.dDtEmissao);
                     console.log(`titulo[${idx}].dReg:`, titulo.dReg);
                     console.log(`titulo[${idx}].dDtVencimento:`, titulo.dDtVencimento);
@@ -1925,17 +1935,33 @@ export class OmieService {
                 console.log('='.repeat(60));
               }
               
+              // FILTRO DE STATUS: Aceitar apenas notas autorizadas (não canceladas/denegadas)
+              const status = invoice.ide?.cStat || '';
+              const statusMsg = invoice.ide?.xMotivo || '';
+              
+              // Status válidos para NF-e autorizada: 100 (autorizada), pular canceladas/denegadas
+              if (status && (status === '101' || status === '135' || status === '151' || status === '155')) {
+                console.log(`⚠️ Pulando NF ${invoiceNumber} - Status: ${status} (${statusMsg})`);
+                continue; // Pular notas canceladas, denegadas, inutilizadas
+              }
+              
               // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
               let invoiceDate = '';
               // Usar PRIMEIRO a data de emissão da nota fiscal (dEmi)
               invoiceDate = invoice.ide?.dEmi || invoice.ide?.dSaiEnt || '';
-              // Fallback para datas dos títulos apenas se não houver dEmi
-              if (!invoiceDate && invoice.titulos && invoice.titulos.length > 0) {
-                invoiceDate = invoice.titulos[0].dDtEmissao || invoice.titulos[0].dReg || '';
-              }
-              // Fallback final para outros campos
-              if (!invoiceDate) {
-                invoiceDate = invoice.info?.dInc || '';
+              
+              // VALIDAÇÃO DE DATA: só processar se tiver data de emissão >= 01/09/2025
+              if (invoiceDate) {
+                const emissionDate = this.parseBrazilianDate(invoiceDate);
+                const cutoffDate = new Date(2025, 8, 1); // 1º setembro 2025 (mês 8 = setembro)
+                
+                if (!emissionDate || emissionDate < cutoffDate) {
+                  console.log(`⚠️ Pulando NF ${invoiceNumber} - Data de emissão ${invoiceDate} anterior a 01/09/2025`);
+                  continue; // Pular notas anteriores à data de corte
+                }
+              } else {
+                console.log(`⚠️ Pulando NF ${invoiceNumber} - Sem data de emissão`);
+                continue; // Pular notas sem data de emissão
               }
               // Buscar valor total nos diferentes campos possíveis
               const totalValue = parseFloat(
@@ -2049,9 +2075,6 @@ export class OmieService {
                 }
               }
               
-              // Verificar se já existe
-              const existing = await this.storage.getBillingByOmieId(omieInvoiceId);
-              
               const billingData = {
                 omieInvoiceId,
                 invoiceNumber,
@@ -2069,14 +2092,13 @@ export class OmieService {
                 products
               };
               
-              if (existing) {
-                await this.storage.updateBilling(existing.id, {
-                  ...billingData,
-                  updatedAt: new Date()
-                });
+              // Usar upsert para criar ou atualizar automaticamente
+              const existingBefore = await this.storage.getBillingByOmieId(omieInvoiceId);
+              await this.storage.upsertBilling(billingData);
+              
+              if (existingBefore) {
                 updated++;
               } else {
-                await this.storage.createBilling(billingData);
                 imported++;
               }
               
@@ -2434,91 +2456,6 @@ export class OmieService {
     };
   }
 
-  // ===== INTEGRAÇÃO DE PEDIDOS COM INFORMAÇÕES DE ENTREGA =====
-
-  // Criar pedido de venda no Omie com informações de entrega
-  async createSalesOrder(salesCard: any, customer: any, products: any[]): Promise<any> {
-    try {
-      // Mapear status de entrega para observações do Omie
-      const deliveryStatusMap = {
-        'pending': 'ENTREGA: Aguardando entrega',
-        'in_transit': 'ENTREGA: Em trânsito',
-        'delivered': 'ENTREGA: Entregue com sucesso',
-        'failed': 'ENTREGA: Falha na entrega',
-        'returned': 'ENTREGA: Produto devolvido'
-      };
-
-      const deliveryInfo = salesCard.deliveryStatus 
-        ? deliveryStatusMap[salesCard.deliveryStatus as keyof typeof deliveryStatusMap] || ''
-        : '';
-
-      const deliveryNotes = salesCard.deliveryNotes 
-        ? `\nOBS ENTREGA: ${salesCard.deliveryNotes}` 
-        : '';
-
-      const trackingInfo = salesCard.trackingCode 
-        ? `\nCÓDIGO RASTREAMENTO: ${salesCard.trackingCode}` 
-        : '';
-
-      const deliveryDate = salesCard.deliveryCompletedDate 
-        ? `\nDATA ENTREGA: ${new Date(salesCard.deliveryCompletedDate).toLocaleString('pt-BR')}` 
-        : '';
-
-      const observacoes = `Pedido CRM: ${salesCard.id}\n${deliveryInfo}${deliveryNotes}${trackingInfo}${deliveryDate}`.trim();
-
-      // Determinar etapa baseada no status
-      let etapa = '10'; // Pedido
-      if (salesCard.deliveryStatus === 'delivered') {
-        etapa = '60'; // Entregue
-      } else if (salesCard.deliveryStatus === 'failed') {
-        etapa = '50'; // Faturado mas com problema
-      } else if (salesCard.deliveryStatus === 'in_transit') {
-        etapa = '50'; // Faturado, em trânsito
-      } else if (salesCard.status === 'completed') {
-        etapa = '50'; // Faturado
-      }
-
-      const omieCustomerId = customer.id.includes('omie-client-') 
-        ? parseInt(customer.id.replace('omie-client-', ''))
-        : customer.omieId || null;
-
-      if (!omieCustomerId) {
-        throw new Error('ID do cliente no Omie não encontrado');
-      }
-
-      const salesOrder = {
-        codigo_cliente_omie: omieCustomerId,
-        codigo_pedido_integracao: salesCard.id,
-        data_previsao: salesCard.deliveryScheduledDate || salesCard.scheduledDate,
-        etapa,
-        codigo_cenario_impostos: '1000000001',
-        observacoes,
-        det: products.map((product: any, index: number) => ({
-          ide: {
-            codigo_item_integracao: `${salesCard.id}-item-${index + 1}`,
-            simples_nacional: 'S'
-          },
-          produto: {
-            codigo_produto_integracao: product.id,
-            descricao: product.name,
-            unidade: 'UN',
-            quantidade: product.quantity || 1,
-            valor_unitario: parseFloat(product.price) || 0,
-            valor_total: (parseFloat(product.price) || 0) * (product.quantity || 1)
-          }
-        }))
-      };
-
-      const response = await this.makeRequest('/produtos/pedidovenda/', 'IncluirPedido', {
-        pedido_venda_produto: salesOrder
-      });
-
-      return response.pedido_venda_produto;
-    } catch (error) {
-      console.error('Erro ao criar pedido no Omie:', error);
-      throw error;
-    }
-  }
 
   // Atualizar pedido existente no Omie com informações de entrega
   async updateOrderDeliveryStatus(omieOrderId: string, salesCard: any): Promise<any> {
@@ -2616,7 +2553,7 @@ export async function importActiveProducts(): Promise<{
     const result = {
       totalProcessed: 0,
       imported: 0,
-      errors: []
+      errors: [] as string[]
     };
 
     let currentPage = 1;
@@ -2726,7 +2663,7 @@ export async function importActiveProducts(): Promise<{
           // Aqui você salvaria no banco - será implementado na rota
           
         } catch (productError: any) {
-          result.errors.push(`Erro ao processar produto ${product.codigo}: ${productError.message}`);
+          result.errors.push(`Erro ao processar produto ${product.codigo || 'N/A'}: ${productError?.message || 'Erro desconhecido'}`);
         }
       }
 
