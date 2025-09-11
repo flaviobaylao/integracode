@@ -1061,8 +1061,8 @@ export class OmieService {
       if (pedidoId && !invoiceStage) {
         try {
           const stageData = await this.fetchPedidoStage(pedidoId);
-          if (stageData) {
-            invoiceStage = stageData;
+          if (stageData && stageData.stageName) {
+            invoiceStage = stageData.stageName;
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
@@ -1115,7 +1115,7 @@ export class OmieService {
         sellerId,
         billingType: 'venda' as const,
         invoiceStatus: 'emitida',
-        invoiceStage: invoiceStage?.substring(0, 100), // Truncar para 100 caracteres
+        invoiceStage: typeof invoiceStage === 'string' ? invoiceStage.substring(0, 100) : '', // Truncar para 100 caracteres com verificação de tipo
         
         // Produtos da nota
         products: invoice.det?.map((item: any) => ({
@@ -1935,14 +1935,14 @@ export class OmieService {
                 console.log('='.repeat(60));
               }
               
-              // FILTRO DE STATUS: Aceitar apenas notas autorizadas (não canceladas/denegadas)
-              const status = invoice.ide?.cStat || '';
+              // FILTRO DE STATUS: Aceitar APENAS notas autorizadas (whitelist)
+              const status = String(invoice.ide?.cStat ?? '').trim();
               const statusMsg = invoice.ide?.xMotivo || '';
               
-              // Status válidos para NF-e autorizada: 100 (autorizada), pular canceladas/denegadas
-              if (status && (status === '101' || status === '135' || status === '151' || status === '155')) {
-                console.log(`⚠️ Pulando NF ${invoiceNumber} - Status: ${status} (${statusMsg})`);
-                continue; // Pular notas canceladas, denegadas, inutilizadas
+              // Status válidos para NF-e autorizada: APENAS 100 (autorizada) e 150 (autorizada fora do prazo)
+              if (status !== '100' && status !== '150') {
+                console.log(`⚠️ Pulando NF ${invoiceNumber} - Status não autorizado: ${status} (${statusMsg})`);
+                continue; // Aceitar apenas status 100 e 150
               }
               
               // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
