@@ -150,6 +150,25 @@ export class OmieService {
     return data;
   }
 
+  // Método auxiliar para mapear status da SEFAZ
+  private mapSefazStatus(rawStatus: string): string {
+    // Normalizar o status para comparação
+    const status = rawStatus?.toLowerCase()?.trim() || '';
+    
+    // Mapeamento de status textuais para códigos SEFAZ
+    const statusMap: { [key: string]: string } = {
+      'autorizada': '100',
+      'autorizado': '100', 
+      'emitida': '100',
+      'autorizada fora do prazo': '150',
+      'autorizada fora prazo': '150',
+      'autorizada_fora_prazo': '150'
+    };
+    
+    // Retornar código SEFAZ ou o valor original se não encontrar mapeamento
+    return statusMap[status] || rawStatus || '';
+  }
+
   // Buscar cliente por CNPJ/CPF
   async getClientByCnpjCpf(cnpjCpf: string): Promise<OmieClient | null> {
     try {
@@ -925,7 +944,7 @@ export class OmieService {
         omieCustomerCode: clientCode,
         sellerId,
         billingType,
-        invoiceStatus: order.cabecalho?.situacao_pedido || '',
+        invoiceStatus: this.mapSefazStatus(order.cabecalho?.situacao_pedido || ''),
         invoiceStage,
         products
       };
@@ -1133,7 +1152,7 @@ export class OmieService {
         sellerName,
         sellerId,
         billingType: 'venda' as const,
-        invoiceStatus: 'emitida',
+        invoiceStatus: this.mapSefazStatus('emitida'),
         invoiceStage: typeof invoiceStage === 'string' ? invoiceStage.substring(0, 100) : '', // Truncar para 100 caracteres com verificação de tipo
         
         // Produtos da nota
@@ -2084,7 +2103,7 @@ export class OmieService {
                 dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
                 omieCustomerCode: clientCode?.toString() || '',
                 customerDocument: customerDocument || '',
-                invoiceStatus: invoice.ide?.cStat || '',
+                invoiceStatus: this.mapSefazStatus(invoice.ide?.cStat || ''),
                 products
               };
               

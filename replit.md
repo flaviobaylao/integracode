@@ -53,6 +53,7 @@ Preferred communication style: Simple, everyday language.
 - **Delivery Integration**: Real-time delivery status tracking integrated with App Entregas Honest
 - **Delivery Tracking**: Complete delivery history, driver management, and status updates
 - **Webhook Support**: External API endpoints for delivery status updates from delivery app
+- **Billing Synchronization**: Accurate invoice synchronization with status mapping and validation filters (422 authorized invoices)
 
 # External Dependencies
 
