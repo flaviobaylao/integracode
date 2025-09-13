@@ -430,7 +430,7 @@ export default function Billings() {
                   <SelectItem value="Faturado">Faturado</SelectItem>
                   <SelectItem value="Aguardando Rota">Aguardando Rota</SelectItem>
                   <SelectItem value="Em Rota">Em Rota</SelectItem>
-                  <SelectItem value="ENTREGUE">ENTREGUE</SelectItem>
+                  <SelectItem value="AGUARDANDO ENTREGA">AGUARDANDO ENTREGA</SelectItem>
                 </SelectContent>
               </Select>
             </div>
