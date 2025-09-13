@@ -927,7 +927,7 @@ export class OmieService {
       
       console.log(`✅ Pedido validado: ID=${omieOrderId}, Número=${orderNumber}, Cliente=${customerFantasyName}`);
       
-      return {
+      const billingData = {
         omieOrderId,
         orderNumber,
         omieInvoiceId: omieInvoiceId || null,
@@ -944,10 +944,14 @@ export class OmieService {
         omieCustomerCode: clientCode,
         sellerId,
         billingType,
-        invoiceStatus: this.mapSefazStatus(order.cabecalho?.situacao_pedido || ''),
+        invoiceStatus: this.mapSefazStatus('emitida'), // Pedidos faturados sempre têm status "emitida"
         invoiceStage,
         products
       };
+      
+      console.log(`🔧 DEBUG BILLING STATUS: invoiceStatus="${billingData.invoiceStatus}", mapeado de "emitida"`);
+      
+      return billingData;
       
     } catch (error) {
       console.error(`❌ Erro ao transformar pedido:`, error);

@@ -1827,9 +1827,12 @@ export class DatabaseStorage implements IStorage {
   }> {
     try {
       console.log(`🔍 Validando billing para omieInvoiceId: ${billing.omieInvoiceId}`);
+      console.log(`🔧 DEBUG VALIDATION INPUT: invoiceStatus=${JSON.stringify(billing.invoiceStatus)}, type=${typeof billing.invoiceStatus}`);
       
       // Validação 1: Status da nota fiscal deve ser 100 (autorizada) ou 150 (autorizada fora do prazo)
       const invoiceStatus = billing.invoiceStatus?.toString().trim();
+      console.log(`🔧 DEBUG VALIDATION PROCESSED: invoiceStatus="${invoiceStatus}"`);
+      
       if (!invoiceStatus || (invoiceStatus !== '100' && invoiceStatus !== '150')) {
         const reason = `Status inválido: ${invoiceStatus || 'NULL'} (deve ser 100 ou 150)`;
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
