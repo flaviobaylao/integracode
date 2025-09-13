@@ -389,7 +389,7 @@ export class OmieService {
       this.stageNamesCache.set('50', 'Faturado');
       this.stageNamesCache.set('60', 'Aguardando Rota');
       this.stageNamesCache.set('70', 'Em Rota');
-      this.stageNamesCache.set('80', 'ENTREGUE');
+      this.stageNamesCache.set('80', 'AGUARDANDO ENTREGA');
     }
   }
 
