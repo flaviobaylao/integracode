@@ -8,14 +8,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/hooks/use-toast';
 import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp } from 'lucide-react';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -279,63 +271,18 @@ export default function Billings() {
         </div>
         
         <div className="flex gap-2">
-          <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-sync">
-                <RotateCw className="w-4 h-4 mr-2" />
-                Sincronizar
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Sincronizar Faturamentos</DialogTitle>
-                <DialogDescription>
-                  Escolha o tipo de sincronização com o Omie ERP
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="py-4 space-y-4">
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium text-green-700 mb-2">✅ Recomendado: Sincronizar Todos os Pedidos</h4>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Sincroniza TODOS os pedidos (faturados e não faturados) incluindo números de pedido e notas fiscais.
-                  </p>
-                  <Button 
-                    onClick={handleSyncOrders} 
-                    disabled={syncOrdersMutation.isPending || syncMutation.isPending}
-                    className="w-full bg-green-600 hover:bg-green-700"
-                    data-testid="button-sync-all-orders"
-                  >
-                    {syncOrdersMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
-                    Sincronizar Todos os Pedidos
-                  </Button>
-                </div>
-
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium text-amber-700 mb-2">⚠️ Legado: Apenas Notas Fiscais</h4>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Sincroniza apenas notas fiscais já emitidas (não inclui pedidos pendentes).
-                  </p>
-                  <Button 
-                    onClick={handleSync} 
-                    disabled={syncMutation.isPending || syncOrdersMutation.isPending}
-                    variant="outline"
-                    className="w-full"
-                    data-testid="button-execute-sync"
-                  >
-                    {syncMutation.isPending && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
-                    Sincronizar Apenas NFs
-                  </Button>
-                </div>
-              </div>
-              
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setShowSyncDialog(false)}>
-                  Cancelar
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button 
+            onClick={handleSyncOrders} 
+            disabled={syncOrdersMutation.isPending}
+            data-testid="button-sync"
+          >
+            {syncOrdersMutation.isPending ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RotateCw className="w-4 h-4 mr-2" />
+            )}
+            Sincronizar
+          </Button>
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />
