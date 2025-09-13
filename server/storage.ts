@@ -1746,10 +1746,24 @@ export class DatabaseStorage implements IStorage {
     }
     
     if (invoiceNumber) {
-      conditions.push(eq(billings.invoiceNumber, invoiceNumber));
+      // Busca parcial normalizada: apenas dígitos, tanto no campo quanto no valor buscado
+      const digitsOnly = invoiceNumber.replace(/\D/g, '');
+      if (digitsOnly) {
+        conditions.push(
+          or(
+            // Buscar em invoice_number normalizado
+            sql`regexp_replace(${billings.invoiceNumber}, '[^0-9]', '', 'g') ILIKE ${'%' + digitsOnly + '%'}`,
+            // Buscar também em order_number normalizado
+            sql`regexp_replace(${billings.orderNumber}, '[^0-9]', '', 'g') ILIKE ${'%' + digitsOnly + '%'}`
+          )
+        );
+      }
     }
     
     if (cfop) {
+      // Normalizar input para robustez (uppercase, trim)
+      const normalizedInput = cfop.trim().toUpperCase();
+      
       // Mapear tipos para múltiplos CFOPs (incluindo formatos com e sem pontos)
       const cfopGroups: Record<string, string[]> = {
         'VENDA': ['5.102', '5.101', '6.102', '6.101', '5102', '5101', '6102', '6101'],
@@ -1760,14 +1774,34 @@ export class DatabaseStorage implements IStorage {
         'DEVOLUÇÃO': ['2.556', '1.556', '1.201', '2556', '1556', '1201']
       };
 
-      const cfopCodes = cfopGroups[cfop];
+      const cfopCodes = cfopGroups[normalizedInput];
       if (cfopCodes) {
         // Filtrar por múltiplos CFOPs (OR condition)
         const cfopConditions = cfopCodes.map(code => eq(billings.cfop, code));
         conditions.push(or(...cfopConditions));
       } else {
-        // Filtro direto por CFOP específico
-        conditions.push(eq(billings.cfop, cfop));
+        // Filtro direto por CFOP específico - normalizar formato (com/sem pontos)
+        const normalizedCfop = normalizedInput.replace(/\./g, ''); // Remove pontos
+        
+        if (normalizedCfop.length === 4 && /^\d{4}$/.test(normalizedCfop)) {
+          // CFOP válido de 4 dígitos - testar com e sem ponto
+          const withDot = normalizedCfop.replace(/(\d)(\d{3})/, '$1.$2');
+          conditions.push(
+            or(
+              eq(billings.cfop, normalizedInput), // Formato original
+              eq(billings.cfop, normalizedCfop), // Sem pontos
+              eq(billings.cfop, withDot) // Com ponto
+            )
+          );
+        } else {
+          // Busca flexível para formatos inesperados
+          conditions.push(
+            or(
+              eq(billings.cfop, normalizedInput),
+              sql`${billings.cfop} ILIKE ${'%' + normalizedCfop + '%'}`
+            )
+          );
+        }
       }
     }
     
