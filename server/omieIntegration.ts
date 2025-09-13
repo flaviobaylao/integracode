@@ -151,22 +151,57 @@ export class OmieService {
   }
 
   // Método auxiliar para mapear status da SEFAZ
-  private mapSefazStatus(rawStatus: string): string {
+  private mapSefazStatus(rawStatus: string | number): string {
+    // Se já é um código numérico SEFAZ, retornar como string
+    if (typeof rawStatus === 'number' || /^\d+$/.test(rawStatus?.toString() || '')) {
+      return rawStatus.toString();
+    }
+    
     // Normalizar o status para comparação
-    const status = rawStatus?.toLowerCase()?.trim() || '';
+    const status = rawStatus?.toString()?.toLowerCase()?.trim() || '';
     
     // Mapeamento de status textuais para códigos SEFAZ
     const statusMap: { [key: string]: string } = {
       'autorizada': '100',
       'autorizado': '100', 
       'emitida': '100',
+      'autorizado o uso da nf-e': '100',
+      'uso autorizado': '100',
+      'autorizado (entrada)': '100',
+      'entrada autorizada': '100',
       'autorizada fora do prazo': '150',
       'autorizada fora prazo': '150',
-      'autorizada_fora_prazo': '150'
+      'autorizada_fora_prazo': '150',
+      'autorizado o uso da nf-e fora de prazo': '150'
     };
     
     // Retornar código SEFAZ ou o valor original se não encontrar mapeamento
-    return statusMap[status] || rawStatus || '';
+    return statusMap[status] || rawStatus?.toString() || '';
+  }
+
+  // Método auxiliar para determinar o tipo de faturamento baseado no CFOP
+  private determineBillingType(cfop: string): 'venda' | 'troca' | 'amostra' | 'devolucao' {
+    // Normalizar CFOP (remover pontos)
+    const normalizedCfop = cfop?.replace(/\./g, '') || '';
+    
+    // CFOPs específicos de devolução (lista precisa)
+    const devolucaoCfops = ['1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    if (devolucaoCfops.includes(normalizedCfop)) {
+      return 'devolucao';
+    }
+    
+    // CFOPs de troca
+    if (['5949', '6949'].includes(normalizedCfop)) {
+      return 'troca';
+    }
+    
+    // CFOPs de amostra
+    if (['5911', '6911'].includes(normalizedCfop)) {
+      return 'amostra';
+    }
+    
+    // Padrão: venda
+    return 'venda';
   }
 
   // Buscar cliente por CNPJ/CPF
@@ -1155,8 +1190,13 @@ export class OmieService {
         paymentMethod,
         sellerName,
         sellerId,
-        billingType: 'venda' as const,
-        invoiceStatus: this.mapSefazStatus('emitida'),
+        billingType: this.determineBillingType(cfop),
+        invoiceStatus: this.mapSefazStatus(
+          invoice.infNFe?.cStat ||          // Status SEFAZ numérico (preferencial)
+          invoice.protNFe?.infProt?.cStat || // Status de protocolo
+          invoice.ide?.cStat ||             // Status na identificação
+          'emitida'                         // Fallback para emitida/100
+        ),
         invoiceStage: typeof invoiceStage === 'string' ? invoiceStage.substring(0, 100) : '', // Truncar para 100 caracteres com verificação de tipo
         
         // Produtos da nota

@@ -1652,6 +1652,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint de debug para buscar nota específica
+  app.get('/api/billings/debug-nota/:numero', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const { numero } = req.params;
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      console.log(`🔍 Buscando nota ${numero} na API do Omie...`);
+      
+      // Buscar nas notas fiscais
+      const response = await (omieService as any).makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: 'N',
+        filtrar_por_data_de: '01/09/2025',
+        filtrar_por_data_ate: '',
+        ordenar_por: 'DATA',
+        ordem_decrescente: 'S'
+      });
+      
+      console.log('📊 Total encontrado:', response.total_de_registros);
+      
+      // Procurar a nota específica
+      const notaEspecifica = response.nfCadastro?.find((nf: any) => 
+        nf.ide?.nNF === `000${numero}` || 
+        nf.ide?.nNF === numero ||
+        nf.ide?.nNF?.includes(numero)
+      );
+      
+      if (notaEspecifica) {
+        console.log('✅ NOTA ENCONTRADA:', notaEspecifica.ide?.nNF);
+        res.json({
+          encontrada: true,
+          nota: {
+            numero: notaEspecifica.ide?.nNF,
+            data: notaEspecifica.ide?.dhEmi,
+            cfop: notaEspecifica.det?.[0]?.prod?.CFOP,
+            statusSefaz: notaEspecifica.infNFe?.cStat,
+            statusDesc: notaEspecifica.infNFe?.xMotivo,
+            cliente: notaEspecifica.dest?.xNome,
+            valor: notaEspecifica.total?.ICMSTot?.vNF
+          },
+          dadosCompletos: notaEspecifica
+        });
+      } else {
+        console.log('❌ Nota não encontrada');
+        const primeiras5 = response.nfCadastro?.slice(0, 5).map((nf: any) => ({
+          numero: nf.ide?.nNF,
+          data: nf.ide?.dhEmi,
+          cfop: nf.det?.[0]?.prod?.CFOP
+        }));
+        
+        res.json({
+          encontrada: false,
+          total: response.total_de_registros,
+          primeiras5,
+          message: `Nota ${numero} não encontrada`
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar nota:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Endpoint de debug para testar sincronização de uma página
   app.post('/api/billings/debug-sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
