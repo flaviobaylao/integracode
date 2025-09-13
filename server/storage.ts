@@ -1843,7 +1843,7 @@ export class DatabaseStorage implements IStorage {
         };
       }
       
-      // Validação 2: Data da nota fiscal deve ser >= 01/09/2025
+      // Validação 2: Data da nota fiscal deve ser do mês corrente (setembro 2025)
       if (!billing.invoiceDate) {
         const reason = 'Data da nota fiscal não informada';
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
@@ -1855,10 +1855,11 @@ export class DatabaseStorage implements IStorage {
       }
       
       const invoiceDate = new Date(billing.invoiceDate);
-      const cutoffDate = new Date(2025, 8, 1); // 1º setembro 2025 (mês 8 = setembro)
+      const startOfMonth = new Date(2025, 8, 1); // 1º setembro 2025
+      const endOfMonth = new Date(2025, 8, 30); // 30 setembro 2025
       
-      if (isNaN(invoiceDate.getTime()) || invoiceDate < cutoffDate) {
-        const reason = `Data inválida ou anterior a 01/09/2025: ${invoiceDate.toISOString().split('T')[0]}`;
+      if (isNaN(invoiceDate.getTime()) || invoiceDate < startOfMonth || invoiceDate > endOfMonth) {
+        const reason = `Data fora do mês corrente (setembro/2025): ${invoiceDate.toISOString().split('T')[0]}`;
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
