@@ -1750,14 +1750,14 @@ export class DatabaseStorage implements IStorage {
     }
     
     if (cfop) {
-      // Mapear tipos para múltiplos CFOPs
+      // Mapear tipos para múltiplos CFOPs (incluindo formatos com e sem pontos)
       const cfopGroups: Record<string, string[]> = {
-        'VENDA': ['5.102', '5.101', '6.102', '6.101'],
-        'TROCA': ['5.949', '6.949'],
-        'AMOSTRA': ['5.911', '6.911'],
-        'BONIFICAÇÃO': ['5.910', '6.910', '5.915'],
-        'ENTRADA': ['1.102', '1.202'],
-        'DEVOLUÇÃO': ['2.556', '1.556', '1.201']
+        'VENDA': ['5.102', '5.101', '6.102', '6.101', '5102', '5101', '6102', '6101'],
+        'TROCA': ['5.949', '6.949', '5949', '6949'],
+        'AMOSTRA': ['5.911', '6.911', '5911', '6911'],
+        'BONIFICAÇÃO': ['5.910', '6.910', '5.915', '5910', '6910', '5915'],
+        'ENTRADA': ['1.102', '1.202', '1102', '1202'],
+        'DEVOLUÇÃO': ['2.556', '1.556', '1.201', '2556', '1556', '1201']
       };
 
       const cfopCodes = cfopGroups[cfop];

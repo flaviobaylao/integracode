@@ -62,24 +62,24 @@ interface BillingFilters {
 // Função para converter código CFOP para nome amigável
 function getCfopDisplayName(cfop: string): string {
   const cfopMap: Record<string, string> = {
-    // CFOPs reais encontrados no sistema
-    '5.102': 'VENDA',
-    '5.101': 'VENDA',
-    '6.102': 'VENDA', 
-    '6.101': 'VENDA',
-    '5.949': 'TROCA',
-    '6.949': 'TROCA',
-    '5.911': 'AMOSTRA',
-    '6.911': 'AMOSTRA',
-    '5.910': 'BONIFICAÇÃO',
-    '6.910': 'BONIFICAÇÃO',
-    '5.915': 'BONIFICAÇÃO',
+    // CFOPs reais encontrados no sistema (formatos com e sem pontos)
+    '5.102': 'VENDA', '5102': 'VENDA',
+    '5.101': 'VENDA', '5101': 'VENDA',
+    '6.102': 'VENDA', '6102': 'VENDA',
+    '6.101': 'VENDA', '6101': 'VENDA',
+    '5.949': 'TROCA', '5949': 'TROCA',
+    '6.949': 'TROCA', '6949': 'TROCA',
+    '5.911': 'AMOSTRA', '5911': 'AMOSTRA',
+    '6.911': 'AMOSTRA', '6911': 'AMOSTRA',
+    '5.910': 'BONIFICAÇÃO', '5910': 'BONIFICAÇÃO',
+    '6.910': 'BONIFICAÇÃO', '6910': 'BONIFICAÇÃO',
+    '5.915': 'BONIFICAÇÃO', '5915': 'BONIFICAÇÃO',
     // Outros códigos comuns
-    '1.102': 'ENTRADA',
-    '1.202': 'ENTRADA',
-    '2.556': 'DEVOLUÇÃO',
-    '1.556': 'DEVOLUÇÃO',
-    '1.201': 'DEVOLUÇÃO'
+    '1.102': 'ENTRADA', '1102': 'ENTRADA',
+    '1.202': 'ENTRADA', '1202': 'ENTRADA',
+    '2.556': 'DEVOLUÇÃO', '2556': 'DEVOLUÇÃO',
+    '1.556': 'DEVOLUÇÃO', '1556': 'DEVOLUÇÃO',
+    '1.201': 'DEVOLUÇÃO', '1201': 'DEVOLUÇÃO'
   };
   
   return cfopMap[cfop] || cfop;
