@@ -204,18 +204,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
-    const [user] = await db
-      .insert(users)
-      .values(userData)
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          ...userData,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
-    return user;
+    try {
+      // First attempt: try to insert the user
+      const [user] = await db
+        .insert(users)
+        .values(userData)
+        .onConflictDoUpdate({
+          target: users.email,
+          set: {
+            ...userData,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return user;
+    } catch (error: any) {
+      // Handle any remaining conflicts (e.g., if both id and email conflict in different ways)
+      console.error('Error in upsertUser:', error);
+      
+      // Try to find existing user by email and update it
+      const existingUser = await this.getUserByEmail(userData.email!);
+      if (existingUser) {
+        return await this.updateUser(existingUser.id, userData);
+      }
+      
+      // If no existing user found, try to find by id and update
+      if (userData.id) {
+        const existingUserById = await this.getUser(userData.id);
+        if (existingUserById) {
+          return await this.updateUser(userData.id, userData);
+        }
+      }
+      
+      // If all else fails, throw the original error
+      throw error;
+    }
   }
 
   // Customer operations
@@ -2010,8 +2033,8 @@ export class DatabaseStorage implements IStorage {
       const invoiceStatus = billing.invoiceStatus?.toString().trim();
       console.log(`🔧 DEBUG VALIDATION PROCESSED: invoiceStatus="${invoiceStatus}"`);
       
-      // Status códigos SEFAZ conhecidos: 100=autorizada, 150=autorizada fora prazo, 101=cancelada, 135=evento registrado, etc.
-      const validStatuses = ['100', '150', '101', '135', '155', '110', '301', '302', '303']; // Incluir códigos de cancelamento e outros
+      // Status códigos SEFAZ: 100=autorizada, 150=autorizada fora prazo, 101=cancelada, 135=evento cancelamento, 155=cancelada extemporânea
+      const validStatuses = ['100', '150', '101', '135', '155']; // Apenas códigos essenciais: autorizadas e canceladas
       const isValidStatus = invoiceStatus && validStatuses.includes(invoiceStatus);
       const isCanceled = invoiceStatus && ['101', '135', '155'].includes(invoiceStatus); // Status de cancelamento
       
@@ -2031,9 +2054,9 @@ export class DatabaseStorage implements IStorage {
         }
       }
       
-      // NOVA LÓGICA: Dar etapa "CANCELADO" para notas canceladas ou sem etapa
-      if (isCanceled || !billing.invoiceStage || billing.invoiceStage.trim() === '') {
-        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status: ${invoiceStatus})`);
+      // NOVA LÓGICA: Dar etapa "CANCELADO" APENAS para notas realmente canceladas
+      if (isCanceled) {
+        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status cancelado: ${invoiceStatus})`);
         billing.invoiceStage = 'CANCELADO';
       }
       
