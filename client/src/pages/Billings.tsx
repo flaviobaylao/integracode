@@ -272,11 +272,11 @@ export default function Billings() {
         
         <div className="flex gap-2">
           <Button 
-            onClick={handleSyncOrders} 
-            disabled={syncOrdersMutation.isPending}
+            onClick={handleSync} 
+            disabled={syncMutation.isPending}
             data-testid="button-sync"
           >
-            {syncOrdersMutation.isPending ? (
+            {syncMutation.isPending ? (
               <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
             ) : (
               <RotateCw className="w-4 h-4 mr-2" />
