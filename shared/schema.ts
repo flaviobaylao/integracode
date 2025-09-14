@@ -611,6 +611,8 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   // Validação customizada para CPF ou CNPJ obrigatório
   cpf: z.string().nullable().optional(),
   cnpj: z.string().nullable().optional(),
+  // Data de início do fornecimento como opcional
+  serviceStartDate: z.date().nullable().optional(),
 }).refine(
   (data) => data.cpf || data.cnpj,
   {

@@ -56,6 +56,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   // Verificar se usuário pode gerenciar travamento de coordenadas e atendimento virtual
   const canManageCoordinatesLock = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canManageVirtualService = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canManageServiceStartDate = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -86,6 +87,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       longitude: '',
       coordinatesLocked: false,
       virtualService: false,
+      serviceStartDate: undefined,
     },
   });
 
@@ -116,6 +118,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         longitude: (customer as any).longitude || '',
         coordinatesLocked: (customer as any).coordinatesLocked || false,
         virtualService: (customer as any).virtualService || false,
+        serviceStartDate: (customer as any).serviceStartDate || undefined,
       });
     } else {
       form.reset({
@@ -140,6 +143,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         longitude: '',
         coordinatesLocked: false,
         virtualService: false,
+        serviceStartDate: undefined,
       });
     }
   }, [customer, form]);
@@ -891,6 +895,37 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     )}
                   />
                 </div>
+
+                {/* Data de Início do Fornecimento - apenas para admin/coordinator/administrative */}
+                {canManageServiceStartDate && (
+                  <div className="mt-4">
+                    <FormField
+                      control={form.control}
+                      name="serviceStartDate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center space-x-1">
+                            <Calendar className="h-4 w-4" />
+                            <span>Data de Início do Fornecimento</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input 
+                              {...field} 
+                              type="date"
+                              value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
+                              onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : null)}
+                              data-testid="input-service-start-date"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Data a partir da qual as visitas serão iniciadas. Apenas administradores podem alterar este campo.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
 
                 {/* Atendimento Virtual - apenas para admin/coordinator/administrative */}
                 {canManageVirtualService && (
