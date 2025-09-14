@@ -425,12 +425,10 @@ export default function Billings() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
-                  <SelectItem value="Pedido de Venda">Pedido de Venda</SelectItem>
-                  <SelectItem value="faturar">faturar</SelectItem>
                   <SelectItem value="Faturado">Faturado</SelectItem>
                   <SelectItem value="Aguardando Rota">Aguardando Rota</SelectItem>
                   <SelectItem value="Em Rota">Em Rota</SelectItem>
-                  <SelectItem value="AGUARDANDO ENTREGA">AGUARDANDO ENTREGA</SelectItem>
+                  <SelectItem value="Entregue">Entregue</SelectItem>
                 </SelectContent>
               </Select>
             </div>
