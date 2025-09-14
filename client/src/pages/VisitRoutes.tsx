@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { optimizeRouteAdvanced, calculateTravelTime, type RouteLocation, type OptimizedRoute } from "@shared/routeOptimization";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -44,6 +46,7 @@ interface VisitResponse {
 
 export default function VisitRoutes() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [filters, setFilters] = useState({
     sellerId: 'all',
     startDate: '',
@@ -52,6 +55,9 @@ export default function VisitRoutes() {
     visitStatus: 'pending',
     page: 1
   });
+  
+  const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRoute | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
 
   const { data: visits, isLoading, refetch } = useQuery<VisitResponse>({
     queryKey: ['/api/visit-agenda', filters],
@@ -60,24 +66,105 @@ export default function VisitRoutes() {
       Object.entries(filters).forEach(([key, value]) => {
         if (value && value !== 'all') params.append(key, value.toString());
       });
-      return await apiRequest(`/api/visit-agenda?${params.toString()}`);
+      return await apiRequest('GET', `/api/visit-agenda?${params.toString()}`);
     }
   });
 
   const { data: sellers } = useQuery({
     queryKey: ['/api/users', { role: 'vendedor' }],
-    queryFn: async () => await apiRequest('/api/users?role=vendedor'),
+    queryFn: async () => await apiRequest('GET', '/api/users?role=vendedor'),
     enabled: user?.role !== 'vendedor'
   });
 
   const generateAgenda = async () => {
     try {
-      await apiRequest('/api/visit-agenda/generate', {
-        method: 'POST'
-      });
+      await apiRequest('POST', '/api/visit-agenda/generate');
       refetch();
+      toast({
+        title: "Agenda gerada com sucesso!",
+        description: "As visitas foram criadas automaticamente.",
+      });
     } catch (error) {
       console.error('Erro ao gerar agenda:', error);
+      toast({
+        title: "Erro ao gerar agenda",
+        description: "Ocorreu um erro ao tentar gerar a agenda de visitas.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const optimizeRoute = async () => {
+    if (!filters.startDate) {
+      toast({
+        title: "Data obrigatória",
+        description: "Selecione uma data específica para otimizar a rota.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Verificar se vendedor tem coordenadas de casa configuradas
+    if (user?.role === 'vendedor' && (!user.homeLatitude || !user.homeLongitude)) {
+      toast({
+        title: "Coordenadas não configuradas",
+        description: "Configure suas coordenadas de casa no perfil para otimizar rotas.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsOptimizing(true);
+    try {
+      const targetSellerId = user?.role === 'vendedor' ? user.id : filters.sellerId;
+      
+      console.log('🔄 Iniciando otimização de rota:', {
+        targetSellerId,
+        date: filters.startDate,
+        userRole: user?.role,
+        userCoordinates: { lat: user?.homeLatitude, lng: user?.homeLongitude }
+      });
+      
+      const response = await apiRequest('POST', '/api/visit-agenda/optimize-route', {
+        sellerId: targetSellerId === 'all' ? undefined : targetSellerId,
+        date: filters.startDate,
+      });
+      
+      console.log('✅ Resposta da API:', response);
+
+      setOptimizedRoute(response.optimizedRoute);
+      
+      // Verificar se existem visitas para mostrar métricas
+      if (response.optimizedRoute && response.optimizedRoute.locations.length > 0) {
+        toast({
+          title: "Rota otimizada!",
+          description: `${response.message}. Distância total: ${(response.optimizedRoute.totalDistance / 1000).toFixed(1)}km, tempo estimado: ${Math.round(response.optimizedRoute.estimatedTotalTime / 60)}h`,
+        });
+      } else {
+        toast({
+          title: "Rota consultada",
+          description: response.message || "Nenhuma visita encontrada para otimização nesta data.",
+        });
+      }
+    } catch (error: any) {
+      console.error('Erro ao otimizar rota:', error);
+      
+      // Tratar erro específico de coordenadas
+      if (error.message && error.message.includes("Coordenadas de localização inicial são obrigatórias")) {
+        toast({
+          title: "Coordenadas não configuradas",
+          description: "Configure suas coordenadas de casa no perfil para otimizar rotas.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Erro ao otimizar rota",
+          description: error.message || "Ocorreu um erro ao tentar otimizar a rota.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsOptimizing(false);
     }
   };
 
@@ -124,16 +211,32 @@ export default function VisitRoutes() {
             Gerencie e visualize a agenda de visitas {user?.role === 'vendedor' ? 'suas' : 'dos vendedores'}
           </p>
         </div>
-        {user?.role && ['admin', 'coordinator'].includes(user.role) && (
+        <div className="flex gap-2">
+          {user?.role && ['admin', 'coordinator'].includes(user.role) && (
+            <Button
+              onClick={generateAgenda}
+              className="bg-honest-blue hover:bg-blue-700"
+              data-testid="button-generate-agenda"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Gerar Agenda
+            </Button>
+          )}
           <Button
-            onClick={generateAgenda}
-            className="bg-honest-blue hover:bg-blue-700"
-            data-testid="button-generate-agenda"
+            onClick={optimizeRoute}
+            disabled={isOptimizing || !filters.startDate || (user?.role === 'vendedor' && (!user.homeLatitude || !user.homeLongitude))}
+            variant="outline"
+            className="border-honest-blue text-honest-blue hover:bg-honest-blue hover:text-white"
+            data-testid="button-optimize-route"
           >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Gerar Agenda
+            {isOptimizing ? (
+              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Route className="mr-2 h-4 w-4" />
+            )}
+            {isOptimizing ? 'Otimizando...' : 'Otimizar Rota'}
           </Button>
-        )}
+        </div>
       </div>
 
       {/* Filtros */}
@@ -232,6 +335,72 @@ export default function VisitRoutes() {
         </CardContent>
       </Card>
 
+      {/* Rota Otimizada */}
+      {optimizedRoute && (
+        <Card className="mb-6 border-green-200 bg-green-50 dark:bg-green-900/20 dark:border-green-800">
+          <CardHeader>
+            <CardTitle className="flex items-center text-green-800 dark:text-green-200">
+              <Route className="mr-2 h-4 w-4" />
+              Rota Otimizada
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                  {(optimizedRoute.totalDistance / 1000).toFixed(1)}km
+                </div>
+                <div className="text-sm text-green-700 dark:text-green-300">Distância Total</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                  {Math.round(optimizedRoute.estimatedTotalTime / 60)}h {optimizedRoute.estimatedTotalTime % 60}min
+                </div>
+                <div className="text-sm text-green-700 dark:text-green-300">Tempo Estimado</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                  {optimizedRoute.locations.length}
+                </div>
+                <div className="text-sm text-green-700 dark:text-green-300">Visitas</div>
+              </div>
+            </div>
+            
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-4">
+              <h4 className="font-semibold mb-3 text-gray-800 dark:text-white">Ordem da Rota:</h4>
+              <div className="space-y-2">
+                {optimizedRoute.locations.map((location, index) => (
+                  <div key={location.id} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <div className="flex items-center">
+                      <div className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3">
+                        {index + 1}
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-800 dark:text-white">{location.customerName}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">{location.address}</div>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      {location.estimatedDuration}min
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mt-4 flex justify-end">
+                <Button
+                  onClick={() => setOptimizedRoute(null)}
+                  variant="outline"
+                  size="sm"
+                >
+                  Fechar Rota
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Lista de Visitas */}
       <Card>
         <CardHeader>
@@ -240,7 +409,7 @@ export default function VisitRoutes() {
               <Calendar className="mr-2 h-4 w-4" />
               Agenda de Visitas
             </span>
-            {visits && (
+            {visits?.pagination && (
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 {visits.pagination.total} visita(s) encontrada(s)
               </span>
@@ -321,7 +490,7 @@ export default function VisitRoutes() {
           )}
 
           {/* Paginação */}
-          {visits && visits.pagination.totalPages > 1 && (
+          {visits?.pagination && visits.pagination.totalPages > 1 && (
             <div className="flex justify-center mt-6 space-x-2">
               <Button
                 variant="outline"

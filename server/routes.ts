@@ -6,6 +6,7 @@ import { validateLocalAdmin, createLocalSession } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda } from "./visitScheduleService";
+import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import {
   insertCustomerSchema,
@@ -1744,6 +1745,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     } catch (error: any) {
       console.error('❌ Erro ao buscar visitas agendadas:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
+  // Otimizar rota de visitas para um vendedor em uma data específica
+  app.post('/api/visit-agenda/optimize-route', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date, homeLatitude, homeLongitude } = req.body;
+
+      // Validar se vendedor pode acessar
+      let targetSellerId = sellerId;
+      if (user.role === 'vendedor') {
+        targetSellerId = user.id; // Vendedores só podem otimizar suas próprias rotas
+      } else if (!sellerId) {
+        return res.status(400).json({ message: 'sellerId é obrigatório para admins/coordenadores' });
+      }
+
+      // Buscar vendedor para obter coordenadas de casa
+      const seller = await storage.getUser(targetSellerId);
+      if (!seller) {
+        return res.status(404).json({ message: 'Vendedor não encontrado' });
+      }
+
+      // Usar coordenadas fornecidas ou as do perfil do vendedor
+      const startLatitude = homeLatitude || seller.homeLatitude;
+      const startLongitude = homeLongitude || seller.homeLongitude;
+
+      if (!startLatitude || !startLongitude) {
+        return res.status(400).json({ 
+          message: 'Coordenadas de localização inicial são obrigatórias' 
+        });
+      }
+
+      // Buscar visitas do vendedor para a data específica
+      const visitDate = new Date(date);
+      const startOfDay = new Date(visitDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(visitDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const visits = await db.select({
+        id: visitAgenda.id,
+        customerId: visitAgenda.customerId,
+        customerName: visitAgenda.customerName,
+        customerLatitude: visitAgenda.customerLatitude,
+        customerLongitude: visitAgenda.customerLongitude,
+        customerAddress: visitAgenda.customerAddress,
+        visitStatus: visitAgenda.visitStatus,
+        recurrenceType: visitAgenda.recurrenceType,
+        isVirtual: visitAgenda.isVirtual,
+      })
+      .from(visitAgenda)
+      .where(and(
+        eq(visitAgenda.sellerId, targetSellerId),
+        gte(visitAgenda.scheduledDate, startOfDay),
+        lte(visitAgenda.scheduledDate, endOfDay),
+        eq(visitAgenda.visitStatus, 'pending'),
+        eq(visitAgenda.isVirtual, false) // Apenas visitas presenciais
+      ));
+
+      if (visits.length === 0) {
+        return res.json({
+          optimizedRoute: {
+            locations: [],
+            totalDistance: 0,
+            estimatedTotalTime: 0,
+            routeOrder: []
+          },
+          message: 'Nenhuma visita presencial pendente encontrada para esta data'
+        });
+      }
+
+      // Filtrar apenas visitas com coordenadas válidas
+      const validVisits = visits.filter(v => 
+        v.customerLatitude !== null && 
+        v.customerLongitude !== null &&
+        !isNaN(v.customerLatitude) && 
+        !isNaN(v.customerLongitude)
+      );
+
+      if (validVisits.length === 0) {
+        return res.json({
+          optimizedRoute: {
+            locations: [],
+            totalDistance: 0,
+            estimatedTotalTime: 0,
+            routeOrder: []
+          },
+          message: 'Nenhuma visita com coordenadas válidas encontrada'
+        });
+      }
+
+      // Converter para formato RouteLocation
+      const locations: RouteLocation[] = validVisits.map(visit => ({
+        id: visit.id,
+        latitude: visit.customerLatitude!,
+        longitude: visit.customerLongitude!,
+        customerName: visit.customerName || 'Cliente sem nome',
+        address: visit.customerAddress || 'Endereço não informado',
+        priority: visit.recurrenceType === 'semanal' ? 4 : 3, // Clientes semanais têm prioridade
+        estimatedDuration: 30 // 30 minutos por visita padrão
+      }));
+
+      // Otimizar rota usando algoritmo avançado
+      const optimizedRoute = optimizeRouteAdvanced(
+        { latitude: startLatitude, longitude: startLongitude },
+        locations
+      );
+
+      res.json({
+        optimizedRoute,
+        sellerId: targetSellerId,
+        date: date,
+        startLocation: { latitude: startLatitude, longitude: startLongitude },
+        totalVisits: visits.length,
+        optimizableVisits: validVisits.length,
+        message: `Rota otimizada com ${optimizedRoute.locations.length} visitas`
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao otimizar rota:', error);
       res.status(500).json({ 
         error: 'Erro interno do servidor',
         message: error.message 
