@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw } from "lucide-react";
+import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw, CheckCircle, XCircle, MapPinIcon } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { optimizeRouteAdvanced, calculateTravelTime, type RouteLocation, type OptimizedRoute } from "@shared/routeOptimization";
@@ -57,7 +57,122 @@ export default function VisitRoutes() {
   });
   
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRoute | null>(null);
+  const [checkInLoading, setCheckInLoading] = useState<string | null>(null);
+  const [checkOutLoading, setCheckOutLoading] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
+
+  // Função para obter localização do usuário
+  const getCurrentLocation = (): Promise<{ latitude: number; longitude: number }> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocalização não é suportada pelo navegador'));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const coords = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          };
+          setUserLocation(coords);
+          resolve(coords);
+        },
+        (error) => {
+          reject(new Error('Erro ao obter localização: ' + error.message));
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000
+        }
+      );
+    });
+  };
+
+  // Mutation para check-in
+  const checkInMutation = useMutation({
+    mutationFn: async ({ visitId, latitude, longitude }: { visitId: string; latitude: number; longitude: number }) => {
+      return apiRequest('POST', `/api/visit-agenda/${visitId}/check-in`, { latitude, longitude });
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Check-in realizado!",
+        description: data.message,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/visit-agenda'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro no check-in",
+        description: error.message || "Erro ao realizar check-in",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para check-out
+  const checkOutMutation = useMutation({
+    mutationFn: async ({ visitId, latitude, longitude }: { visitId: string; latitude: number; longitude: number }) => {
+      return apiRequest('POST', `/api/visit-agenda/${visitId}/check-out`, { latitude, longitude });
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Check-out realizado!",
+        description: `${data.message} - Duração: ${data.visitDuration} minutos`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/visit-agenda'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro no check-out",
+        description: error.message || "Erro ao realizar check-out",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Função para realizar check-in
+  const handleCheckIn = async (visitId: string) => {
+    try {
+      setCheckInLoading(visitId);
+      const location = await getCurrentLocation();
+      checkInMutation.mutate({ visitId, latitude: location.latitude, longitude: location.longitude });
+    } catch (error: any) {
+      toast({
+        title: "Erro de localização",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setCheckInLoading(null);
+    }
+  };
+
+  // Função para realizar check-out
+  const handleCheckOut = async (visitId: string) => {
+    try {
+      setCheckOutLoading(visitId);
+      const location = await getCurrentLocation();
+      checkOutMutation.mutate({ visitId, latitude: location.latitude, longitude: location.longitude });
+    } catch (error: any) {
+      toast({
+        title: "Erro de localização",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setCheckOutLoading(null);
+    }
+  };
+
+  // Query para buscar sellers (para o filtro de vendedor)
+  const { data: sellers } = useQuery({
+    queryKey: ['/api/users', { role: 'vendedor' }],
+    queryFn: async () => await apiRequest('GET', '/api/users?role=vendedor'),
+    enabled: user?.role !== 'vendedor'
+  });
 
   const { data: visits, isLoading, refetch } = useQuery<VisitResponse>({
     queryKey: ['/api/visit-agenda', filters],
@@ -68,12 +183,6 @@ export default function VisitRoutes() {
       });
       return await apiRequest('GET', `/api/visit-agenda?${params.toString()}`);
     }
-  });
-
-  const { data: sellers } = useQuery({
-    queryKey: ['/api/users', { role: 'vendedor' }],
-    queryFn: async () => await apiRequest('GET', '/api/users?role=vendedor'),
-    enabled: user?.role !== 'vendedor'
   });
 
   const generateAgenda = async () => {
@@ -440,6 +549,7 @@ export default function VisitRoutes() {
                     <TableHead>Check-in</TableHead>
                     <TableHead>Check-out</TableHead>
                     <TableHead>Tipo</TableHead>
+                    <TableHead>Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -480,6 +590,57 @@ export default function VisitRoutes() {
                           <Badge variant="outline">Virtual</Badge>
                         ) : (
                           <Badge variant="secondary">Presencial</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {!visit.isVirtual && (
+                          <div className="flex gap-2">
+                            {!visit.actualCheckIn && visit.visitStatus === 'pending' && (
+                              <Button
+                                onClick={() => handleCheckIn(visit.id)}
+                                disabled={checkInLoading === visit.id}
+                                size="sm"
+                                variant="outline"
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                data-testid={`button-checkin-${visit.id}`}
+                              >
+                                {checkInLoading === visit.id ? (
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <MapPinIcon className="h-3 w-3" />
+                                )}
+                                Check-in
+                              </Button>
+                            )}
+                            {visit.actualCheckIn && !visit.actualCheckOut && visit.visitStatus === 'in_progress' && (
+                              <Button
+                                onClick={() => handleCheckOut(visit.id)}
+                                disabled={checkOutLoading === visit.id}
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                data-testid={`button-checkout-${visit.id}`}
+                              >
+                                {checkOutLoading === visit.id ? (
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="h-3 w-3" />
+                                )}
+                                Check-out
+                              </Button>
+                            )}
+                            {visit.actualCheckIn && visit.actualCheckOut && visit.visitStatus === 'completed' && (
+                              <Badge variant="secondary" className="text-green-600">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Concluída
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+                        {visit.isVirtual && (
+                          <Badge variant="outline" className="text-gray-500">
+                            Virtual
+                          </Badge>
                         )}
                       </TableCell>
                     </TableRow>

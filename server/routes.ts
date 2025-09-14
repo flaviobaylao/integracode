@@ -1877,6 +1877,212 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check-in para uma visita agendada
+  app.post('/api/visit-agenda/:id/check-in', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+
+      // Validar entrada
+      if (!latitude || !longitude) {
+        return res.status(400).json({ 
+          message: 'Latitude e longitude são obrigatórias' 
+        });
+      }
+
+      // Buscar a visita
+      const visit = await db.select()
+        .from(visitAgenda)
+        .where(eq(visitAgenda.id, id))
+        .limit(1);
+
+      if (!visit.length) {
+        return res.status(404).json({ message: 'Visita não encontrada' });
+      }
+
+      const currentVisit = visit[0];
+
+      // Verificar se o vendedor pode fazer check-in nesta visita
+      if (user.role === 'vendedor' && currentVisit.sellerId !== user.id) {
+        return res.status(403).json({ 
+          message: 'Você só pode fazer check-in em suas próprias visitas' 
+        });
+      }
+
+      // Verificar se a visita não está virtual
+      if (currentVisit.isVirtual) {
+        return res.status(400).json({ 
+          message: 'Check-in não é necessário para visitas virtuais' 
+        });
+      }
+
+      // Verificar se já foi feito check-in
+      if (currentVisit.actualCheckIn) {
+        return res.status(400).json({ 
+          message: 'Check-in já foi realizado para esta visita' 
+        });
+      }
+
+      // Calcular distância até o cliente
+      let distanceToCustomer = null;
+      if (currentVisit.customerLatitude && currentVisit.customerLongitude) {
+        const customerLat = parseFloat(currentVisit.customerLatitude.toString());
+        const customerLon = parseFloat(currentVisit.customerLongitude.toString());
+        
+        // Fórmula de Haversine para calcular distância
+        const R = 6371000; // Raio da Terra em metros
+        const dLat = (customerLat - latitude) * Math.PI / 180;
+        const dLon = (customerLon - longitude) * Math.PI / 180;
+        const a = 
+          Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(latitude * Math.PI / 180) * Math.cos(customerLat * Math.PI / 180) * 
+          Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        distanceToCustomer = R * c; // Distância em metros
+      }
+
+      // Validar distância máxima (500 metros)
+      const maxDistance = 500;
+      if (distanceToCustomer && distanceToCustomer > maxDistance) {
+        return res.status(400).json({ 
+          message: `Você deve estar a no máximo ${maxDistance}m do cliente para fazer check-in. Distância atual: ${Math.round(distanceToCustomer)}m`,
+          distance: Math.round(distanceToCustomer),
+          maxDistance
+        });
+      }
+
+      // Atualizar visita com dados de check-in
+      await db.update(visitAgenda)
+        .set({
+          actualCheckIn: new Date(),
+          checkInLatitude: latitude.toString(),
+          checkInLongitude: longitude.toString(),
+          distanceToCustomer: distanceToCustomer ? distanceToCustomer.toString() : null,
+          visitStatus: 'in_progress'
+        })
+        .where(eq(visitAgenda.id, id));
+
+      res.json({
+        success: true,
+        message: 'Check-in realizado com sucesso',
+        checkInTime: new Date(),
+        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro no check-in da visita:', error);
+      res.status(500).json({ 
+        message: 'Erro interno do servidor',
+        error: error.message 
+      });
+    }
+  });
+
+  // Check-out para uma visita agendada
+  app.post('/api/visit-agenda/:id/check-out', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+
+      // Validar entrada
+      if (!latitude || !longitude) {
+        return res.status(400).json({ 
+          message: 'Latitude e longitude são obrigatórias' 
+        });
+      }
+
+      // Buscar a visita
+      const visit = await db.select()
+        .from(visitAgenda)
+        .where(eq(visitAgenda.id, id))
+        .limit(1);
+
+      if (!visit.length) {
+        return res.status(404).json({ message: 'Visita não encontrada' });
+      }
+
+      const currentVisit = visit[0];
+
+      // Verificar se o vendedor pode fazer check-out nesta visita
+      if (user.role === 'vendedor' && currentVisit.sellerId !== user.id) {
+        return res.status(403).json({ 
+          message: 'Você só pode fazer check-out em suas próprias visitas' 
+        });
+      }
+
+      // Verificar se a visita não está virtual
+      if (currentVisit.isVirtual) {
+        return res.status(400).json({ 
+          message: 'Check-out não é necessário para visitas virtuais' 
+        });
+      }
+
+      // Verificar se foi feito check-in
+      if (!currentVisit.actualCheckIn) {
+        return res.status(400).json({ 
+          message: 'É necessário fazer check-in antes do check-out' 
+        });
+      }
+
+      // Verificar se já foi feito check-out
+      if (currentVisit.actualCheckOut) {
+        return res.status(400).json({ 
+          message: 'Check-out já foi realizado para esta visita' 
+        });
+      }
+
+      // Calcular distância até o cliente
+      let distanceToCustomer = null;
+      if (currentVisit.customerLatitude && currentVisit.customerLongitude) {
+        const customerLat = parseFloat(currentVisit.customerLatitude.toString());
+        const customerLon = parseFloat(currentVisit.customerLongitude.toString());
+        
+        // Fórmula de Haversine para calcular distância
+        const R = 6371000; // Raio da Terra em metros
+        const dLat = (customerLat - latitude) * Math.PI / 180;
+        const dLon = (customerLon - longitude) * Math.PI / 180;
+        const a = 
+          Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(latitude * Math.PI / 180) * Math.cos(customerLat * Math.PI / 180) * 
+          Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        distanceToCustomer = R * c; // Distância em metros
+      }
+
+      // Calcular tempo de visita
+      const checkInTime = new Date(currentVisit.actualCheckIn);
+      const checkOutTime = new Date();
+      const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
+
+      // Atualizar visita com dados de check-out
+      await db.update(visitAgenda)
+        .set({
+          actualCheckOut: checkOutTime,
+          checkOutLatitude: latitude.toString(),
+          checkOutLongitude: longitude.toString(),
+          visitStatus: 'completed'
+        })
+        .where(eq(visitAgenda.id, id));
+
+      res.json({
+        success: true,
+        message: 'Check-out realizado com sucesso',
+        checkOutTime,
+        visitDuration,
+        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro no check-out da visita:', error);
+      res.status(500).json({ 
+        message: 'Erro interno do servidor',
+        error: error.message 
+      });
+    }
+  });
+
   // Sincronizar TODAS as notas fiscais do Omie
   app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
