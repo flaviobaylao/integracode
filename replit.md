@@ -54,6 +54,8 @@ Preferred communication style: Simple, everyday language.
 - **Delivery Tracking**: Complete delivery history, driver management, and status updates
 - **Webhook Support**: External API endpoints for delivery status updates from delivery app
 - **Billing Synchronization**: Accurate invoice synchronization with status mapping and validation filters (422 authorized invoices)
+- **Billing Filters & Stats**: Seller-based filtering with reactive statistics that update based on applied filters using efficient SQL aggregates
+- **Invoice Stage Mapping**: Properly documented invoice stage mapping (Etapa 20="Em Rota", Etapa 70="Entregue", Etapa 80="Aguardando Rota", Etapa 50/60="Faturado")
 
 # External Dependencies
 
