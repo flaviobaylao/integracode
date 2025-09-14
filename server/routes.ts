@@ -1810,11 +1810,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Obter estatísticas de faturamentos
-  app.get('/api/billings/stats', authenticateUser, async (req, res) => {
+  app.get('/api/billings/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const { sellerId, month, year } = req.query;
+      const { 
+        sellerId, 
+        month, 
+        year,
+        startDate: reqStartDate,
+        endDate: reqEndDate,
+        customerDocument,
+        invoiceNumber,
+        cfop,
+        invoiceStage
+      } = req.query;
       
-      // Calcular período do mês se especificado
+      // Calcular período do mês se especificado (para compatibilidade com versão anterior)
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
@@ -1823,36 +1833,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const yearNum = parseInt(year as string);
         startDate = new Date(yearNum, monthNum - 1, 1);
         endDate = new Date(yearNum, monthNum, 0); // Último dia do mês
+      } else if (reqStartDate || reqEndDate) {
+        // Usar datas específicas dos filtros
+        startDate = reqStartDate ? new Date(reqStartDate as string) : undefined;
+        endDate = reqEndDate ? new Date(reqEndDate as string) : undefined;
       }
       
-      const { billings, total } = await storage.getBillingsWithFilters({
-        sellerId: sellerId as string,
+      // Para vendedores, usar o sellerId do middleware (req.sellerId)
+      // Para admins/coordenadores, permitir sellerId do query
+      const effectiveSellerId = req.sellerId || (sellerId as string);
+      
+      // Usar novo método eficiente com SQL aggregates
+      const statsResult = await storage.getBillingsStats({
+        sellerId: effectiveSellerId,
         startDate,
         endDate,
-        page: 1,
-        pageSize: 10000 // Buscar todos para cálculos
+        customerDocument: customerDocument as string,
+        invoiceNumber: invoiceNumber as string,
+        cfop: cfop as string,
+        invoiceStage: invoiceStage as string
       });
       
-      // Calcular estatísticas
-      const totalValue = billings.reduce((sum, bill) => sum + parseFloat(bill.totalValue.toString()), 0);
-      const averageValue = total > 0 ? totalValue / total : 0;
-      
-      // Agrupar por método de pagamento
-      const paymentMethods = billings.reduce((acc: any, bill) => {
-        const method = bill.paymentMethod || 'Não informado';
-        if (!acc[method]) {
-          acc[method] = { count: 0, total: 0 };
-        }
-        acc[method].count++;
-        acc[method].total += parseFloat(bill.totalValue.toString());
-        return acc;
-      }, {});
-      
       const stats = {
-        totalInvoices: total,
-        totalValue: totalValue,
-        averageValue: averageValue,
-        paymentMethods,
+        ...statsResult,
         period: month && year ? `${month}/${year}` : 'Todos os períodos'
       };
       

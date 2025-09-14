@@ -32,7 +32,7 @@ import {
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne } from "drizzle-orm";
+import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne, like } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -150,6 +150,20 @@ export interface IStorage {
     pageSize?: number;
   }): Promise<{ billings: Billing[]; total: number }>;
   getUniqueSellers(): Promise<Array<{seller_id: string; seller_name: string}>>;
+  getBillingsStats(filters: {
+    sellerId?: string;
+    startDate?: Date;
+    endDate?: Date;
+    customerDocument?: string;
+    invoiceNumber?: string;
+    cfop?: string;
+    invoiceStage?: string;
+  }): Promise<{
+    totalInvoices: number;
+    totalValue: number;
+    averageValue: number;
+    paymentMethods: Record<string, { count: number; total: number }>;
+  }>;
   upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing>;
   saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
     success: boolean;
@@ -1858,6 +1872,112 @@ export class DatabaseStorage implements IStorage {
       .orderBy(billings.sellerName);
     
     return result;
+  }
+
+  async getBillingsStats(filters: {
+    sellerId?: string;
+    startDate?: Date;
+    endDate?: Date;
+    customerDocument?: string;
+    invoiceNumber?: string;
+    cfop?: string;
+    invoiceStage?: string;
+  }): Promise<{
+    totalInvoices: number;
+    totalValue: number;
+    averageValue: number;
+    paymentMethods: Record<string, { count: number; total: number }>;
+  }> {
+    // Construir condições WHERE baseado nos filtros
+    const conditions: any[] = [];
+
+    if (filters.sellerId) {
+      conditions.push(eq(billings.sellerId, filters.sellerId));
+    }
+
+    if (filters.startDate) {
+      conditions.push(gte(billings.invoiceDate, filters.startDate));
+    }
+
+    if (filters.endDate) {
+      conditions.push(lte(billings.invoiceDate, filters.endDate));
+    }
+
+    if (filters.customerDocument) {
+      conditions.push(like(billings.customerDocument, `%${filters.customerDocument}%`));
+    }
+
+    if (filters.invoiceNumber) {
+      conditions.push(like(billings.invoiceNumber, `%${filters.invoiceNumber}%`));
+    }
+
+    if (filters.cfop) {
+      // Mapear nome amigável para valores reais de CFOP
+      const cfopValues: Record<string, string[]> = {
+        'VENDA': ['5.101', '5.102', '6.101', '6.102', '5101', '5102', '6101', '6102'],
+        'TROCA': ['5.949', '6.949', '5949', '6949'],
+        'AMOSTRA': ['5.911', '6.911', '5911', '6911'],
+        'BONIFICAÇÃO': ['5.910', '6.910', '5.915', '5910', '6910', '5915'],
+        'ENTRADA': ['1.102', '1.202', '1102', '1202'],
+        'DEVOLUÇÃO': ['1.151', '1.201', '1.556', '2.556', '1151', '1201', '1556', '2556']
+      };
+
+      if (cfopValues[filters.cfop]) {
+        const cfopConditions = cfopValues[filters.cfop].map(cfopValue => 
+          eq(billings.cfop, cfopValue)
+        );
+        conditions.push(or(...cfopConditions));
+      }
+    }
+
+    if (filters.invoiceStage) {
+      conditions.push(eq(billings.invoiceStage, filters.invoiceStage));
+    }
+
+    // Query para estatísticas básicas usando SQL aggregates
+    const baseQuery = db.select({
+      totalInvoices: sql<number>`COUNT(*)`,
+      totalValue: sql<number>`COALESCE(SUM(CAST(${billings.totalValue} AS NUMERIC)), 0)`,
+      averageValue: sql<number>`COALESCE(AVG(CAST(${billings.totalValue} AS NUMERIC)), 0)`
+    }).from(billings);
+
+    const statsWithConditions = conditions.length > 0 ? 
+      baseQuery.where(and(...conditions)) : 
+      baseQuery;
+
+    const [statsResult] = await statsWithConditions;
+
+    // Query separada para métodos de pagamento (GROUP BY)
+    const paymentQuery = db.select({
+      paymentMethod: billings.paymentMethod,
+      count: sql<number>`COUNT(*)`,
+      total: sql<number>`COALESCE(SUM(CAST(${billings.totalValue} AS NUMERIC)), 0)`
+    }).from(billings);
+
+    const paymentWithConditions = conditions.length > 0 ? 
+      paymentQuery.where(and(...conditions)) : 
+      paymentQuery;
+
+    const paymentResults = await paymentWithConditions
+      .groupBy(billings.paymentMethod);
+
+    // Processar resultados dos métodos de pagamento
+    const paymentMethods: Record<string, { count: number; total: number }> = {};
+    
+    for (const result of paymentResults) {
+      const method = result.paymentMethod || 'Não informado';
+      paymentMethods[method] = {
+        count: parseInt(result.count.toString()),
+        total: parseFloat(result.total.toString())
+      };
+    }
+
+    return {
+      totalInvoices: parseInt(statsResult.totalInvoices.toString()),
+      totalValue: parseFloat(statsResult.totalValue.toString()),
+      averageValue: parseFloat(statsResult.averageValue.toString()),
+      paymentMethods
+    };
   }
 
   async upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing> {

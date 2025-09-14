@@ -111,10 +111,15 @@ export default function Billings() {
 
   // Query para estatísticas
   const { data: stats } = useQuery({
-    queryKey: ['/api/billings/stats', filters.sellerId],
+    queryKey: ['/api/billings/stats', filters],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (filters.sellerId) params.append('sellerId', filters.sellerId);
+      // Adicionar todos os filtros exceto page e pageSize
+      Object.entries(filters).forEach(([key, value]) => {
+        if (key !== 'page' && key !== 'pageSize' && value !== undefined && value !== '') {
+          params.append(key, value.toString());
+        }
+      });
       return fetch(`/api/billings/stats?${params.toString()}`).then(res => res.json());
     }
   });
@@ -203,7 +208,7 @@ export default function Billings() {
     syncOrdersMutation.mutate();
   };
 
-  const handleFilterChange = (key: keyof BillingFilters, value: string | number) => {
+  const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
@@ -442,19 +447,19 @@ export default function Billings() {
             <div className="space-y-2">
               <Label>Vendedor</Label>
               <Select 
-                value={filters.sellerId || ''}
-                onValueChange={(value) => handleFilterChange('sellerId', value === 'all' ? '' : value)}
+                value={filters.sellerId || 'all'}
+                onValueChange={(value) => handleFilterChange('sellerId', value === 'all' ? undefined : value)}
               >
                 <SelectTrigger data-testid="filter-seller">
                   <SelectValue placeholder="Selecionar Vendedor" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  {sellers?.map((seller: any) => (
+                  {(sellers && Array.isArray(sellers)) ? sellers.map((seller: any) => (
                     <SelectItem key={seller.seller_id} value={seller.seller_id}>
                       {seller.seller_name}
                     </SelectItem>
-                  ))}
+                  )) : null}
                 </SelectContent>
               </Select>
             </div>
