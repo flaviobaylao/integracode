@@ -2217,6 +2217,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sincronização completa: Clientes + Faturamentos + Débitos Vencidos
+  app.post('/api/omie/sync-complete', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log('🔄 Iniciando sincronização completa (Clientes + Faturamentos + Débitos)...');
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const results = {
+        clients: null,
+        billings: null,
+        overdueDebts: null,
+        errors: [],
+        startTime: new Date(),
+        endTime: null
+      };
+
+      // 1. Sincronizar clientes ativos
+      try {
+        console.log('📋 Sincronizando clientes ativos...');
+        const clientResult = await omieService.syncActiveClients();
+        results.clients = {
+          totalProcessed: clientResult.totalProcessed || 0,
+          imported: clientResult.imported || 0,
+          updated: clientResult.updated || 0,
+          errors: clientResult.errors || []
+        };
+        console.log('✅ Clientes sincronizados:', results.clients);
+      } catch (error: any) {
+        console.error('❌ Erro na sincronização de clientes:', error);
+        results.errors.push(`Clientes: ${error.message}`);
+      }
+
+      // 2. Sincronizar faturamentos
+      try {
+        console.log('💰 Sincronizando faturamentos...');
+        const billingResult = await omieService.syncAllBillings();
+        results.billings = {
+          totalProcessed: billingResult.totalProcessed || 0,
+          imported: billingResult.imported || 0,
+          updated: billingResult.updated || 0,
+          errors: billingResult.errors || []
+        };
+        console.log('✅ Faturamentos sincronizados:', results.billings);
+      } catch (error: any) {
+        console.error('❌ Erro na sincronização de faturamentos:', error);
+        results.errors.push(`Faturamentos: ${error.message}`);
+      }
+
+      // 3. Sincronizar débitos vencidos
+      try {
+        console.log('⏰ Sincronizando débitos vencidos...');
+        const overdueData = await omieService.getOverdueDebts();
+        results.overdueDebts = {
+          totalClients: overdueData.totalClients || 0,
+          totalAmount: overdueData.totalAmount || 0,
+          debts: overdueData.debts ? overdueData.debts.length : 0
+        };
+        console.log('✅ Débitos vencidos sincronizados:', results.overdueDebts);
+      } catch (error: any) {
+        console.error('❌ Erro na sincronização de débitos:', error);
+        results.errors.push(`Débitos: ${error.message}`);
+      }
+
+      results.endTime = new Date();
+      const duration = ((results.endTime.getTime() - results.startTime.getTime()) / 1000).toFixed(2);
+
+      console.log(`🏁 Sincronização completa finalizada em ${duration}s`);
+      console.log('📊 Resumo:', {
+        clientes: results.clients,
+        faturamentos: results.billings,
+        debitos: results.overdueDebts,
+        erros: results.errors.length
+      });
+
+      res.json({
+        success: true,
+        duration: `${duration}s`,
+        results,
+        summary: {
+          clientsProcessed: results.clients?.totalProcessed || 0,
+          billingsProcessed: results.billings?.totalProcessed || 0,
+          overdueClientsFound: results.overdueDebts?.totalClients || 0,
+          totalErrors: results.errors.length
+        }
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro geral na sincronização completa:', error);
+      res.status(500).json({ 
+        success: false,
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Sincronizar TODAS as notas fiscais do Omie
   app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {

@@ -6,14 +6,16 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, RotateCcw } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function Dashboard() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading } = useAuth();
   const queryClient = useQueryClient();
   const [isRefreshingSellers, setIsRefreshingSellers] = useState(false);
+  const [isSyncingComplete, setIsSyncingComplete] = useState(false);
 
   // Redirect to home if not authenticated
   useEffect(() => {
@@ -112,6 +114,61 @@ export default function Dashboard() {
     }
   };
 
+  // Função para sincronização completa (Clientes + Faturamentos + Débitos)
+  const handleCompleteSync = async () => {
+    setIsSyncingComplete(true);
+    try {
+      toast({
+        title: "Sincronização Iniciada",
+        description: "Sincronizando clientes, faturamentos e débitos vencidos...",
+        variant: "default",
+      });
+
+      const result = await apiRequest('POST', '/api/omie/sync-complete');
+
+      if (result.success) {
+        const { summary, duration } = result;
+        
+        toast({
+          title: "Sincronização Concluída",
+          description: `✅ ${summary.clientsProcessed} clientes, ${summary.billingsProcessed} faturamentos, ${summary.overdueClientsFound} débitos em ${duration}`,
+          variant: "default",
+        });
+
+        // Invalidar cache dos dados para forçar atualização
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/today-clients'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] })
+        ]);
+
+        if (result.results.errors.length > 0) {
+          toast({
+            title: "Sincronização com Avisos",
+            description: `${result.results.errors.length} erro(s) encontrado(s). Verifique os logs.`,
+            variant: "destructive",
+          });
+        }
+        
+      } else {
+        throw new Error(result.message || 'Erro desconhecido');
+      }
+      
+    } catch (error: any) {
+      console.error('Erro na sincronização completa:', error);
+      toast({
+        title: "Erro na Sincronização",
+        description: error.message || "Falha na sincronização completa",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncingComplete(false);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
@@ -144,6 +201,34 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Ações Administrativas */}
+      {user && ['admin', 'coordinator'].includes(user.role) && (
+        <Card>
+          <CardHeader className="border-b border-gray-200">
+            <CardTitle className="text-lg font-semibold text-gray-800">
+              Ações de Sincronização
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            <div className="flex gap-4">
+              <Button
+                onClick={handleCompleteSync}
+                disabled={isSyncingComplete}
+                variant="default"
+                className="flex items-center gap-2 bg-honest-blue hover:bg-honest-blue/90"
+                data-testid="button-sync-complete"
+              >
+                <RotateCcw className={`h-4 w-4 ${isSyncingComplete ? 'animate-spin' : ''}`} />
+                {isSyncingComplete ? 'Sincronizando...' : 'Sincronizar Tudo'}
+              </Button>
+              <div className="text-sm text-gray-600 flex items-center">
+                Sincroniza clientes, faturamentos e débitos vencidos simultaneamente
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
