@@ -57,12 +57,14 @@ function updateUserSession(
 async function upsertUser(
   claims: any,
 ) {
+  console.log('🔍 Claims recebidos no upsertUser:', claims);
   await storage.upsertUser({
     id: claims["sub"],
     email: claims["email"],
     firstName: claims["first_name"],
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],
+    role: claims["role"], // Incluindo role dos claims OIDC
   });
 }
 

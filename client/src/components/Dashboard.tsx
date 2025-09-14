@@ -53,7 +53,13 @@ export default function Dashboard() {
     retry: false,
   });
 
-  if (statsLoading || todayClientsLoading || overdueClientsLoading) {
+  // Query para métricas de performance de visitas
+  const { data: visitPerformance, isLoading: visitPerformanceLoading } = useQuery({
+    queryKey: ['/api/dashboard/visit-performance'],
+    retry: false,
+  });
+
+  if (statsLoading || todayClientsLoading || overdueClientsLoading || visitPerformanceLoading) {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -420,6 +426,208 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Performance de Visitas */}
+      {visitPerformance && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-800">Performance de Atendimento</h2>
+            <p className="text-sm text-gray-600">Últimos 30 dias</p>
+          </div>
+          
+          {/* Métricas Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <Card data-testid="card-total-visits">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Total de Visitas</p>
+                    <p className="text-2xl font-bold text-gray-800" data-testid="metric-total-visits">
+                      {visitPerformance?.overview?.totalVisits || 0}
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                    <i className="fas fa-calendar text-blue-600"></i>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-completion-rate">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Taxa de Atendimento</p>
+                    <p className="text-2xl font-bold text-green-600" data-testid="metric-completion-rate">
+                      {visitPerformance?.overview?.completionRate?.toFixed(1) || '0.0'}%
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                    <i className="fas fa-check-circle text-green-600"></i>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-average-time">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Tempo Médio</p>
+                    <p className="text-2xl font-bold text-purple-600" data-testid="metric-average-time">
+                      {visitPerformance?.overview?.averageVisitTime || 0} min
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
+                    <i className="fas fa-clock text-purple-600"></i>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-conversion-rate">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Taxa de Positivação</p>
+                    <p className="text-2xl font-bold text-orange-600" data-testid="metric-conversion-rate">
+                      {visitPerformance?.overview?.conversionRate?.toFixed(1) || '0.0'}%
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
+                    <i className="fas fa-trophy text-orange-600"></i>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Breakdown de Status das Visitas */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card data-testid="card-visit-status">
+              <CardHeader className="border-b border-gray-200">
+                <CardTitle className="text-lg font-semibold text-gray-800">
+                  Status das Visitas
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                      <span className="text-sm text-gray-600">Concluídas</span>
+                    </div>
+                    <span className="text-sm font-medium text-gray-800" data-testid="status-completed">
+                      {visitPerformance?.overview?.completedVisits || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                      <span className="text-sm text-gray-600">Em Atendimento</span>
+                    </div>
+                    <span className="text-sm font-medium text-gray-800" data-testid="status-in-progress">
+                      {visitPerformance?.overview?.inProgressVisits || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                      <span className="text-sm text-gray-600">Pendentes</span>
+                    </div>
+                    <span className="text-sm font-medium text-gray-800" data-testid="status-pending">
+                      {visitPerformance?.overview?.pendingVisits || 0}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-sales-metrics">
+              <CardHeader className="border-b border-gray-200">
+                <CardTitle className="text-lg font-semibold text-gray-800">
+                  Métricas de Vendas
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Total de Vendas</span>
+                    <span className="text-sm font-medium text-gray-800" data-testid="metric-total-sales">
+                      {visitPerformance?.overview?.totalSales || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Valor Médio por Venda</span>
+                    <span className="text-sm font-medium text-gray-800" data-testid="metric-average-sale">
+                      {formatCurrency(visitPerformance?.overview?.averageSaleValue || 0)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Taxa de Conversão</span>
+                    <span className="text-sm font-medium text-green-600" data-testid="metric-conversion-detailed">
+                      {visitPerformance?.overview?.conversionRate?.toFixed(1) || '0.0'}%
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Performance por Vendedor (apenas para admins/coordenadores) */}
+          {user && ['admin', 'coordinator'].includes(user.role) && visitPerformance?.performanceBySeller && visitPerformance.performanceBySeller.length > 0 && (
+            <Card data-testid="card-seller-performance">
+              <CardHeader className="border-b border-gray-200">
+                <CardTitle className="text-lg font-semibold text-gray-800">
+                  Performance por Vendedor
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  {visitPerformance.performanceBySeller.map((seller: any, index: number) => (
+                    <div key={seller.sellerId || index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg" data-testid={`seller-performance-${seller.sellerId || index}`}>
+                      <div className="flex items-center space-x-3">
+                        <div 
+                          className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm ${getVendorColor(seller.sellerId)}`}
+                        >
+                          {getVendorInitials(seller.sellerFirstName, seller.sellerLastName)}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-800">
+                            {seller.sellerFirstName} {seller.sellerLastName}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex space-x-6">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Visitas</p>
+                          <p className="text-sm font-medium text-gray-800" data-testid={`seller-visits-${seller.sellerId || index}`}>{seller.totalVisits || 0}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Concluídas</p>
+                          <p className="text-sm font-medium text-green-600" data-testid={`seller-completed-${seller.sellerId || index}`}>{seller.completedVisits || 0}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Taxa</p>
+                          <p className="text-sm font-medium text-blue-600" data-testid={`seller-rate-${seller.sellerId || index}`}>
+                            {seller.totalVisits > 0 ? ((seller.completedVisits / seller.totalVisits) * 100).toFixed(1) : '0.0'}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Tempo Médio</p>
+                          <p className="text-sm font-medium text-purple-600" data-testid={`seller-time-${seller.sellerId || index}`}>
+                            {seller.averageTime ? Math.round(seller.averageTime) : 0} min
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   );
 }

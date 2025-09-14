@@ -17,9 +17,11 @@ import {
   insertLocationSchema,
   insertSalesGoalSchema,
   visitAgenda,
+  users,
+  salesCards,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql, eq, and, gte, lte, isNotNull } from "drizzle-orm";
+import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -2079,6 +2081,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         message: 'Erro interno do servidor',
         error: error.message 
+      });
+    }
+  });
+
+  // Métricas de performance de visitas para dashboard
+  app.get('/api/dashboard/visit-performance', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Definir período padrão (últimos 30 dias)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+
+      // Filtros baseados na role do usuário
+      const visitFilters: any[] = [
+        gte(visitAgenda.scheduledDate, startDate),
+        lte(visitAgenda.scheduledDate, endDate)
+      ];
+
+      if (user.role === 'vendedor') {
+        visitFilters.push(eq(visitAgenda.sellerId, user.id));
+      }
+
+      // Buscar visitas no período
+      const visits = await db.select({
+        id: visitAgenda.id,
+        sellerId: visitAgenda.sellerId,
+        visitStatus: visitAgenda.visitStatus,
+        actualCheckIn: visitAgenda.actualCheckIn,
+        actualCheckOut: visitAgenda.actualCheckOut,
+        isVirtual: visitAgenda.isVirtual,
+        salesCardId: visitAgenda.salesCardId,
+        scheduledDate: visitAgenda.scheduledDate
+      })
+      .from(visitAgenda)
+      .where(and(...visitFilters));
+
+      // Buscar vendas relacionadas às visitas que têm sales cards
+      const salesCardIds = visits
+        .filter(v => v.salesCardId)
+        .map(v => v.salesCardId);
+
+      let sales: any[] = [];
+      if (salesCardIds.length > 0) {
+        sales = await db.select({
+          salesCardId: salesCards.id,
+          status: salesCards.status,
+          totalValue: salesCards.totalValue
+        })
+        .from(salesCards)
+        .where(and(
+          inArray(salesCards.id, salesCardIds),
+          eq(salesCards.status, 'completed')
+        ));
+      }
+
+      // Calcular métricas
+      const totalVisits = visits.length;
+      const completedVisits = visits.filter(v => v.visitStatus === 'completed').length;
+      const inProgressVisits = visits.filter(v => v.visitStatus === 'in_progress').length;
+      const pendingVisits = visits.filter(v => v.visitStatus === 'pending').length;
+      const totalSales = sales.length;
+
+      // Calcular tempo médio de visita
+      let averageVisitTime = 0;
+      const visitsWithTime = visits.filter(v => v.actualCheckIn && v.actualCheckOut);
+      if (visitsWithTime.length > 0) {
+        const totalTime = visitsWithTime.reduce((acc, visit) => {
+          const checkIn = new Date(visit.actualCheckIn);
+          const checkOut = new Date(visit.actualCheckOut);
+          return acc + (checkOut.getTime() - checkIn.getTime());
+        }, 0);
+        averageVisitTime = Math.round(totalTime / (visitsWithTime.length * 60000)); // em minutos
+      }
+
+      // Taxa de conversão (vendas / visitas completadas)
+      const conversionRate = completedVisits > 0 ? (totalSales / completedVisits * 100) : 0;
+
+      // Valor médio por venda
+      const averageSaleValue = sales.length > 0 ? 
+        sales.reduce((acc, sale) => acc + parseFloat(sale.totalValue || '0'), 0) / sales.length : 0;
+
+      // Performance por vendedor (apenas para admins/coordenadores)
+      let performanceBySellerQuery: any[] = [];
+      if (['admin', 'coordinator'].includes(user.role)) {
+        performanceBySellerQuery = await db.select({
+          sellerId: visitAgenda.sellerId,
+          sellerFirstName: users.firstName,
+          sellerLastName: users.lastName,
+          totalVisits: sql<number>`count(${visitAgenda.id})`,
+          completedVisits: sql<number>`count(case when ${visitAgenda.visitStatus} = 'completed' then 1 end)`,
+          averageTime: sql<number>`avg(case when ${visitAgenda.actualCheckIn} is not null and ${visitAgenda.actualCheckOut} is not null then extract(epoch from ${visitAgenda.actualCheckOut} - ${visitAgenda.actualCheckIn})/60 end)`
+        })
+        .from(visitAgenda)
+        .leftJoin(users, eq(visitAgenda.sellerId, users.id))
+        .where(and(...visitFilters))
+        .groupBy(visitAgenda.sellerId, users.firstName, users.lastName)
+        .having(sql`count(${visitAgenda.id}) > 0`);
+      }
+
+      res.json({
+        period: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString()
+        },
+        overview: {
+          totalVisits,
+          completedVisits,
+          inProgressVisits,
+          pendingVisits,
+          completionRate: totalVisits > 0 ? (completedVisits / totalVisits * 100) : 0,
+          averageVisitTime,
+          totalSales,
+          conversionRate,
+          averageSaleValue
+        },
+        performanceBySeller: performanceBySellerQuery
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar performance de visitas:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
       });
     }
   });
