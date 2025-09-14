@@ -563,6 +563,7 @@ export class OmieService {
     totalProcessed: number;
     imported: number;
     updated: number;
+    skipped: number;
     errors: any[];
   }> {
     try {
@@ -682,6 +683,7 @@ export class OmieService {
     totalProcessed: number;
     imported: number;
     updated: number;
+    skipped: number;
     errors: any[];
   }> {
     try {
@@ -1067,13 +1069,40 @@ export class OmieService {
       let sellerId = null;
       let paymentMethod = '';
       
-      // PRIORIDADE 1: Buscar vendedor do pedido de venda (CORREÇÃO SOLICITADA)
+      // PRIORIDADE 1: Buscar vendedor do pedido de venda (CORREÇÃO ROBUSTA)
       let pedidoId = invoice.compl?.nIdPedido?.toString();
+      let pedidoCompleto = null;
+      let vendorResolutionSource = '';
+      
+      // Tentativa 1: Usar pedidoId direto se disponível
       if (pedidoId) {
         try {
-          console.log(`🔍 Buscando vendedor e forma de pagamento do pedido relacionado: ${pedidoId}`);
-          const pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
+          console.log(`🔍 Buscando vendedor do pedido relacionado (método 1 - ID direto): ${pedidoId}`);
+          pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
           if (pedidoCompleto) {
+            vendorResolutionSource = 'direct_pedido_id';
+          }
+        } catch (error) {
+          console.log(`⚠️ Falha na busca direta do pedido ${pedidoId}:`, error);
+        }
+      }
+      
+      // Tentativa 2: RECUPERAÇÃO ALTERNATIVA - buscar pedido por número da NF e cliente
+      if (!pedidoCompleto && invoiceNumber && clientCode) {
+        try {
+          console.log(`🔍 RECUPERAÇÃO ALTERNATIVA: Buscando pedido por NF ${invoiceNumber} e cliente ${clientCode}`);
+          pedidoCompleto = await this.findOrderByInvoiceAndClient(invoiceNumber, clientCode);
+          if (pedidoCompleto) {
+            pedidoId = pedidoCompleto.cabecalho?.codigo_pedido?.toString();
+            vendorResolutionSource = 'invoice_client_recovery';
+            console.log(`✅ RECUPERAÇÃO: Encontrado pedido ${pedidoId} através de busca alternativa`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Falha na recuperação alternativa para NF ${invoiceNumber}:`, error);
+        }
+      }
+      
+      if (pedidoCompleto) {
             // CORREÇÃO: Extrair vendedor do pedido (campo correto conforme solicitação)
             const sellerCodeFromOrder = pedidoCompleto.cabecalho?.codigo_vendedor?.toString();
             if (sellerCodeFromOrder) {
@@ -1968,6 +1997,7 @@ export class OmieService {
     totalProcessed: number;
     imported: number;
     updated: number;
+    skipped: number;
     errors: any[];
     isComplete: boolean;
     message: string;
