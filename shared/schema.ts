@@ -96,6 +96,9 @@ export const customers = pgTable("customers", {
   // Atendimento virtual (não conta para meta de atendimento)
   virtualService: boolean("virtual_service").notNull().default(false),
   
+  // Data de início do fornecimento - só pode ser alterada por admins
+  serviceStartDate: timestamp("service_start_date"),
+  
   // Status no Omie (ativo/inativo)
   omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
@@ -422,6 +425,44 @@ export const locations = pgTable("locations", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Visit agenda table - agenda de visitas automática baseada na recorrência
+export const visitAgenda = pgTable("visit_agenda", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull(),
+  sellerId: varchar("seller_id").notNull(),
+  scheduledDate: timestamp("scheduled_date").notNull(), // Data da visita agendada
+  routeDay: varchar("route_day").notNull(), // Dia da semana (segunda, terca, etc)
+  recurrenceType: varchar("recurrence_type").notNull(), // semanal, quinzenal, trisemanal, mensal
+  isVirtual: boolean("is_virtual").notNull().default(false), // Atendimento virtual
+  
+  // Status da visita
+  visitStatus: varchar("visit_status").notNull().default('pending'), // pending, completed, missed, cancelled
+  
+  // Dados de execução da visita
+  actualCheckIn: timestamp("actual_check_in"),
+  actualCheckOut: timestamp("actual_check_out"),
+  checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }),
+  checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }),
+  checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }),
+  checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }),
+  distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }),
+  
+  // Dados do cliente na data da visita (cache para performance)
+  customerName: varchar("customer_name").notNull(),
+  customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }),
+  customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }),
+  customerAddress: text("customer_address"),
+  
+  // Vínculo com sales card gerado (se houver venda)
+  salesCardId: varchar("sales_card_id"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_visit_agenda_seller_date").on(table.sellerId, table.scheduledDate),
+  index("idx_visit_agenda_customer_date").on(table.customerId, table.scheduledDate),
+]);
+
 // Sales Goals table - para definição de metas mensais por vendedor
 export const salesGoals = pgTable("sales_goals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -455,6 +496,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   salesCards: many(salesCards),
   messageHistory: many(messageHistory),
   salesGoals: many(salesGoals),
+  visitAgenda: many(visitAgenda),
 }));
 
 export const salesGoalsRelations = relations(salesGoals, ({ one }) => ({
@@ -475,6 +517,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
   }),
   salesCards: many(salesCards),
   messageHistory: many(messageHistory),
+  visitAgenda: many(visitAgenda),
 }));
 
 export const salesCardsRelations = relations(salesCards, ({ one, many }) => ({
@@ -511,6 +554,21 @@ export const deliveryHistoryRelations = relations(deliveryHistory, ({ one }) => 
 export const deliveryDriversRelations = relations(deliveryDrivers, ({ many }) => ({
   salesCards: many(salesCards),
   deliveryHistory: many(deliveryHistory),
+}));
+
+export const visitAgendaRelations = relations(visitAgenda, ({ one }) => ({
+  customer: one(customers, {
+    fields: [visitAgenda.customerId],
+    references: [customers.id],
+  }),
+  seller: one(users, {
+    fields: [visitAgenda.sellerId],
+    references: [users.id],
+  }),
+  salesCard: one(salesCards, {
+    fields: [visitAgenda.salesCardId],
+    references: [salesCards.id],
+  }),
 }));
 
 export const telemarketingAgentsRelations = relations(telemarketingAgents, ({ one, many }) => ({
@@ -612,6 +670,12 @@ export const insertSalesGoalSchema = createInsertSchema(salesGoals).omit({
   updatedAt: true,
 });
 
+export const insertVisitAgendaSchema = createInsertSchema(visitAgenda).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertBillingSchema = createInsertSchema(billings).omit({
   id: true,
   createdAt: true,
@@ -670,6 +734,9 @@ export type InsertLocation = z.infer<typeof insertLocationSchema>;
 
 export type SalesGoal = typeof salesGoals.$inferSelect;
 export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
+
+export type VisitAgenda = typeof visitAgenda.$inferSelect;
+export type InsertVisitAgenda = z.infer<typeof insertVisitAgendaSchema>;
 
 export type Billing = typeof billings.$inferSelect;
 export type InsertBilling = z.infer<typeof insertBillingSchema>;
