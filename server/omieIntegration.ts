@@ -1973,7 +1973,7 @@ export class OmieService {
     message: string;
   }> {
     try {
-      console.log('🔄 Iniciando sincronização de faturamentos a partir de 01/09/2025 (apenas NF-e autorizadas)...');
+      console.log('🔄 Iniciando sincronização de TODAS as notas fiscais históricas (apenas NF-e autorizadas)...');
       
       let totalProcessed = 0;
       let imported = 0;
@@ -1996,8 +1996,8 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '01/09/2025', // FILTRAR desde 1º de setembro
-            filtrar_por_data_ate: '', // Até hoje (sem limite superior)
+            filtrar_por_data_de: '', // SEM FILTRO - busca TODAS as notas históric as
+            filtrar_por_data_ate: '', // SEM FILTRO - busca TODAS as notas históricas  
             ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
