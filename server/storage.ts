@@ -264,11 +264,11 @@ export class DatabaseStorage implements IStorage {
           .orderBy(desc(salesCards.scheduledDate))
           .limit(1);
         
-        let lastActivityStatus = 'none'; // none, success, failed, pending
+        let lastActivityStatus: 'none' | 'success' | 'failed' | 'pending' | 'overdue' | 'scheduled' = 'none';
         
         if (lastActivity) {
           if (lastActivity.status === 'completed') {
-            lastActivityStatus = lastActivity.saleValue && lastActivity.saleValue > 0 ? 'success' : 'failed';
+            lastActivityStatus = lastActivity.saleValue && parseFloat(lastActivity.saleValue.toString()) > 0 ? 'success' : 'failed';
           } else if (lastActivity.status === 'in_progress') {
             lastActivityStatus = 'pending';
           } else if (lastActivity.status === 'scheduled') {
@@ -284,7 +284,7 @@ export class DatabaseStorage implements IStorage {
           seller: row.users!,
           isPositivatedThisMonth: (positivatedThisMonth?.count || 0) > 0,
           lastActivityStatus,
-          lastActivityDate: lastActivity?.scheduledDate || null,
+          lastActivityDate: lastActivity?.scheduledDate?.toISOString() || null,
         };
       })
     );
@@ -1497,7 +1497,6 @@ export class DatabaseStorage implements IStorage {
 
   // Sales Goals operations
   async getSalesGoals(sellerId?: string, month?: number, year?: number): Promise<SalesGoal[]> {
-    let query = db.select().from(salesGoals);
     const conditions = [];
 
     if (sellerId) {
@@ -1510,11 +1509,12 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(salesGoals.year, year));
     }
     
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
+    const baseQuery = db.select().from(salesGoals);
+    const queryWithConditions = conditions.length > 0 ? 
+      baseQuery.where(and(...conditions)) : 
+      baseQuery;
 
-    return await query.orderBy(desc(salesGoals.year), desc(salesGoals.month));
+    return await queryWithConditions.orderBy(desc(salesGoals.year), desc(salesGoals.month));
   }
 
   async getSalesGoal(id: string): Promise<SalesGoal | undefined> {
@@ -1595,7 +1595,7 @@ export class DatabaseStorage implements IStorage {
       const salesCardsQuery = db.select({
         id: salesCards.id,
         status: salesCards.status,
-        totalValue: salesCards.totalValue,
+        saleValue: salesCards.saleValue,
         scheduledDate: salesCards.scheduledDate,
         customerId: salesCards.customerId,
         sellerId: salesCards.sellerId
@@ -1612,8 +1612,8 @@ export class DatabaseStorage implements IStorage {
       const positivationRate = totalCards > 0 ? (successfulCards / totalCards) * 100 : 0;
       
       const totalRevenue = monthSalesCards
-        .filter(card => card.status === 'success' && card.totalValue)
-        .reduce((sum, card) => sum + parseFloat(card.totalValue?.toString() || '0'), 0);
+        .filter(card => card.status === 'success' && card.saleValue)
+        .reduce((sum, card) => sum + parseFloat(card.saleValue?.toString() || '0'), 0);
       
       const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
       const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
@@ -1666,13 +1666,13 @@ export class DatabaseStorage implements IStorage {
 
   // Billing operations
   async getBillings(sellerId?: string): Promise<Billing[]> {
-    let query = db.select().from(billings);
+    const baseQuery = db.select().from(billings);
     
-    if (sellerId) {
-      query = query.where(eq(billings.sellerId, sellerId));
-    }
+    const queryWithConditions = sellerId ? 
+      baseQuery.where(eq(billings.sellerId, sellerId)) : 
+      baseQuery;
     
-    const result = await query.orderBy(desc(billings.invoiceDate));
+    const result = await queryWithConditions.orderBy(desc(billings.invoiceDate));
     return result;
   }
 
@@ -1703,7 +1703,7 @@ export class DatabaseStorage implements IStorage {
   async createBilling(billing: InsertBilling): Promise<Billing> {
     const [newBilling] = await db
       .insert(billings)
-      .values(billing)
+      .values(billing as any)
       .returning();
     return newBilling;
   }
@@ -1711,7 +1711,7 @@ export class DatabaseStorage implements IStorage {
   async updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing> {
     const [updatedBilling] = await db
       .update(billings)
-      .set({ ...billing, updatedAt: new Date() })
+      .set({ ...billing as any, updatedAt: new Date() })
       .where(eq(billings.id, id))
       .returning();
     return updatedBilling;
@@ -1825,11 +1825,11 @@ export class DatabaseStorage implements IStorage {
     }
     
     // Query com filtros
-    let query = db.select().from(billings);
+    const baseQuery = db.select().from(billings);
     
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
+    const query = conditions.length > 0 ? 
+      baseQuery.where(and(...conditions)) : 
+      baseQuery;
     
     // Contar total de registros
     const totalQuery = db.select({ count: sql`count(*)` }).from(billings);
@@ -1837,8 +1837,8 @@ export class DatabaseStorage implements IStorage {
       totalQuery.where(and(...conditions)) : 
       totalQuery;
     
-    const [{ count: totalCount }] = await totalWithConditions;
-    const total = parseInt(totalCount.toString());
+    const [countResult] = await totalWithConditions;
+    const total = parseInt(countResult.count?.toString() || '0');
     
     // Aplicar paginação e ordenação
     const offset = (page - 1) * pageSize;
@@ -1871,7 +1871,10 @@ export class DatabaseStorage implements IStorage {
       .groupBy(billings.sellerId, billings.sellerName)
       .orderBy(billings.sellerName);
     
-    return result;
+    return result.map(row => ({
+      seller_id: row.seller_id || '',
+      seller_name: row.seller_name || ''
+    }));
   }
 
   async getBillingsStats(filters: {
@@ -2003,21 +2006,38 @@ export class DatabaseStorage implements IStorage {
       console.log(`🔍 Validando billing para omieInvoiceId: ${billing.omieInvoiceId}`);
       console.log(`🔧 DEBUG VALIDATION INPUT: invoiceStatus=${JSON.stringify(billing.invoiceStatus)}, type=${typeof billing.invoiceStatus}`);
       
-      // Validação 1: Status da nota fiscal deve ser 100 (autorizada) ou 150 (autorizada fora do prazo)
+      // Validação 1: Status da nota fiscal - aceitar autorizadas (100/150) E canceladas para dar etapa CANCELADO
       const invoiceStatus = billing.invoiceStatus?.toString().trim();
       console.log(`🔧 DEBUG VALIDATION PROCESSED: invoiceStatus="${invoiceStatus}"`);
       
-      if (!invoiceStatus || (invoiceStatus !== '100' && invoiceStatus !== '150')) {
-        const reason = `Status inválido: ${invoiceStatus || 'NULL'} (deve ser 100 ou 150)`;
-        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
-        return {
-          success: false,
-          reason,
-          action: 'skipped'
-        };
+      // Status códigos SEFAZ conhecidos: 100=autorizada, 150=autorizada fora prazo, 101=cancelada, 135=evento registrado, etc.
+      const validStatuses = ['100', '150', '101', '135', '155', '110', '301', '302', '303']; // Incluir códigos de cancelamento e outros
+      const isValidStatus = invoiceStatus && validStatuses.includes(invoiceStatus);
+      const isCanceled = invoiceStatus && ['101', '135', '155'].includes(invoiceStatus); // Status de cancelamento
+      
+      if (!invoiceStatus || !isValidStatus) {
+        // Só rejeitar se for realmente status inválido - não cancelado
+        if (!invoiceStatus || (!invoiceStatus.match(/^\d+$/) || invoiceStatus.length > 3)) {
+          const reason = `Status inválido: ${invoiceStatus || 'NULL'} (deve ser código SEFAZ numérico)`;
+          console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+          return {
+            success: false,
+            reason,
+            action: 'skipped'
+          };
+        } else {
+          // Status numérico desconhecido - assumir como possível cancelamento e permitir
+          console.log(`⚠️ Status desconhecido ${invoiceStatus} para NF ${billing.invoiceNumber} - processando como possível cancelada`);
+        }
       }
       
-      // Validação 2: Data da nota fiscal deve ser do mês corrente (setembro 2025)
+      // NOVA LÓGICA: Dar etapa "CANCELADO" para notas canceladas ou sem etapa
+      if (isCanceled || !billing.invoiceStage || billing.invoiceStage.trim() === '') {
+        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status: ${invoiceStatus})`);
+        billing.invoiceStage = 'CANCELADO';
+      }
+      
+      // Validação 2: Data da nota fiscal deve ser válida (REMOVIDO filtro de setembro 2025 para incluir todas as históricas)
       if (!billing.invoiceDate) {
         const reason = 'Data da nota fiscal não informada';
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
@@ -2029,11 +2049,10 @@ export class DatabaseStorage implements IStorage {
       }
       
       const invoiceDate = new Date(billing.invoiceDate);
-      const startOfMonth = new Date(2025, 8, 1); // 1º setembro 2025
-      const endOfMonth = new Date(2025, 8, 30); // 30 setembro 2025
       
-      if (isNaN(invoiceDate.getTime()) || invoiceDate < startOfMonth || invoiceDate > endOfMonth) {
-        const reason = `Data fora do mês corrente (setembro/2025): ${invoiceDate.toISOString().split('T')[0]}`;
+      // Validação básica de data válida (sem restrição de período para incluir notas canceladas históricas)
+      if (isNaN(invoiceDate.getTime())) {
+        const reason = `Data inválida: ${billing.invoiceDate}`;
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
@@ -2176,10 +2195,10 @@ export class DatabaseStorage implements IStorage {
     
     const metrics = result.rows[0] || { todayDeliveries: 0, successRate: 0, averageDeliveryTime: 'N/A', activeDrivers: 0 };
     return {
-      todayDeliveries: parseInt(metrics.todayDeliveries) || 0,
-      successRate: parseFloat(metrics.successRate) || 0,
-      averageDeliveryTime: metrics.averageDeliveryTime,
-      activeDrivers: parseInt(metrics.activeDrivers) || 0
+      todayDeliveries: parseInt(metrics.todayDeliveries?.toString() || '0') || 0,
+      successRate: parseFloat(metrics.successRate?.toString() || '0') || 0,
+      averageDeliveryTime: metrics.averageDeliveryTime?.toString() || 'N/A',
+      activeDrivers: parseInt(metrics.activeDrivers?.toString() || '0') || 0
     };
   }
 
@@ -2270,13 +2289,13 @@ export class DatabaseStorage implements IStorage {
     const stats = statsResult.rows[0] || {};
     return {
       period,
-      totalDeliveries: parseInt(stats.totalDeliveries) || 0,
-      delivered: parseInt(stats.delivered) || 0,
-      failed: parseInt(stats.failed) || 0,
-      pending: parseInt(stats.pending) || 0,
-      in_transit: parseInt(stats.in_transit) || 0,
-      returned: parseInt(stats.returned) || 0,
-      successRate: parseFloat(stats.successRate) || 0,
+      totalDeliveries: parseInt(stats.totalDeliveries?.toString() || '0') || 0,
+      delivered: parseInt(stats.delivered?.toString() || '0') || 0,
+      failed: parseInt(stats.failed?.toString() || '0') || 0,
+      pending: parseInt(stats.pending?.toString() || '0') || 0,
+      in_transit: parseInt(stats.in_transit?.toString() || '0') || 0,
+      returned: parseInt(stats.returned?.toString() || '0') || 0,
+      successRate: parseFloat(stats.successRate?.toString() || '0') || 0,
       averageDeliveryTime: "2h 30min",
       topDrivers: topDriversResult.rows || [],
       dailyStats: dailyStatsResult.rows || []

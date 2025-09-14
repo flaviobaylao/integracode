@@ -1088,41 +1088,32 @@ export class OmieService {
       }
       
       // Tentativa 2: RECUPERAÇÃO ALTERNATIVA - buscar pedido por número da NF e cliente
+      // TODO: Implementar método findOrderByInvoiceAndClient se necessário
       if (!pedidoCompleto && invoiceNumber && clientCode) {
-        try {
-          console.log(`🔍 RECUPERAÇÃO ALTERNATIVA: Buscando pedido por NF ${invoiceNumber} e cliente ${clientCode}`);
-          pedidoCompleto = await this.findOrderByInvoiceAndClient(invoiceNumber, clientCode);
-          if (pedidoCompleto) {
-            pedidoId = pedidoCompleto.cabecalho?.codigo_pedido?.toString();
-            vendorResolutionSource = 'invoice_client_recovery';
-            console.log(`✅ RECUPERAÇÃO: Encontrado pedido ${pedidoId} através de busca alternativa`);
-          }
-        } catch (error) {
-          console.log(`⚠️ Falha na recuperação alternativa para NF ${invoiceNumber}:`, error);
-        }
+        console.log(`⚠️ RECUPERAÇÃO ALTERNATIVA não implementada para NF ${invoiceNumber} e cliente ${clientCode}`);
       }
       
       if (pedidoCompleto) {
-            // CORREÇÃO: Extrair vendedor do pedido (campo correto conforme solicitação)
-            const sellerCodeFromOrder = pedidoCompleto.cabecalho?.codigo_vendedor?.toString();
-            if (sellerCodeFromOrder) {
-              console.log(`🔍 Código do vendedor extraído do PEDIDO DE VENDA: ${sellerCodeFromOrder}`);
-              const sellerData = await this.fetchSellerData(sellerCodeFromOrder);
-              if (sellerData) {
-                sellerName = sellerData.name;
-                sellerId = sellerData.id;
-                console.log(`✅ Vendedor extraído do PEDIDO: ${sellerCodeFromOrder} -> ${sellerName}`);
-              }
+        try {
+          // CORREÇÃO: Extrair vendedor do pedido (campo correto conforme solicitação)
+          const sellerCodeFromOrder = pedidoCompleto.cabecalho?.codigo_vendedor?.toString();
+          if (sellerCodeFromOrder) {
+            console.log(`🔍 Código do vendedor extraído do PEDIDO DE VENDA: ${sellerCodeFromOrder}`);
+            const sellerData = await this.fetchSellerData(sellerCodeFromOrder);
+            if (sellerData) {
+              sellerName = sellerData.name;
+              sellerId = sellerData.id;
+              console.log(`✅ Vendedor extraído do PEDIDO: ${sellerCodeFromOrder} -> ${sellerName}`);
             }
-            
-            // Extrair forma de pagamento do pedido
-            const parcelaCode = pedidoCompleto.cabecalho?.codigo_parcela;
-            if (parcelaCode) {
-              const payment = await this.fetchPaymentMethod(parcelaCode);
-              if (payment) {
-                paymentMethod = payment;
-                console.log(`✅ Forma de pagamento extraída do pedido: ${parcelaCode} -> ${paymentMethod}`);
-              }
+          }
+          
+          // Extrair forma de pagamento do pedido
+          const parcelaCode = pedidoCompleto.cabecalho?.codigo_parcela;
+          if (parcelaCode) {
+            const payment = await this.fetchPaymentMethod(parcelaCode);
+            if (payment) {
+              paymentMethod = payment;
+              console.log(`✅ Forma de pagamento extraída do pedido: ${parcelaCode} -> ${paymentMethod}`);
             }
           }
         } catch (error) {
