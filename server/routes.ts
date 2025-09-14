@@ -1864,6 +1864,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Listar vendedores únicos para filtro
+  app.get('/api/billings/sellers', authenticateUser, async (req, res) => {
+    try {
+      const sellers = await storage.getUniqueSellers();
+      res.json(sellers);
+    } catch (error: any) {
+      console.error('❌ Erro ao obter lista de vendedores:', error);
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  });
+  
   // Buscar faturamento específico
   app.get('/api/billings/:id', authenticateUser, async (req, res) => {
     try {

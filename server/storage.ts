@@ -149,6 +149,7 @@ export interface IStorage {
     page?: number;
     pageSize?: number;
   }): Promise<{ billings: Billing[]; total: number }>;
+  getUniqueSellers(): Promise<Array<{seller_id: string; seller_name: string}>>;
   upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing>;
   saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
     success: boolean;
@@ -1838,6 +1839,25 @@ export class DatabaseStorage implements IStorage {
       billings: result,
       total
     };
+  }
+
+  async getUniqueSellers(): Promise<Array<{seller_id: string; seller_name: string}>> {
+    const result = await db
+      .select({
+        seller_id: billings.sellerId,
+        seller_name: billings.sellerName
+      })
+      .from(billings)
+      .where(and(
+        isNotNull(billings.sellerId),
+        isNotNull(billings.sellerName),
+        ne(billings.sellerId, ''),
+        ne(billings.sellerName, '')
+      ))
+      .groupBy(billings.sellerId, billings.sellerName)
+      .orderBy(billings.sellerName);
+    
+    return result;
   }
 
   async upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing> {

@@ -119,6 +119,12 @@ export default function Billings() {
     }
   });
 
+  // Query para buscar vendedores
+  const { data: sellers } = useQuery({
+    queryKey: ['/api/billings/sellers'],
+    queryFn: () => fetch('/api/billings/sellers').then(res => res.json())
+  });
+
   // Mutation para sincronização de pedidos (NOVO)
   const syncOrdersMutation = useMutation({
     mutationFn: async () => {
@@ -429,6 +435,26 @@ export default function Billings() {
                   <SelectItem value="Aguardando Rota">Aguardando Rota</SelectItem>
                   <SelectItem value="Em Rota">Em Rota</SelectItem>
                   <SelectItem value="Entregue">Entregue</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Vendedor</Label>
+              <Select 
+                value={filters.sellerId || ''}
+                onValueChange={(value) => handleFilterChange('sellerId', value === 'all' ? '' : value)}
+              >
+                <SelectTrigger data-testid="filter-seller">
+                  <SelectValue placeholder="Selecionar Vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {sellers?.map((seller: any) => (
+                    <SelectItem key={seller.seller_id} value={seller.seller_id}>
+                      {seller.seller_name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
