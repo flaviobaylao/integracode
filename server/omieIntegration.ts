@@ -1067,51 +1067,26 @@ export class OmieService {
       let sellerId = null;
       let paymentMethod = '';
       
-      // Buscar vendedor através do cliente
-      if (clientCode) {
-        try {
-          const clientApiData = await this.fetchClientData(clientCode);
-          if (clientApiData && clientApiData.rawData) {
-            const sellerCode = clientApiData.rawData.recomendacoes?.codigo_vendedor?.toString();
-            if (sellerCode) {
-              console.log(`🔍 Código do vendedor extraído das recomendações do cliente: ${sellerCode}`);
-              const sellerData = await this.fetchSellerData(sellerCode);
-              if (sellerData) {
-                sellerName = sellerData.name;
-                sellerId = sellerData.id;
-                console.log(`✅ Vendedor extraído: ${sellerCode} -> ${sellerName}`);
-              }
-            }
-          }
-        } catch (error) {
-          console.log(`⚠️ Erro ao buscar dados do cliente/vendedor ${clientCode}:`, error);
-        }
-      }
-      
-      // Fallback: buscar vendedor do título se não encontrou pelo cliente
-      if (!sellerName) {
-        const sellerCode = titulo.nCodVendedor?.toString();
-        if (sellerCode) {
-          try {
-            const sellerData = await this.fetchSellerData(sellerCode);
-            if (sellerData) {
-              sellerName = sellerData.name;
-              sellerId = sellerData.id;
-              console.log(`✅ Vendedor extraído do título: ${sellerCode} -> ${sellerName}`);
-            }
-          } catch (error) {
-            console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
-          }
-        }
-      }
-      
-      // Buscar forma de pagamento correta - primeiro do pedido relacionado se existir
+      // PRIORIDADE 1: Buscar vendedor do pedido de venda (CORREÇÃO SOLICITADA)
       let pedidoId = invoice.compl?.nIdPedido?.toString();
       if (pedidoId) {
         try {
-          console.log(`🔍 Buscando forma de pagamento do pedido relacionado: ${pedidoId}`);
+          console.log(`🔍 Buscando vendedor e forma de pagamento do pedido relacionado: ${pedidoId}`);
           const pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
           if (pedidoCompleto) {
+            // CORREÇÃO: Extrair vendedor do pedido (campo correto conforme solicitação)
+            const sellerCodeFromOrder = pedidoCompleto.cabecalho?.codigo_vendedor?.toString();
+            if (sellerCodeFromOrder) {
+              console.log(`🔍 Código do vendedor extraído do PEDIDO DE VENDA: ${sellerCodeFromOrder}`);
+              const sellerData = await this.fetchSellerData(sellerCodeFromOrder);
+              if (sellerData) {
+                sellerName = sellerData.name;
+                sellerId = sellerData.id;
+                console.log(`✅ Vendedor extraído do PEDIDO: ${sellerCodeFromOrder} -> ${sellerName}`);
+              }
+            }
+            
+            // Extrair forma de pagamento do pedido
             const parcelaCode = pedidoCompleto.cabecalho?.codigo_parcela;
             if (parcelaCode) {
               const payment = await this.fetchPaymentMethod(parcelaCode);
@@ -1122,7 +1097,45 @@ export class OmieService {
             }
           }
         } catch (error) {
-          console.log(`⚠️ Erro ao buscar forma de pagamento do pedido ${pedidoId}:`, error);
+          console.log(`⚠️ Erro ao buscar dados do pedido ${pedidoId}:`, error);
+        }
+      }
+      
+      // FALLBACK 1: Buscar vendedor através das recomendações do cliente (se não encontrou no pedido)
+      if (!sellerName && clientCode) {
+        try {
+          const clientApiData = await this.fetchClientData(clientCode);
+          if (clientApiData && clientApiData.rawData) {
+            const sellerCode = clientApiData.rawData.recomendacoes?.codigo_vendedor?.toString();
+            if (sellerCode) {
+              console.log(`🔍 FALLBACK: Código do vendedor extraído das recomendações do cliente: ${sellerCode}`);
+              const sellerData = await this.fetchSellerData(sellerCode);
+              if (sellerData) {
+                sellerName = sellerData.name;
+                sellerId = sellerData.id;
+                console.log(`✅ FALLBACK: Vendedor extraído das recomendações: ${sellerCode} -> ${sellerName}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar dados do cliente/vendedor ${clientCode}:`, error);
+        }
+      }
+      
+      // FALLBACK 2: buscar vendedor do título se não encontrou pelos métodos anteriores
+      if (!sellerName) {
+        const sellerCode = titulo.nCodVendedor?.toString();
+        if (sellerCode) {
+          try {
+            const sellerData = await this.fetchSellerData(sellerCode);
+            if (sellerData) {
+              sellerName = sellerData.name;
+              sellerId = sellerData.id;
+              console.log(`✅ FALLBACK: Vendedor extraído do título: ${sellerCode} -> ${sellerName}`);
+            }
+          } catch (error) {
+            console.log(`⚠️ Erro ao buscar dados do vendedor ${sellerCode}:`, error);
+          }
         }
       }
       

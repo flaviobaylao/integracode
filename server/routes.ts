@@ -1626,6 +1626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+
   // Sincronizar TODAS as notas fiscais do Omie
   app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
