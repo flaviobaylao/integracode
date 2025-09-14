@@ -20,6 +20,7 @@ import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
+import VisitRoutes from "@/pages/VisitRoutes";
 import { useState } from "react";
 
 export default function Home() {
@@ -60,6 +61,8 @@ export default function Home() {
         return <TelemarketingPage />;
       case 'sales-schedule':
         return <SalesSchedule />;
+      case 'visit-routes':
+        return <VisitRoutes />;
       case 'overdue-debts':
         return <OverdueDebtsManagement />;
       case 'blocked-orders':

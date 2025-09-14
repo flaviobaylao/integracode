@@ -30,6 +30,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: true 
     },
     { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true },
+    { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true },
     { 
       id: 'customers', 
       label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes',

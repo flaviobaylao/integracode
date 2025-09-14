@@ -15,9 +15,10 @@ import {
   insertMessageHistorySchema,
   insertLocationSchema,
   insertSalesGoalSchema,
+  visitAgenda,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
+import { sql, eq, and, gte, lte, isNotNull } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -1644,6 +1645,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
     } catch (error: any) {
       console.error('❌ Erro na geração manual de agenda:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
+  // Buscar visitas agendadas com filtros
+  app.get('/api/visit-agenda', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const {
+        sellerId,
+        startDate,
+        endDate,
+        routeDay,
+        visitStatus = 'pending',
+        page = '1',
+        pageSize = '50'
+      } = req.query;
+
+      // Construir filtros
+      const filters: any[] = [];
+
+      // Filtro por vendedor baseado na role
+      if (user.role === 'vendedor') {
+        // Vendedores só veem suas próprias visitas
+        filters.push(eq(visitAgenda.sellerId, user.id));
+      } else if (sellerId && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        // Admins/coordenadores podem filtrar por vendedor específico
+        filters.push(eq(visitAgenda.sellerId, sellerId));
+      }
+
+      // Filtros de data
+      if (startDate) {
+        filters.push(gte(visitAgenda.scheduledDate, new Date(startDate as string)));
+      }
+      if (endDate) {
+        filters.push(lte(visitAgenda.scheduledDate, new Date(endDate as string)));
+      }
+
+      // Filtro por dia da semana
+      if (routeDay) {
+        filters.push(eq(visitAgenda.routeDay, routeDay as string));
+      }
+
+      // Filtro por status
+      if (visitStatus) {
+        filters.push(eq(visitAgenda.visitStatus, visitStatus as string));
+      }
+
+      // Buscar visitas com paginação
+      const offset = (parseInt(page as string) - 1) * parseInt(pageSize as string);
+      
+      const visits = await db.select({
+        id: visitAgenda.id,
+        customerId: visitAgenda.customerId,
+        sellerId: visitAgenda.sellerId,
+        scheduledDate: visitAgenda.scheduledDate,
+        routeDay: visitAgenda.routeDay,
+        recurrenceType: visitAgenda.recurrenceType,
+        isVirtual: visitAgenda.isVirtual,
+        visitStatus: visitAgenda.visitStatus,
+        customerName: visitAgenda.customerName,
+        customerLatitude: visitAgenda.customerLatitude,
+        customerLongitude: visitAgenda.customerLongitude,
+        customerAddress: visitAgenda.customerAddress,
+        actualCheckIn: visitAgenda.actualCheckIn,
+        actualCheckOut: visitAgenda.actualCheckOut,
+        distanceToCustomer: visitAgenda.distanceToCustomer,
+        salesCardId: visitAgenda.salesCardId,
+        createdAt: visitAgenda.createdAt,
+      })
+      .from(visitAgenda)
+      .where(and(...filters))
+      .orderBy(visitAgenda.scheduledDate, visitAgenda.customerName)
+      .limit(parseInt(pageSize as string))
+      .offset(offset);
+
+      // Contar total de registros
+      const totalQuery = await db.select({ count: sql<number>`count(*)` })
+        .from(visitAgenda)
+        .where(and(...filters));
+      
+      const total = totalQuery[0]?.count || 0;
+      const totalPages = Math.ceil(total / parseInt(pageSize as string));
+
+      res.json({
+        visits,
+        pagination: {
+          page: parseInt(page as string),
+          pageSize: parseInt(pageSize as string),
+          total,
+          totalPages
+        }
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar visitas agendadas:', error);
       res.status(500).json({ 
         error: 'Erro interno do servidor',
         message: error.message 
