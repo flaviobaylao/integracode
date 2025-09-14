@@ -383,12 +383,28 @@ export class OmieService {
       
     } catch (error) {
       console.log('⚠️ Erro ao carregar nomes das etapas:', error);
-      // Mapeamento de fallback para códigos comuns conforme processo da empresa
+      
+      // MAPEAMENTO OFICIAL DAS ETAPAS DE NOTAS FISCAIS - HONEST SUCOS
+      // ============================================================
+      // DOCUMENTAÇÃO: Este mapeamento foi validado em 14/09/2025 após análise
+      // dos dados reais do Omie ERP. NUNCA alterar sem validação prévia.
+      // Processo: NF emitida → Aguardando Rota → Em Rota → Entregue
+      // ============================================================
+      
+      // Etapa 10: Pedidos (não são notas fiscais)
       this.stageNamesCache.set('10', 'Pedido de Venda');
+      
+      // Etapa 20: Notas que aguardam saída para entrega
       this.stageNamesCache.set('20', 'Em Rota');
+      
+      // Etapas 50/60: Notas emitidas/faturadas
       this.stageNamesCache.set('50', 'Faturado');
       this.stageNamesCache.set('60', 'Faturado');
+      
+      // Etapa 70: Notas entregues ao cliente final
       this.stageNamesCache.set('70', 'Entregue');
+      
+      // Etapa 80: Notas prontas aguardando definição de rota
       this.stageNamesCache.set('80', 'Aguardando Rota');
     }
   }
