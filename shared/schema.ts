@@ -10,6 +10,7 @@ import {
   integer,
   boolean,
   pgEnum,
+  unique,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -461,6 +462,7 @@ export const visitAgenda = pgTable("visit_agenda", {
 }, (table) => [
   index("idx_visit_agenda_seller_date").on(table.sellerId, table.scheduledDate),
   index("idx_visit_agenda_customer_date").on(table.customerId, table.scheduledDate),
+  unique("unique_visit_agenda_customer_date").on(table.customerId, table.scheduledDate),
 ]);
 
 // Sales Goals table - para definição de metas mensais por vendedor

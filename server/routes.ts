@@ -5,6 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
+import { generateVisitAgenda } from "./visitScheduleService";
 import { receitaService } from "./receitaIntegration";
 import {
   insertCustomerSchema,
@@ -1626,6 +1627,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Geração manual de agenda de visitas (apenas admin/coordinator)
+  app.post('/api/visit-agenda/generate', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log('🗓️ Iniciando geração manual de agenda de visitas...');
+      
+      const result = await generateVisitAgenda();
+      
+      console.log('✅ Geração manual de agenda concluída:', result);
+      res.json({
+        success: true,
+        message: `Agenda gerada com sucesso: ${result.generated} visitas criadas para ${result.processed} clientes`,
+        processed: result.processed,
+        generated: result.generated
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro na geração manual de agenda:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
 
   // Sincronizar TODAS as notas fiscais do Omie
   app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
