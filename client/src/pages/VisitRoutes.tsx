@@ -171,7 +171,7 @@ export default function VisitRoutes() {
   const { data: sellers } = useQuery({
     queryKey: ['/api/users', { role: 'vendedor' }],
     queryFn: async () => await apiRequest('GET', '/api/users?role=vendedor'),
-    enabled: user?.role !== 'vendedor'
+    enabled: !!user && ['admin', 'coordinator', 'administrative'].includes(user.role || '')
   });
 
   const { data: visits, isLoading, refetch } = useQuery<VisitResponse>({
@@ -358,7 +358,7 @@ export default function VisitRoutes() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {user?.role !== 'vendedor' && (
+            {user && ['admin', 'coordinator', 'administrative'].includes(user.role || '') && (
               <div>
                 <label className="text-sm font-medium mb-1 block">Vendedor</label>
                 <Select
@@ -370,7 +370,7 @@ export default function VisitRoutes() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos os vendedores</SelectItem>
-                    {sellers?.map((seller: any) => (
+                    {Array.isArray(sellers) && sellers.map((seller: any) => (
                       <SelectItem key={seller.id} value={seller.id}>
                         {seller.firstName} {seller.lastName}
                       </SelectItem>

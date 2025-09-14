@@ -110,7 +110,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User routes
   app.get('/api/users', authenticateUser, async (req: any, res) => {
     try {
-      const users = await storage.getUsers();
+      const { role } = req.query;
+      let users = await storage.getUsers();
+      
+      // Filtrar por role se especificado
+      if (role && role !== 'all') {
+        users = users.filter(user => user.role === role);
+      }
+      
       res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
