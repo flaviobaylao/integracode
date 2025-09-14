@@ -185,7 +185,7 @@ export class OmieService {
     const normalizedCfop = cfop?.replace(/\./g, '') || '';
     
     // CFOPs específicos de devolução (lista precisa)
-    const devolucaoCfops = ['1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    const devolucaoCfops = ['1151', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
     if (devolucaoCfops.includes(normalizedCfop)) {
       return 'devolucao';
     }
