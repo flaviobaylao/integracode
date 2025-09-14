@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useMemo } from "react";
 import { RefreshCw, FileText, Calendar, DollarSign, Search, Filter, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
@@ -43,7 +44,8 @@ export default function Billings() {
     startDate: '',
     endDate: '',
     customerName: '',
-    sellerName: ''
+    sellerName: '',
+    invoiceStage: ''
   });
 
   // Estado da ordenação
@@ -214,7 +216,8 @@ export default function Billings() {
       startDate: '',
       endDate: '',
       customerName: '',
-      sellerName: ''
+      sellerName: '',
+      invoiceStage: ''
     });
   };
 
@@ -362,7 +365,7 @@ export default function Billings() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
             <div className="space-y-2">
               <Label htmlFor="start-date">Data Inicial</Label>
               <Input
@@ -412,6 +415,25 @@ export default function Billings() {
                   data-testid="input-seller-search"
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="invoice-stage">Etapa</Label>
+              <Select 
+                value={filters.invoiceStage} 
+                onValueChange={(value) => handleFilterChange('invoiceStage', value)}
+              >
+                <SelectTrigger data-testid="select-invoice-stage">
+                  <SelectValue placeholder="Todas as etapas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todas as etapas</SelectItem>
+                  <SelectItem value="CANCELADO">CANCELADO</SelectItem>
+                  <SelectItem value="Faturado">Faturado</SelectItem>
+                  <SelectItem value="Em Rota">Em Rota</SelectItem>
+                  <SelectItem value="Entregue">Entregue</SelectItem>
+                  <SelectItem value="Aguardando Rota">Aguardando Rota</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="flex justify-between items-center">

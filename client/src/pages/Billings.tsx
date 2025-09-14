@@ -436,6 +436,7 @@ export default function Billings() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="CANCELADO">CANCELADO</SelectItem>
                   <SelectItem value="Faturado">Faturado</SelectItem>
                   <SelectItem value="Aguardando Rota">Aguardando Rota</SelectItem>
                   <SelectItem value="Em Rota">Em Rota</SelectItem>
