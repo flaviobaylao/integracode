@@ -385,11 +385,11 @@ export class OmieService {
       console.log('⚠️ Erro ao carregar nomes das etapas:', error);
       // Mapeamento de fallback para códigos comuns conforme processo da empresa
       this.stageNamesCache.set('10', 'Pedido de Venda');
-      this.stageNamesCache.set('20', 'faturar');
+      this.stageNamesCache.set('20', 'Faturado');
       this.stageNamesCache.set('50', 'Faturado');
-      this.stageNamesCache.set('60', 'Aguardando Rota');
+      this.stageNamesCache.set('60', 'Faturado');
       this.stageNamesCache.set('70', 'Em Rota');
-      this.stageNamesCache.set('80', 'AGUARDANDO ENTREGA');
+      this.stageNamesCache.set('80', 'Aguardando Rota');
     }
   }
 
