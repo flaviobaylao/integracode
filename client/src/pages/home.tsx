@@ -15,7 +15,6 @@ import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
 import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
 import LocationsManagement from "@/pages/LocationsManagement";
 import OrderSteps from "@/components/OrderSteps";
-import InvoiceDebugger from "@/pages/InvoiceDebugger";
 import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
@@ -49,8 +48,6 @@ export default function Home() {
         return <ProductManagement />;
       case 'billings':
         return <Billings />;
-      case 'debug-invoice':
-        return <InvoiceDebugger />;
       case 'whatsapp':
         return <WhatsAppIntegration />;
       case 'omie':

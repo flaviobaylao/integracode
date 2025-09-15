@@ -11,7 +11,6 @@ import AdminLogin from "@/pages/admin-login";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
-import InvoiceDebugger from "@/pages/InvoiceDebugger";
 import Billings from "@/pages/Billings";
 import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
@@ -33,7 +32,6 @@ function Router() {
           <Route path="/sellers" component={Sellers} />
           <Route path="/telemarketing" component={TelemarketingPage} />
           <Route path="/sales-schedule" component={SalesSchedule} />
-          <Route path="/debug-invoice" component={InvoiceDebugger} />
           <Route path="/billings" component={Billings} />
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
           <Route path="/delivery-management" component={DeliveryManagement} />
