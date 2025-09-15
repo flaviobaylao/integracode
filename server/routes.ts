@@ -1858,7 +1858,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerName: visit.customerName || 'Cliente sem nome',
         address: visit.customerAddress || 'Endereço não informado',
         priority: visit.recurrenceType === 'semanal' ? 4 : 3, // Clientes semanais têm prioridade
-        estimatedDuration: 30 // 30 minutos por visita padrão
+        estimatedDuration: 30, // 30 minutos por visita padrão
+        isVirtual: visit.isVirtual || false // incluir informação de atendimento virtual
       }));
 
       // Otimizar rota usando algoritmo avançado

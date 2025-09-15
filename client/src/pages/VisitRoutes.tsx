@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw, CheckCircle, XCircle, MapPinIcon } from "lucide-react";
+import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw, CheckCircle, XCircle, MapPinIcon, Monitor, Phone, Video } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { optimizeRouteAdvanced, calculateTravelTime, type RouteLocation, type OptimizedRoute } from "@shared/routeOptimization";
@@ -479,14 +479,34 @@ export default function VisitRoutes() {
               <h4 className="font-semibold mb-3 text-gray-800 dark:text-white">Ordem da Rota:</h4>
               <div className="space-y-2">
                 {optimizedRoute.locations.map((location, index) => (
-                  <div key={location.id} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                  <div key={location.id} className={`flex items-center justify-between p-2 rounded ${
+                    location.isVirtual 
+                      ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700' 
+                      : 'bg-gray-50 dark:bg-gray-700'
+                  }`}>
                     <div className="flex items-center">
-                      <div className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3">
+                      <div className={`w-6 h-6 text-white rounded-full flex items-center justify-center text-xs font-bold mr-3 ${
+                        location.isVirtual ? 'bg-blue-600' : 'bg-green-600'
+                      }`}>
                         {index + 1}
                       </div>
-                      <div>
-                        <div className="font-medium text-gray-800 dark:text-white">{location.customerName}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400">{location.address}</div>
+                      <div className="flex items-center">
+                        {location.isVirtual && (
+                          <Monitor className="h-4 w-4 text-blue-600 mr-2" />
+                        )}
+                        <div>
+                          <div className="font-medium text-gray-800 dark:text-white flex items-center">
+                            {location.customerName}
+                            {location.isVirtual && (
+                              <Badge variant="outline" className="ml-2 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400 text-xs">
+                                Virtual
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-sm text-gray-600 dark:text-gray-400">
+                            {location.isVirtual ? 'Atendimento Virtual' : location.address}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -587,9 +607,15 @@ export default function VisitRoutes() {
                       </TableCell>
                       <TableCell>
                         {visit.isVirtual ? (
-                          <Badge variant="outline">Virtual</Badge>
+                          <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400">
+                            <Monitor className="h-3 w-3 mr-1" />
+                            Virtual
+                          </Badge>
                         ) : (
-                          <Badge variant="secondary">Presencial</Badge>
+                          <Badge variant="secondary" className="text-green-600 bg-green-50 dark:bg-green-900/20">
+                            <MapPin className="h-3 w-3 mr-1" />
+                            Presencial
+                          </Badge>
                         )}
                       </TableCell>
                       <TableCell>
@@ -638,9 +664,15 @@ export default function VisitRoutes() {
                           </div>
                         )}
                         {visit.isVirtual && (
-                          <Badge variant="outline" className="text-gray-500">
-                            Virtual
-                          </Badge>
+                          <div className="flex flex-col items-center gap-1">
+                            <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400">
+                              <Video className="h-3 w-3 mr-1" />
+                              Atendimento Virtual
+                            </Badge>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                              Não requer check-in físico
+                            </span>
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>

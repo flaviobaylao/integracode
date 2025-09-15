@@ -17,6 +17,7 @@ import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
+import VisitRoutes from "@/pages/VisitRoutes";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -38,6 +39,7 @@ function Router() {
           <Route path="/delivery-management" component={DeliveryManagement} />
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
+          <Route path="/visit-routes" component={VisitRoutes} />
         </>
       )}
       <Route component={NotFound} />

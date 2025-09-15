@@ -10,6 +10,7 @@ export interface RouteLocation {
   address?: string;
   priority?: number; // 1-5, onde 5 é prioridade alta
   estimatedDuration?: number; // tempo estimado de visita em minutos
+  isVirtual?: boolean; // indica se é atendimento virtual
 }
 
 export interface OptimizedRoute {
