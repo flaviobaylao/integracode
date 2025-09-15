@@ -2852,17 +2852,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
                (user.email && user.email === systemVendor.email))
             );
 
+            if (!systemVendor.isActive) {
+              // VENDEDOR INATIVO NO OMIE
+              if (existingVendor) {
+                // Desativar vendedor existente que se tornou inativo no Omie
+                console.log(`🔄 Desativando vendedor: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
+                await storage.updateUser(existingVendor.id, {
+                  firstName: systemVendor.firstName,
+                  lastName: systemVendor.lastName,
+                  email: systemVendor.email,
+                  isActive: false // Desativar
+                  // Não atualizar homeLatitude e homeLongitude para preservar dados cadastrados
+                });
+                result.updated++;
+              } else {
+                // Não criar novos vendedores inativos
+                console.log(`⏭️ Ignorando criação de vendedor inativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
+              }
+              continue;
+            }
+
+            // VENDEDOR ATIVO NO OMIE
             if (existingVendor) {
-              // Atualizar vendedor existente
+              // Atualizar vendedor existente (manter geolocalização existente)
+              console.log(`🔄 Atualizando vendedor ativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
               await storage.updateUser(existingVendor.id, {
                 firstName: systemVendor.firstName,
                 lastName: systemVendor.lastName,
                 email: systemVendor.email,
-                isActive: systemVendor.isActive
+                isActive: true // Garantir que está ativo
+                // Não atualizar homeLatitude e homeLongitude para preservar dados cadastrados
               });
               result.updated++;
             } else {
-              // Criar novo vendedor
+              // Criar novo vendedor ativo
+              console.log(`✅ Criando novo vendedor ativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
               await storage.createUser(systemVendor);
               result.imported++;
             }
