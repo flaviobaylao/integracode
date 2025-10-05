@@ -263,6 +263,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Import customer data from Excel file
+  app.post('/api/customers/import', authenticateUser, upload.single('file'), async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem importar dados." });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhum arquivo foi enviado" });
+      }
+
+      // Parse Excel file
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet);
+
+      console.log(`Importando dados de ${data.length} linhas do Excel`);
+
+      const results = {
+        updated: 0,
+        notFound: 0,
+        errors: [] as string[],
+      };
+
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i] as any;
+        
+        try {
+          // Map Excel columns to our schema (flexible column names)
+          const cpfCnpj = (row['CPF OU CNPJ'] || row['CNPJ/CPF'] || row['cpf_cnpj'] || row['cpfCnpj'] || row['documento'] || '').toString().trim();
+          const latitude = row['LATITUDE'] || row['Latitude'] || row['latitude'] || row['lat'];
+          const longitude = row['LONGITUDE'] || row['Longitude'] || row['longitude'] || row['lng'];
+          const route = row['ROTA'] || row['Rota'] || row['rota'] || row['route'];
+          const periodicidade = (row['PERIODICIDADE'] || row['Periodicidade'] || row['periodicidade'] || row['periodicity'] || '').toString().toLowerCase().trim();
+
+          if (!cpfCnpj) {
+            results.errors.push(`Linha ${i + 2}: CPF/CNPJ não informado`);
+            continue;
+          }
+
+          // Normalize CPF/CNPJ - remove formatting
+          const normalizedCpfCnpj = cpfCnpj.replace(/[^\d]/g, '');
+
+          // Find customer by CPF or CNPJ
+          let customer = null;
+          if (normalizedCpfCnpj.length === 11) {
+            // CPF
+            customer = await storage.getCustomerByCpf(normalizedCpfCnpj);
+          } else if (normalizedCpfCnpj.length === 14) {
+            // CNPJ
+            customer = await storage.getCustomerByCnpj(normalizedCpfCnpj);
+          }
+
+          if (!customer) {
+            results.notFound++;
+            results.errors.push(`Linha ${i + 2}: Cliente não encontrado para CPF/CNPJ ${cpfCnpj}`);
+            continue;
+          }
+
+          // Prepare update data
+          const updateData: any = {};
+          
+          if (latitude !== undefined && latitude !== null && latitude !== '') {
+            updateData.latitude = parseFloat(latitude.toString());
+          }
+          
+          if (longitude !== undefined && longitude !== null && longitude !== '') {
+            updateData.longitude = parseFloat(longitude.toString());
+          }
+          
+          if (route !== undefined && route !== null && route !== '') {
+            updateData.route = route.toString();
+          }
+          
+          if (periodicidade) {
+            // Map periodicidade values
+            const periodicityMap: Record<string, string> = {
+              'semanal': 'semanal',
+              'quinzenal': 'quinzenal',
+              'mensal': 'mensal',
+              'bimestral': 'bimestral',
+            };
+            
+            const mappedPeriodicity = periodicityMap[periodicidade];
+            if (mappedPeriodicity) {
+              updateData.visitPeriodicity = mappedPeriodicity;
+            } else {
+              results.errors.push(`Linha ${i + 2}: Periodicidade inválida '${periodicidade}'. Use: semanal, quinzenal, mensal ou bimestral`);
+            }
+          }
+
+          // Only update if there's something to update
+          if (Object.keys(updateData).length > 0) {
+            await storage.updateCustomer(customer.id, updateData);
+            results.updated++;
+            console.log(`Cliente ${customer.name} (${cpfCnpj}) atualizado com sucesso`);
+          }
+
+        } catch (error) {
+          results.errors.push(`Linha ${i + 2}: Erro ao processar - ${error}`);
+        }
+      }
+
+      res.json({
+        success: true,
+        updated: results.updated,
+        notFound: results.notFound,
+        totalProcessed: data.length,
+        errors: results.errors,
+        message: `${results.updated} clientes atualizados com sucesso. ${results.notFound} clientes não encontrados.`
+      });
+    } catch (error) {
+      console.error("Error importing customer data:", error);
+      res.status(500).json({ message: "Falha ao importar dados de clientes" });
+    }
+  });
+
   // Product routes
   app.get('/api/products', authenticateUser, async (req, res) => {
     try {

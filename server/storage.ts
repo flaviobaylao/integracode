@@ -46,6 +46,8 @@ export interface IStorage {
   // Customer operations
   getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
   getCustomer(id: string): Promise<CustomerWithSeller | undefined>;
+  getCustomerByCpf(cpf: string): Promise<Customer | undefined>;
+  getCustomerByCnpj(cnpj: string): Promise<Customer | undefined>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   updateCustomer(id: string, customer: Partial<InsertCustomer>): Promise<Customer>;
   deleteCustomer(id: string): Promise<void>;
@@ -328,6 +330,24 @@ export class DatabaseStorage implements IStorage {
       ...result.customers,
       seller: result.users!,
     };
+  }
+
+  async getCustomerByCpf(cpf: string): Promise<Customer | undefined> {
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.cpf, cpf));
+    
+    return customer;
+  }
+
+  async getCustomerByCnpj(cnpj: string): Promise<Customer | undefined> {
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.cnpj, cnpj));
+    
+    return customer;
   }
 
   async createCustomer(customer: InsertCustomer): Promise<Customer> {
