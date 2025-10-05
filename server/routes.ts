@@ -1443,15 +1443,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               if (existingCustomer) {
                 // Atualizar cliente existente
+                // IMPORTANTE: Preservar latitude, longitude, route e visitPeriodicity
+                // Estes campos só devem ser alterados via importação de planilha ou edição individual no app
                 await storage.updateCustomer(existingCustomer.id, {
+                  // Campos que podem ser atualizados do Omie
                   name: systemClient.name,
+                  customerType: systemClient.customerType,
+                  cpf: systemClient.cpf,
+                  cnpj: systemClient.cnpj,
+                  companyName: systemClient.companyName,
+                  fantasyName: systemClient.fantasyName,
                   phone: systemClient.phone,
                   email: systemClient.email,
                   address: systemClient.address,
                   city: systemClient.city,
                   state: systemClient.state,
+                  zipCode: systemClient.zipCode,
+                  isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao
+                  // Campos preservados (NÃO atualizados do Omie):
+                  // - latitude
+                  // - longitude  
+                  // - route
+                  // - visitPeriodicity
                 });
                 result.updated++;
               } else {
