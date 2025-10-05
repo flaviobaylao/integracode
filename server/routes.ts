@@ -16,6 +16,7 @@ import {
   insertMessageHistorySchema,
   insertLocationSchema,
   insertSalesGoalSchema,
+  insertRouteSchema,
   visitAgenda,
   users,
   salesCards,
@@ -142,6 +143,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating user:", error);
       res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  // Route management routes
+  app.get('/api/routes', authenticateUser, async (req: any, res) => {
+    try {
+      const routes = await storage.getRoutes();
+      res.json(routes);
+    } catch (error) {
+      console.error("Error fetching routes:", error);
+      res.status(500).json({ message: "Failed to fetch routes" });
+    }
+  });
+
+  app.get('/api/routes/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const route = await storage.getRoute(id);
+      
+      if (!route) {
+        return res.status(404).json({ message: "Route not found" });
+      }
+      
+      res.json(route);
+    } catch (error) {
+      console.error("Error fetching route:", error);
+      res.status(500).json({ message: "Failed to fetch route" });
+    }
+  });
+
+  app.post('/api/routes', authenticateUser, async (req: any, res) => {
+    try {
+      const data = insertRouteSchema.parse(req.body);
+      const route = await storage.createRoute(data);
+      res.json(route);
+    } catch (error) {
+      console.error("Error creating route:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create route" });
+    }
+  });
+
+  app.put('/api/routes/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const data = req.body;
+      const route = await storage.updateRoute(id, data);
+      res.json(route);
+    } catch (error) {
+      console.error("Error updating route:", error);
+      res.status(500).json({ message: "Failed to update route" });
+    }
+  });
+
+  app.delete('/api/routes/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteRoute(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting route:", error);
+      res.status(500).json({ message: "Failed to delete route" });
     }
   });
 
