@@ -11,6 +11,7 @@ import CustomerModal from "./CustomerModal";
 import CustomerDetailsModal from "./CustomerDetailsModal";
 import OmieClientImport from "./OmieClientImport";
 import OmieSyncManager from "./OmieSyncManager";
+import CustomerExcelImport from "./CustomerExcelImport";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
 
@@ -455,6 +456,12 @@ export default function CustomerManagement() {
       <OmieSyncManager
         isOpen={showOmieSync}
         onClose={() => setShowOmieSync(false)}
+      />
+
+      {/* Excel Import Modal */}
+      <CustomerExcelImport
+        isOpen={showExcelImport}
+        onClose={() => setShowExcelImport(false)}
       />
 
       {/* Customer Details Modal */}
