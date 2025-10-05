@@ -12,12 +12,13 @@ import CustomerDetailsModal from "./CustomerDetailsModal";
 import OmieClientImport from "./OmieClientImport";
 import OmieSyncManager from "./OmieSyncManager";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
-import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar } from "lucide-react";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
 
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
   const [showOmieImport, setShowOmieImport] = useState(false);
   const [showOmieSync, setShowOmieSync] = useState(false);
+  const [showExcelImport, setShowExcelImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -189,6 +190,7 @@ export default function CustomerManagement() {
             variant="outline"
             className="border-orange-500 text-orange-600 hover:bg-orange-500 hover:text-white"
             onClick={() => setShowOmieSync(true)}
+            data-testid="button-sync-omie"
           >
             <RefreshCw className="h-4 w-4 mr-2" />
             Sincronizar Omie
@@ -197,13 +199,24 @@ export default function CustomerManagement() {
             variant="outline"
             className="border-honest-blue text-honest-blue hover:bg-honest-blue hover:text-white"
             onClick={() => setShowOmieImport(true)}
+            data-testid="button-import-omie"
           >
             <Download className="h-4 w-4 mr-2" />
             Importar do Omie
           </Button>
           <Button
+            variant="outline"
+            className="border-green-500 text-green-600 hover:bg-green-500 hover:text-white"
+            onClick={() => setShowExcelImport(true)}
+            data-testid="button-import-excel"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Importar Excel
+          </Button>
+          <Button
             className="bg-honest-blue hover:bg-blue-700"
             onClick={() => setShowModal(true)}
+            data-testid="button-new-customer"
           >
             <Plus className="h-4 w-4 mr-2" />
             Novo Cliente
