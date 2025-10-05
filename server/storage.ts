@@ -1,5 +1,6 @@
 import {
   users,
+  routes,
   customers,
   products,
   salesCards,
@@ -11,6 +12,8 @@ import {
   billings,
   type User,
   type UpsertUser,
+  type Route,
+  type InsertRoute,
   type InsertCustomer,
   type Customer,
   type CustomerWithSeller,
@@ -42,6 +45,15 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   createUser(user: UpsertUser): Promise<User>;
   updateUser(id: string, user: Partial<UpsertUser>): Promise<User>;
+  
+  // Route operations
+  getRoutes(): Promise<Route[]>;
+  getRoute(id: string): Promise<Route | undefined>;
+  getRouteByName(name: string): Promise<Route | undefined>;
+  createRoute(route: InsertRoute): Promise<Route>;
+  updateRoute(id: string, route: Partial<InsertRoute>): Promise<Route>;
+  deleteRoute(id: string): Promise<void>;
+  getRoutesBySellerId(sellerId: string): Promise<Route[]>;
   
   // Customer operations
   getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
@@ -241,6 +253,46 @@ export class DatabaseStorage implements IStorage {
       // If all else fails, throw the original error
       throw error;
     }
+  }
+
+  // Route operations
+  async getRoutes(): Promise<Route[]> {
+    return await db.select().from(routes).where(eq(routes.isActive, true));
+  }
+
+  async getRoute(id: string): Promise<Route | undefined> {
+    const [route] = await db.select().from(routes).where(eq(routes.id, id));
+    return route;
+  }
+
+  async getRouteByName(name: string): Promise<Route | undefined> {
+    const [route] = await db.select().from(routes).where(eq(routes.name, name));
+    return route;
+  }
+
+  async createRoute(routeData: InsertRoute): Promise<Route> {
+    const [route] = await db.insert(routes).values(routeData).returning();
+    return route;
+  }
+
+  async updateRoute(id: string, routeData: Partial<InsertRoute>): Promise<Route> {
+    const [route] = await db
+      .update(routes)
+      .set({ ...routeData, updatedAt: new Date() })
+      .where(eq(routes.id, id))
+      .returning();
+    return route;
+  }
+
+  async deleteRoute(id: string): Promise<void> {
+    await db.update(routes).set({ isActive: false }).where(eq(routes.id, id));
+  }
+
+  async getRoutesBySellerId(sellerId: string): Promise<Route[]> {
+    return await db
+      .select()
+      .from(routes)
+      .where(and(eq(routes.sellerId, sellerId), eq(routes.isActive, true)));
   }
 
   // Customer operations
