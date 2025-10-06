@@ -63,10 +63,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, isLoading: userLoading } = useAuth();
   
   // Verificar se usuário pode editar recorrência e dia da rota
-  const canManageRouteAndRecurrence = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  // Permitir edição se: está carregando OU é admin/coordinator/administrative
+  const canManageRouteAndRecurrence = userLoading || (user && ['admin', 'coordinator', 'administrative'].includes(user.role));
 
   // Buscar produtos disponíveis
   const { data: availableProducts } = useQuery({
