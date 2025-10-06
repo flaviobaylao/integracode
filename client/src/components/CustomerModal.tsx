@@ -36,13 +36,13 @@ interface CNPJData {
 }
 
 const weekdayOptions = [
-  { value: 'monday', label: 'Segunda-feira' },
-  { value: 'tuesday', label: 'Terça-feira' },
-  { value: 'wednesday', label: 'Quarta-feira' },
-  { value: 'thursday', label: 'Quinta-feira' },
-  { value: 'friday', label: 'Sexta-feira' },
-  { value: 'saturday', label: 'Sábado' },
-  { value: 'sunday', label: 'Domingo' },
+  { value: 'segunda', label: 'Segunda-feira' },
+  { value: 'terca', label: 'Terça-feira' },
+  { value: 'quarta', label: 'Quarta-feira' },
+  { value: 'quinta', label: 'Quinta-feira' },
+  { value: 'sexta', label: 'Sexta-feira' },
+  { value: 'sabado', label: 'Sábado' },
+  { value: 'domingo', label: 'Domingo' },
 ];
 
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
@@ -298,10 +298,24 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const handleWeekdayToggle = (weekday: string) => {
     const currentWeekdays = JSON.parse(form.getValues('weekdays') || '[]');
-    const newWeekdays = currentWeekdays.includes(weekday)
-      ? currentWeekdays.filter((w: string) => w !== weekday)
-      : [...currentWeekdays, weekday];
-    form.setValue('weekdays', JSON.stringify(newWeekdays));
+    
+    if (currentWeekdays.includes(weekday)) {
+      // Remove o dia se já estiver selecionado
+      const newWeekdays = currentWeekdays.filter((w: string) => w !== weekday);
+      form.setValue('weekdays', JSON.stringify(newWeekdays));
+    } else {
+      // Adiciona o dia apenas se ainda não tiver 2 dias selecionados
+      if (currentWeekdays.length >= 2) {
+        toast({
+          title: "Limite atingido",
+          description: "Cada cliente pode ter no máximo 2 dias de rota por semana.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const newWeekdays = [...currentWeekdays, weekday];
+      form.setValue('weekdays', JSON.stringify(newWeekdays));
+    }
   };
 
   const formatCPF = (value: string) => {
@@ -839,8 +853,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                       <FormItem>
                         <FormLabel className="flex items-center space-x-1">
                           <Calendar className="h-4 w-4" />
-                          <span>Dias de Visita</span>
+                          <span>Dias de Visita (máximo 2 dias)</span>
                         </FormLabel>
+                        <FormDescription className="text-xs">
+                          Selecione até 2 dias da semana para visita ao cliente
+                        </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
                             const isSelected = JSON.parse(form.getValues('weekdays') || '[]').includes(option.value);
