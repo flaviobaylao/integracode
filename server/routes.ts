@@ -951,7 +951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('POST /api/sales-cards - Processed data:', processedData);
       
       // Validar apenas os campos obrigatórios
-      const requiredFields = ['customerId', 'sellerId', 'scheduledDate', 'routeDay', 'recurrenceType'];
+      const requiredFields = ['customerId', 'sellerId', 'scheduledDate'];
       for (const field of requiredFields) {
         if (!processedData[field]) {
           return res.status(400).json({ 
