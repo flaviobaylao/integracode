@@ -390,10 +390,29 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             <CardContent>
               <div className="grid grid-cols-3 gap-4">
                 <div className="flex items-center space-x-2">
-                  <MapPin className="h-4 w-4 text-blue-500" />
+                  <Calendar className="h-4 w-4 text-blue-500" />
                   <div>
-                    <p className="text-sm text-gray-600">Rota:</p>
-                    <p className="font-medium">{card.customer.route || 'Não definida'}</p>
+                    <p className="text-sm text-gray-600">Dias de Visita:</p>
+                    <p className="font-medium">{(() => {
+                      try {
+                        const days = JSON.parse(card.customer.weekdays || '[]');
+                        const dayLabels: Record<string, string> = {
+                          'segunda': 'Seg',
+                          'terca': 'Ter',
+                          'quarta': 'Qua',
+                          'quinta': 'Qui',
+                          'sexta': 'Sex',
+                          'sabado': 'Sáb',
+                          'domingo': 'Dom'
+                        };
+                        if (Array.isArray(days) && days.length > 0) {
+                          return days.map(d => dayLabels[d] || d).join(', ');
+                        }
+                        return 'Não definido';
+                      } catch {
+                        return 'Não definido';
+                      }
+                    })()}</p>
                   </div>
                 </div>
                 <div>

@@ -55,6 +55,27 @@ const STATUS_COLORS = {
   'no_sale': 'bg-red-100 text-red-800 border-red-200'
 };
 
+const getWeekdaysLabel = (weekdays: string) => {
+  try {
+    const days = JSON.parse(weekdays);
+    const dayLabels: Record<string, string> = {
+      'segunda': 'Seg',
+      'terca': 'Ter',
+      'quarta': 'Qua',
+      'quinta': 'Qui',
+      'sexta': 'Sex',
+      'sabado': 'Sáb',
+      'domingo': 'Dom'
+    };
+    if (Array.isArray(days) && days.length > 0) {
+      return days.map(d => dayLabels[d] || d).join(', ');
+    }
+    return 'Não definido';
+  } catch {
+    return weekdays || 'Não definido';
+  }
+};
+
 export default function SalesSchedule() {
   const { user } = useAuth();
   const [selectedDay, setSelectedDay] = useState('segunda');
@@ -289,8 +310,8 @@ export default function SalesSchedule() {
                           <span>{card.customer.phone}</span>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <MapPin className="h-4 w-4" />
-                          <span>{card.customer.route}</span>
+                          <Calendar className="h-4 w-4" />
+                          <span>{getWeekdaysLabel(card.customer.weekdays)}</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           <Clock className="h-4 w-4" />

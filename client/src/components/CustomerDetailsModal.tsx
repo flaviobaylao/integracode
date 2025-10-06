@@ -287,13 +287,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Rota</p>
-                      <Badge className="bg-blue-100 text-blue-800 capitalize">
-                        {customer.route}
-                      </Badge>
-                    </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-gray-600">Dias de Visita</p>
                       <p className="font-medium">{getWeekdaysLabel(customer.weekdays)}</p>
