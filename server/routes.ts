@@ -364,6 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const latitude = row['LATITUDE'] || row['Latitude'] || row['latitude'] || row['lat'];
           const longitude = row['LONGITUDE'] || row['Longitude'] || row['longitude'] || row['lng'];
           const route = row['ROTA'] || row['Rota'] || row['rota'] || row['route'];
+          const weekdaysRaw = (row['DIAS DA SEMANA'] || row['Dias da Semana'] || row['dias_da_semana'] || row['weekdays'] || row['DIAS'] || row['Dias'] || '').toString().toLowerCase().trim();
           const periodicidade = (row['PERIODICIDADE'] || row['Periodicidade'] || row['periodicidade'] || row['periodicity'] || '').toString().toLowerCase().trim();
 
           if (!cpfCnpj) {
@@ -403,6 +404,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (route !== undefined && route !== null && route !== '') {
             updateData.route = route.toString();
+          }
+          
+          if (weekdaysRaw) {
+            // Normalizar e validar dias da semana
+            const weekdayMap: Record<string, string> = {
+              'segunda': 'segunda',
+              'segunda-feira': 'segunda',
+              'seg': 'segunda',
+              'terça': 'terca',
+              'terca': 'terca',
+              'terça-feira': 'terca',
+              'terca-feira': 'terca',
+              'ter': 'terca',
+              'quarta': 'quarta',
+              'quarta-feira': 'quarta',
+              'qua': 'quarta',
+              'quinta': 'quinta',
+              'quinta-feira': 'quinta',
+              'qui': 'quinta',
+              'sexta': 'sexta',
+              'sexta-feira': 'sexta',
+              'sex': 'sexta',
+              'sábado': 'sabado',
+              'sabado': 'sabado',
+              'sáb': 'sabado',
+              'sab': 'sabado',
+              'domingo': 'domingo',
+              'dom': 'domingo'
+            };
+            
+            const inputDays = weekdaysRaw.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+            const normalizedDays = inputDays
+              .map(day => weekdayMap[day])
+              .filter(day => day !== undefined);
+            
+            if (normalizedDays.length === 0 && inputDays.length > 0) {
+              results.errors.push(`Linha ${i + 2}: Nenhum dia da semana válido encontrado em '${weekdaysRaw}'`);
+            } else if (normalizedDays.length > 2) {
+              results.errors.push(`Linha ${i + 2}: Máximo de 2 dias da semana permitido. Encontrados ${normalizedDays.length} dias.`);
+            } else if (normalizedDays.length > 0) {
+              // Remover duplicatas e ordenar
+              const uniqueDays = Array.from(new Set(normalizedDays));
+              updateData.weekdays = uniqueDays.join(',');
+            }
           }
           
           if (periodicidade) {
