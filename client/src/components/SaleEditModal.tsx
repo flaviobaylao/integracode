@@ -366,7 +366,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // Função para calcular próxima data de agendamento
   const calculateNextScheduledDate = (fromDate?: Date, isRescheduling: boolean = false) => {
     if (!customerWeekdays || customerWeekdays.length === 0 || !customerVisitPeriodicity) {
-      console.log('Dados ausentes:', { customerWeekdays, customerVisitPeriodicity });
       return null;
     }
 
@@ -382,13 +381,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     };
 
     const targetWeekdays = customerWeekdays.map(day => weekdayMap[day]);
-    console.log('Calculando próxima data:', { 
-      baseDate: baseDate.toLocaleDateString('pt-BR'), 
-      targetWeekdays, 
-      customerWeekdays,
-      customerVisitPeriodicity,
-      isRescheduling 
-    });
     
     // Se estamos reagendando após completar, adicionar o período correto
     if (isRescheduling) {
@@ -401,7 +393,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       const daysToAdd = periodDays[customerVisitPeriodicity] || 7;
       const nextDate = new Date(baseDate);
       nextDate.setDate(baseDate.getDate() + daysToAdd);
-      console.log('Reagendando:', { daysToAdd, nextDate: nextDate.toLocaleDateString('pt-BR') });
       return nextDate;
     }
 
@@ -409,18 +400,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     for (let i = 1; i <= 7; i++) {
       const testDate = new Date(baseDate);
       testDate.setDate(baseDate.getDate() + i);
-      console.log(`Testando dia ${i}:`, { 
-        testDate: testDate.toLocaleDateString('pt-BR'), 
-        dayOfWeek: testDate.getDay(),
-        isMatch: targetWeekdays.includes(testDate.getDay())
-      });
       if (targetWeekdays.includes(testDate.getDay())) {
-        console.log('Data encontrada:', testDate.toLocaleDateString('pt-BR'));
         return testDate;
       }
     }
 
-    console.log('Nenhuma data encontrada');
     return null;
   };
 
