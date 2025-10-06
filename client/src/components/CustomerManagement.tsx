@@ -31,12 +31,12 @@ export default function CustomerManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: customers, isLoading } = useQuery({
+  const { data: customers = [], isLoading } = useQuery<CustomerWithSeller[]>({
     queryKey: ['/api/customers'],
     retry: false,
   });
 
-  const { data: users } = useQuery({
+  const { data: users = [] } = useQuery<User[]>({
     queryKey: ['/api/users'],
     retry: false,
   });
@@ -131,15 +131,15 @@ export default function CustomerManagement() {
   const renderLastActivityIcon = (status: string | undefined) => {
     switch (status) {
       case 'success':
-        return <CheckCircle className="h-4 w-4 text-green-600" title="Última venda realizada" />;
+        return <div title="Última venda realizada"><CheckCircle className="h-4 w-4 text-green-600" /></div>;
       case 'failed':
-        return <XCircle className="h-4 w-4 text-red-600" title="Última venda sem êxito" />;
+        return <div title="Última venda sem êxito"><XCircle className="h-4 w-4 text-red-600" /></div>;
       case 'pending':
-        return <Clock className="h-4 w-4 text-blue-600" title="Venda em andamento" />;
+        return <div title="Venda em andamento"><Clock className="h-4 w-4 text-blue-600" /></div>;
       case 'overdue':
-        return <AlertCircle className="h-4 w-4 text-purple-600" title="Card atrasado" />;
+        return <div title="Card atrasado"><AlertCircle className="h-4 w-4 text-purple-600" /></div>;
       case 'scheduled':
-        return <Calendar className="h-4 w-4 text-orange-600" title="Card agendado" />;
+        return <div title="Card agendado"><Calendar className="h-4 w-4 text-orange-600" /></div>;
       default:
         return <div className="h-4 w-4" />; // Espaço vazio para manter alinhamento
     }
@@ -442,7 +442,7 @@ export default function CustomerManagement() {
             setShowModal(false);
             setEditingCustomer(null);
           }}
-          editingCustomer={editingCustomer}
+          customer={editingCustomer}
         />
       )}
 
