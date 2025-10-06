@@ -57,6 +57,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const canManageCoordinatesLock = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canManageVirtualService = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canManageServiceStartDate = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canManageRouteAndPeriodicity = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -856,7 +857,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <span>Dias de Visita (máximo 2 dias)</span>
                         </FormLabel>
                         <FormDescription className="text-xs">
-                          Selecione até 2 dias da semana para visita ao cliente
+                          {canManageRouteAndPeriodicity 
+                            ? "Selecione até 2 dias da semana para visita ao cliente" 
+                            : "Apenas usuários administrativos podem alterar os dias de visita"}
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
@@ -868,7 +871,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                 variant={isSelected ? "default" : "outline"}
                                 size="sm"
                                 onClick={() => handleWeekdayToggle(option.value)}
+                                disabled={!canManageRouteAndPeriodicity}
                                 className={isSelected ? "bg-honest-blue hover:bg-honest-blue/90" : ""}
+                                data-testid={`button-weekday-${option.value}`}
                               >
                                 {option.label}
                               </Button>
@@ -894,9 +899,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         <Select 
                           value={field.value} 
                           onValueChange={field.onChange}
+                          disabled={!canManageRouteAndPeriodicity}
                         >
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger data-testid="select-visit-periodicity">
                               <SelectValue placeholder="Selecione a periodicidade" />
                             </SelectTrigger>
                           </FormControl>
@@ -907,6 +913,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <SelectItem value="bimestral">Bimestral</SelectItem>
                           </SelectContent>
                         </Select>
+                        <FormDescription className="text-xs">
+                          {canManageRouteAndPeriodicity 
+                            ? "Defina com que frequência o cliente deve ser visitado" 
+                            : "Apenas usuários administrativos podem alterar a periodicidade"}
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
