@@ -84,6 +84,21 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
 
   const handleCreateSalesCard = () => {
     if (!customer?.id) return;
+    
+    // Verificar se já existe um card pendente para este cliente
+    const hasPendingCard = salesHistory?.some((card: any) => 
+      card.status === 'pending'
+    );
+    
+    if (hasPendingCard) {
+      toast({
+        title: "Card já existe",
+        description: "Este cliente já possui um card de vendas pendente. Por favor, utilize o card existente.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     createSalesCardMutation.mutate(customer.id);
   };
 
