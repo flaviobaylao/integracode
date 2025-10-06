@@ -263,7 +263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/customers/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const data = req.body;
