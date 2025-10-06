@@ -54,6 +54,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<string[]>(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
   const [customerLatitude, setCustomerLatitude] = useState('');
   const [customerLongitude, setCustomerLongitude] = useState('');
+  const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
+  const [customerVisitPeriodicity, setCustomerVisitPeriodicity] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
@@ -88,6 +90,20 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       );
       setCustomerLatitude((card as any).customerLatitude || '');
       setCustomerLongitude((card as any).customerLongitude || '');
+      
+      // Carregar weekdays e periodicidade do cliente
+      if (card.customer) {
+        try {
+          const weekdaysData = card.customer.weekdays || '[]';
+          const parsedWeekdays = typeof weekdaysData === 'string' 
+            ? JSON.parse(weekdaysData) 
+            : weekdaysData;
+          setCustomerWeekdays(Array.isArray(parsedWeekdays) ? parsedWeekdays : []);
+        } catch {
+          setCustomerWeekdays([]);
+        }
+        setCustomerVisitPeriodicity((card.customer as any).visitPeriodicity || '');
+      }
     } else {
       // Valores padrão quando não há card
       setProducts([]);
@@ -100,6 +116,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setDeliveryTimeSlots(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
       setCustomerLatitude('');
       setCustomerLongitude('');
+      setCustomerWeekdays([]);
+      setCustomerVisitPeriodicity('');
     }
   }, [card]);
 
@@ -114,6 +132,27 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         description: "Venda finalizada com sucesso!",
       });
       onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateCustomerMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      await apiRequest('PUT', `/api/customers/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      toast({
+        title: "Sucesso",
+        description: "Dados do cliente atualizados com sucesso!",
+      });
     },
     onError: (error) => {
       toast({
@@ -290,6 +329,36 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     );
   };
 
+  // Função para gerenciar weekdays do cliente (máximo 2 dias)
+  const handleCustomerWeekdayChange = (weekday: string, checked: boolean) => {
+    if (checked) {
+      if (customerWeekdays.length >= 2) {
+        toast({
+          title: "Limite atingido",
+          description: "Cada cliente pode ter no máximo 2 dias de visita por semana.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setCustomerWeekdays([...customerWeekdays, weekday]);
+    } else {
+      setCustomerWeekdays(customerWeekdays.filter(w => w !== weekday));
+    }
+  };
+
+  // Função para salvar dados do cliente
+  const handleSaveCustomerInfo = async () => {
+    if (!card?.customer?.id) return;
+    
+    await updateCustomerMutation.mutateAsync({
+      id: card.customer.id,
+      data: {
+        weekdays: JSON.stringify(customerWeekdays),
+        visitPeriodicity: customerVisitPeriodicity || null
+      }
+    });
+  };
+
   // Função para gerenciar checkboxes de horários
   const handleTimeSlotChange = (timeSlot: string, checked: boolean) => {
     setDeliveryTimeSlots(checked 
@@ -379,73 +448,73 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             </CardContent>
           </Card>
 
-          {/* Informações de Rota e Periodicidade */}
+          {/* Informações de Rota e Periodicidade do Cliente */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Route className="h-5 w-5 text-green-600" />
-                <span>Rota e Periodicidade</span>
+                <span>Rota e Periodicidade do Cliente</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4 text-blue-500" />
-                  <div>
-                    <p className="text-sm text-gray-600">Dias de Visita:</p>
-                    <p className="font-medium">{(() => {
-                      try {
-                        const days = JSON.parse(card.customer.weekdays || '[]');
-                        const dayLabels: Record<string, string> = {
-                          'segunda': 'Seg',
-                          'terca': 'Ter',
-                          'quarta': 'Qua',
-                          'quinta': 'Qui',
-                          'sexta': 'Sex',
-                          'sabado': 'Sáb',
-                          'domingo': 'Dom'
-                        };
-                        if (Array.isArray(days) && days.length > 0) {
-                          return days.map(d => dayLabels[d] || d).join(', ');
-                        }
-                        return 'Não definido';
-                      } catch {
-                        return 'Não definido';
-                      }
-                    })()}</p>
+              <div className="space-y-4">
+                {/* Dias de Visita do Cliente (Editável) */}
+                <div>
+                  <Label className="text-sm font-medium mb-3 block">
+                    Dias de Visita do Cliente (máximo 2 dias)
+                  </Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {weekdays.map((day) => (
+                      <div key={day.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`customer-weekday-${day.value}`}
+                          checked={customerWeekdays.includes(day.value)}
+                          onCheckedChange={(checked) => handleCustomerWeekdayChange(day.value, checked as boolean)}
+                          data-testid={`checkbox-customer-weekday-${day.value}`}
+                        />
+                        <Label 
+                          htmlFor={`customer-weekday-${day.value}`} 
+                          className="text-sm font-normal cursor-pointer"
+                        >
+                          {day.label}
+                        </Label>
+                      </div>
+                    ))}
                   </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    {customerWeekdays.length}/2 dias selecionados
+                  </p>
                 </div>
+
+                {/* Periodicidade de Visita do Cliente */}
                 <div>
-                  <Label>Dia da Semana</Label>
-                  <Select value={routeDay} onValueChange={setRouteDay}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o dia" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="segunda">Segunda-feira</SelectItem>
-                      <SelectItem value="terca">Terça-feira</SelectItem>
-                      <SelectItem value="quarta">Quarta-feira</SelectItem>
-                      <SelectItem value="quinta">Quinta-feira</SelectItem>
-                      <SelectItem value="sexta">Sexta-feira</SelectItem>
-                      <SelectItem value="sabado">Sábado</SelectItem>
-                      <SelectItem value="domingo">Domingo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Periodicidade</Label>
-                  <Select value={recurrenceType} onValueChange={setRecurrenceType}>
-                    <SelectTrigger>
+                  <Label>Periodicidade de Visita do Cliente</Label>
+                  <Select 
+                    value={customerVisitPeriodicity} 
+                    onValueChange={setCustomerVisitPeriodicity}
+                  >
+                    <SelectTrigger data-testid="select-customer-periodicity">
                       <SelectValue placeholder="Selecione a periodicidade" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="semanal">Semanal</SelectItem>
                       <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                      <SelectItem value="trisemanal">Tri-semanal</SelectItem>
                       <SelectItem value="mensal">Mensal</SelectItem>
+                      <SelectItem value="bimestral">Bimestral</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Botão para Salvar Informações do Cliente */}
+                <Button
+                  onClick={handleSaveCustomerInfo}
+                  disabled={updateCustomerMutation.isPending}
+                  variant="outline"
+                  className="w-full"
+                  data-testid="button-save-customer-info"
+                >
+                  {updateCustomerMutation.isPending ? 'Salvando...' : 'Salvar Informações do Cliente'}
+                </Button>
               </div>
             </CardContent>
           </Card>
