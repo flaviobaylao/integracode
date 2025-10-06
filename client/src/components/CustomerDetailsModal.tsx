@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { Customer, SalesCardWithRelations } from "@shared/schema";
 import { 
   User, 
@@ -23,7 +25,8 @@ import {
   Clock,
   AlertCircle,
   TrendingUp,
-  History
+  History,
+  Plus
 } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 
@@ -34,10 +37,47 @@ interface CustomerDetailsModalProps {
 }
 
 export default function CustomerDetailsModal({ isOpen, onClose, customer }: CustomerDetailsModalProps) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
   const { data: salesHistory } = useQuery({
     queryKey: ['/api/sales-cards', 'customer', customer?.id],
     enabled: !!customer?.id,
   });
+
+  const createSalesCardMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      const currentUser = await fetch('/api/auth/user').then(res => res.json());
+      
+      return apiRequest('POST', '/api/sales-cards', {
+        customerId: customerId,
+        sellerId: currentUser.id,
+        status: 'pending',
+        scheduledDate: new Date().toISOString(),
+        notes: 'Card criado a partir da gestão de clientes'
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      toast({
+        title: "Sucesso",
+        description: "Card de venda criado com sucesso!",
+      });
+      onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível criar o card de venda",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreateSalesCard = () => {
+    if (!customer?.id) return;
+    createSalesCardMutation.mutate(customer.id);
+  };
 
   const openWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
@@ -133,10 +173,21 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
-          <DialogTitle className="flex items-center space-x-2">
-            <User className="h-5 w-5 text-blue-600" />
-            <span>Detalhes do Cliente</span>
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center space-x-2">
+              <User className="h-5 w-5 text-blue-600" />
+              <span>Detalhes do Cliente</span>
+            </DialogTitle>
+            <Button
+              onClick={handleCreateSalesCard}
+              disabled={createSalesCardMutation.isPending}
+              className="bg-green-600 hover:bg-green-700 text-white"
+              data-testid="button-create-sales-card"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              {createSalesCardMutation.isPending ? 'Criando...' : 'Criar Card de Venda'}
+            </Button>
+          </div>
         </DialogHeader>
 
         <ScrollArea className="max-h-[75vh]">
