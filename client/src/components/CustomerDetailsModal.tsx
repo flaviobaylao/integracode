@@ -49,11 +49,19 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     mutationFn: async (customerId: string) => {
       const currentUser = await fetch('/api/auth/user').then(res => res.json());
       
+      // Calcular o próximo domingo
+      const today = new Date();
+      const dayOfWeek = today.getDay(); // 0 = domingo, 1 = segunda, etc.
+      const daysUntilSunday = dayOfWeek === 0 ? 7 : 7 - dayOfWeek; // Se já for domingo, pega o próximo
+      const nextSunday = new Date(today);
+      nextSunday.setDate(today.getDate() + daysUntilSunday);
+      nextSunday.setHours(0, 0, 0, 0); // Zerar horas para começar às 00:00
+      
       return apiRequest('POST', '/api/sales-cards', {
         customerId: customerId,
         sellerId: currentUser.id,
         status: 'pending',
-        scheduledDate: new Date().toISOString(),
+        scheduledDate: nextSunday.toISOString(),
         notes: 'Card criado a partir da gestão de clientes'
       });
     },
