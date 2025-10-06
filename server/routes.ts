@@ -960,6 +960,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Verificar se já existe um card para este cliente
+      const existingCards = await storage.getSalesCards(processedData.sellerId);
+      const customerHasCard = existingCards.some(card => 
+        card.customerId === processedData.customerId && 
+        card.status === 'pending'
+      );
+      
+      if (customerHasCard) {
+        return res.status(400).json({ 
+          message: `Este cliente já possui um card de vendas pendente. Por favor, utilize o card existente.` 
+        });
+      }
+      
       const salesCard = await storage.createSalesCard(processedData);
       
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
