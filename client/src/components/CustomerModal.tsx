@@ -892,7 +892,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         </div>
                         <FormMessage />
                       </FormItem>
-                      );
+                      )
                     }}
                   />
                 </div>
