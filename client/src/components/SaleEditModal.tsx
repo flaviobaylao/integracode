@@ -278,8 +278,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
     setIsSubmitting(true);
     try {
-      // Calcular próxima data de agendamento
-      const nextScheduledDate = calculateNextScheduledDate();
+      // Calcular próxima data de agendamento baseada na data atual do card
+      const currentScheduledDate = card.scheduledDate ? new Date(card.scheduledDate) : new Date();
+      const nextScheduledDate = calculateNextScheduledDate(currentScheduledDate, true);
 
       // Atualizar card com dados da venda e reagendar
       await updateCardMutation.mutateAsync({
@@ -363,12 +364,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   // Função para calcular próxima data de agendamento
-  const calculateNextScheduledDate = () => {
+  const calculateNextScheduledDate = (fromDate?: Date, isRescheduling: boolean = false) => {
     if (!customerWeekdays || customerWeekdays.length === 0 || !customerVisitPeriodicity) {
+      console.log('Dados ausentes:', { customerWeekdays, customerVisitPeriodicity });
       return null;
     }
 
-    const today = new Date();
+    const baseDate = fromDate || new Date();
     const weekdayMap: { [key: string]: number } = {
       domingo: 0,
       segunda: 1,
@@ -380,24 +382,45 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     };
 
     const targetWeekdays = customerWeekdays.map(day => weekdayMap[day]);
-    const periodDays: { [key: string]: number } = {
-      semanal: 7,
-      quinzenal: 14,
-      mensal: 30,
-      bimestral: 60
-    };
+    console.log('Calculando próxima data:', { 
+      baseDate: baseDate.toLocaleDateString('pt-BR'), 
+      targetWeekdays, 
+      customerWeekdays,
+      customerVisitPeriodicity,
+      isRescheduling 
+    });
+    
+    // Se estamos reagendando após completar, adicionar o período correto
+    if (isRescheduling) {
+      const periodDays: { [key: string]: number } = {
+        semanal: 7,
+        quinzenal: 14,
+        mensal: 30,
+        bimestral: 60
+      };
+      const daysToAdd = periodDays[customerVisitPeriodicity] || 7;
+      const nextDate = new Date(baseDate);
+      nextDate.setDate(baseDate.getDate() + daysToAdd);
+      console.log('Reagendando:', { daysToAdd, nextDate: nextDate.toLocaleDateString('pt-BR') });
+      return nextDate;
+    }
 
-    const daysToAdd = periodDays[customerVisitPeriodicity] || 7;
-
-    // Encontrar o próximo dia válido
+    // Para exibição, encontrar o próximo dia válido a partir de hoje
     for (let i = 1; i <= 7; i++) {
-      const testDate = new Date(today);
-      testDate.setDate(today.getDate() + i);
+      const testDate = new Date(baseDate);
+      testDate.setDate(baseDate.getDate() + i);
+      console.log(`Testando dia ${i}:`, { 
+        testDate: testDate.toLocaleDateString('pt-BR'), 
+        dayOfWeek: testDate.getDay(),
+        isMatch: targetWeekdays.includes(testDate.getDay())
+      });
       if (targetWeekdays.includes(testDate.getDay())) {
+        console.log('Data encontrada:', testDate.toLocaleDateString('pt-BR'));
         return testDate;
       }
     }
 
+    console.log('Nenhuma data encontrada');
     return null;
   };
 
@@ -428,7 +451,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   if (!card) return null;
 
-  const scheduledDate = card.scheduledDate ? new Date(card.scheduledDate) : calculateNextScheduledDate();
+  // Sempre calcular a próxima data baseada nos dias de visita do cliente
+  const scheduledDate = calculateNextScheduledDate();
   const deliveryDate = calculateDeliveryDate(scheduledDate);
 
   // Dias da semana disponíveis
