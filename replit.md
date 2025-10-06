@@ -46,9 +46,12 @@ Preferred communication style: Simple, everyday language.
 - **Sales Card System**: Visit scheduling and outcome tracking
 - **Product Catalog**: Inventory and pricing management
 - **WhatsApp Integration**: Template-based messaging system
-- **Route Management**: Geographic organization of customers and sellers
+- **Weekday-Based Route System**: Customers are organized by weekdays (segunda, terca, quarta, quinta, sexta, sabado, domingo) instead of geographic regions
+  - Each customer can be assigned to up to 2 days per week for visits
+  - Validation enforced at UI and database level (Zod refinement)
+  - Legacy `route` field maintained for backward compatibility (nullable)
 - **Omie ERP Integration**: Complete synchronization of clients, vendors, products and overdue debts
-  - **Protected Fields During Sync**: Customer coordinates (latitude/longitude), route, and visit periodicity are preserved during Omie synchronization and can only be modified through spreadsheet import or individual customer editing in the app
+  - **Protected Fields During Sync**: Customer coordinates (latitude/longitude), route (deprecated), weekdays, and visit periodicity are preserved during Omie synchronization and can only be modified through spreadsheet import or individual customer editing in the app
 - **Bulk Import Operations**: Individual and bulk client import from Omie with seller assignment
 - **Financial Tracking**: Real-time overdue debt monitoring and credit analysis
 - **Delivery Integration**: Real-time delivery status tracking integrated with App Entregas Honest
