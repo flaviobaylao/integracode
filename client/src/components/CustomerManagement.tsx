@@ -24,7 +24,7 @@ export default function CustomerManagement() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [routeFilter, setRouteFilter] = useState('all');
+  const [weekdayFilter, setWeekdayFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active');
   const [sellerFilter, setSellerFilter] = useState('all');
   const [routeDateFilter, setRouteDateFilter] = useState('');
@@ -88,7 +88,18 @@ export default function CustomerManagement() {
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          documentSearch.includes(searchTerm) ||
                          customer.phone.includes(searchTerm);
-    const matchesRoute = routeFilter === 'all' || customer.route === routeFilter;
+    
+    // Filtro por dia da semana
+    let matchesWeekday = true;
+    if (weekdayFilter !== 'all') {
+      try {
+        const customerWeekdays = JSON.parse(customer.weekdays || '[]');
+        matchesWeekday = customerWeekdays.includes(weekdayFilter);
+      } catch {
+        matchesWeekday = false;
+      }
+    }
+    
     const matchesStatus = statusFilter === 'all' || 
                          (statusFilter === 'active' && customer.omieStatus === 'ativo') ||
                          (statusFilter === 'inactive' && customer.omieStatus === 'inativo');
@@ -100,20 +111,20 @@ export default function CustomerManagement() {
       const selectedDate = new Date(routeDateFilter);
       const dayOfWeek = selectedDate.getDay(); // 0=domingo, 1=segunda, etc.
       const weekdayMapping = {
-        0: 'sunday',
-        1: 'monday', 
-        2: 'tuesday',
-        3: 'wednesday',
-        4: 'thursday',
-        5: 'friday',
-        6: 'saturday'
+        0: 'domingo',
+        1: 'segunda', 
+        2: 'terca',
+        3: 'quarta',
+        4: 'quinta',
+        5: 'sexta',
+        6: 'sabado'
       };
       const dayString = weekdayMapping[dayOfWeek as keyof typeof weekdayMapping];
       const customerWeekdays = JSON.parse(customer.weekdays || '[]');
       matchesRouteDate = customerWeekdays.includes(dayString);
     }
     
-    return matchesSearch && matchesRoute && matchesStatus && matchesSeller && matchesRouteDate;
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesRouteDate;
   }) || [];
 
   const formatCurrency = (value: number) => {
@@ -234,17 +245,19 @@ export default function CustomerManagement() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Select value={routeFilter} onValueChange={setRouteFilter}>
+            <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
               <SelectTrigger>
-                <SelectValue placeholder="Todas as rotas" />
+                <SelectValue placeholder="Todos os dias" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas as rotas</SelectItem>
-                <SelectItem value="centro">Centro</SelectItem>
-                <SelectItem value="norte">Norte</SelectItem>
-                <SelectItem value="sul">Sul</SelectItem>
-                <SelectItem value="leste">Leste</SelectItem>
-                <SelectItem value="oeste">Oeste</SelectItem>
+                <SelectItem value="all">Todos os dias</SelectItem>
+                <SelectItem value="segunda">Segunda-feira</SelectItem>
+                <SelectItem value="terca">Terça-feira</SelectItem>
+                <SelectItem value="quarta">Quarta-feira</SelectItem>
+                <SelectItem value="quinta">Quinta-feira</SelectItem>
+                <SelectItem value="sexta">Sexta-feira</SelectItem>
+                <SelectItem value="sabado">Sábado</SelectItem>
+                <SelectItem value="domingo">Domingo</SelectItem>
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -292,7 +305,7 @@ export default function CustomerManagement() {
                 <tr>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Nome Fantasia</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Rota</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Dias da Semana</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
@@ -333,13 +346,8 @@ export default function CustomerManagement() {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div>
-                          <Badge className="bg-blue-100 text-blue-800 capitalize">
-                            {customer.route}
-                          </Badge>
-                          <p className="text-xs text-gray-600 mt-1">
-                            {getWeekdaysLabel(customer.weekdays)}
-                          </p>
+                        <div className="text-sm text-gray-700 font-medium">
+                          {getWeekdaysLabel(customer.weekdays)}
                         </div>
                       </td>
                       <td className="px-6 py-4">
