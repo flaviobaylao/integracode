@@ -56,6 +56,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<string[]>(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
   const [customerLatitude, setCustomerLatitude] = useState('');
   const [customerLongitude, setCustomerLongitude] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
   const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
   const [customerVisitPeriodicity, setCustomerVisitPeriodicity] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -99,7 +101,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setCustomerLatitude((card as any).customerLatitude || '');
       setCustomerLongitude((card as any).customerLongitude || '');
       
-      // Carregar weekdays, periodicidade e telefone do cliente
+      // Carregar weekdays, periodicidade, telefone e coordenadas do cliente
       if (card.customer) {
         try {
           const weekdaysData = card.customer.weekdays || '[]';
@@ -112,6 +114,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         }
         setCustomerVisitPeriodicity((card.customer as any).visitPeriodicity || '');
         setCustomerPhone(card.customer.phone || '');
+        setLatitude(card.customer.latitude || '');
+        setLongitude(card.customer.longitude || '');
       }
     } else {
       // Valores padrão quando não há card
@@ -311,6 +315,40 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     });
   };
 
+  const captureLocation = () => {
+    setIsCapturingLocation(true);
+    
+    if (!navigator.geolocation) {
+      toast({
+        title: "Erro",
+        description: "Geolocalização não é suportada pelo seu navegador.",
+        variant: "destructive",
+      });
+      setIsCapturingLocation(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLatitude(position.coords.latitude.toString());
+        setLongitude(position.coords.longitude.toString());
+        toast({
+          title: "Sucesso",
+          description: "Localização capturada com sucesso!",
+        });
+        setIsCapturingLocation(false);
+      },
+      (error) => {
+        toast({
+          title: "Erro",
+          description: `Não foi possível capturar a localização: ${error.message}`,
+          variant: "destructive",
+        });
+        setIsCapturingLocation(false);
+      }
+    );
+  };
+
   if (!card) return null;
 
   // Dias da semana disponíveis
@@ -364,7 +402,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       data: {
         weekdays: JSON.stringify(customerWeekdays),
         visitPeriodicity: customerVisitPeriodicity || null,
-        phone: customerPhone
+        phone: customerPhone,
+        latitude: latitude || null,
+        longitude: longitude || null
       }
     });
   };
@@ -482,6 +522,49 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                     data-testid="input-customer-phone"
                   />
                 </div>
+
+                {/* Latitude e Longitude do Cliente */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="flex items-center space-x-1">
+                      <MapPin className="h-4 w-4" />
+                      <span>Latitude</span>
+                    </Label>
+                    <Input
+                      type="text"
+                      value={latitude}
+                      onChange={(e) => setLatitude(e.target.value)}
+                      placeholder="-23.550520"
+                      data-testid="input-latitude"
+                    />
+                  </div>
+                  <div>
+                    <Label className="flex items-center space-x-1">
+                      <MapPin className="h-4 w-4" />
+                      <span>Longitude</span>
+                    </Label>
+                    <Input
+                      type="text"
+                      value={longitude}
+                      onChange={(e) => setLongitude(e.target.value)}
+                      placeholder="-46.633308"
+                      data-testid="input-longitude"
+                    />
+                  </div>
+                </div>
+
+                {/* Botão para Capturar Localização */}
+                <Button
+                  type="button"
+                  onClick={captureLocation}
+                  variant="outline"
+                  className="w-full"
+                  disabled={isCapturingLocation}
+                  data-testid="button-capture-location"
+                >
+                  <MapPin className="h-4 w-4 mr-2" />
+                  {isCapturingLocation ? 'Capturando localização...' : 'Capturar Localização Atual'}
+                </Button>
 
                 {/* Dias de Visita do Cliente */}
                 <div>
