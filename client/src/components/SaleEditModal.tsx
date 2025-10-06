@@ -483,16 +483,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   />
                 </div>
 
-                {/* Dias de Visita do Cliente (Editável apenas para administrativos) */}
+                {/* Dias de Visita do Cliente */}
                 <div>
                   <Label className="text-sm font-medium mb-3 block">
                     Dias de Visita do Cliente (máximo 2 dias)
                   </Label>
-                  {!canManageRouteAndRecurrence && (
-                    <p className="text-xs text-gray-500 mb-2">
-                      Apenas usuários administrativos podem alterar os dias de visita
-                    </p>
-                  )}
                   <div className="grid grid-cols-2 gap-3">
                     {weekdays.map((day) => (
                       <div key={day.value} className="flex items-center space-x-2">
@@ -500,7 +495,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                           id={`customer-weekday-${day.value}`}
                           checked={customerWeekdays.includes(day.value)}
                           onCheckedChange={(checked) => handleCustomerWeekdayChange(day.value, checked as boolean)}
-                          disabled={!canManageRouteAndRecurrence}
                           data-testid={`checkbox-customer-weekday-${day.value}`}
                         />
                         <Label 
@@ -517,18 +511,12 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   </p>
                 </div>
 
-                {/* Periodicidade de Visita do Cliente (Editável apenas para administrativos) */}
+                {/* Periodicidade de Visita do Cliente */}
                 <div>
                   <Label>Periodicidade de Visita do Cliente</Label>
-                  {!canManageRouteAndRecurrence && (
-                    <p className="text-xs text-gray-500 mb-2">
-                      Apenas usuários administrativos podem alterar a periodicidade
-                    </p>
-                  )}
                   <Select 
                     value={customerVisitPeriodicity} 
                     onValueChange={setCustomerVisitPeriodicity}
-                    disabled={!canManageRouteAndRecurrence}
                   >
                     <SelectTrigger data-testid="select-customer-periodicity">
                       <SelectValue placeholder="Selecione a periodicidade" />
@@ -820,19 +808,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                 </div>
               </div>
 
-              {/* Recorrência e Dia da Rota (Editável apenas para administrativos) */}
+              {/* Recorrência e Dia da Rota */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Dia da Rota</Label>
-                  {!canManageRouteAndRecurrence && (
-                    <p className="text-xs text-gray-500 mb-2">
-                      Apenas usuários administrativos podem alterar
-                    </p>
-                  )}
                   <Select 
                     value={routeDay} 
                     onValueChange={setRouteDay}
-                    disabled={!canManageRouteAndRecurrence}
                   >
                     <SelectTrigger data-testid="select-route-day">
                       <SelectValue placeholder="Selecione o dia" />
@@ -851,15 +833,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
                 <div>
                   <Label>Recorrência</Label>
-                  {!canManageRouteAndRecurrence && (
-                    <p className="text-xs text-gray-500 mb-2">
-                      Apenas usuários administrativos podem alterar
-                    </p>
-                  )}
                   <Select 
                     value={recurrenceType} 
                     onValueChange={setRecurrenceType}
-                    disabled={!canManageRouteAndRecurrence}
                   >
                     <SelectTrigger data-testid="select-recurrence-type">
                       <SelectValue placeholder="Selecione a recorrência" />
