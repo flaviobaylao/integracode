@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/useAuth";
 import { 
   Package, 
   Plus, 
@@ -25,7 +26,8 @@ import {
   Route,
   Truck,
   Clock,
-  Target
+  Target,
+  Phone
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -56,10 +58,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerLongitude, setCustomerLongitude] = useState('');
   const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
   const [customerVisitPeriodicity, setCustomerVisitPeriodicity] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  
+  // Verificar se usuário pode editar recorrência e dia da rota
+  const canManageRouteAndRecurrence = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   // Buscar produtos disponíveis
   const { data: availableProducts } = useQuery({
@@ -91,7 +98,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setCustomerLatitude((card as any).customerLatitude || '');
       setCustomerLongitude((card as any).customerLongitude || '');
       
-      // Carregar weekdays e periodicidade do cliente
+      // Carregar weekdays, periodicidade e telefone do cliente
       if (card.customer) {
         try {
           const weekdaysData = card.customer.weekdays || '[]';
@@ -103,6 +110,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           setCustomerWeekdays([]);
         }
         setCustomerVisitPeriodicity((card.customer as any).visitPeriodicity || '');
+        setCustomerPhone(card.customer.phone || '');
       }
     } else {
       // Valores padrão quando não há card
@@ -354,7 +362,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       id: card.customer.id,
       data: {
         weekdays: JSON.stringify(customerWeekdays),
-        visitPeriodicity: customerVisitPeriodicity || null
+        visitPeriodicity: customerVisitPeriodicity || null,
+        phone: customerPhone
       }
     });
   };
@@ -458,11 +467,31 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {/* Dias de Visita do Cliente (Editável) */}
+                {/* Telefone do Cliente (Editável por todos) */}
+                <div>
+                  <Label className="flex items-center space-x-1">
+                    <Phone className="h-4 w-4" />
+                    <span>Telefone de Contato</span>
+                  </Label>
+                  <Input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="(00) 00000-0000"
+                    data-testid="input-customer-phone"
+                  />
+                </div>
+
+                {/* Dias de Visita do Cliente (Editável apenas para administrativos) */}
                 <div>
                   <Label className="text-sm font-medium mb-3 block">
                     Dias de Visita do Cliente (máximo 2 dias)
                   </Label>
+                  {!canManageRouteAndRecurrence && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Apenas usuários administrativos podem alterar os dias de visita
+                    </p>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     {weekdays.map((day) => (
                       <div key={day.value} className="flex items-center space-x-2">
@@ -470,6 +499,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                           id={`customer-weekday-${day.value}`}
                           checked={customerWeekdays.includes(day.value)}
                           onCheckedChange={(checked) => handleCustomerWeekdayChange(day.value, checked as boolean)}
+                          disabled={!canManageRouteAndRecurrence}
                           data-testid={`checkbox-customer-weekday-${day.value}`}
                         />
                         <Label 
@@ -486,12 +516,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   </p>
                 </div>
 
-                {/* Periodicidade de Visita do Cliente */}
+                {/* Periodicidade de Visita do Cliente (Editável apenas para administrativos) */}
                 <div>
                   <Label>Periodicidade de Visita do Cliente</Label>
+                  {!canManageRouteAndRecurrence && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Apenas usuários administrativos podem alterar a periodicidade
+                    </p>
+                  )}
                   <Select 
                     value={customerVisitPeriodicity} 
                     onValueChange={setCustomerVisitPeriodicity}
+                    disabled={!canManageRouteAndRecurrence}
                   >
                     <SelectTrigger data-testid="select-customer-periodicity">
                       <SelectValue placeholder="Selecione a periodicidade" />
@@ -778,6 +814,60 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                       <SelectItem value="venda">Venda</SelectItem>
                       <SelectItem value="troca">Troca</SelectItem>
                       <SelectItem value="amostra">Amostra</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Recorrência e Dia da Rota (Editável apenas para administrativos) */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Dia da Rota</Label>
+                  {!canManageRouteAndRecurrence && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Apenas usuários administrativos podem alterar
+                    </p>
+                  )}
+                  <Select 
+                    value={routeDay} 
+                    onValueChange={setRouteDay}
+                    disabled={!canManageRouteAndRecurrence}
+                  >
+                    <SelectTrigger data-testid="select-route-day">
+                      <SelectValue placeholder="Selecione o dia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="segunda">Segunda-feira</SelectItem>
+                      <SelectItem value="terca">Terça-feira</SelectItem>
+                      <SelectItem value="quarta">Quarta-feira</SelectItem>
+                      <SelectItem value="quinta">Quinta-feira</SelectItem>
+                      <SelectItem value="sexta">Sexta-feira</SelectItem>
+                      <SelectItem value="sabado">Sábado</SelectItem>
+                      <SelectItem value="domingo">Domingo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>Recorrência</Label>
+                  {!canManageRouteAndRecurrence && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Apenas usuários administrativos podem alterar
+                    </p>
+                  )}
+                  <Select 
+                    value={recurrenceType} 
+                    onValueChange={setRecurrenceType}
+                    disabled={!canManageRouteAndRecurrence}
+                  >
+                    <SelectTrigger data-testid="select-recurrence-type">
+                      <SelectValue placeholder="Selecione a recorrência" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semanal">Semanal</SelectItem>
+                      <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                      <SelectItem value="mensal">Mensal</SelectItem>
+                      <SelectItem value="bimestral">Bimestral</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
