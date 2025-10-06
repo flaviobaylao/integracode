@@ -134,6 +134,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
   }, [card]);
 
+  // Ajustar dias selecionados quando periodicidade mudar
+  useEffect(() => {
+    // Se a periodicidade não for semanal e houver mais de 1 dia selecionado, manter apenas o primeiro
+    if (customerVisitPeriodicity && customerVisitPeriodicity !== 'semanal' && customerWeekdays.length > 1) {
+      setCustomerWeekdays([customerWeekdays[0]]);
+      toast({
+        title: "Dias ajustados",
+        description: `Para periodicidade ${customerVisitPeriodicity}, apenas 1 dia de visita é permitido. O primeiro dia foi mantido.`,
+      });
+    }
+  }, [customerVisitPeriodicity]);
+
   const updateCardMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
       await apiRequest('PUT', `/api/sales-cards/${id}`, data);
@@ -376,13 +388,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     );
   };
 
-  // Função para gerenciar weekdays do cliente (máximo 2 dias)
+  // Função para gerenciar weekdays do cliente (baseado na periodicidade)
   const handleCustomerWeekdayChange = (weekday: string, checked: boolean) => {
     if (checked) {
-      if (customerWeekdays.length >= 2) {
+      // Se periodicidade é semanal, permitir 2 dias. Senão, apenas 1 dia.
+      const maxDays = customerVisitPeriodicity === 'semanal' ? 2 : 1;
+      
+      if (customerWeekdays.length >= maxDays) {
         toast({
           title: "Limite atingido",
-          description: "Cada cliente pode ter no máximo 2 dias de visita por semana.",
+          description: customerVisitPeriodicity === 'semanal' 
+            ? "Clientes com frequência semanal podem ter no máximo 2 dias de visita."
+            : "Clientes com frequência quinzenal, mensal ou bimestral podem ter apenas 1 dia de visita.",
           variant: "destructive",
         });
         return;
@@ -569,7 +586,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                 {/* Dias de Visita do Cliente */}
                 <div>
                   <Label className="text-sm font-medium mb-3 block">
-                    Dias de Visita do Cliente (máximo 2 dias)
+                    Dias de Visita do Cliente {customerVisitPeriodicity === 'semanal' ? '(máximo 2 dias)' : '(1 dia apenas)'}
                   </Label>
                   <div className="grid grid-cols-2 gap-3">
                     {weekdays.map((day) => (
@@ -590,7 +607,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                     ))}
                   </div>
                   <p className="text-xs text-gray-500 mt-2">
-                    {customerWeekdays.length}/2 dias selecionados
+                    {customerWeekdays.length}/{customerVisitPeriodicity === 'semanal' ? '2' : '1'} dias selecionados
                   </p>
                 </div>
 
