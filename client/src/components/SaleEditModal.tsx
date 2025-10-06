@@ -208,47 +208,44 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     },
   });
 
-  const addProduct = () => {
-    setProducts([...products, {
-      id: '',
-      name: '',
-      quantity: 1,
-      unitPrice: 0,
-      totalPrice: 0
-    }]);
-  };
-
-  const removeProduct = (index: number) => {
-    setProducts(products.filter((_, i) => i !== index));
-  };
-
-  const updateProduct = (index: number, field: keyof ProductItem, value: any) => {
-    const updatedProducts = [...products];
-    updatedProducts[index] = { ...updatedProducts[index], [field]: value };
-    
-    // Recalcular total do produto
-    if (field === 'quantity' || field === 'unitPrice') {
-      updatedProducts[index].totalPrice = updatedProducts[index].quantity * updatedProducts[index].unitPrice;
+  // Gerenciar seleção de produtos via checkbox
+  const handleProductToggle = (productId: string, checked: boolean) => {
+    if (checked) {
+      if (!Array.isArray(availableProducts)) return;
+      const selectedProduct = availableProducts.find((p: any) => p.id === productId);
+      if (selectedProduct) {
+        setProducts([...products, {
+          id: selectedProduct.id,
+          name: selectedProduct.name,
+          quantity: 1,
+          unitPrice: parseFloat(selectedProduct.price || '0'),
+          totalPrice: parseFloat(selectedProduct.price || '0')
+        }]);
+      }
+    } else {
+      setProducts(products.filter(p => p.id !== productId));
     }
-    
+  };
+
+  const updateProductQuantity = (productId: string, quantity: number) => {
+    const updatedProducts = products.map(p => {
+      if (p.id === productId) {
+        const qty = quantity || 1;
+        return { ...p, quantity: qty, totalPrice: qty * p.unitPrice };
+      }
+      return p;
+    });
     setProducts(updatedProducts);
   };
 
-  const selectProductById = (index: number, productId: string) => {
-    if (!availableProducts || !Array.isArray(availableProducts)) return;
-    
-    const selectedProduct = availableProducts.find((p: any) => p.id === productId);
-    if (selectedProduct) {
-      const updatedProducts = [...products];
-      updatedProducts[index] = {
-        ...updatedProducts[index],
-        id: selectedProduct.id,
-        name: selectedProduct.name,
-        unitPrice: parseFloat(selectedProduct.price || '0'),
-        totalPrice: updatedProducts[index].quantity * parseFloat(selectedProduct.price || '0')
-      };
-      setProducts(updatedProducts);
-    }
+  const updateProductPrice = (productId: string, price: number) => {
+    const updatedProducts = products.map(p => {
+      if (p.id === productId) {
+        return { ...p, unitPrice: price, totalPrice: p.quantity * price };
+      }
+      return p;
+    });
+    setProducts(updatedProducts);
   };
 
   const calculateTotal = () => {
@@ -281,7 +278,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
     setIsSubmitting(true);
     try {
-      // Atualizar card com dados da venda
+      // Calcular próxima data de agendamento
+      const nextScheduledDate = calculateNextScheduledDate();
+
+      // Atualizar card com dados da venda e reagendar
       await updateCardMutation.mutateAsync({
         id: card.id,
         data: {
@@ -297,7 +297,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           deliveryTimeSlots: deliveryTimeSlots,
           customerLatitude: customerLatitude || null,
           customerLongitude: customerLongitude || null,
-          completedDate: new Date()
+          completedDate: new Date(),
+          scheduledDate: nextScheduledDate || undefined
         }
       });
     } finally {
@@ -361,7 +362,74 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     );
   };
 
+  // Função para calcular próxima data de agendamento
+  const calculateNextScheduledDate = () => {
+    if (!customerWeekdays || customerWeekdays.length === 0 || !customerVisitPeriodicity) {
+      return null;
+    }
+
+    const today = new Date();
+    const weekdayMap: { [key: string]: number } = {
+      domingo: 0,
+      segunda: 1,
+      terca: 2,
+      quarta: 3,
+      quinta: 4,
+      sexta: 5,
+      sabado: 6
+    };
+
+    const targetWeekdays = customerWeekdays.map(day => weekdayMap[day]);
+    const periodDays: { [key: string]: number } = {
+      semanal: 7,
+      quinzenal: 14,
+      mensal: 30,
+      bimestral: 60
+    };
+
+    const daysToAdd = periodDays[customerVisitPeriodicity] || 7;
+
+    // Encontrar o próximo dia válido
+    for (let i = 1; i <= 7; i++) {
+      const testDate = new Date(today);
+      testDate.setDate(today.getDate() + i);
+      if (targetWeekdays.includes(testDate.getDay())) {
+        return testDate;
+      }
+    }
+
+    return null;
+  };
+
+  // Função para calcular data de entrega (2 dias úteis após agendamento)
+  const calculateDeliveryDate = (scheduledDate: Date | null) => {
+    if (!scheduledDate) return null;
+
+    const saturdayEnabled = deliveryWeekdays.includes('sabado');
+    let workingDaysCount = 0;
+    let currentDate = new Date(scheduledDate);
+
+    while (workingDaysCount < 2) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      const dayOfWeek = currentDate.getDay();
+
+      // Segunda a sexta sempre conta
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        workingDaysCount++;
+      }
+      // Sábado conta se estiver habilitado
+      else if (dayOfWeek === 6 && saturdayEnabled) {
+        workingDaysCount++;
+      }
+    }
+
+    return currentDate;
+  };
+
   if (!card) return null;
+
+  const scheduledDate = card.scheduledDate ? new Date(card.scheduledDate) : calculateNextScheduledDate();
+  const deliveryDate = calculateDeliveryDate(scheduledDate);
 
   // Dias da semana disponíveis
   const weekdays = [
@@ -757,100 +825,76 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           {/* Produtos */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Package className="h-5 w-5 text-blue-600" />
-                  <span>Produtos</span>
-                </div>
-                <Button onClick={addProduct} size="sm" className="bg-green-500 hover:bg-green-600">
-                  <Plus className="h-4 w-4 mr-1" />
-                  Adicionar
-                </Button>
+              <CardTitle className="flex items-center space-x-2">
+                <Package className="h-5 w-5 text-blue-600" />
+                <span>Produtos</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {products.map((product, index) => (
-                <div key={index} className="grid grid-cols-12 gap-3 items-end p-4 bg-gray-50 rounded-lg">
-                  <div className="col-span-4">
-                    <Label>Produto</Label>
-                    <Select 
-                      value={product.id} 
-                      onValueChange={(value) => selectProductById(index, value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione um produto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.isArray(availableProducts) && availableProducts
-                          .filter((p: any) => {
-                            // Mostra o produto se:
-                            // 1. Não está selecionado em nenhum outro campo, OU
-                            // 2. É o produto já selecionado neste campo atual
-                            const isUsedElsewhere = products.some((prod, i) => 
-                              i !== index && prod.id === p.id && prod.id !== ''
-                            );
-                            return !isUsedElsewhere;
-                          })
-                          .map((p: any) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))
-                        }
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="col-span-2">
-                    <Label>Quantidade</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={product.quantity}
-                      onChange={(e) => updateProduct(index, 'quantity', parseInt(e.target.value) || 1)}
-                    />
-                  </div>
-                  
-                  <div className="col-span-2">
-                    <Label>Preço Unit.</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={product.unitPrice}
-                      onChange={(e) => updateProduct(index, 'unitPrice', parseFloat(e.target.value) || 0)}
-                    />
-                  </div>
-                  
-                  <div className="col-span-2">
-                    <Label>Total</Label>
-                    <Input
-                      value={product.totalPrice.toFixed(2)}
-                      disabled
-                      className="bg-green-50 font-semibold"
-                    />
-                  </div>
-                  
-                  <div className="col-span-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => removeProduct(index)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              
-              {products.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                  <Package className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                  <p>Nenhum produto adicionado</p>
-                  <p className="text-sm">Clique em "Adicionar" para incluir produtos</p>
-                </div>
-              )}
+              {/* Lista de produtos ativos com checkbox */}
+              <div className="space-y-3">
+                {Array.isArray(availableProducts) && availableProducts
+                  .filter((p: any) => p.status === 'ativo')
+                  .map((product: any) => {
+                    const selectedProduct = products.find(p => p.id === product.id);
+                    const isSelected = !!selectedProduct;
+                    
+                    return (
+                      <div key={product.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`product-${product.id}`}
+                            checked={isSelected}
+                            onCheckedChange={(checked) => handleProductToggle(product.id, checked as boolean)}
+                            data-testid={`checkbox-product-${product.id}`}
+                          />
+                          <Label 
+                            htmlFor={`product-${product.id}`} 
+                            className="text-sm font-medium cursor-pointer flex-1"
+                          >
+                            {product.name}
+                          </Label>
+                        </div>
+                        
+                        {isSelected && (
+                          <div className="grid grid-cols-3 gap-3 ml-6">
+                            <div>
+                              <Label className="text-xs">Quantidade</Label>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={selectedProduct.quantity}
+                                onChange={(e) => updateProductQuantity(product.id, parseInt(e.target.value) || 1)}
+                                data-testid={`input-quantity-${product.id}`}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs">Preço Unit. (R$)</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={selectedProduct.unitPrice}
+                                onChange={(e) => updateProductPrice(product.id, parseFloat(e.target.value) || 0)}
+                                data-testid={`input-price-${product.id}`}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs">Total (R$)</Label>
+                              <Input
+                                value={selectedProduct.totalPrice.toFixed(2)}
+                                disabled
+                                className="bg-green-50 font-semibold"
+                                data-testid={`input-total-${product.id}`}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                }
+              </div>
               
               {/* Total Geral */}
               {products.length > 0 && (
@@ -882,7 +926,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                 <div>
                   <Label>Método de Pagamento</Label>
                   <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <SelectTrigger>
+                    <SelectTrigger data-testid="select-payment-method">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -896,55 +940,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                 <div>
                   <Label>Tipo de Operação</Label>
                   <Select value={operationType} onValueChange={setOperationType}>
-                    <SelectTrigger>
+                    <SelectTrigger data-testid="select-operation-type">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="venda">Venda</SelectItem>
                       <SelectItem value="troca">Troca</SelectItem>
                       <SelectItem value="amostra">Amostra</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Recorrência e Dia da Rota */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Dia da Rota</Label>
-                  <Select 
-                    value={routeDay} 
-                    onValueChange={setRouteDay}
-                  >
-                    <SelectTrigger data-testid="select-route-day">
-                      <SelectValue placeholder="Selecione o dia" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="segunda">Segunda-feira</SelectItem>
-                      <SelectItem value="terca">Terça-feira</SelectItem>
-                      <SelectItem value="quarta">Quarta-feira</SelectItem>
-                      <SelectItem value="quinta">Quinta-feira</SelectItem>
-                      <SelectItem value="sexta">Sexta-feira</SelectItem>
-                      <SelectItem value="sabado">Sábado</SelectItem>
-                      <SelectItem value="domingo">Domingo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label>Recorrência</Label>
-                  <Select 
-                    value={recurrenceType} 
-                    onValueChange={setRecurrenceType}
-                  >
-                    <SelectTrigger data-testid="select-recurrence-type">
-                      <SelectValue placeholder="Selecione a recorrência" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="semanal">Semanal</SelectItem>
-                      <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                      <SelectItem value="mensal">Mensal</SelectItem>
-                      <SelectItem value="bimestral">Bimestral</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -957,8 +959,31 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Observações sobre a venda..."
                   rows={3}
+                  data-testid="textarea-notes"
                 />
               </div>
+
+              {/* Previsão de Entrega */}
+              {deliveryDate && (
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Truck className="h-5 w-5 text-blue-600" />
+                    <Label className="text-sm font-medium text-blue-900">Previsão de Entrega</Label>
+                  </div>
+                  <p className="text-sm text-blue-700">
+                    Data prevista: <span className="font-bold" data-testid="text-delivery-date">
+                      {deliveryDate.toLocaleDateString('pt-BR', { 
+                        day: '2-digit', 
+                        month: 'long', 
+                        year: 'numeric' 
+                      })}
+                    </span>
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    (2 dias úteis após o agendamento{deliveryWeekdays.includes('sabado') ? ', incluindo sábado' : ''})
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
