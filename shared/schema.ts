@@ -92,9 +92,9 @@ export const customers = pgTable("customers", {
   city: varchar("city"),
   state: varchar("state"),
   zipCode: varchar("zip_code"),
-  route: varchar("route").notNull(),
+  route: varchar("route"), // DEPRECATED: Use weekdays instead
   sellerId: varchar("seller_id").notNull(),
-  weekdays: varchar("weekdays").notNull(), // JSON string of selected days
+  weekdays: varchar("weekdays").notNull(), // JSON array with 1-2 weekdays: ["segunda"] or ["segunda","quarta"]
   visitPeriodicity: visitPeriodicityEnum("visit_periodicity").notNull().default('semanal'),
   isActive: boolean("is_active").notNull().default(true),
   lastSaleDate: timestamp("last_sale_date"),
@@ -632,6 +632,18 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   cnpj: z.string().nullable().optional(),
   // Data de início do fornecimento como opcional
   serviceStartDate: z.date().nullable().optional(),
+  // Validação de weekdays: deve ser JSON array com 1 ou 2 dias
+  weekdays: z.string().refine(
+    (val) => {
+      try {
+        const days = JSON.parse(val);
+        return Array.isArray(days) && days.length >= 1 && days.length <= 2;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Cliente deve ter entre 1 e 2 dias de rota por semana" }
+  ),
 }).refine(
   (data) => data.cpf || data.cnpj,
   {
