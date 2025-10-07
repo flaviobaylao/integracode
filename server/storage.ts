@@ -930,6 +930,46 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
+  // Buscar cards criticamente atrasados (pending com mais de 3 dias de atraso)
+  async getCriticallyOverdueCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
+    // Calcular data limite: hoje - 3 dias no timezone do Brasil (UTC-3)
+    const now = new Date();
+    const brazilOffset = -3 * 60; // UTC-3 em minutos
+    const localOffset = now.getTimezoneOffset();
+    const brazilTime = new Date(now.getTime() + (localOffset + brazilOffset) * 60 * 1000);
+    
+    const threeDaysAgo = new Date(brazilTime);
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    threeDaysAgo.setHours(23, 59, 59, 999); // Fim do dia há 3 dias
+    
+    let whereConditions = and(
+      lte(salesCards.scheduledDate, threeDaysAgo),
+      eq(salesCards.status, 'pending')
+    );
+    
+    if (sellerId) {
+      whereConditions = and(
+        lte(salesCards.scheduledDate, threeDaysAgo),
+        eq(salesCards.status, 'pending'),
+        eq(salesCards.sellerId, sellerId)
+      );
+    }
+    
+    const result = await db
+      .select()
+      .from(salesCards)
+      .leftJoin(customers, eq(salesCards.customerId, customers.id))
+      .leftJoin(users, eq(salesCards.sellerId, users.id))
+      .where(whereConditions)
+      .orderBy(salesCards.scheduledDate);
+    
+    return result.map(row => ({
+      ...row.sales_cards,
+      customer: row.customers!,
+      seller: row.users!,
+    }));
+  }
+
   async duplicateSalesCard(id: string, newDate: Date): Promise<SalesCard> {
     const originalCard = await this.getSalesCard(id);
     if (!originalCard) {

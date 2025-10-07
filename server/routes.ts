@@ -1132,6 +1132,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para buscar cards criticamente atrasados (>3 dias, devem ser marcados como failed)
+  app.get('/api/sales-cards/critically-overdue', authenticateUser, checkSellerAccess, async (req: any, res) => {
+    try {
+      const sellerId = req.sellerId;
+      const criticallyOverdueCards = await storage.getCriticallyOverdueCards(sellerId);
+      res.json(criticallyOverdueCards);
+    } catch (error) {
+      console.error("Error fetching critically overdue cards:", error);
+      res.status(500).json({ message: "Failed to fetch critically overdue cards" });
+    }
+  });
+
   app.get('/api/dashboard/sellers-stats', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
