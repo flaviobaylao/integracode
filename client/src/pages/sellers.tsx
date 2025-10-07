@@ -1,9 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Users, Mail, MapPin, Plus, UserCheck } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Users, Mail, MapPin, Plus, UserCheck, Edit, Home } from "lucide-react";
 import { formatDate } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 interface Seller {
   id: string;
@@ -14,12 +20,73 @@ interface Seller {
   route: string;
   isActive: boolean;
   createdAt: string;
+  homeLatitude?: string;
+  homeLongitude?: string;
 }
 
 export default function Sellers() {
+  const [editingSeller, setEditingSeller] = useState<Seller | null>(null);
+  const [homeLatitude, setHomeLatitude] = useState("");
+  const [homeLongitude, setHomeLongitude] = useState("");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
   const { data: sellers = [], isLoading } = useQuery<Seller[]>({
     queryKey: ['/api/users'],
   });
+
+  const updateSellerMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      await apiRequest('PUT', `/api/users/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      setEditingSeller(null);
+      setHomeLatitude("");
+      setHomeLongitude("");
+      toast({
+        title: "Sucesso",
+        description: "Coordenadas da casa atualizadas com sucesso!",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao atualizar coordenadas",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleEditClick = (seller: Seller) => {
+    setEditingSeller(seller);
+    setHomeLatitude(seller.homeLatitude || "");
+    setHomeLongitude(seller.homeLongitude || "");
+  };
+
+  const handleSaveCoordinates = () => {
+    if (!editingSeller) return;
+
+    const lat = parseFloat(homeLatitude);
+    const lng = parseFloat(homeLongitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      toast({
+        title: "Erro",
+        description: "Por favor, insira coordenadas válidas",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateSellerMutation.mutate({
+      id: editingSeller.id,
+      data: {
+        homeLatitude: homeLatitude,
+        homeLongitude: homeLongitude
+      }
+    });
+  };
 
   // Filtrar apenas vendedores ativos
   const activeSellers = sellers.filter(user => user.role === 'vendedor' && user.isActive);
@@ -138,19 +205,108 @@ export default function Sellers() {
                     <span>Rota: {seller.route || 'Não definida'}</span>
                   </div>
                   
+                  {seller.homeLatitude && seller.homeLongitude ? (
+                    <div className="flex items-center space-x-2 text-sm text-green-600">
+                      <Home className="h-4 w-4" />
+                      <span>Coordenadas cadastradas</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2 text-sm text-orange-600">
+                      <Home className="h-4 w-4" />
+                      <span>Sem coordenadas da casa</span>
+                    </div>
+                  )}
+                  
                   <div className="text-xs text-muted-foreground">
                     Cadastrado em: {formatDate(new Date(seller.createdAt), "dd/MM/yyyy")}
                   </div>
                   
-                  <div className="text-xs text-muted-foreground">
-                    ID: {seller.id}
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-2"
+                    onClick={() => handleEditClick(seller)}
+                    data-testid={`button-edit-seller-${seller.id}`}
+                  >
+                    <Edit className="h-4 w-4 mr-2" />
+                    Editar Coordenadas
+                  </Button>
                 </CardContent>
               </Card>
             ))}
           </div>
         )}
       </div>
+
+      {/* Edit Coordinates Modal */}
+      <Dialog open={!!editingSeller} onOpenChange={() => setEditingSeller(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Editar Coordenadas da Casa - {editingSeller?.firstName} {editingSeller?.lastName}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="homeLatitude">Latitude</Label>
+              <Input
+                id="homeLatitude"
+                type="number"
+                step="any"
+                placeholder="-23.5505"
+                value={homeLatitude}
+                onChange={(e) => setHomeLatitude(e.target.value)}
+                data-testid="input-home-latitude"
+              />
+              <p className="text-xs text-muted-foreground">
+                Exemplo: -23.5505 (use ponto como separador decimal)
+              </p>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="homeLongitude">Longitude</Label>
+              <Input
+                id="homeLongitude"
+                type="number"
+                step="any"
+                placeholder="-46.6333"
+                value={homeLongitude}
+                onChange={(e) => setHomeLongitude(e.target.value)}
+                data-testid="input-home-longitude"
+              />
+              <p className="text-xs text-muted-foreground">
+                Exemplo: -46.6333 (use ponto como separador decimal)
+              </p>
+            </div>
+            
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+              <p className="text-sm text-blue-800">
+                💡 <strong>Dica:</strong> Você pode obter as coordenadas abrindo o Google Maps,
+                clicando no local da casa do vendedor, e copiando os valores de latitude e longitude
+                que aparecem.
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex justify-end space-x-2">
+            <Button
+              variant="outline"
+              onClick={() => setEditingSeller(null)}
+              data-testid="button-cancel-edit"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveCoordinates}
+              disabled={updateSellerMutation.isPending}
+              data-testid="button-save-coordinates"
+            >
+              {updateSellerMutation.isPending ? "Salvando..." : "Salvar Coordenadas"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Action */}
       <div className="flex justify-center pt-6">

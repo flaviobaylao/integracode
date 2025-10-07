@@ -130,9 +130,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.params.id;
       const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
+      const currentUser = req.currentUser;
       
-      // Usuários só podem editar seu próprio perfil
-      if (userId !== currentUserId) {
+      // Usuários só podem editar seu próprio perfil, exceto admins e coordenadores
+      const canEditOthers = ['admin', 'coordinator'].includes(currentUser?.role);
+      if (userId !== currentUserId && !canEditOthers) {
         return res.status(403).json({ message: "Não autorizado a editar este perfil" });
       }
 
