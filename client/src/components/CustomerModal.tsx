@@ -471,21 +471,26 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   maxLength={18}
                                   value={field.value || ''}
                                   onChange={(e) => {
+                                    console.log('DEBUG - field.value antes:', field.value, 'e.target.value:', e.target.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
+                                    console.log('DEBUG - valor após replace:', value);
                                     // Aplica formatação conforme digita
+                                    let formatted = '';
                                     if (value.length <= 2) {
-                                      field.onChange(value);
+                                      formatted = value;
                                     } else if (value.length <= 5) {
-                                      field.onChange(value.replace(/(\d{2})(\d{0,3})/, '$1.$2'));
+                                      formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
                                     } else if (value.length <= 8) {
-                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3'));
+                                      formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
                                     } else if (value.length <= 12) {
-                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4'));
+                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
                                     } else {
-                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5'));
+                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
                                     }
+                                    console.log('DEBUG - valor formatado a ser salvo:', formatted);
+                                    field.onChange(formatted);
                                   }}
                                   onBlur={field.onBlur}
                                   name={field.name}
