@@ -241,9 +241,10 @@ export default function CustomerManagement() {
         <CardContent className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <Input
-              placeholder="Buscar cliente..."
+              placeholder="Buscar por nome, CPF/CNPJ ou telefone..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              data-testid="input-search-customer"
             />
             <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
               <SelectTrigger>
