@@ -25,6 +25,7 @@ import {
 import type { SalesCardWithRelations } from "@shared/schema";
 
 const DAYS_OF_WEEK = [
+  { value: 'atrasados', label: '⚠️ Atrasados (>3 dias)' },
   { value: 'segunda', label: 'Segunda-feira' },
   { value: 'terca', label: 'Terça-feira' },
   { value: 'quarta', label: 'Quarta-feira' },
@@ -95,10 +96,19 @@ export default function SalesSchedule() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
 
-  // Buscar cards por dia da semana
+  // Buscar cards por dia da semana ou cards atrasados
   const { data: cardsData, isLoading, refetch } = useQuery({
     queryKey: ['/api/sales-cards/by-day', selectedDay, startDate, endDate, currentPage],
     queryFn: async () => {
+      // Se "atrasados" for selecionado, usar endpoint específico
+      if (selectedDay === 'atrasados') {
+        const response = await fetch('/api/sales-cards/critically-overdue');
+        if (!response.ok) throw new Error('Failed to fetch overdue cards');
+        const cards = await response.json();
+        return { cards, pagination: { hasMore: false } };
+      }
+      
+      // Caso contrário, usar endpoint normal de busca por dia
       const params = new URLSearchParams({
         startDate,
         endDate,
