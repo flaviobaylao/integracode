@@ -1212,8 +1212,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { date } = req.params;
       const { sellerId: filterSellerId } = req.query;
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser; // Corrigido: usar currentUser definido pelo middleware
       
       if (!user) {
         return res.status(404).json({ message: "User not found" });
