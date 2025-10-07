@@ -411,7 +411,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <FormLabel>CPF *</FormLabel>
                           <FormControl>
                             <Input
-                              {...field}
+                              name={field.name}
+                              ref={field.ref}
+                              onBlur={field.onBlur}
                               value={field.value || ''}
                               placeholder="000.000.000-00"
                               maxLength={14}
@@ -447,7 +449,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input
-                                  {...field}
+                                  name={field.name}
+                                  ref={field.ref}
+                                  onBlur={field.onBlur}
                                   value={field.value || ''}
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
