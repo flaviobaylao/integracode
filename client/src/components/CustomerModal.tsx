@@ -94,17 +94,23 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const customerType = form.watch('customerType');
   const coordinatesLocked = form.watch('coordinatesLocked');
+  
+  // Track previous customer type to only clear when it actually changes
+  const [prevCustomerType, setPrevCustomerType] = useState(customerType);
 
   // Limpar campos de documento quando o tipo de cliente muda
   useEffect(() => {
-    if (customerType === 'pessoa_fisica') {
-      form.setValue('cnpj', '');
-      form.setValue('companyName', '');
-      form.setValue('fantasyName', '');
-    } else {
-      form.setValue('cpf', '');
+    if (prevCustomerType !== customerType) {
+      if (customerType === 'pessoa_fisica') {
+        form.setValue('cnpj', '');
+        form.setValue('companyName', '');
+        form.setValue('fantasyName', '');
+      } else {
+        form.setValue('cpf', '');
+      }
+      setPrevCustomerType(customerType);
     }
-  }, [customerType, form]);
+  }, [customerType, prevCustomerType, form]);
 
   useEffect(() => {
     if (customer) {
@@ -466,7 +472,17 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   value={field.value || ''}
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
+                                  data-testid="input-cnpj"
+                                  disabled={false}
+                                  readOnly={false}
+                                  onClick={(e) => {
+                                    console.log('CNPJ clicked, field.value:', field.value);
+                                  }}
+                                  onInput={(e) => {
+                                    console.log('CNPJ onInput triggered:', (e.target as HTMLInputElement).value);
+                                  }}
                                   onChange={(e) => {
+                                    console.log('CNPJ onChange triggered:', e.target.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
