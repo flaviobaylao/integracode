@@ -47,10 +47,20 @@ interface VisitResponse {
 export default function VisitRoutes() {
   const { user } = useAuth();
   const { toast } = useToast();
+  
+  // Obter data de hoje no formato YYYY-MM-DD (timezone do Brasil)
+  const getTodayBrazil = () => {
+    const now = new Date();
+    const brazilOffset = -3 * 60; // UTC-3 em minutos
+    const localOffset = now.getTimezoneOffset();
+    const brazilTime = new Date(now.getTime() + (localOffset + brazilOffset) * 60 * 1000);
+    return brazilTime.toISOString().split('T')[0];
+  };
+  
   const [filters, setFilters] = useState({
     sellerId: 'all',
-    startDate: '',
-    endDate: '',
+    startDate: getTodayBrazil(), // Inicializar com data de hoje
+    endDate: getTodayBrazil(), // Inicializar com data de hoje
     routeDay: 'all',
     visitStatus: 'pending',
     page: 1
@@ -174,16 +184,48 @@ export default function VisitRoutes() {
     enabled: !!user && ['admin', 'coordinator', 'administrative'].includes(user.role || '')
   });
 
-  const { data: visits, isLoading, refetch } = useQuery<VisitResponse>({
-    queryKey: ['/api/visit-agenda', filters],
+  // Usar sales-cards ao invés de visit-agenda (mais direto e atualizado)
+  const { data: salesCardsData, isLoading, refetch } = useQuery({
+    queryKey: ['/api/sales-cards/by-date', filters.startDate, filters.sellerId],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== 'all') params.append(key, value.toString());
+      if (!filters.startDate) return { cards: [] };
+      
+      const response = await fetch(`/api/sales-cards/by-date/${filters.startDate}${filters.sellerId !== 'all' ? `?sellerId=${filters.sellerId}` : ''}`, {
+        credentials: 'include'
       });
-      return await apiRequest('GET', `/api/visit-agenda?${params.toString()}`);
+      if (!response.ok) throw new Error('Erro ao buscar cards de visita');
+      return response.json();
     }
   });
+
+  // Mapear sales cards para formato compatível com visits
+  const visits = salesCardsData?.cards ? {
+    visits: salesCardsData.cards.map((card: any) => ({
+      id: card.id,
+      customerId: card.customerId,
+      sellerId: card.sellerId,
+      scheduledDate: card.scheduledDate,
+      routeDay: card.routeDay,
+      recurrenceType: card.recurrenceType,
+      isVirtual: false,
+      visitStatus: card.status === 'completed' ? 'completed' : card.status === 'pending' ? 'pending' : 'missed',
+      customerName: card.customer?.name || '',
+      customerLatitude: card.customer?.latitude,
+      customerLongitude: card.customer?.longitude,
+      customerAddress: card.customer?.address,
+      actualCheckIn: card.checkInTime,
+      actualCheckOut: card.checkOutTime,
+      distanceToCustomer: null,
+      salesCardId: card.id,
+      createdAt: card.createdAt
+    })),
+    pagination: {
+      page: 1,
+      pageSize: 50,
+      total: salesCardsData.cards.length,
+      totalPages: 1
+    }
+  } : { visits: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 } };
 
   const generateAgenda = async () => {
     try {

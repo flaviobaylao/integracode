@@ -1207,6 +1207,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para buscar cards por data específica
+  app.get('/api/sales-cards/by-date/:date', authenticateUser, checkSellerAccess, async (req: any, res) => {
+    try {
+      const { date } = req.params;
+      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      
+      const targetDate = new Date(date);
+      const cards = await storage.getSalesCardsByDate(targetDate, sellerId);
+      
+      res.json({ cards });
+    } catch (error) {
+      console.error("Error fetching sales cards by date:", error);
+      res.status(500).json({ message: "Failed to fetch sales cards" });
+    }
+  });
+
   // Endpoint para gerar próximo card manualmente
   app.post('/api/sales-cards/:id/generate-next', authenticateUser, async (req: any, res) => {
     try {
