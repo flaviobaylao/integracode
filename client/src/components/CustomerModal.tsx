@@ -240,6 +240,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       }
 
       const data: CNPJData = await response.json();
+      console.log('Dados recebidos da Receita Federal:', data);
       setCnpjData(data);
 
       // Preencher automaticamente os campos
