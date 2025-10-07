@@ -419,31 +419,70 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
             <Card>
               <CardContent className="pt-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {customerType === 'pessoa_fisica' ? (
-                    <FormField
-                      control={form.control}
-                      name="cpf"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>CPF *</FormLabel>
+                  <FormField
+                    control={form.control}
+                    name="cpf"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>CPF</FormLabel>
+                        <FormControl>
+                          <Input
+                            data-testid="input-cpf"
+                            placeholder="000.000.000-00"
+                            maxLength={14}
+                            value={field.value || ''}
+                            disabled={!!form.watch('cnpj')}
+                            onChange={(e) => {
+                              let value = e.target.value.replace(/\D/g, '');
+                              let formatted = '';
+                              if (value.length <= 3) formatted = value;
+                              else if (value.length <= 6) formatted = value.replace(/(\d{3})(\d{0,3})/, '$1.$2');
+                              else if (value.length <= 9) formatted = value.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3');
+                              else formatted = value.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+                              field.onChange(formatted);
+                              if (formatted) {
+                                form.setValue('cnpj', '');
+                                form.setValue('customerType', 'pessoa_fisica');
+                                setCustomerType('pessoa_fisica');
+                              }
+                            }}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="cnpj"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>CNPJ</FormLabel>
+                        <div className="flex space-x-2">
                           <FormControl>
                             <Input
-                              placeholder="000.000.000-00"
-                              maxLength={14}
+                              data-testid="input-cnpj"
+                              placeholder="00.000.000/0000-00"
+                              maxLength={18}
                               value={field.value || ''}
+                              disabled={!!form.watch('cpf')}
                               onChange={(e) => {
-                                let value = e.target.value;
-                                // Remove tudo que não é número
-                                value = value.replace(/\D/g, '');
-                                // Aplica formatação conforme digita
-                                if (value.length <= 3) {
-                                  field.onChange(value);
-                                } else if (value.length <= 6) {
-                                  field.onChange(value.replace(/(\d{3})(\d{0,3})/, '$1.$2'));
-                                } else if (value.length <= 9) {
-                                  field.onChange(value.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3'));
-                                } else {
-                                  field.onChange(value.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4'));
+                                let value = e.target.value.replace(/\D/g, '');
+                                let formatted = '';
+                                if (value.length <= 2) formatted = value;
+                                else if (value.length <= 5) formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
+                                else if (value.length <= 8) formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+                                else if (value.length <= 12) formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+                                else formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
+                                field.onChange(formatted);
+                                if (formatted) {
+                                  form.setValue('cpf', '');
+                                  form.setValue('customerType', 'pessoa_juridica');
+                                  setCustomerType('pessoa_juridica');
                                 }
                               }}
                               onBlur={field.onBlur}
@@ -451,89 +490,54 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                               ref={field.ref}
                             />
                           </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : (
-                    <>
-                      <FormField
-                        control={form.control}
-                        name="cnpj"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>CNPJ *</FormLabel>
-                            <div className="flex space-x-2">
-                              <FormControl>
-                                <Input
-                                  data-testid="input-cnpj"
-                                  placeholder="00.000.000/0000-00"
-                                  maxLength={18}
-                                  value={field.value || ''}
-                                  onChange={(e) => {
-                                    let value = e.target.value.replace(/\D/g, '');
-                                    let formatted = '';
-                                    if (value.length <= 2) formatted = value;
-                                    else if (value.length <= 5) formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
-                                    else if (value.length <= 8) formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
-                                    else if (value.length <= 12) formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
-                                    else formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
-                                    field.onChange(formatted);
-                                  }}
-                                  onBlur={field.onBlur}
-                                  name={field.name}
-                                  ref={field.ref}
-                                />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => searchCNPJ(field.value || '')}
-                                disabled={cnpjLoading}
-                                className="px-3"
-                              >
-                                {cnpjLoading ? (
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-honest-blue"></div>
-                                ) : (
-                                  <Search className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      {cnpjData && (
-                        <div className="col-span-2">
-                          <Card className="bg-green-50 border-green-200">
-                            <CardContent className="pt-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <Badge variant="secondary" className="bg-green-100 text-green-800">
-                                  Dados da Receita Federal
-                                </Badge>
-                                <Badge 
-                                  variant={cnpjData.situacao === 'ATIVA' ? 'default' : 'destructive'}
-                                  className={cnpjData.situacao === 'ATIVA' ? 'bg-green-600' : ''}
-                                >
-                                  {cnpjData.situacao}
-                                </Badge>
-                              </div>
-                              <div className="text-sm text-green-700">
-                                <p><strong>Razão Social:</strong> {cnpjData.razaoSocial}</p>
-                                {cnpjData.nomeFantasia && (
-                                  <p><strong>Nome Fantasia:</strong> {cnpjData.nomeFantasia}</p>
-                                )}
-                                <p><strong>Endereço:</strong> {cnpjData.endereco}</p>
-                                <p><strong>Cidade:</strong> {cnpjData.cidade} - {cnpjData.estado}</p>
-                              </div>
-                            </CardContent>
-                          </Card>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => searchCNPJ(field.value || '')}
+                            disabled={cnpjLoading || !field.value}
+                            className="px-3"
+                          >
+                            {cnpjLoading ? (
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-honest-blue"></div>
+                            ) : (
+                              <Search className="h-4 w-4" />
+                            )}
+                          </Button>
                         </div>
-                      )}
-                    </>
-                  )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </div>
+
+                {cnpjData && (
+                  <div className="mt-4">
+                    <Card className="bg-green-50 border-green-200">
+                      <CardContent className="pt-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge variant="secondary" className="bg-green-100 text-green-800">
+                            Dados da Receita Federal
+                          </Badge>
+                          <Badge 
+                            variant={cnpjData.situacao === 'ATIVA' ? 'default' : 'destructive'}
+                            className={cnpjData.situacao === 'ATIVA' ? 'bg-green-600' : ''}
+                          >
+                            {cnpjData.situacao}
+                          </Badge>
+                        </div>
+                        <div className="text-sm text-green-700">
+                          <p><strong>Razão Social:</strong> {cnpjData.razaoSocial}</p>
+                          {cnpjData.nomeFantasia && (
+                            <p><strong>Nome Fantasia:</strong> {cnpjData.nomeFantasia}</p>
+                          )}
+                          <p><strong>Endereço:</strong> {cnpjData.endereco}</p>
+                          <p><strong>Cidade:</strong> {cnpjData.cidade} - {cnpjData.estado}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
