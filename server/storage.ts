@@ -331,7 +331,7 @@ export class DatabaseStorage implements IStorage {
       .from(salesCards)
       .where(
         and(
-          sql`${salesCards.customerId} = ANY(${customerIds})`,
+          inArray(salesCards.customerId, customerIds),
           eq(salesCards.status, 'completed'),
           gte(salesCards.completedDate, currentMonthStart),
           sql`${salesCards.saleValue} > 0`
@@ -344,11 +344,11 @@ export class DatabaseStorage implements IStorage {
       positivations.map(p => [p.customerId, p.count > 0])
     );
     
-    // Buscar última atividade de todos os clientes de uma vez usando DISTINCT ON
+    // Buscar última atividade de todos os clientes de uma vez
     const lastActivities = await db
       .select()
       .from(salesCards)
-      .where(sql`${salesCards.customerId} = ANY(${customerIds})`)
+      .where(inArray(salesCards.customerId, customerIds))
       .orderBy(salesCards.customerId, desc(salesCards.scheduledDate));
     
     // Agrupar por customerId e pegar a primeira (mais recente)
