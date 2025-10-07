@@ -53,8 +53,8 @@ export const users = pgTable("users", {
   isActive: boolean("is_active").notNull().default(true),
   
   // Geolocalização da casa do vendedor
-  homeLatitude: decimal("home_latitude", { precision: 10, scale: 8 }),
-  homeLongitude: decimal("home_longitude", { precision: 11, scale: 8 }),
+  homeLatitude: decimal("home_latitude", { precision: 9, scale: 6 }),
+  homeLongitude: decimal("home_longitude", { precision: 10, scale: 6 }),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -101,8 +101,8 @@ export const customers = pgTable("customers", {
   lastSaleValue: decimal("last_sale_value", { precision: 10, scale: 2 }),
   
   // Geolocalização do cliente
-  latitude: decimal("latitude", { precision: 10, scale: 8 }),
-  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  latitude: decimal("latitude", { precision: 9, scale: 6 }),
+  longitude: decimal("longitude", { precision: 10, scale: 6 }),
   coordinatesLocked: boolean("coordinates_locked").notNull().default(false),
   
   // Atendimento virtual (não conta para meta de atendimento)
