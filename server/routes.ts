@@ -1017,28 +1017,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Vendedores cannot reassign sales cards" });
       }
       
-      const salesCard = await storage.updateSalesCard(id, data);
-      
-      // Se coordenadas GPS foram capturadas durante a atualização da venda, atualizar o cliente
+      // Se coordenadas GPS foram capturadas, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
         try {
-          await storage.updateCustomer(salesCard.customerId, {
-            latitude: req.body.customerLatitude,
-            longitude: req.body.customerLongitude
-          });
-          console.log(`Coordenadas GPS atualizadas para cliente ${salesCard.customerId}: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
+          // Buscar card atual para pegar customerId
+          const currentCard = await storage.getSalesCard(id);
+          if (currentCard) {
+            await storage.updateCustomer(currentCard.customerId, {
+              latitude: req.body.customerLatitude,
+              longitude: req.body.customerLongitude
+            });
+            console.log(`Coordenadas GPS atualizadas para cliente ${currentCard.customerId}`);
+          }
         } catch (coordError) {
           console.error('Erro ao atualizar coordenadas do cliente:', coordError);
-          // Não falhar a atualização da venda se a atualização de coordenadas falhar
         }
       }
       
-      // Se o card foi completado e tem recorrência ativa, gerar próximo card
-      if (data.status === 'completed' && salesCard.isRecurring) {
-        const nextCard = await storage.generateNextSalesCard(salesCard.id);
-        if (nextCard) {
-          console.log(`Próximo card gerado para o cliente ${salesCard.customerId}: ${nextCard.id}`);
+      // Se o status mudou para completed, no_sale ou failed, usar função helper para fechar e reagendar
+      let salesCard;
+      if (data.status && ['completed', 'no_sale', 'failed'].includes(data.status)) {
+        const result = await storage.closeCardAndScheduleNext(id, data.status as any, data);
+        salesCard = result.closedCard;
+        
+        if (result.nextCard) {
+          console.log(`Card fechado e próxima visita agendada: ${result.nextCard.id} para ${result.nextCard.scheduledDate}`);
         }
+      } else {
+        // Atualização normal sem mudança de status final
+        salesCard = await storage.updateSalesCard(id, data);
       }
       
       res.json(salesCard);
