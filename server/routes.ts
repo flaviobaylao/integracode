@@ -1106,8 +1106,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const localOffset = now.getTimezoneOffset(); // Diferença do servidor para UTC em minutos
       const brazilTime = new Date(now.getTime() + (localOffset + brazilOffset) * 60 * 1000);
       
-      console.log('Today clients - UTC:', now.toISOString(), 'Brazil:', brazilTime.toISOString());
-      
       const todayClients = await storage.getSalesCardsByDate(brazilTime, sellerId);
       res.json(todayClients);
     } catch (error) {

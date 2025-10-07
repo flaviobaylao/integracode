@@ -810,8 +810,6 @@ export class DatabaseStorage implements IStorage {
     const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
     
-    console.log('getSalesCardsByDate -', 'Input:', date.toISOString(), 'Range:', startOfDay.toISOString(), 'to', endOfDay.toISOString());
-    
     let whereConditions = and(
       gte(salesCards.scheduledDate, startOfDay),
       lte(salesCards.scheduledDate, endOfDay)
@@ -832,8 +830,6 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
-    
-    console.log(`Found ${result.length} cards for date ${year}-${month+1}-${day}`);
     
     return result.map(row => ({
       ...row.sales_cards,
