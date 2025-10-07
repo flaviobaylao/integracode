@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { getOmieService } from './omieIntegration';
 import { generateVisitAgenda } from './visitScheduleService';
+import { getStorage } from './storage';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -46,6 +47,47 @@ cron.schedule('0 6 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
+// Processamento de cards criticamente atrasados todos os dias às 02:00h
+cron.schedule('0 2 * * *', async () => {
+  console.log('🕐 [SCHEDULER] Iniciando processamento de cards atrasados...');
+  
+  try {
+    const storage = getStorage();
+    
+    // Buscar todos os cards criticamente atrasados (sem filtro de vendedor)
+    const overdueCards = await storage.getCriticallyOverdueCards();
+    
+    console.log(`📋 [SCHEDULER] Encontrados ${overdueCards.length} cards criticamente atrasados (>3 dias)`);
+    
+    let processedCount = 0;
+    let errorCount = 0;
+    
+    // Processar cada card: marcar como failed e agendar próximo
+    for (const card of overdueCards) {
+      try {
+        const result = await storage.closeCardAndScheduleNext(
+          card.id,
+          'failed',
+          { noSaleReason: 'Card automaticamente marcado como fracassado após 3 dias sem atendimento' }
+        );
+        
+        console.log(`✅ [SCHEDULER] Card ${card.id} marcado como failed. Próxima visita: ${result.nextCard?.scheduledDate || 'N/A'}`);
+        processedCount++;
+      } catch (error) {
+        console.error(`❌ [SCHEDULER] Erro ao processar card ${card.id}:`, error);
+        errorCount++;
+      }
+    }
+    
+    console.log(`✨ [SCHEDULER] Processamento concluído: ${processedCount} sucesso, ${errorCount} erros`);
+  } catch (error) {
+    console.error('❌ [SCHEDULER] Erro ao buscar cards atrasados:', error);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
+
 console.log('✅ Agendador configurado:');
-console.log('   - Sincronização de débitos vencidos às 07:00h (UTC-3)');
+console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
 console.log('   - Geração de agenda de visitas às 06:00h (UTC-3)');
+console.log('   - Sincronização de débitos vencidos às 07:00h (UTC-3)');
