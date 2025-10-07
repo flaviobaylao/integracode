@@ -18,6 +18,7 @@ interface VisitAgenda {
   id: string;
   customerId: string;
   sellerId: string;
+  sellerName?: string;
   scheduledDate: string;
   routeDay: string;
   recurrenceType: string;
@@ -714,15 +715,9 @@ export default function VisitRoutes() {
                           </div>
                         )}
                         {visit.isVirtual && (
-                          <div className="flex flex-col items-center gap-1">
-                            <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400">
-                              <Video className="h-3 w-3 mr-1" />
-                              Atendimento Virtual
-                            </Badge>
-                            <span className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                              Não requer check-in físico
-                            </span>
-                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                            Não requer check-in físico
+                          </span>
                         )}
                       </TableCell>
                     </TableRow>
