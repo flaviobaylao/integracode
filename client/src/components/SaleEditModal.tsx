@@ -278,9 +278,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
     setIsSubmitting(true);
     try {
-      // Calcular próxima data de agendamento baseada na data atual do card
-      const currentScheduledDate = card.scheduledDate ? new Date(card.scheduledDate) : new Date();
-      const nextScheduledDate = calculateNextScheduledDate(currentScheduledDate, true);
+      // A próxima data será calculada automaticamente pelo backend ao completar
+      const nextScheduledDate = null;
 
       // Atualizar card com dados da venda e reagendar
       await updateCardMutation.mutateAsync({
@@ -363,49 +362,24 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     );
   };
 
-  // Função para calcular próxima data de agendamento
-  const calculateNextScheduledDate = (fromDate?: Date, isRescheduling: boolean = false) => {
-    if (!customerWeekdays || customerWeekdays.length === 0 || !customerVisitPeriodicity) {
+  // Função para calcular próxima data de agendamento usando módulo compartilhado
+  const calculateNextScheduledDate = () => {
+    if (!card || !customerWeekdays || customerWeekdays.length === 0 || !customerVisitPeriodicity) {
       return null;
     }
 
-    const baseDate = fromDate || new Date();
-    const weekdayMap: { [key: string]: number } = {
-      domingo: 0,
-      segunda: 1,
-      terca: 2,
-      quarta: 3,
-      quinta: 4,
-      sexta: 5,
-      sabado: 6
-    };
-
-    const targetWeekdays = customerWeekdays.map(day => weekdayMap[day]);
-    
-    // Se estamos reagendando após completar, adicionar o período correto
-    if (isRescheduling) {
-      const periodDays: { [key: string]: number } = {
-        semanal: 7,
-        quinzenal: 14,
-        mensal: 30,
-        bimestral: 60
-      };
-      const daysToAdd = periodDays[customerVisitPeriodicity] || 7;
-      const nextDate = new Date(baseDate);
-      nextDate.setDate(baseDate.getDate() + daysToAdd);
-      return nextDate;
-    }
-
-    // Para exibição, encontrar o próximo dia válido a partir de hoje
-    for (let i = 1; i <= 7; i++) {
-      const testDate = new Date(baseDate);
-      testDate.setDate(baseDate.getDate() + i);
-      if (targetWeekdays.includes(testDate.getDay())) {
-        return testDate;
+    try {
+      // Usar scheduledDate do card se disponível (é a data que está salva)
+      if (card && card.scheduledDate) {
+        return new Date(card.scheduledDate);
       }
-    }
 
-    return null;
+      // Caso contrário, usar data atual como fallback
+      return new Date();
+    } catch (e) {
+      console.error('Erro ao calcular próxima data:', e);
+      return null;
+    }
   };
 
   // Função para calcular data de entrega (2 dias úteis após agendamento)

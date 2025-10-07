@@ -38,52 +38,6 @@ export default function SalesCards() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Função para calcular próxima data de agendamento do cliente
-  const calculateNextScheduledDate = (card: SalesCardWithRelations) => {
-    const customer = card.customer;
-    if (!customer) return card.scheduledDate;
-
-    const weekdays = customer.weekdays;
-    const periodicity = (customer as any).visitPeriodicity;
-
-    if (!weekdays || !periodicity) return card.scheduledDate;
-
-    const weekdayMap: { [key: string]: number } = {
-      domingo: 0,
-      segunda: 1,
-      terca: 2,
-      quarta: 3,
-      quinta: 4,
-      sexta: 5,
-      sabado: 6
-    };
-
-    let parsedWeekdays: string[] = [];
-    try {
-      parsedWeekdays = typeof weekdays === 'string' ? JSON.parse(weekdays) : weekdays;
-    } catch {
-      return card.scheduledDate;
-    }
-
-    if (!Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
-      return card.scheduledDate;
-    }
-
-    const targetWeekdays = parsedWeekdays.map(day => weekdayMap[day]);
-    const today = new Date();
-
-    // Encontrar o próximo dia válido
-    for (let i = 1; i <= 7; i++) {
-      const testDate = new Date(today);
-      testDate.setDate(today.getDate() + i);
-      if (targetWeekdays.includes(testDate.getDay())) {
-        return testDate.toISOString();
-      }
-    }
-
-    return card.scheduledDate;
-  };
-
   // Construir query string para filtros
   const buildQueryString = () => {
     const params = new URLSearchParams();
@@ -366,8 +320,8 @@ export default function SalesCards() {
                     <div className="flex items-center space-x-1">
                       <i className="fas fa-calendar"></i>
                       <span>
-                        {new Date(calculateNextScheduledDate(card)).toLocaleDateString('pt-BR')} às{' '}
-                        {new Date(calculateNextScheduledDate(card)).toLocaleTimeString('pt-BR', {
+                        {new Date(card.scheduledDate).toLocaleDateString('pt-BR')} às{' '}
+                        {new Date(card.scheduledDate).toLocaleTimeString('pt-BR', {
                           hour: '2-digit',
                           minute: '2-digit'
                         })}
