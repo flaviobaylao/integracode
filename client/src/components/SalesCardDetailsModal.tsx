@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   const queryClient = useQueryClient();
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [localVirtualService, setLocalVirtualService] = useState(false);
   
   // Buscar usuário atual para verificar permissões
   const { data: currentUser } = useQuery({
@@ -57,6 +58,13 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
+  
+  // Sincronizar estado local com o card quando ele mudar
+  useEffect(() => {
+    if (card?.customer) {
+      setLocalVirtualService((card.customer as any).virtualService || false);
+    }
+  }, [card]);
   
   // Log para debug
   console.log('SalesCardDetailsModal opened:', { isOpen, cardStatus: card?.status, cardId: card?.id });
@@ -179,7 +187,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     mutationFn: async ({ customerId, virtualService }: { customerId: string, virtualService: boolean }) => {
       await apiRequest('PUT', `/api/customers/${customerId}`, { virtualService });
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
+      // Atualizar estado local imediatamente
+      setLocalVirtualService(variables.virtualService);
+      
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
       toast({
@@ -418,7 +429,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               <div className="flex items-center space-x-2">
                 <div className="text-sm text-gray-600">Tipo de Atendimento:</div>
                 <Button
-                  variant={(card.customer as any).virtualService ? "default" : "outline"}
+                  variant={localVirtualService ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     if (!isAdministrative) {
@@ -431,18 +442,18 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                     }
                     toggleServiceTypeMutation.mutate({
                       customerId: card.customer.id,
-                      virtualService: !(card.customer as any).virtualService
+                      virtualService: !localVirtualService
                     });
                   }}
                   className={`${
-                    (card.customer as any).virtualService 
+                    localVirtualService 
                       ? "bg-blue-500 hover:bg-blue-600 text-white" 
                       : "bg-green-500 hover:bg-green-600 text-white border-green-500"
                   } ${!isAdministrative ? 'opacity-60 cursor-not-allowed' : ''}`}
                   disabled={toggleServiceTypeMutation.isPending || !isAdministrative}
                   data-testid="button-service-type"
                 >
-                  {(card.customer as any).virtualService ? (
+                  {localVirtualService ? (
                     <>
                       <Monitor className="h-4 w-4 mr-1" />
                       Virtual
