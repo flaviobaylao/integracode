@@ -992,6 +992,116 @@ export class DatabaseStorage implements IStorage {
     return newCard;
   }
 
+  // Função helper para calcular distância entre dois pontos (Haversine formula)
+  private calculateDistance(
+    lat1: number, 
+    lon1: number, 
+    lat2: number, 
+    lon2: number
+  ): number {
+    const R = 6371; // Raio da Terra em km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; // Distância em km
+  }
+
+  // Otimizar rota usando algoritmo Nearest Neighbor (TSP simplificado)
+  async getOptimizedRoute(
+    sellerId: string,
+    date: Date
+  ): Promise<{ cards: SalesCardWithRelations[]; totalDistance: number; seller: any }> {
+    // 1. Buscar vendedor com coordenadas de casa
+    const [seller] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, sellerId));
+
+    if (!seller || !seller.homeLatitude || !seller.homeLongitude) {
+      throw new Error('Vendedor não encontrado ou sem coordenadas de casa cadastradas');
+    }
+
+    const homeCoords = {
+      lat: parseFloat(seller.homeLatitude),
+      lng: parseFloat(seller.homeLongitude)
+    };
+
+    // 2. Buscar cards da data especificada
+    const cards = await this.getSalesCardsByDate(date, sellerId);
+
+    // 3. Filtrar apenas cards com coordenadas válidas
+    const cardsWithCoords = cards.filter(card => 
+      card.customer.latitude && 
+      card.customer.longitude
+    );
+
+    if (cardsWithCoords.length === 0) {
+      return { cards: [], totalDistance: 0, seller };
+    }
+
+    // 4. Aplicar algoritmo Nearest Neighbor
+    const optimizedCards: SalesCardWithRelations[] = [];
+    const remaining = [...cardsWithCoords];
+    let currentPosition = homeCoords;
+    let totalDistance = 0;
+
+    while (remaining.length > 0) {
+      // Encontrar o card mais próximo da posição atual
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+
+      remaining.forEach((card, index) => {
+        const distance = this.calculateDistance(
+          currentPosition.lat,
+          currentPosition.lng,
+          parseFloat(card.customer.latitude!),
+          parseFloat(card.customer.longitude!)
+        );
+
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+
+      // Adicionar o card mais próximo à rota
+      const nearestCard = remaining[nearestIndex];
+      optimizedCards.push(nearestCard);
+      totalDistance += nearestDistance;
+
+      // Atualizar posição atual
+      currentPosition = {
+        lat: parseFloat(nearestCard.customer.latitude!),
+        lng: parseFloat(nearestCard.customer.longitude!)
+      };
+
+      // Remover card da lista de pendentes
+      remaining.splice(nearestIndex, 1);
+    }
+
+    // 5. Adicionar distância de volta para casa
+    if (optimizedCards.length > 0) {
+      const lastCard = optimizedCards[optimizedCards.length - 1];
+      const returnDistance = this.calculateDistance(
+        parseFloat(lastCard.customer.latitude!),
+        parseFloat(lastCard.customer.longitude!),
+        homeCoords.lat,
+        homeCoords.lng
+      );
+      totalDistance += returnDistance;
+    }
+
+    return {
+      cards: optimizedCards,
+      totalDistance: Math.round(totalDistance * 10) / 10, // Arredondar para 1 casa decimal
+      seller
+    };
+  }
+
   // Message template operations
   async getMessageTemplates(): Promise<MessageTemplate[]> {
     return await db.select().from(messageTemplates).where(eq(messageTemplates.isActive, true));
