@@ -720,6 +720,8 @@ export class DatabaseStorage implements IStorage {
     limit: number = 20,
     offset: number = 0
   ): Promise<SalesCardWithRelations[]> {
+    console.log('getSalesCardsByDayAndDate -', { sellerId, routeDay, startDate: startDate.toISOString(), endDate: endDate.toISOString() });
+    
     const cardsWithRelations = await db
       .select({
         // Sales card fields
@@ -797,17 +799,24 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(customers, eq(salesCards.customerId, customers.id))
       .innerJoin(users, eq(salesCards.sellerId, users.id))
       .where(
-        and(
-          eq(salesCards.sellerId, sellerId),
-          eq(salesCards.routeDay, routeDay),
-          gte(salesCards.scheduledDate, startDate),
-          lte(salesCards.scheduledDate, endDate)
-        )
+        sellerId
+          ? and(
+              eq(salesCards.sellerId, sellerId),
+              eq(salesCards.routeDay, routeDay),
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
+            )
+          : and(
+              eq(salesCards.routeDay, routeDay),
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
+            )
       )
       .orderBy(salesCards.scheduledDate)
       .limit(limit)
       .offset(offset);
 
+    console.log(`Found ${cardsWithRelations.length} cards`);
     return cardsWithRelations as SalesCardWithRelations[];
   }
 
