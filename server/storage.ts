@@ -311,60 +311,81 @@ export class DatabaseStorage implements IStorage {
     
     const result = await query;
     
-    // Para cada cliente, vamos buscar informações de positivação e última atividade
-    const customersWithExtendedInfo = await Promise.all(
-      result.map(async (row) => {
-        const customerId = row.customers!.id;
-        
-        // Verificar se cliente foi positivado no mês atual
-        const currentMonthStart = new Date();
-        currentMonthStart.setDate(1);
-        currentMonthStart.setHours(0, 0, 0, 0);
-        
-        const [positivatedThisMonth] = await db
-          .select({ count: sql`COUNT(*)`.mapWith(Number) })
-          .from(salesCards)
-          .where(
-            and(
-              eq(salesCards.customerId, customerId),
-              eq(salesCards.status, 'completed'),
-              gte(salesCards.completedDate, currentMonthStart),
-              sql`${salesCards.saleValue} > 0`
-            )
-          );
-        
-        // Buscar informações da última atividade (card mais recente)
-        const [lastActivity] = await db
-          .select()
-          .from(salesCards)
-          .where(eq(salesCards.customerId, customerId))
-          .orderBy(desc(salesCards.scheduledDate))
-          .limit(1);
-        
-        let lastActivityStatus: 'none' | 'success' | 'failed' | 'pending' | 'overdue' | 'scheduled' = 'none';
-        
-        if (lastActivity) {
-          if (lastActivity.status === 'completed') {
-            lastActivityStatus = lastActivity.saleValue && parseFloat(lastActivity.saleValue.toString()) > 0 ? 'success' : 'failed';
-          } else if (lastActivity.status === 'in_progress') {
-            lastActivityStatus = 'pending';
-          } else if (lastActivity.status === 'scheduled') {
-            // Verificar se está atrasado
-            const scheduledDate = new Date(lastActivity.scheduledDate);
-            const now = new Date();
-            lastActivityStatus = scheduledDate < now ? 'overdue' : 'scheduled';
-          }
-        }
-        
-        return {
-          ...row.customers!,
-          seller: row.users!,
-          isPositivatedThisMonth: (positivatedThisMonth?.count || 0) > 0,
-          lastActivityStatus,
-          lastActivityDate: lastActivity?.scheduledDate?.toISOString() || null,
-        };
+    if (result.length === 0) {
+      return [];
+    }
+    
+    // Extrair IDs dos clientes
+    const customerIds = result.map(row => row.customers!.id);
+    
+    // Buscar positivações do mês atual para todos os clientes de uma vez
+    const currentMonthStart = new Date();
+    currentMonthStart.setDate(1);
+    currentMonthStart.setHours(0, 0, 0, 0);
+    
+    const positivations = await db
+      .select({
+        customerId: salesCards.customerId,
+        count: sql<number>`COUNT(*)`.mapWith(Number),
       })
+      .from(salesCards)
+      .where(
+        and(
+          sql`${salesCards.customerId} = ANY(${customerIds})`,
+          eq(salesCards.status, 'completed'),
+          gte(salesCards.completedDate, currentMonthStart),
+          sql`${salesCards.saleValue} > 0`
+        )
+      )
+      .groupBy(salesCards.customerId);
+    
+    // Criar mapa de positivações
+    const positivationMap = new Map(
+      positivations.map(p => [p.customerId, p.count > 0])
     );
+    
+    // Buscar última atividade de todos os clientes de uma vez usando DISTINCT ON
+    const lastActivities = await db
+      .select()
+      .from(salesCards)
+      .where(sql`${salesCards.customerId} = ANY(${customerIds})`)
+      .orderBy(salesCards.customerId, desc(salesCards.scheduledDate));
+    
+    // Agrupar por customerId e pegar a primeira (mais recente)
+    const lastActivityMap = new Map();
+    for (const activity of lastActivities) {
+      if (!lastActivityMap.has(activity.customerId)) {
+        lastActivityMap.set(activity.customerId, activity);
+      }
+    }
+    
+    // Montar resultado final
+    const customersWithExtendedInfo = result.map((row) => {
+      const customerId = row.customers!.id;
+      const lastActivity = lastActivityMap.get(customerId);
+      
+      let lastActivityStatus: 'none' | 'success' | 'failed' | 'pending' | 'overdue' | 'scheduled' = 'none';
+      
+      if (lastActivity) {
+        if (lastActivity.status === 'completed') {
+          lastActivityStatus = lastActivity.saleValue && parseFloat(lastActivity.saleValue.toString()) > 0 ? 'success' : 'failed';
+        } else if (lastActivity.status === 'in_progress') {
+          lastActivityStatus = 'pending';
+        } else if (lastActivity.status === 'scheduled') {
+          const scheduledDate = new Date(lastActivity.scheduledDate);
+          const now = new Date();
+          lastActivityStatus = scheduledDate < now ? 'overdue' : 'scheduled';
+        }
+      }
+      
+      return {
+        ...row.customers!,
+        seller: row.users!,
+        isPositivatedThisMonth: positivationMap.get(customerId) || false,
+        lastActivityStatus,
+        lastActivityDate: lastActivity?.scheduledDate?.toISOString() || null,
+      };
+    });
     
     return customersWithExtendedInfo;
   }
