@@ -617,12 +617,55 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      // Calcular próxima data
-      const nextDate = this.calculateNextRecurrenceDate(
-        parentCard.routeDay,
-        parentCard.recurrenceType,
-        parentCard.scheduledDate
-      );
+      // Buscar dados do cliente para usar weekdays e visitPeriodicity
+      const [customer] = await db
+        .select()
+        .from(customers)
+        .where(eq(customers.id, parentCard.customerId));
+
+      if (!customer) {
+        throw new Error('Cliente não encontrado');
+      }
+
+      // Usar o novo módulo de agendamento se cliente tiver weekdays e visitPeriodicity
+      let nextDate: Date;
+      
+      if (customer.weekdays && customer.visitPeriodicity) {
+        const { calculateNextVisitDate } = await import('@shared/visitSchedule');
+        
+        let parsedWeekdays: string[] = [];
+        try {
+          parsedWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays;
+        } catch (e) {
+          console.error('Erro ao parsear weekdays:', e);
+          parsedWeekdays = [];
+        }
+
+        if (parsedWeekdays.length > 0) {
+          const result = calculateNextVisitDate({
+            weekdays: parsedWeekdays as any[],
+            periodicity: customer.visitPeriodicity as any,
+            lastCompletedDate: parentCard.completedDate || parentCard.scheduledDate
+          });
+          nextDate = result.nextDate;
+        } else {
+          // Fallback para lógica antiga se weekdays não estiver configurado
+          nextDate = this.calculateNextRecurrenceDate(
+            parentCard.routeDay,
+            parentCard.recurrenceType,
+            parentCard.scheduledDate
+          );
+        }
+      } else {
+        // Fallback para lógica antiga se cliente não tiver novos campos
+        nextDate = this.calculateNextRecurrenceDate(
+          parentCard.routeDay,
+          parentCard.recurrenceType,
+          parentCard.scheduledDate
+        );
+      }
 
       // Criar novo card
       const nextCardData: InsertSalesCard = {
