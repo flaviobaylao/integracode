@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
@@ -94,6 +94,21 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const customerType = form.watch('customerType');
   const coordinatesLocked = form.watch('coordinatesLocked');
+  const prevCustomerTypeRef = useRef(customerType);
+
+  useEffect(() => {
+    // Limpar campos de documento quando o tipo de cliente muda
+    if (prevCustomerTypeRef.current !== customerType && isOpen) {
+      if (customerType === 'pessoa_fisica') {
+        form.setValue('cnpj', '');
+        form.setValue('companyName', '');
+        form.setValue('fantasyName', '');
+      } else if (customerType === 'pessoa_juridica') {
+        form.setValue('cpf', '');
+      }
+      prevCustomerTypeRef.current = customerType;
+    }
+  }, [customerType, isOpen, form]);
 
   useEffect(() => {
     if (customer) {
@@ -371,17 +386,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     <FormItem>
                       <FormLabel>Tipo de Cliente</FormLabel>
                       <Select 
-                        onValueChange={(value) => {
-                          field.onChange(value);
-                          // Limpar campos de documento quando o tipo muda
-                          if (value === 'pessoa_fisica') {
-                            form.setValue('cnpj', '');
-                            form.setValue('companyName', '');
-                            form.setValue('fantasyName', '');
-                          } else {
-                            form.setValue('cpf', '');
-                          }
-                        }} 
+                        onValueChange={field.onChange}
                         defaultValue={field.value}
                       >
                         <FormControl>
@@ -467,7 +472,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   maxLength={18}
                                   value={field.value || ''}
                                   onChange={(e) => {
-                                    console.log('onChange CNPJ:', e.target.value, 'field.value:', field.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
