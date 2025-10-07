@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
@@ -92,33 +92,15 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     },
   });
 
-  const customerType = form.watch('customerType');
+  const [customerType, setCustomerType] = useState<'pessoa_fisica' | 'pessoa_juridica'>('pessoa_fisica');
   const coordinatesLocked = form.watch('coordinatesLocked');
-  
-  const handleCNPJChange = useMemo(() => (e: React.ChangeEvent<HTMLInputElement>, fieldOnChange: (value: string) => void) => {
-    let value = e.target.value;
-    // Remove tudo que não é número
-    value = value.replace(/\D/g, '');
-    // Aplica formatação conforme digita
-    let formatted = '';
-    if (value.length <= 2) {
-      formatted = value;
-    } else if (value.length <= 5) {
-      formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
-    } else if (value.length <= 8) {
-      formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
-    } else if (value.length <= 12) {
-      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
-    } else {
-      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
-    }
-    fieldOnChange(formatted);
-  }, []);
 
   useEffect(() => {
     if (customer) {
+      const type = (customer as any).customerType || 'pessoa_fisica';
+      setCustomerType(type);
       form.reset({
-        customerType: (customer as any).customerType || 'pessoa_fisica',
+        customerType: type,
         name: customer.name || '',
         cpf: (customer as any).cpf || '',
         cnpj: (customer as any).cnpj || '',
@@ -142,6 +124,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         serviceStartDate: (customer as any).serviceStartDate || undefined,
       });
     } else {
+      setCustomerType('pessoa_fisica');
       form.reset({
         customerType: 'pessoa_fisica',
         name: '',
@@ -391,8 +374,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     <FormItem>
                       <FormLabel>Tipo de Cliente</FormLabel>
                       <Select 
-                        onValueChange={(value) => {
+                        onValueChange={(value: 'pessoa_fisica' | 'pessoa_juridica') => {
                           field.onChange(value);
+                          setCustomerType(value);
                           // Limpar campos específicos quando muda o tipo
                           if (value === 'pessoa_fisica') {
                             form.setValue('cnpj', '', { shouldValidate: false });
@@ -486,7 +470,16 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
                                   value={field.value || ''}
-                                  onChange={(e) => handleCNPJChange(e, field.onChange)}
+                                  onChange={(e) => {
+                                    let value = e.target.value.replace(/\D/g, '');
+                                    let formatted = '';
+                                    if (value.length <= 2) formatted = value;
+                                    else if (value.length <= 5) formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
+                                    else if (value.length <= 8) formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+                                    else if (value.length <= 12) formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+                                    else formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
+                                    field.onChange(formatted);
+                                  }}
                                   onBlur={field.onBlur}
                                   name={field.name}
                                   ref={field.ref}
