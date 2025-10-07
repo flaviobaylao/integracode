@@ -467,6 +467,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   maxLength={18}
                                   value={field.value || ''}
                                   onChange={(e) => {
+                                    console.log('onChange CNPJ:', e.target.value, 'field.value:', field.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
