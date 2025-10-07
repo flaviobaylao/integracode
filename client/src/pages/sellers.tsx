@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Users, Mail, MapPin, Plus, UserCheck, Edit, Home } from "lucide-react";
+import { Users, Mail, MapPin, Plus, UserCheck, Edit, Home, RefreshCw } from "lucide-react";
 import { formatDate } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -53,6 +53,26 @@ export default function Sellers() {
       toast({
         title: "Erro",
         description: error.message || "Erro ao atualizar coordenadas",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const syncVendorsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('POST', '/api/omie/sync-vendors');
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "Sincronização concluída",
+        description: `${data.imported} vendedores importados, ${data.updated} atualizados`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro na sincronização",
+        description: error.message || "Erro ao sincronizar vendedores do Omie",
         variant: "destructive",
       });
     },
@@ -112,6 +132,16 @@ export default function Sellers() {
           </p>
         </div>
         <div className="flex items-center space-x-2">
+          <Button
+            onClick={() => syncVendorsMutation.mutate()}
+            disabled={syncVendorsMutation.isPending}
+            variant="outline"
+            size="sm"
+            data-testid="button-sync-vendors"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncVendorsMutation.isPending ? 'animate-spin' : ''}`} />
+            {syncVendorsMutation.isPending ? 'Sincronizando...' : 'Sincronizar Omie'}
+          </Button>
           <Badge variant="secondary" className="px-3 py-1">
             <Users className="h-4 w-4 mr-1" />
             {activeSellers.length} vendedores

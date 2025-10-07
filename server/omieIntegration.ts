@@ -272,6 +272,109 @@ export class OmieService {
     }
   }
 
+  // Método para listar e sincronizar todos os vendedores do Omie
+  async syncVendors(): Promise<{ totalProcessed: number; imported: number; updated: number; errors: any[] }> {
+    console.log('🔄 Iniciando sincronização de vendedores do Omie...');
+    
+    const results = {
+      totalProcessed: 0,
+      imported: 0,
+      updated: 0,
+      errors: [] as any[]
+    };
+
+    try {
+      let page = 1;
+      let hasMore = true;
+      const registrosPerPage = 100;
+
+      while (hasMore) {
+        console.log(`📄 Buscando página ${page} de vendedores...`);
+        
+        const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
+          pagina: page,
+          registros_por_pagina: registrosPerPage
+        });
+
+        const vendors = response.cadastros || [];
+        
+        if (vendors.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const vendor of vendors) {
+          try {
+            results.totalProcessed++;
+            
+            const vendorCode = vendor.codigo?.toString();
+            if (!vendorCode) {
+              results.errors.push({ vendor, error: 'Código do vendedor não encontrado' });
+              continue;
+            }
+
+            // Parse o nome do vendedor
+            const fullName = vendor.nome || '';
+            const nameParts = fullName.trim().split(' ');
+            const firstName = nameParts[0] || '';
+            const lastName = nameParts.slice(1).join(' ') || '';
+
+            // Verificar se o vendedor já existe no banco
+            const existingUser = await this.storage.getUserByEmail(vendor.email || `vendor-${vendorCode}@omie.com`);
+            
+            const userData = {
+              firstName,
+              lastName,
+              email: vendor.email || `vendor-${vendorCode}@omie.com`,
+              role: 'vendedor' as const,
+              isActive: vendor.inativo === 'N', // Vendedor ativo se inativo='N'
+            };
+
+            if (existingUser) {
+              // Atualizar vendedor existente
+              await this.storage.updateUser(existingUser.id, userData);
+              results.updated++;
+              console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode})`);
+            } else {
+              // Criar novo vendedor
+              await this.storage.createUser({
+                id: `omie-vendor-${vendorCode}`,
+                ...userData,
+                password: '', // Vai usar autenticação via Replit
+              });
+              results.imported++;
+              console.log(`✅ Vendedor importado: ${fullName} (${vendorCode})`);
+            }
+
+            // Armazenar no cache
+            this.sellersCache.set(vendorCode, {
+              name: fullName,
+              id: vendorCode
+            });
+
+          } catch (error) {
+            console.error(`❌ Erro ao processar vendedor ${vendor.nome}:`, error);
+            results.errors.push({ vendor, error: error instanceof Error ? error.message : 'Unknown error' });
+          }
+        }
+
+        // Verificar se há mais páginas
+        if (vendors.length < registrosPerPage) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+
+      console.log('🎉 Sincronização de vendedores concluída:', results);
+      return results;
+
+    } catch (error) {
+      console.error('❌ Erro na sincronização de vendedores:', error);
+      throw error;
+    }
+  }
+
   // Método para buscar dados de forma de pagamento
   async fetchPaymentMethod(paymentCode: string): Promise<string | null> {
     if (!paymentCode) return null;

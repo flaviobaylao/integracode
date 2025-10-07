@@ -3124,7 +3124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar todos os vendedores do Omie
-  app.post('/api/omie/sync-vendors', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-vendors', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -3133,84 +3133,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const result = {
-        totalProcessed: 0,
-        imported: 0,
-        updated: 0,
-        errors: [] as string[]
-      };
-
-      let currentPage = 1;
-      let hasMorePages = true;
-
-      while (hasMorePages) {
-        const pageData = await omieService.getAllVendors(currentPage, 100);
-        
-        for (const omieVendor of pageData.vendors) {
-          result.totalProcessed++;
-          
-          try {
-            // Converter para formato do sistema
-            const systemVendor = omieService.convertVendorToSystemFormat(omieVendor);
-
-            // Verificar se vendedor já existe pelo ID do Omie ou email
-            const existingUsers = await storage.getUsers();
-            const existingVendor = existingUsers.find(user => 
-              user.role === 'vendedor' && 
-              (user.id === `omie-vendor-${omieVendor.codigo}` || 
-               (user.email && user.email === systemVendor.email))
-            );
-
-            if (!systemVendor.isActive) {
-              // VENDEDOR INATIVO NO OMIE
-              if (existingVendor) {
-                // Desativar vendedor existente que se tornou inativo no Omie
-                console.log(`🔄 Desativando vendedor: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
-                await storage.updateUser(existingVendor.id, {
-                  firstName: systemVendor.firstName,
-                  lastName: systemVendor.lastName,
-                  email: systemVendor.email,
-                  isActive: false // Desativar
-                  // Não atualizar homeLatitude e homeLongitude para preservar dados cadastrados
-                });
-                result.updated++;
-              } else {
-                // Não criar novos vendedores inativos
-                console.log(`⏭️ Ignorando criação de vendedor inativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
-              }
-              continue;
-            }
-
-            // VENDEDOR ATIVO NO OMIE
-            if (existingVendor) {
-              // Atualizar vendedor existente (manter geolocalização existente)
-              console.log(`🔄 Atualizando vendedor ativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
-              await storage.updateUser(existingVendor.id, {
-                firstName: systemVendor.firstName,
-                lastName: systemVendor.lastName,
-                email: systemVendor.email,
-                isActive: true // Garantir que está ativo
-                // Não atualizar homeLatitude e homeLongitude para preservar dados cadastrados
-              });
-              result.updated++;
-            } else {
-              // Criar novo vendedor ativo
-              console.log(`✅ Criando novo vendedor ativo: ${omieVendor.nome} (código: ${omieVendor.codigo})`);
-              await storage.createUser(systemVendor);
-              result.imported++;
-            }
-
-          } catch (error: any) {
-            console.error(`Erro ao processar vendedor ${omieVendor.codigo}:`, error);
-            result.errors.push(`Erro ao processar vendedor ${omieVendor.nome}: ${error?.message || 'Erro desconhecido'}`);
-          }
-        }
-
-        currentPage++;
-        hasMorePages = currentPage <= pageData.totalPages;
-      }
-
-      res.json(result);
+      console.log('🔄 Iniciando sincronização de vendedores via endpoint...');
+      const result = await omieService.syncVendors();
+      
+      res.json({
+        success: true,
+        message: `Sincronização concluída: ${result.imported} importados, ${result.updated} atualizados`,
+        ...result
+      });
 
     } catch (error) {
       console.error("Error syncing vendors from Omie:", error);
