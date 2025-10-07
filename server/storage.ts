@@ -757,8 +757,6 @@ export class DatabaseStorage implements IStorage {
     limit: number = 20,
     offset: number = 0
   ): Promise<SalesCardWithRelations[]> {
-    console.log('getSalesCardsByDayAndDate -', { sellerId, routeDay, startDate: startDate.toISOString(), endDate: endDate.toISOString() });
-    
     const cardsWithRelations = await db
       .select({
         // Sales card fields
@@ -853,7 +851,6 @@ export class DatabaseStorage implements IStorage {
       .limit(limit)
       .offset(offset);
 
-    console.log(`Found ${cardsWithRelations.length} cards`);
     return cardsWithRelations as SalesCardWithRelations[];
   }
 

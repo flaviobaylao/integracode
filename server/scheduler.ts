@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { getOmieService } from './omieIntegration';
 import { generateVisitAgenda } from './visitScheduleService';
-import { getStorage } from './storage';
+import { storage } from './storage';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -52,8 +52,6 @@ cron.schedule('0 2 * * *', async () => {
   console.log('🕐 [SCHEDULER] Iniciando processamento de cards atrasados...');
   
   try {
-    const storage = getStorage();
-    
     // Buscar todos os cards criticamente atrasados (sem filtro de vendedor)
     const overdueCards = await storage.getCriticallyOverdueCards();
     
