@@ -829,7 +829,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
               {/* Lista de produtos ativos com checkbox */}
               <div className="space-y-3">
                 {Array.isArray(availableProducts) && availableProducts
-                  .filter((p: any) => p.status === 'ativo')
+                  .filter((p: any) => p.isActive === true)
                   .map((product: any) => {
                     const selectedProduct = products.find(p => p.id === product.id);
                     const isSelected = !!selectedProduct;
