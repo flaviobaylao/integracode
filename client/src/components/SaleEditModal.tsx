@@ -382,15 +382,28 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
   };
 
-  // Função para calcular data de entrega (2 dias úteis após agendamento)
+  // Função para calcular data de entrega
+  // 2 dias úteis se venda no dia agendado, 3 dias úteis se em outro dia
   const calculateDeliveryDate = (scheduledDate: Date | null) => {
     if (!scheduledDate) return null;
 
+    // Comparar se hoje é o dia agendado (ignorando hora)
+    const today = new Date();
+    const scheduledDay = new Date(scheduledDate);
+    
+    const isSameDayAsSale = 
+      today.getDate() === scheduledDay.getDate() &&
+      today.getMonth() === scheduledDay.getMonth() &&
+      today.getFullYear() === scheduledDay.getFullYear();
+
+    // Definir número de dias úteis baseado na regra
+    const workingDaysNeeded = isSameDayAsSale ? 2 : 3;
+
     const saturdayEnabled = deliveryWeekdays.includes('sabado');
     let workingDaysCount = 0;
-    let currentDate = new Date(scheduledDate);
+    let currentDate = new Date(today); // Usar data atual como base
 
-    while (workingDaysCount < 2) {
+    while (workingDaysCount < workingDaysNeeded) {
       currentDate.setDate(currentDate.getDate() + 1);
       const dayOfWeek = currentDate.getDay();
 
