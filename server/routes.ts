@@ -3436,6 +3436,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      console.log('Dados da API Receita Federal:', JSON.stringify(dadosCNPJ, null, 2));
+
       // Formatar dados para retorno
       const dadosFormatados = {
         cnpj: receitaService.formatarCNPJ(dadosCNPJ.cnpj),
