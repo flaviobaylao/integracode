@@ -94,23 +94,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const customerType = form.watch('customerType');
   const coordinatesLocked = form.watch('coordinatesLocked');
-  
-  // Track previous customer type to only clear when it actually changes
-  const [prevCustomerType, setPrevCustomerType] = useState(customerType);
-
-  // Limpar campos de documento quando o tipo de cliente muda
-  useEffect(() => {
-    if (prevCustomerType !== customerType) {
-      if (customerType === 'pessoa_fisica') {
-        form.setValue('cnpj', '');
-        form.setValue('companyName', '');
-        form.setValue('fantasyName', '');
-      } else {
-        form.setValue('cpf', '');
-      }
-      setPrevCustomerType(customerType);
-    }
-  }, [customerType, prevCustomerType, form]);
 
   useEffect(() => {
     if (customer) {
@@ -387,7 +370,20 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Tipo de Cliente</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <Select 
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          // Limpar campos de documento quando o tipo muda
+                          if (value === 'pessoa_fisica') {
+                            form.setValue('cnpj', '');
+                            form.setValue('companyName', '');
+                            form.setValue('fantasyName', '');
+                          } else {
+                            form.setValue('cpf', '');
+                          }
+                        }} 
+                        defaultValue={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Selecione o tipo" />
@@ -471,26 +467,21 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   maxLength={18}
                                   value={field.value || ''}
                                   onChange={(e) => {
-                                    console.log('DEBUG - field.value antes:', field.value, 'e.target.value:', e.target.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
-                                    console.log('DEBUG - valor após replace:', value);
                                     // Aplica formatação conforme digita
-                                    let formatted = '';
                                     if (value.length <= 2) {
-                                      formatted = value;
+                                      field.onChange(value);
                                     } else if (value.length <= 5) {
-                                      formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
+                                      field.onChange(value.replace(/(\d{2})(\d{0,3})/, '$1.$2'));
                                     } else if (value.length <= 8) {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3'));
                                     } else if (value.length <= 12) {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4'));
                                     } else {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
+                                      field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5'));
                                     }
-                                    console.log('DEBUG - valor formatado a ser salvo:', formatted);
-                                    field.onChange(formatted);
                                   }}
                                   onBlur={field.onBlur}
                                   name={field.name}
