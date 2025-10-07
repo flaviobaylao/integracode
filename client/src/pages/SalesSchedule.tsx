@@ -20,7 +20,8 @@ import {
   Phone,
   Package,
   RefreshCw,
-  Filter
+  Filter,
+  Monitor
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -314,6 +315,17 @@ export default function SalesSchedule() {
                         <Badge className={STATUS_COLORS[card.status as keyof typeof STATUS_COLORS]}>
                           {STATUS_LABELS[card.status as keyof typeof STATUS_LABELS]}
                         </Badge>
+                        {card.customer?.virtualService ? (
+                          <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400">
+                            <Monitor className="h-3 w-3 mr-1" />
+                            Virtual
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-green-600 bg-green-50 dark:bg-green-900/20">
+                            <MapPin className="h-3 w-3 mr-1" />
+                            Presencial
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -401,8 +413,8 @@ export default function SalesSchedule() {
         isOpen={isDetailsModalOpen}
         onClose={closeModals}
         card={selectedCard}
-        onEditSale={handleEditSale}
-        onNoSale={handleNoSale}
+        onStartSale={handleEditSale}
+        onStartNoSale={handleNoSale}
       />
 
       <SaleEditModal
