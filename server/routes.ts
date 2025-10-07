@@ -3079,6 +3079,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para buscar cliente específico no Omie por CNPJ
+  app.get('/api/omie/search-client', authenticateUser, async (req: any, res) => {
+    try {
+      const { cnpj } = req.query;
+      
+      if (!cnpj) {
+        return res.status(400).json({ 
+          message: "CNPJ é obrigatório" 
+        });
+      }
+
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      console.log(`Buscando cliente no Omie com CNPJ: ${cnpj}`);
+      
+      const cliente = await omieService.getClientByCnpjCpf(cnpj as string);
+      
+      if (!cliente) {
+        return res.json({ 
+          found: false,
+          message: "Cliente não encontrado no Omie"
+        });
+      }
+
+      const formattedClient = omieService.convertClientToSystemFormat(cliente);
+
+      res.json({ 
+        found: true,
+        omieClient: cliente,
+        systemFormat: formattedClient,
+        message: "Cliente encontrado no Omie"
+      });
+
+    } catch (error) {
+      console.error("Error searching client in Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar cliente no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Blocked orders routes
   app.get('/api/blocked-orders', authenticateUser, async (req: any, res) => {
     try {
