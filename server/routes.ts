@@ -1150,24 +1150,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint para buscar cards por dia da semana e período
-  app.get('/api/sales-cards/by-day/:routeDay', authenticateUser, async (req: any, res) => {
+  app.get('/api/sales-cards/by-day/:routeDay', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
       const { routeDay } = req.params;
-      const { startDate, endDate, page = 1, limit = 20, sellerId: querySellerId } = req.query;
+      const { startDate, endDate, page = 1, limit = 20 } = req.query;
       
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
-      
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      
-      // Para vendedores, mostrar apenas seus cards
-      const sellerId = user.role === 'vendedor' ? user.id : querySellerId;
-      
-      if (!sellerId) {
-        return res.status(400).json({ message: "sellerId is required for non-vendedor users" });
-      }
+      const user = req.currentUser;
+      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       
       const start = startDate ? new Date(startDate as string) : new Date();
       const end = endDate ? new Date(endDate as string) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 dias

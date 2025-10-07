@@ -528,7 +528,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard> {
-    const [newSalesCard] = await db.insert(salesCards).values(salesCard as any).returning();
+    // Derivar routeDay do scheduledDate se não for fornecido
+    let processedSalesCard = { ...salesCard };
+    
+    if (!processedSalesCard.routeDay && processedSalesCard.scheduledDate) {
+      const scheduledDate = new Date(processedSalesCard.scheduledDate);
+      const dayOfWeek = scheduledDate.getDay();
+      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      processedSalesCard.routeDay = weekdayNames[dayOfWeek];
+    }
+    
+    const [newSalesCard] = await db.insert(salesCards).values(processedSalesCard as any).returning();
     return newSalesCard;
   }
 
@@ -667,14 +677,19 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
+      // Derivar routeDay do scheduledDate
+      const dayOfWeek = nextDate.getDay();
+      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const derivedRouteDay = weekdayNames[dayOfWeek];
+      
       // Criar novo card
       const nextCardData: InsertSalesCard = {
         customerId: parentCard.customerId,
         sellerId: parentCard.sellerId,
         status: 'pending',
         scheduledDate: nextDate,
-        routeDay: parentCard.routeDay,
-        recurrenceType: parentCard.recurrenceType,
+        routeDay: derivedRouteDay, // Usar dia derivado do scheduledDate
+        recurrenceType: customer.visitPeriodicity || parentCard.recurrenceType,
         isRecurring: parentCard.isRecurring,
         parentCardId: parentCardId,
         paymentMethod: parentCard.paymentMethod,
