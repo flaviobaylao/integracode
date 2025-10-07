@@ -412,6 +412,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <FormControl>
                             <Input
                               {...field}
+                              value={field.value || ''}
                               placeholder="000.000.000-00"
                               maxLength={14}
                               onChange={(e) => {
@@ -447,6 +448,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                               <FormControl>
                                 <Input
                                   {...field}
+                                  value={field.value || ''}
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
                                   onChange={(e) => {
@@ -818,7 +820,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                       <FormItem>
                         <FormLabel>Rota *</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="Ex: Centro, Zona Norte" />
+                          <Input {...field} value={field.value || ''} placeholder="Ex: Centro, Zona Norte" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
