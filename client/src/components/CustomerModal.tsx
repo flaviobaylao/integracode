@@ -428,12 +428,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <FormLabel>CPF *</FormLabel>
                           <FormControl>
                             <Input
-                              name={field.name}
-                              ref={field.ref}
-                              onBlur={field.onBlur}
-                              value={field.value || ''}
                               placeholder="000.000.000-00"
                               maxLength={14}
+                              value={field.value || ''}
                               onChange={(e) => {
                                 let value = e.target.value;
                                 // Remove tudo que não é número
@@ -449,6 +446,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   field.onChange(value.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4'));
                                 }
                               }}
+                              onBlur={field.onBlur}
+                              name={field.name}
+                              ref={field.ref}
                             />
                           </FormControl>
                           <FormMessage />
@@ -466,23 +466,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input
-                                  name={field.name}
-                                  ref={field.ref}
-                                  onBlur={field.onBlur}
-                                  value={field.value || ''}
+                                  data-testid="input-cnpj"
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
-                                  data-testid="input-cnpj"
-                                  disabled={false}
-                                  readOnly={false}
-                                  onClick={(e) => {
-                                    console.log('CNPJ clicked, field.value:', field.value);
-                                  }}
-                                  onInput={(e) => {
-                                    console.log('CNPJ onInput triggered:', (e.target as HTMLInputElement).value);
-                                  }}
+                                  value={field.value || ''}
                                   onChange={(e) => {
-                                    console.log('CNPJ onChange triggered:', e.target.value);
                                     let value = e.target.value;
                                     // Remove tudo que não é número
                                     value = value.replace(/\D/g, '');
@@ -499,6 +487,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                       field.onChange(value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5'));
                                     }
                                   }}
+                                  onBlur={field.onBlur}
+                                  name={field.name}
+                                  ref={field.ref}
                                 />
                               </FormControl>
                               <Button
