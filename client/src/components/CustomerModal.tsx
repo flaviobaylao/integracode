@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
@@ -94,22 +94,26 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const customerType = form.watch('customerType');
   const coordinatesLocked = form.watch('coordinatesLocked');
-  const prevCustomerTypeRef = useRef(customerType);
-
-  useEffect(() => {
-    // Limpar campos de documento quando o tipo de cliente muda
-    if (prevCustomerTypeRef.current !== customerType && isOpen) {
-      console.log('Limpando campos - tipo mudou de', prevCustomerTypeRef.current, 'para', customerType);
-      if (customerType === 'pessoa_fisica') {
-        form.setValue('cnpj', '');
-        form.setValue('companyName', '');
-        form.setValue('fantasyName', '');
-      } else if (customerType === 'pessoa_juridica') {
-        form.setValue('cpf', '');
-      }
-      prevCustomerTypeRef.current = customerType;
+  
+  const handleCNPJChange = useMemo(() => (e: React.ChangeEvent<HTMLInputElement>, fieldOnChange: (value: string) => void) => {
+    let value = e.target.value;
+    // Remove tudo que não é número
+    value = value.replace(/\D/g, '');
+    // Aplica formatação conforme digita
+    let formatted = '';
+    if (value.length <= 2) {
+      formatted = value;
+    } else if (value.length <= 5) {
+      formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
+    } else if (value.length <= 8) {
+      formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+    } else if (value.length <= 12) {
+      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+    } else {
+      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
     }
-  }, [customerType, isOpen, form]);
+    fieldOnChange(formatted);
+  }, []);
 
   useEffect(() => {
     if (customer) {
@@ -387,8 +391,18 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     <FormItem>
                       <FormLabel>Tipo de Cliente</FormLabel>
                       <Select 
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          // Limpar campos específicos quando muda o tipo
+                          if (value === 'pessoa_fisica') {
+                            form.setValue('cnpj', '', { shouldValidate: false });
+                            form.setValue('companyName', '', { shouldValidate: false });
+                            form.setValue('fantasyName', '', { shouldValidate: false });
+                          } else {
+                            form.setValue('cpf', '', { shouldValidate: false });
+                          }
+                        }}
+                        value={field.value}
                       >
                         <FormControl>
                           <SelectTrigger>
@@ -472,27 +486,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   placeholder="00.000.000/0000-00"
                                   maxLength={18}
                                   value={field.value || ''}
-                                  onChange={(e) => {
-                                    console.log('CNPJ onChange - input:', e.target.value, 'current field:', field.value);
-                                    let value = e.target.value;
-                                    // Remove tudo que não é número
-                                    value = value.replace(/\D/g, '');
-                                    // Aplica formatação conforme digita
-                                    let formatted = '';
-                                    if (value.length <= 2) {
-                                      formatted = value;
-                                    } else if (value.length <= 5) {
-                                      formatted = value.replace(/(\d{2})(\d{0,3})/, '$1.$2');
-                                    } else if (value.length <= 8) {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
-                                    } else if (value.length <= 12) {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
-                                    } else {
-                                      formatted = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
-                                    }
-                                    console.log('CNPJ onChange - setting to:', formatted);
-                                    field.onChange(formatted);
-                                  }}
+                                  onChange={(e) => handleCNPJChange(e, field.onChange)}
                                   onBlur={field.onBlur}
                                   name={field.name}
                                   ref={field.ref}
