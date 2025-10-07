@@ -801,10 +801,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]> {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Extrair ano, mês e dia da data recebida (já no timezone correto)
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const day = date.getDate();
+    
+    // Criar início e fim do dia usando UTC para evitar problemas de timezone
+    const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+    
+    console.log('getSalesCardsByDate -', 'Input:', date.toISOString(), 'Range:', startOfDay.toISOString(), 'to', endOfDay.toISOString());
     
     let whereConditions = and(
       gte(salesCards.scheduledDate, startOfDay),
@@ -826,6 +832,8 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
+    
+    console.log(`Found ${result.length} cards for date ${year}-${month+1}-${day}`);
     
     return result.map(row => ({
       ...row.sales_cards,
