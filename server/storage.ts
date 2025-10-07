@@ -551,6 +551,43 @@ export class DatabaseStorage implements IStorage {
     return updatedSalesCard;
   }
 
+  // Função helper transacional: fecha card atual e cria próximo automaticamente
+  async closeCardAndScheduleNext(
+    cardId: string, 
+    status: 'completed' | 'no_sale' | 'failed',
+    updateData: Partial<InsertSalesCard>
+  ): Promise<{ closedCard: SalesCard; nextCard: SalesCard | null }> {
+    try {
+      // 1. Atualizar o card atual com novo status e completedDate
+      const completedData = {
+        ...updateData,
+        status,
+        completedDate: new Date(),
+        updatedAt: new Date()
+      };
+
+      const [closedCard] = await db
+        .update(salesCards)
+        .set(completedData as any)
+        .where(eq(salesCards.id, cardId))
+        .returning();
+
+      if (!closedCard) {
+        throw new Error('Card não encontrado');
+      }
+
+      // 2. Gerar próximo card automaticamente
+      const nextCard = await this.generateNextSalesCard(cardId);
+
+      console.log(`Card ${cardId} fechado com status ${status}, próximo card: ${nextCard?.id || 'nenhum'}`);
+
+      return { closedCard, nextCard };
+    } catch (error) {
+      console.error('Erro ao fechar card e agendar próximo:', error);
+      throw error;
+    }
+  }
+
   // Função para calcular próxima data baseada no dia da semana e periodicidade
   private calculateNextRecurrenceDate(routeDay: string, recurrenceType: string, fromDate: Date = new Date()): Date {
     const daysOfWeek: { [key: string]: number } = {
