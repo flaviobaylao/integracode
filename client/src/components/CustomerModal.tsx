@@ -95,6 +95,17 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const customerType = form.watch('customerType');
   const coordinatesLocked = form.watch('coordinatesLocked');
 
+  // Limpar campos de documento quando o tipo de cliente muda
+  useEffect(() => {
+    if (customerType === 'pessoa_fisica') {
+      form.setValue('cnpj', '');
+      form.setValue('companyName', '');
+      form.setValue('fantasyName', '');
+    } else {
+      form.setValue('cpf', '');
+    }
+  }, [customerType, form]);
+
   useEffect(() => {
     if (customer) {
       form.reset({
