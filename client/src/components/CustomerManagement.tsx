@@ -85,9 +85,14 @@ export default function CustomerManagement() {
 
   const filteredCustomers = customers?.filter((customer: any) => {
     const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
+    // Normalizar termos de busca removendo formatação (pontos, barras, hífens)
+    const normalizedSearchTerm = searchTerm.replace(/[.\-\/\s]/g, '');
+    const normalizedDocument = documentSearch.replace(/[.\-\/\s]/g, '');
+    const normalizedPhone = customer.phone.replace(/[.\-\/\s()\s]/g, '');
+    
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         documentSearch.includes(searchTerm) ||
-                         customer.phone.includes(searchTerm);
+                         normalizedDocument.includes(normalizedSearchTerm) ||
+                         normalizedPhone.includes(normalizedSearchTerm);
     
     // Filtro por dia da semana
     let matchesWeekday = true;
