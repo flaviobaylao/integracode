@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { Monitor, MapPin } from "lucide-react";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
@@ -282,9 +283,22 @@ export default function SalesCards() {
             >
               <CardContent className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <Badge className={getStatusColor(card.status)}>
-                    {getStatusLabel(card.status)}
-                  </Badge>
+                  <div className="flex items-center space-x-2">
+                    <Badge className={getStatusColor(card.status)}>
+                      {getStatusLabel(card.status)}
+                    </Badge>
+                    {card.customer?.virtualService ? (
+                      <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400">
+                        <Monitor className="h-3 w-3 mr-1" />
+                        Virtual
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-green-600 bg-green-50 dark:bg-green-900/20">
+                        <MapPin className="h-3 w-3 mr-1" />
+                        Presencial
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center space-x-2">
                     <Button
                       variant="ghost"
