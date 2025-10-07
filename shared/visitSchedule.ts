@@ -79,14 +79,22 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
 
 /**
  * Encontra o próximo dia válido da semana a partir de uma data base
+ * Permite incluir o dia atual se for um dia válido
  */
 function findNextWeekday(baseDate: Date, targetWeekdays: number[]): Date {
+  // Verificar se o dia atual já é válido
+  if (targetWeekdays.includes(baseDate.getDay())) {
+    const result = new Date(baseDate);
+    result.setHours(8, 0, 0, 0);
+    return result;
+  }
+
+  // Procurar nos próximos 7 dias
   for (let i = 1; i <= 7; i++) {
     const testDate = new Date(baseDate);
     testDate.setDate(baseDate.getDate() + i);
     
     if (targetWeekdays.includes(testDate.getDay())) {
-      // Definir horário padrão: 8:00 AM
       testDate.setHours(8, 0, 0, 0);
       return testDate;
     }
