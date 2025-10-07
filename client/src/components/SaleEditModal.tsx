@@ -210,21 +210,17 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   // Gerenciar seleção de produtos via checkbox
   const handleProductToggle = (productId: string, checked: boolean) => {
-    console.log('handleProductToggle:', { productId, checked, currentProducts: products });
     if (checked) {
       if (!Array.isArray(availableProducts)) return;
       const selectedProduct = availableProducts.find((p: any) => p.id === productId);
-      console.log('selectedProduct found:', selectedProduct);
       if (selectedProduct) {
-        const newProduct = {
+        setProducts([...products, {
           id: selectedProduct.id,
           name: selectedProduct.name,
           quantity: 1,
           unitPrice: parseFloat(selectedProduct.price || '0'),
           totalPrice: parseFloat(selectedProduct.price || '0')
-        };
-        console.log('Adding product:', newProduct);
-        setProducts([...products, newProduct]);
+        }]);
       }
     } else {
       setProducts(products.filter(p => p.id !== productId));
@@ -837,7 +833,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   .map((product: any) => {
                     const selectedProduct = products.find(p => p.id === product.id);
                     const isSelected = !!selectedProduct;
-                    console.log('Rendering product:', { productId: product.id, isSelected, selectedProduct, allProducts: products });
                     
                     return (
                       <div key={product.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
