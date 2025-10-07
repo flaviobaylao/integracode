@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,9 @@ import {
   Ban,
   LogIn,
   LogOut,
-  Loader2
+  Loader2,
+  Monitor,
+  Users
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -46,6 +48,15 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   const queryClient = useQueryClient();
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  
+  // Buscar usuário atual para verificar permissões
+  const { data: currentUser } = useQuery({
+    queryKey: ['/api/auth/user'],
+    retry: false,
+  });
+
+  // Verificar se o usuário é administrativo
+  const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
   
   // Log para debug
   console.log('SalesCardDetailsModal opened:', { isOpen, cardStatus: card?.status, cardId: card?.id });
@@ -157,6 +168,28 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     onError: (error) => {
       toast({
         title: "Erro ao Enviar para Omie",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para alternar tipo de atendimento
+  const toggleServiceTypeMutation = useMutation({
+    mutationFn: async ({ customerId, virtualService }: { customerId: string, virtualService: boolean }) => {
+      await apiRequest('PUT', `/api/customers/${customerId}`, { virtualService });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      toast({
+        title: "Sucesso",
+        description: "Tipo de atendimento atualizado com sucesso!",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao Atualizar",
         description: error.message,
         variant: "destructive",
       });
@@ -378,6 +411,48 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 >
                   <MessageSquare className="h-4 w-4 mr-1" />
                   WhatsApp
+                </Button>
+              </div>
+              
+              {/* Botão de Tipo de Atendimento */}
+              <div className="flex items-center space-x-2">
+                <div className="text-sm text-gray-600">Tipo de Atendimento:</div>
+                <Button
+                  variant={(card.customer as any).virtualService ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    if (!isAdministrative) {
+                      toast({
+                        title: "Acesso Negado",
+                        description: "Apenas usuários administrativos podem alterar o tipo de atendimento.",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+                    toggleServiceTypeMutation.mutate({
+                      customerId: card.customer.id,
+                      virtualService: !(card.customer as any).virtualService
+                    });
+                  }}
+                  className={`${
+                    (card.customer as any).virtualService 
+                      ? "bg-blue-500 hover:bg-blue-600 text-white" 
+                      : "bg-green-500 hover:bg-green-600 text-white border-green-500"
+                  } ${!isAdministrative ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  disabled={toggleServiceTypeMutation.isPending || !isAdministrative}
+                  data-testid="button-service-type"
+                >
+                  {(card.customer as any).virtualService ? (
+                    <>
+                      <Monitor className="h-4 w-4 mr-1" />
+                      Virtual
+                    </>
+                  ) : (
+                    <>
+                      <Users className="h-4 w-4 mr-1" />
+                      Presencial
+                    </>
+                  )}
                 </Button>
               </div>
               
