@@ -1208,10 +1208,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint para buscar cards por data específica
-  app.get('/api/sales-cards/by-date/:date', authenticateUser, checkSellerAccess, async (req: any, res) => {
+  app.get('/api/sales-cards/by-date/:date', authenticateUser, async (req: any, res) => {
     try {
       const { date } = req.params;
-      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      const { sellerId: filterSellerId } = req.query;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Determinar o sellerId a ser usado
+      let sellerId: string | undefined;
+      
+      if (user.role === 'vendedor') {
+        // Vendedores só veem seus próprios cards
+        sellerId = user.id;
+      } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        // Admin/coordenador/administrativo podem filtrar por vendedor específico ou ver todos
+        sellerId = filterSellerId && filterSellerId !== 'all' ? filterSellerId as string : undefined;
+      }
       
       const targetDate = new Date(date);
       const cards = await storage.getSalesCardsByDate(targetDate, sellerId);

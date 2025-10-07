@@ -204,6 +204,7 @@ export default function VisitRoutes() {
       id: card.id,
       customerId: card.customerId,
       sellerId: card.sellerId,
+      sellerName: card.seller ? `${card.seller.firstName} ${card.seller.lastName}` : 'N/A',
       scheduledDate: card.scheduledDate,
       routeDay: card.routeDay,
       recurrenceType: card.recurrenceType,
@@ -604,6 +605,7 @@ export default function VisitRoutes() {
                   <TableRow>
                     <TableHead>Data</TableHead>
                     <TableHead>Cliente</TableHead>
+                    <TableHead>Vendedor</TableHead>
                     <TableHead>Endereço</TableHead>
                     <TableHead>Dia</TableHead>
                     <TableHead>Recorrência</TableHead>
@@ -624,6 +626,12 @@ export default function VisitRoutes() {
                         <div className="flex items-center">
                           <User className="mr-2 h-4 w-4 text-gray-400" />
                           {visit.customerName}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center text-sm">
+                          <User className="mr-1 h-3 w-3 text-blue-500" />
+                          {visit.sellerName || 'N/A'}
                         </div>
                       </TableCell>
                       <TableCell>
