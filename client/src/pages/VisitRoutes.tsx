@@ -208,7 +208,7 @@ export default function VisitRoutes() {
       scheduledDate: card.scheduledDate,
       routeDay: card.routeDay,
       recurrenceType: card.recurrenceType,
-      isVirtual: false,
+      isVirtual: card.customer?.virtualService || false,
       visitStatus: card.status === 'completed' ? 'completed' : card.status === 'pending' ? 'pending' : 'missed',
       customerName: card.customer?.name || '',
       customerLatitude: card.customer?.latitude,
