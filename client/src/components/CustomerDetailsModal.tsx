@@ -49,19 +49,57 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     mutationFn: async (customerId: string) => {
       const currentUser = await fetch('/api/auth/user').then(res => res.json());
       
-      // Calcular o próximo domingo
-      const today = new Date();
-      const dayOfWeek = today.getDay(); // 0 = domingo, 1 = segunda, etc.
-      const daysUntilSunday = dayOfWeek === 0 ? 7 : 7 - dayOfWeek; // Se já for domingo, pega o próximo
-      const nextSunday = new Date(today);
-      nextSunday.setDate(today.getDate() + daysUntilSunday);
-      nextSunday.setHours(0, 0, 0, 0); // Zerar horas para começar às 00:00
+      // Buscar dados do cliente para calcular próxima data correta
+      const customerResponse = await fetch(`/api/customers/${customerId}`);
+      const customerData = await customerResponse.json();
+      
+      let scheduledDate = new Date();
+      scheduledDate.setHours(8, 0, 0, 0);
+      
+      // Se cliente tem weekdays configurado, calcular baseado nisso
+      if (customerData.weekdays && customerData.visitPeriodicity) {
+        const weekdayMap: { [key: string]: number } = {
+          domingo: 0, segunda: 1, terca: 2, quarta: 3,
+          quinta: 4, sexta: 5, sabado: 6
+        };
+        
+        let parsedWeekdays: string[] = [];
+        try {
+          parsedWeekdays = typeof customerData.weekdays === 'string' 
+            ? JSON.parse(customerData.weekdays) 
+            : customerData.weekdays;
+        } catch (e) {
+          parsedWeekdays = [];
+        }
+        
+        if (parsedWeekdays.length > 0) {
+          const targetWeekdays = parsedWeekdays.map((day: string) => weekdayMap[day]);
+          const today = new Date();
+          
+          // Verificar se hoje já é um dia válido
+          if (targetWeekdays.includes(today.getDay())) {
+            scheduledDate = new Date(today);
+            scheduledDate.setHours(8, 0, 0, 0);
+          } else {
+            // Procurar próximo dia válido
+            for (let i = 1; i <= 7; i++) {
+              const testDate = new Date(today);
+              testDate.setDate(today.getDate() + i);
+              if (targetWeekdays.includes(testDate.getDay())) {
+                scheduledDate = testDate;
+                scheduledDate.setHours(8, 0, 0, 0);
+                break;
+              }
+            }
+          }
+        }
+      }
       
       return apiRequest('POST', '/api/sales-cards', {
         customerId: customerId,
         sellerId: currentUser.id,
         status: 'pending',
-        scheduledDate: nextSunday.toISOString(),
+        scheduledDate: scheduledDate.toISOString(),
         notes: 'Card criado a partir da gestão de clientes'
       });
     },
