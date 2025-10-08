@@ -78,6 +78,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       coordinator: 'Coordenador',
       administrative: 'Administrativo',
       vendedor: 'Vendedor',
+      telemarketing: 'Telemarketing',
     };
     return roleLabels[role as keyof typeof roleLabels] || role;
   };

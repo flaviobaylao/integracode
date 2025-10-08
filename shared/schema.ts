@@ -39,7 +39,7 @@ export const systemSettings = pgTable("system_settings", {
 });
 
 // User roles enum
-export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor']);
+export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']);
 
 // User storage table.
 export const users = pgTable("users", {
