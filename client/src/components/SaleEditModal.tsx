@@ -27,7 +27,8 @@ import {
   Truck,
   Clock,
   Target,
-  Phone
+  Phone,
+  AlertTriangle
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
@@ -63,6 +64,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerPhone, setCustomerPhone] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [boletoDays, setBoletoDays] = useState(7);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user, isLoading: userLoading } = useAuth();
@@ -85,6 +87,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes(card.notes || '');
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
+      setBoletoDays((card as any).boletoDays || 7);
       
       // Se o card tem configurações de entrega, usa elas, senão usa os valores padrão
       const defaultWeekdays = ['segunda', 'terca', 'quarta', 'quinta', 'sexta'];
@@ -125,6 +128,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes('');
       setRouteDay('');
       setRecurrenceType('');
+      setBoletoDays(7);
       setDeliveryWeekdays(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
       setDeliveryTimeSlots(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
       setCustomerLatitude('');
@@ -297,6 +301,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           deliveryTimeSlots: deliveryTimeSlots,
           customerLatitude: customerLatitude || null,
           customerLongitude: customerLongitude || null,
+          boletoDays: boletoDays,
           completedDate: new Date(),
           scheduledDate: nextScheduledDate || undefined
         }
@@ -946,6 +951,44 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                   </Select>
                 </div>
               </div>
+
+              {/* Prazo do Boleto (exibido apenas quando boleto for selecionado) */}
+              {paymentMethod === 'boleto' && (
+                <div>
+                  <Label>Prazo do Boleto</Label>
+                  <Select 
+                    value={boletoDays.toString()} 
+                    onValueChange={(value) => setBoletoDays(parseInt(value))}
+                  >
+                    <SelectTrigger data-testid="select-boleto-days">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="7">7 dias</SelectItem>
+                      <SelectItem value="14">14 dias</SelectItem>
+                      <SelectItem value="21">21 dias</SelectItem>
+                      <SelectItem value="28">28 dias</SelectItem>
+                      <SelectItem value="32">32 dias</SelectItem>
+                      <SelectItem value="35">35 dias</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Alerta quando prazo do boleto > 7 dias */}
+              {paymentMethod === 'boleto' && boletoDays > 7 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4" data-testid="alert-boleto-blocked">
+                  <div className="flex items-start space-x-2">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-yellow-900">Pedido Bloqueado</p>
+                      <p className="text-sm text-yellow-700">
+                        Pedidos com prazo de boleto acima de 7 dias ficam bloqueados e precisam de aprovação.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <div>
                 <Label>Observações</Label>
