@@ -137,7 +137,15 @@ export class OmieService {
         throw error;
       }
       
-      throw new Error(`Omie API error: ${response.status} ${response.statusText}`);
+      // Tentar parsear a resposta de erro para obter mais detalhes
+      try {
+        const errorData = JSON.parse(errorText);
+        const errorMessage = errorData.faultstring || errorData.message || `${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
+      } catch (parseError) {
+        // Se não conseguir fazer parse, lançar erro com o texto da resposta
+        throw new Error(`${response.status}: ${errorText || response.statusText}`);
+      }
     }
 
     const data = await response.json();
