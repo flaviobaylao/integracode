@@ -1631,11 +1631,11 @@ export class OmieService {
   // Garantir que o produto genérico CRM existe no Omie
   async ensureCrmProductExists(): Promise<number> {
     try {
-      // Tentar buscar o produto pelo código de integração
+      // Tentar buscar o produto pelo código de integração usando filtro correto
       const searchPayload = {
         pagina: 1,
-        registros_por_pagina: 1,
-        filtrar_por_codigo_integracao: 'crm-sale'
+        registros_por_pagina: 50,
+        apenas_importado_api: 'N'
       };
 
       let productCode: number | null = null;
@@ -1643,24 +1643,30 @@ export class OmieService {
       try {
         const searchResponse = await this.makeRequest('/geral/produtos/', 'ListarProdutos', searchPayload);
         
+        // Procurar o produto pelo código de integração na resposta
         if (searchResponse.produto_servico_cadastro && searchResponse.produto_servico_cadastro.length > 0) {
-          productCode = searchResponse.produto_servico_cadastro[0].codigo_produto;
-          console.log('Produto CRM genérico já existe no Omie:', productCode);
-          return productCode;
+          const crmProduct = searchResponse.produto_servico_cadastro.find(
+            (p: any) => p.codigo_produto_integracao === 'crm-sale'
+          );
+          
+          if (crmProduct) {
+            productCode = crmProduct.codigo_produto;
+            console.log('Produto CRM genérico já existe no Omie:', productCode);
+            return productCode;
+          }
         }
       } catch (searchError) {
-        console.log('Produto CRM genérico não encontrado, criando...');
+        console.log('Erro ao buscar produto, tentando criar...');
       }
 
       // Se não encontrou, criar o produto
+      console.log('Produto CRM genérico não encontrado, criando...');
       const createPayload = {
         codigo_produto_integracao: 'crm-sale',
         descricao: 'VENDA VIA CRM',
         unidade: 'UN',
         ncm: '00000000',
-        valor_unitario: 0, // Será definido no pedido
-        tipo: 'P', // Produto
-        indicador_escala: 'N'
+        valor_unitario: 0 // Será definido no pedido
       };
 
       const createResponse = await this.makeRequest('/geral/produtos/', 'IncluirProduto', createPayload);
