@@ -925,8 +925,14 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Método de Pagamento</Label>
-                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <SelectTrigger data-testid="select-payment-method">
+                  <Select 
+                    value={paymentMethod} 
+                    onValueChange={setPaymentMethod}
+                  >
+                    <SelectTrigger 
+                      data-testid="select-payment-method"
+                      disabled={operationType === 'troca' || operationType === 'amostra'}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -952,8 +958,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
                 </div>
               </div>
 
-              {/* Prazo do Boleto (exibido apenas quando boleto for selecionado) */}
-              {paymentMethod === 'boleto' && (
+              {/* Prazo do Boleto (exibido apenas quando boleto for selecionado e operação for venda) */}
+              {paymentMethod === 'boleto' && operationType === 'venda' && (
                 <div>
                   <Label>Prazo do Boleto</Label>
                   <Select 
@@ -976,7 +982,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
               )}
 
               {/* Alerta quando prazo do boleto > 7 dias */}
-              {paymentMethod === 'boleto' && boletoDays > 7 && (
+              {paymentMethod === 'boleto' && operationType === 'venda' && boletoDays > 7 && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4" data-testid="alert-boleto-blocked">
                   <div className="flex items-start space-x-2">
                     <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
