@@ -49,6 +49,12 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - Integrates with existing status and route filters
   - Clear all filters button resets search query along with other filters
   - Complete e2e testing validated: search by name, CNPJ, clear search, no-match behavior
+- **Boleto Payment Terms**: Implemented conditional payment term selection for boleto transactions
+  - When "Boleto" payment method is selected, a term selector appears with options: 7, 14, 21, 28, 32, and 35 days
+  - Orders with boleto terms over 7 days trigger a blocking alert, indicating approval is required
+  - Visual alert (yellow banner with AlertTriangle icon) displays "Pedido Bloqueado" message when term > 7 days
+  - boletoDays field stored in database (default: 7 days) and persisted when finalizing sales
+  - Complete e2e testing validated: term selection, conditional display, alert behavior
 
 # User Preferences
 
