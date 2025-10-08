@@ -17,6 +17,7 @@ import {
   insertLocationSchema,
   insertSalesGoalSchema,
   insertRouteSchema,
+  insertUserSchema,
   visitAgenda,
   users,
   salesCards,
@@ -145,6 +146,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating user:", error);
       res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.post('/api/users', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const validatedData = insertUserSchema.parse(req.body);
+      const newUser = await storage.createUser(validatedData);
+      
+      res.status(201).json(newUser);
+    } catch (error) {
+      console.error("Error creating user:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create user" });
     }
   });
 

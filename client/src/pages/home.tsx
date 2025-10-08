@@ -20,6 +20,7 @@ import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
+import UserManagement from "@/components/UserManagement";
 import { useState } from "react";
 
 export default function Home() {
@@ -84,6 +85,8 @@ export default function Home() {
         return <DriverManagement />;
       case 'delivery-reports':
         return <DeliveryReports />;
+      case 'users':
+        return <UserManagement />;
       default:
         return <Dashboard />;
     }
