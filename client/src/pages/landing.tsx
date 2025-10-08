@@ -6,12 +6,14 @@ export default function Landing() {
     <div className="min-h-screen bg-gradient-to-br from-honest-blue to-honest-orange flex items-center justify-center p-4">
       <Card className="w-full max-w-md shadow-2xl">
         <CardContent className="p-8">
-          {/* Honest Sucos Logo */}
+          {/* Sistema Integra Logo */}
           <div className="text-center mb-8">
-            <div className="mx-auto w-20 h-20 bg-honest-orange rounded-full flex items-center justify-center mb-4">
-              <i className="fas fa-glass-whiskey text-white text-2xl"></i>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-800">Honest Sucos</h1>
+            <img 
+              src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+              alt="Sistema Integra" 
+              className="mx-auto w-24 h-24 mb-4"
+            />
+            <h1 className="text-2xl font-bold text-gray-800">Sistema Integra</h1>
             <p className="text-gray-600 text-sm">Sistema de Gestão de Vendas</p>
           </div>
           

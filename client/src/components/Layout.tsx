@@ -239,11 +239,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </Sheet>
 
         <div className="flex items-center space-x-4">
-          <div className="w-10 h-10 bg-honest-orange rounded-full flex items-center justify-center">
-            <i className="fas fa-glass-whiskey text-white"></i>
-          </div>
+          <img 
+            src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+            alt="Honest Sucos - Sistema Integra" 
+            className="w-10 h-10"
+          />
           <div>
-            <h1 className="text-lg md:text-xl font-bold text-gray-800">Honest Sucos CRM</h1>
+            <h1 className="text-lg md:text-xl font-bold text-gray-800">Sistema Integra</h1>
             {user?.route && (
               <p className="text-xs md:text-sm text-gray-600">Rota: {user.route}</p>
             )}

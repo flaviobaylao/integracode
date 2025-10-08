@@ -74,9 +74,11 @@ export default function SetPassword() {
         <Card className="w-full max-w-md mx-4">
           <CardHeader className="text-center">
             <div className="flex justify-center mb-4">
-              <div className="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center">
-                <Leaf className="h-8 w-8 text-white" />
-              </div>
+              <img 
+                src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+                alt="Sistema Integra" 
+                className="w-20 h-20"
+              />
             </div>
             <CardTitle className="text-2xl font-bold text-green-700 dark:text-green-400">
               Senha Definida!
@@ -107,9 +109,11 @@ export default function SetPassword() {
       <Card className="w-full max-w-md mx-4">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center">
-              <Leaf className="h-8 w-8 text-white" />
-            </div>
+            <img 
+              src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+              alt="Sistema Integra" 
+              className="w-20 h-20"
+            />
           </div>
           <CardTitle className="text-2xl font-bold text-green-700 dark:text-green-400">
             Definir Senha
