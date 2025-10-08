@@ -215,14 +215,24 @@ export class OmieService {
   // Buscar cliente por CNPJ/CPF
   async getClientByCnpjCpf(cnpjCpf: string): Promise<OmieClient | null> {
     try {
-      const response = await this.makeRequest('/geral/clientes/', 'ConsultarCliente', {
-        cnpj_cpf: cnpjCpf
+      console.log(`Buscando cliente no Omie por CNPJ/CPF: ${cnpjCpf}`);
+      
+      const response = await this.makeRequest('/geral/clientes/', 'ListarClientes', {
+        pagina: 1,
+        registros_por_pagina: 1,
+        clientesFiltro: {
+          cnpj_cpf: cnpjCpf
+        }
       });
 
-      if (response && response.cnpj_cpf) {
-        return OmieClientSchema.parse(response);
+      const clients = response.clientes_cadastro || [];
+      
+      if (clients.length > 0) {
+        console.log(`Cliente encontrado no Omie: ${clients[0].razao_social || clients[0].nome_fantasia} (código: ${clients[0].codigo_cliente_omie})`);
+        return OmieClientSchema.parse(clients[0]);
       }
 
+      console.log(`Nenhum cliente encontrado no Omie com CNPJ/CPF: ${cnpjCpf}`);
       return null;
     } catch (error) {
       console.error('Erro ao buscar cliente no Omie:', error);
