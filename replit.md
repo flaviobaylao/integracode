@@ -73,6 +73,18 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - **Payment Method Disable Logic**: Payment method field is disabled when operation type is "Troca" or "Amostra"
   - Boleto term selector only appears when operation type is "Venda" and payment method is "Boleto"
   - Complete e2e testing validated: term selection, conditional display, alert behavior, payment method disable/enable
+- **Bulk Sales Cards Import**: Implemented mass creation of sales cards via Excel/CSV spreadsheet upload
+  - POST /api/sales-cards/bulk-import endpoint with multipart/form-data support (multer)
+  - Spreadsheet format: CNPJ (required), Dias da Semana (comma-separated weekdays), Periodicidade (semanal/quinzenal/mensal)
+  - Automatic customer registration via Receita Federal API when CNPJ not found in system
+  - Uses receitaService.consultarCNPJ() to fetch company data (nome, fantasia, address, etc.)
+  - Updates existing customers' weekdays and periodicidade when provided
+  - Prevents duplicate pending cards for same customer
+  - Calculates next visit date based on weekdays and periodicity using calculateNextVisitDate()
+  - Frontend: Dialog in SalesCards component with file upload, format instructions, and progress feedback
+  - Returns detailed results: {total, created, updated, errors[]} with row-level error reporting
+  - Bug fixes applied: req.currentUser usage (authenticateUser middleware), correct Receita field mapping (nome/fantasia)
+  - Complete e2e testing validated: upload flow, authentication, customer creation, card generation
 
 # User Preferences
 
