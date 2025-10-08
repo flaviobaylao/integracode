@@ -1655,10 +1655,9 @@ export class OmieService {
             (p: any) => p.codigo_produto_integracao === 'crm-sale' || p.codigo === 'CRM-SALE'
           );
           
-          if (crmProduct) {
-            productCode = crmProduct.codigo_produto;
-            console.log('Produto CRM genérico já existe no Omie:', productCode);
-            return productCode;
+          if (crmProduct && crmProduct.codigo_produto) {
+            console.log('Produto CRM genérico já existe no Omie:', crmProduct.codigo_produto);
+            return crmProduct.codigo_produto;
           }
         }
       } catch (searchError) {
@@ -1815,10 +1814,10 @@ export class OmieService {
         }
       };
 
-      // Adicionar vendedor ao pedido se encontrado
+      // Adicionar vendedor ao pedido se encontrado (nCodVend em informacoes_adicionais)
       if (omieVendorCode) {
-        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
-        console.log('Vendedor adicionado ao pedido:', omieVendorCode);
+        orderPayload.informacoes_adicionais.nCodVend = omieVendorCode;
+        console.log('✅ Vendedor adicionado ao pedido (nCodVend):', omieVendorCode);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
