@@ -2518,6 +2518,45 @@ export class OmieService {
     }
   }
 
+  // Buscar vendedor por email
+  async getVendorByEmail(email: string): Promise<OmieVendor | null> {
+    try {
+      console.log(`Buscando vendedor no Omie pelo email: ${email}`);
+      
+      // Buscar vendedores
+      const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: 'N'
+      });
+
+      const vendors = response.cadastro || response.vendedores_cadastro || [];
+      
+      // Procurar vendedor por email (case insensitive)
+      const vendor = vendors.find((v: any) => 
+        v.email && v.email.toLowerCase() === email.toLowerCase() && v.inativo !== 'S'
+      );
+      
+      if (vendor) {
+        console.log(`✅ Vendedor encontrado: ${vendor.nome} (código: ${vendor.codigo})`);
+        return {
+          codigo: vendor.codigo,
+          nome: vendor.nome,
+          email: vendor.email,
+          telefone: vendor.telefone,
+          inativo: vendor.inativo,
+          comissao: vendor.comissao
+        };
+      }
+      
+      console.log(`⚠️ Vendedor não encontrado para o email: ${email}`);
+      return null;
+    } catch (error) {
+      console.error('Erro ao buscar vendedor por email:', error);
+      return null;
+    }
+  }
+
   // Listar todos os vendedores ativos do Omie - buscar TODAS as páginas
   async getAllVendors(page = 1, pageSize = 50): Promise<{
     vendors: OmieVendor[];
