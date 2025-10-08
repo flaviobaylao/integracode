@@ -20,6 +20,12 @@ const OmieClientSchema = z.object({
   inativo: z.string().optional(),
   situacao: z.string().optional(), // Campo situacao para determinar se cliente está ativo
   limite_credito: z.number().optional(),
+  recomendacoes: z.object({
+    codigo_vendedor: z.number().optional(),
+    email_fatura: z.string().optional(),
+    gerar_boletos: z.string().optional(),
+    numero_parcelas: z.string().optional(),
+  }).optional(),
 });
 
 const OmieCreditInfoSchema = z.object({
@@ -1727,22 +1733,38 @@ export class OmieService {
         throw new Error('Cliente não encontrado no Omie ERP');
       }
 
-      // Buscar código do vendedor no Omie se sellerId foi fornecido
+      // Buscar código do vendedor no Omie
       let omieVendorCode = null;
-      if (sellerId && this.storage) {
+      
+      // Primeiro tentar buscar pelo sellerId do card
+      if (sellerId && this.storage && !sellerId.startsWith('omie-vendor-')) {
         try {
           const seller = await this.storage.getUser(sellerId);
           if (seller && seller.email) {
             const omieVendor = await this.getVendorByEmail(seller.email);
             if (omieVendor) {
               omieVendorCode = omieVendor.codigo;
-              console.log('Vendedor encontrado no Omie:', seller.email, 'Código:', omieVendorCode);
+              console.log('✅ Vendedor encontrado no Omie pelo CRM:', seller.email, 'Código:', omieVendorCode);
             } else {
-              console.log('Vendedor não encontrado no Omie pelo email:', seller.email);
+              console.log('⚠️ Vendedor não encontrado no Omie pelo email:', seller.email);
             }
           }
         } catch (error) {
           console.error('Erro ao buscar vendedor no Omie:', error);
+        }
+      }
+      
+      // Se não encontrou pelo sellerId, tentar pegar das recomendações do cliente
+      if (!omieVendorCode && omieClientCode) {
+        try {
+          // Buscar informações completas do cliente no Omie
+          const clientData = await this.getClientByCnpjCpf(customer.cnpj || customer.cpf);
+          if (clientData && clientData.recomendacoes?.codigo_vendedor) {
+            omieVendorCode = clientData.recomendacoes.codigo_vendedor;
+            console.log('✅ Vendedor extraído das recomendações do cliente:', omieVendorCode);
+          }
+        } catch (error) {
+          console.error('Erro ao buscar vendedor das recomendações:', error);
         }
       }
 
