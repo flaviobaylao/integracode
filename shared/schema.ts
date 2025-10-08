@@ -249,6 +249,7 @@ export const salesCards = pgTable("sales_cards", {
   checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }), // Longitude do vendedor no check-out
   distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-in
   checkOutDistanceToCustomer: decimal("check_out_distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-out
+  checkInPhotoUrl: text("check_in_photo_url"), // URL da foto tirada no check-in
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
