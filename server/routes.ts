@@ -1194,8 +1194,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       
-      const start = startDate ? new Date(startDate as string) : new Date();
-      const end = endDate ? new Date(endDate as string) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 dias
+      // Parse dates more safely - treat as local date strings YYYY-MM-DD
+      let start: Date;
+      let end: Date;
+      
+      if (startDate) {
+        const [year, month, day] = (startDate as string).split('-').map(Number);
+        start = new Date(year, month - 1, day, 0, 0, 0, 0);
+      } else {
+        start = new Date();
+        start.setHours(0, 0, 0, 0);
+      }
+      
+      if (endDate) {
+        const [year, month, day] = (endDate as string).split('-').map(Number);
+        end = new Date(year, month - 1, day, 23, 59, 59, 999);
+      } else {
+        end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        end.setHours(23, 59, 59, 999);
+      }
       
       const offset = (Number(page) - 1) * Number(limit);
       
