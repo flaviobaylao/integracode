@@ -22,6 +22,7 @@ import type { SalesCardWithRelations } from "@shared/schema";
 export default function SalesCards() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [routeFilter, setRouteFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
   const [actionDialog, setActionDialog] = useState<{
@@ -220,8 +221,27 @@ export default function SalesCards() {
   };
 
   const filteredCards = salesCards?.filter((card: SalesCardWithRelations) => {
-    if (statusFilter === 'all') return true;
-    return card.status === statusFilter;
+    // Filtro por status
+    if (statusFilter !== 'all' && card.status !== statusFilter) {
+      return false;
+    }
+    
+    // Filtro por pesquisa (nome fantasia ou CNPJ)
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase().trim();
+      const customerName = card.customer?.name?.toLowerCase() || '';
+      const customerCnpj = card.customer?.cnpj?.replace(/\D/g, '') || '';
+      const searchQueryClean = query.replace(/\D/g, '');
+      
+      const matchesName = customerName.includes(query);
+      const matchesCnpj = searchQueryClean.length > 0 && customerCnpj.includes(searchQueryClean);
+      
+      if (!matchesName && !matchesCnpj) {
+        return false;
+      }
+    }
+    
+    return true;
   }) || [];
 
   if (isLoading) {
@@ -246,6 +266,7 @@ export default function SalesCards() {
   const clearAllFilters = () => {
     setRouteFilter('all');
     setStatusFilter('all');
+    setSearchQuery('');
   };
 
   return (
@@ -258,6 +279,32 @@ export default function SalesCards() {
         >
           <i className="fas fa-plus mr-2"></i>Novo Card
         </Button>
+      </div>
+
+      {/* Campo de Pesquisa */}
+      <div className="flex items-center gap-4">
+        <div className="flex-1 max-w-md">
+          <div className="relative">
+            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            <Input
+              type="text"
+              placeholder="Buscar por nome fantasia ou CNPJ..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+              data-testid="input-search-customer"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                data-testid="button-clear-search"
+              >
+                <i className="fas fa-times"></i>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Filtros */}
