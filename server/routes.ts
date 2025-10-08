@@ -253,7 +253,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
-      const data = insertCustomerSchema.parse(req.body);
+      // Transformar strings vazias em null para campos numéricos
+      const cleanedData = {
+        ...req.body,
+        latitude: req.body.latitude === '' ? null : req.body.latitude,
+        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+      };
+      
+      const data = insertCustomerSchema.parse(cleanedData);
       const customer = await storage.createCustomer(data);
       res.json(customer);
     } catch (error) {
@@ -268,7 +276,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const data = req.body;
+      
+      // Transformar strings vazias em null para campos numéricos
+      const data = {
+        ...req.body,
+        latitude: req.body.latitude === '' ? null : req.body.latitude,
+        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+      };
       
       // Get current customer and user info
       const currentCustomerResult = await storage.getCustomer(id);
@@ -3453,11 +3468,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         porte: dadosCNPJ.porte || '',
         naturezaJuridica: dadosCNPJ.natureza_juridica || ''
       };
-
-      console.log('=== DADOS FORMATADOS ===');
-      console.log('razaoSocial:', dadosFormatados.razaoSocial);
-      console.log('nomeFantasia:', dadosFormatados.nomeFantasia);
-      console.log('========================');
 
       res.json(dadosFormatados);
     } catch (error) {
