@@ -5,6 +5,13 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
 # Recent Changes
 
 ## October 8, 2025
+- **Sistema Integra Branding**: Updated system branding to use new "Integra" logo
+  - Added favicon with sustainability leaf icon (green leaf with circular arrows)
+  - Updated logo across all pages: landing, login, set-password, and main layout header
+  - Changed system title from "Honest Sucos CRM" to "Sistema Integra"
+  - Maintained subtitle "Sistema de Gestão de Vendas" for clarity
+  - Logo image stored in attached_assets directory
+  - Complete e2e testing validated: logo display, favicon, page titles
 - **Email/Password Authentication System**: Implemented complete email and password authentication for all users
   - Added `password` field to users table with bcrypt hash (SALT_ROUNDS=10)
   - Created authentication routes: POST /api/auth/login, POST /api/auth/set-password, POST /api/auth/change-password
