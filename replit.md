@@ -15,6 +15,14 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - Changed from error-prone `new Date(string)` to explicit ISO UTC format: `new Date('YYYY-MM-DDT00:00:00.000Z')`
   - Resolves "time zone displacement out of range" PostgreSQL errors
   - Ensures consistent date handling across different timezones
+- **User Roles Expansion & Mobile Navigation**: Enhanced role-based access control and implemented mobile-first responsive navigation
+  - Added 'telemarketing' role to user roles enum (admin, coordinator, administrative, vendedor, telemarketing)
+  - Expanded vendedor permissions to access: Faturamentos, Débitos Vencidos, Pedidos Bloqueados, and Sistema de Entregas
+  - Implemented mobile-responsive navigation using Sheet component with hamburger menu button
+  - Desktop sidebar (w-64) remains visible only on md+ screens with `hidden md:block` utility
+  - Mobile menu features user info header and auto-closes on menu item selection
+  - Vendedor-specific menu labels: "Meus Cards de Venda", "Minha Carteira", "Minhas Metas", "Meus Faturamentos", "Meus Débitos Vencidos", "Meus Pedidos Bloqueados", "Minhas Entregas"
+  - All 9 required vendedor functionalities validated: Dashboard, Agenda, Rota, Clientes, Metas, Faturamentos, Débitos Vencidos, Pedidos Bloqueados, Entregas
 
 # User Preferences
 
@@ -39,7 +47,7 @@ Preferred communication style: Simple, everyday language.
 - **API Design**: RESTful API endpoints with role-based access control
 
 ## Database Schema
-- **Users**: Role-based system (admin, coordinator, administrative, vendedor) with routes and profile information
+- **Users**: Role-based system (admin, coordinator, administrative, vendedor, telemarketing) with routes and profile information
 - **Customers**: Customer data with seller assignments, contact information, and visit scheduling
 - **Products**: Product catalog with pricing and inventory tracking
 - **Sales Cards**: Visit scheduling and sales tracking with customer relationships and delivery integration
