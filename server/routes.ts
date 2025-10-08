@@ -4219,26 +4219,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Route for check-in
-  app.post('/api/sales-cards/:id/check-in', authenticateUser, async (req: any, res) => {
+  // Route for check-in with photo upload
+  app.post('/api/sales-cards/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { latitude, longitude, distance } = req.body;
+      const { latitude, longitude } = req.body;
+
+      // Buscar dados do card para verificar se é virtual e calcular distância
+      const currentCard = await storage.getSalesCard(id);
+      
+      if (!currentCard) {
+        return res.status(404).json({ message: "Sales card not found" });
+      }
+
+      // Verificar se o cliente é virtual (não precisa de check-in)
+      if (currentCard.customer?.virtualService) {
+        return res.status(400).json({ 
+          message: "Cliente virtual não requer check-in" 
+        });
+      }
+
+      // Calcular distância até o cliente usando Haversine
+      let checkInDistance = null;
+      if (currentCard.customerLatitude && currentCard.customerLongitude) {
+        const customerLat = parseFloat(currentCard.customerLatitude);
+        const customerLon = parseFloat(currentCard.customerLongitude);
+        
+        const R = 6371000; // Raio da Terra em metros
+        const dLat = (customerLat - parseFloat(latitude)) * Math.PI / 180;
+        const dLon = (customerLon - parseFloat(longitude)) * Math.PI / 180;
+        const a = 
+          Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(parseFloat(latitude) * Math.PI / 180) * Math.cos(customerLat * Math.PI / 180) * 
+          Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        checkInDistance = R * c; // Distância em metros
+      }
+
+      // Processar foto se fornecida
+      let photoUrl = null;
+      if (req.file) {
+        // Converter para base64
+        const base64Photo = req.file.buffer.toString('base64');
+        photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      }
 
       const updateData = {
         checkInTime: new Date(),
         checkInLatitude: latitude.toString(),
         checkInLongitude: longitude.toString(),
-        distanceToCustomer: distance.toString()
+        distanceToCustomer: checkInDistance?.toString() || null,
+        checkInPhotoUrl: photoUrl
       };
 
-      const salesCard = await storage.updateSalesCard(id, updateData);
+      await storage.updateSalesCard(id, updateData);
       
       res.json({
         success: true,
         message: 'Check-in realizado com sucesso',
         checkInTime: updateData.checkInTime,
-        distance
+        distance: checkInDistance,
+        hasPhoto: !!photoUrl
       });
     } catch (error) {
       console.error("Error during check-in:", error);

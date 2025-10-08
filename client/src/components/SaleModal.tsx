@@ -1019,10 +1019,7 @@ Qualquer dúvida, estou à disposição.`;
                       <Checkbox
                         id="saturday-delivery"
                         checked={enableSaturdayDelivery}
-                        onCheckedChange={(checked) => {
-                          console.log('Saturday checkbox changed:', checked);
-                          setEnableSaturdayDelivery(checked === true);
-                        }}
+                        onCheckedChange={(checked) => setEnableSaturdayDelivery(checked === true)}
                       />
                       <Label htmlFor="saturday-delivery" className="text-sm font-medium">
                         Habilitar entrega aos sábados

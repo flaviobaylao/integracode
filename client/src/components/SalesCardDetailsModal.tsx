@@ -34,6 +34,7 @@ import {
   Users
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
+import CheckInModal from "./CheckInModal";
 
 interface SalesCardDetailsModalProps {
   isOpen: boolean;
@@ -49,6 +50,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [localVirtualService, setLocalVirtualService] = useState(false);
+  const [showCheckInModal, setShowCheckInModal] = useState(false);
   
   // Buscar usuário atual para verificar permissões
   const { data: currentUser } = useQuery({
@@ -219,44 +221,21 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     sendToOmieMutation.mutate(card.id);
   };
 
-  // Função para realizar check-in
-  const handleCheckIn = async () => {
+  // Função para realizar check-in - abre o modal
+  const handleCheckIn = () => {
     if (!card) return;
     
-    setIsCheckingIn(true);
-    try {
-      const location = await getCurrentLocation();
-      
-      // Calcular distância se o cliente tem coordenadas
-      let distance = 0;
-      if (card.customerLatitude && card.customerLongitude) {
-        distance = calculateDistance(
-          location.latitude,
-          location.longitude,
-          parseFloat(card.customerLatitude),
-          parseFloat(card.customerLongitude)
-        );
-        
-        toast({
-          title: "Localização Capturada",
-          description: `Distância até o cliente: ${distance.toFixed(0)}m`,
-        });
-      }
-      
-      checkInMutation.mutate({
-        cardId: card.id,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        distance
-      });
-    } catch (error) {
-      setIsCheckingIn(false);
+    // Verificar se é cliente virtual
+    if (card.customer?.virtualService) {
       toast({
-        title: "Erro na Localização",
-        description: error instanceof Error ? error.message : "Erro ao capturar localização",
+        title: "Cliente Virtual",
+        description: "Clientes virtuais não requerem check-in",
         variant: "destructive",
       });
+      return;
     }
+    
+    setShowCheckInModal(true);
   };
 
   // Função para realizar check-out
@@ -827,6 +806,21 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           </Button>
         </div>
       </DialogContent>
+
+      {/* Modal de Check-In com foto */}
+      {card && (
+        <CheckInModal
+          isOpen={showCheckInModal}
+          onClose={() => setShowCheckInModal(false)}
+          cardId={card.id}
+          customerLatitude={card.customerLatitude}
+          customerLongitude={card.customerLongitude}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+            setShowCheckInModal(false);
+          }}
+        />
+      )}
     </Dialog>
   );
 }
