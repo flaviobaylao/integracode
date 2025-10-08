@@ -740,7 +740,7 @@ export class DatabaseStorage implements IStorage {
       const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
       const derivedRouteDay = weekdayNames[dayOfWeek];
       
-      // Criar novo card
+      // Criar novo card copiando dados da venda anterior
       const nextCardData: InsertSalesCard = {
         customerId: parentCard.customerId,
         sellerId: parentCard.sellerId,
@@ -750,8 +750,16 @@ export class DatabaseStorage implements IStorage {
         recurrenceType: customer.visitPeriodicity || parentCard.recurrenceType,
         isRecurring: parentCard.isRecurring,
         parentCardId: parentCardId,
+        // Copiar dados da venda anterior
+        products: parentCard.products,
+        saleValue: parentCard.saleValue,
         paymentMethod: parentCard.paymentMethod,
-        operationType: parentCard.operationType
+        operationType: parentCard.operationType,
+        boletoDays: parentCard.boletoDays,
+        deliveryTimeSlots: parentCard.deliveryTimeSlots,
+        deliverySaturdayTimeSlots: parentCard.deliverySaturdayTimeSlots,
+        customerLatitude: parentCard.customerLatitude,
+        customerLongitude: parentCard.customerLongitude
       };
 
       const [newCard] = await db.insert(salesCards).values(nextCardData as any).returning();
