@@ -54,7 +54,9 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - Orders with boleto terms over 7 days trigger a blocking alert, indicating approval is required
   - Visual alert (yellow banner with AlertTriangle icon) displays "Pedido Bloqueado" message when term > 7 days
   - boletoDays field stored in database (default: 7 days) and persisted when finalizing sales
-  - Complete e2e testing validated: term selection, conditional display, alert behavior
+  - **Payment Method Disable Logic**: Payment method field is disabled when operation type is "Troca" or "Amostra"
+  - Boleto term selector only appears when operation type is "Venda" and payment method is "Boleto"
+  - Complete e2e testing validated: term selection, conditional display, alert behavior, payment method disable/enable
 
 # User Preferences
 
