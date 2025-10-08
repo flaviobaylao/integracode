@@ -1685,9 +1685,11 @@ export class OmieService {
   }
 
   // Criar pedido de venda no Omie
-  async createSalesOrder(salesCard: any, customer: any, products: any[], paymentMethod?: string, operationType?: string): Promise<any> {
+  async createSalesOrder(salesCard: any, customer: any, products: any[], paymentMethod?: string, operationType?: string, sellerId?: string): Promise<any> {
     try {
       console.log('Criando pedido no Omie para cliente:', customer.name);
+      console.log('Método de pagamento:', paymentMethod);
+      console.log('Vendedor ID:', sellerId);
       
       // Garantir que o produto genérico existe
       await this.ensureCrmProductExists();
@@ -1710,6 +1712,25 @@ export class OmieService {
 
       if (!omieClientCode) {
         throw new Error('Cliente não encontrado no Omie ERP');
+      }
+
+      // Buscar código do vendedor no Omie se sellerId foi fornecido
+      let omieVendorCode = null;
+      if (sellerId && this.storage) {
+        try {
+          const seller = await this.storage.getUser(sellerId);
+          if (seller && seller.email) {
+            const omieVendor = await this.getVendorByEmail(seller.email);
+            if (omieVendor) {
+              omieVendorCode = omieVendor.codigo;
+              console.log('Vendedor encontrado no Omie:', seller.email, 'Código:', omieVendorCode);
+            } else {
+              console.log('Vendedor não encontrado no Omie pelo email:', seller.email);
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao buscar vendedor no Omie:', error);
+        }
       }
 
       // Preparar detalhes dos produtos
@@ -1737,7 +1758,7 @@ export class OmieService {
       const parcelaCode = paymentMethod === 'boleto' ? '030' : '999'; // 30 dias para boleto, à vista para outros
 
       // Payload para API Omie (estrutura correta)
-      const orderPayload = {
+      const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
           codigo_cliente: omieClientCode,
@@ -1758,6 +1779,12 @@ export class OmieService {
           enviar_email: "N"
         }
       };
+
+      // Adicionar vendedor ao pedido se encontrado
+      if (omieVendorCode) {
+        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
+        console.log('Vendedor adicionado ao pedido:', omieVendorCode);
+      }
 
       console.log('Enviando pedido para Omie:', orderNumber);
       console.log('Cliente Omie ID:', omieClientCode);

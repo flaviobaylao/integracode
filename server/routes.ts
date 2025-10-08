@@ -4228,17 +4228,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: 'Omie integration not configured' });
       }
       
-      // Create simplified order data for Omie - using createSalesOrder method
-      const products = [
-        {
-          id: 'crm-sale',
-          name: `Venda via CRM - Card ${card.id}`,
-          unitPrice: parseFloat(card.saleValue),
-          quantity: 1
-        }
-      ];
+      // Preparar produtos para envio ao Omie
+      let products = [];
       
-      const omieResponse = await omieService.createSalesOrder(card, card.customer, products);
+      // Se o card tem produtos detalhados, usar eles
+      if (card.products && Array.isArray(card.products) && card.products.length > 0) {
+        products = card.products.map((p: any) => ({
+          id: p.id || p.productId || 'crm-sale',
+          name: p.name || p.description || 'Produto',
+          unitPrice: parseFloat(p.unitPrice || p.price || 0),
+          quantity: parseInt(p.quantity || 1)
+        }));
+      } else {
+        // Caso contrário, usar produto genérico
+        products = [
+          {
+            id: 'crm-sale',
+            name: `Venda via CRM - Card ${card.id}`,
+            unitPrice: parseFloat(card.saleValue),
+            quantity: 1
+          }
+        ];
+      }
+      
+      const omieResponse = await omieService.createSalesOrder(
+        card, 
+        card.customer, 
+        products,
+        card.paymentMethod || 'a_vista',
+        card.operationType || 'venda',
+        card.sellerId
+      );
       
       // Atualizar card com ID do Omie
       await storage.updateSalesCard(cardId, {
