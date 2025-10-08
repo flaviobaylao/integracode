@@ -665,6 +665,12 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   createdAt: true,
   updatedAt: true,
 }).extend({
+  // Campos de data aceitam string ISO ou Date
+  scheduledDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional(),
+  completedDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  telemarketingDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  deliveryScheduledDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  deliveryCompletedDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
   // Coordenadas GPS podem ser números ou strings
   customerLatitude: z.union([z.string(), z.number()]).optional().nullable(),
   customerLongitude: z.union([z.string(), z.number()]).optional().nullable(),

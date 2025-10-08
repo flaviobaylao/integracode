@@ -1204,6 +1204,190 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Importação em massa de cards de venda via planilha
+  app.post('/api/sales-cards/bulk-import', authenticateUser, upload.single('file'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "Arquivo não enviado" });
+      }
+
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(401).json({ message: "Usuário não encontrado" });
+      }
+
+      // Processar planilha
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet);
+
+      const results = {
+        total: data.length,
+        created: 0,
+        updated: 0,
+        errors: [] as any[]
+      };
+
+      // Processar cada linha da planilha
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i] as any;
+        
+        try {
+          // Validar campos obrigatórios
+          if (!row.CNPJ) {
+            results.errors.push({
+              row: i + 2, // Excel row (1-indexed + header)
+              error: "CNPJ é obrigatório"
+            });
+            continue;
+          }
+
+          // Limpar CNPJ
+          const cnpj = row.CNPJ.toString().replace(/\D/g, '');
+          
+          // Verificar se cliente existe
+          let customer = await storage.getCustomerByCnpj(cnpj);
+          
+          // Se não existe, buscar na Receita Federal e criar
+          if (!customer) {
+            console.log(`Cliente não encontrado para CNPJ ${cnpj}, consultando Receita Federal...`);
+            
+            const receitaData = await receitaService.consultCNPJ(cnpj);
+            
+            if (!receitaData) {
+              results.errors.push({
+                row: i + 2,
+                cnpj,
+                error: "CNPJ não encontrado na Receita Federal"
+              });
+              continue;
+            }
+
+            // Criar cliente com dados da Receita
+            customer = await storage.createCustomer({
+              cnpj: receitaData.cnpj,
+              name: receitaData.razao_social,
+              fantasyName: receitaData.nome_fantasia || receitaData.razao_social,
+              email: receitaData.email || '',
+              phone: receitaData.telefone || '',
+              address: receitaData.logradouro ? 
+                `${receitaData.logradouro}, ${receitaData.numero || 'S/N'} - ${receitaData.bairro}` : '',
+              city: receitaData.municipio || '',
+              state: receitaData.uf || '',
+              zipCode: receitaData.cep || '',
+              sellerId: user.role === 'vendedor' ? userId : (row.Vendedor || user.id),
+              weekdays: row['Dias da Semana'] ? JSON.stringify(
+                row['Dias da Semana'].toString().split(',').map((d: string) => d.trim().toLowerCase())
+              ) : JSON.stringify([]),
+              visitPeriodicity: row.Periodicidade?.toLowerCase() || 'semanal'
+            });
+            
+            results.created++;
+            console.log(`Cliente criado: ${customer.fantasyName} (${cnpj})`);
+          } else {
+            // Atualizar weekdays e periodicidade se fornecidos
+            const updateData: any = {};
+            
+            if (row['Dias da Semana']) {
+              updateData.weekdays = JSON.stringify(
+                row['Dias da Semana'].toString().split(',').map((d: string) => d.trim().toLowerCase())
+              );
+            }
+            
+            if (row.Periodicidade) {
+              updateData.visitPeriodicity = row.Periodicidade.toLowerCase();
+            }
+            
+            if (Object.keys(updateData).length > 0) {
+              await storage.updateCustomer(customer.id, updateData);
+              results.updated++;
+            }
+          }
+
+          // Verificar se já existe card pendente para este cliente
+          const existingCards = await storage.getSalesCards();
+          const hasPendingCard = existingCards.some(
+            card => card.customerId === customer.id && card.status === 'pending'
+          );
+
+          if (hasPendingCard) {
+            results.errors.push({
+              row: i + 2,
+              cnpj,
+              customer: customer.fantasyName,
+              error: "Cliente já possui card pendente"
+            });
+            continue;
+          }
+
+          // Calcular próxima data de visita
+          let scheduledDate = new Date();
+          
+          if (customer.weekdays && customer.visitPeriodicity) {
+            const { calculateNextVisitDate } = await import('@shared/visitSchedule');
+            
+            let parsedWeekdays: string[] = [];
+            try {
+              parsedWeekdays = typeof customer.weekdays === 'string' 
+                ? JSON.parse(customer.weekdays) 
+                : customer.weekdays;
+            } catch (e) {
+              parsedWeekdays = [];
+            }
+
+            if (parsedWeekdays.length > 0) {
+              const result = calculateNextVisitDate({
+                weekdays: parsedWeekdays as any[],
+                periodicity: customer.visitPeriodicity as any,
+                lastCompletedDate: new Date()
+              });
+              scheduledDate = result.nextDate;
+            }
+          }
+
+          // Derivar routeDay do scheduledDate
+          const dayOfWeek = scheduledDate.getDay();
+          const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+          const routeDay = weekdayNames[dayOfWeek];
+
+          // Criar card de venda
+          await storage.createSalesCard({
+            customerId: customer.id,
+            sellerId: user.role === 'vendedor' ? userId : (customer.sellerId || user.id),
+            status: 'pending',
+            scheduledDate,
+            routeDay,
+            recurrenceType: customer.visitPeriodicity || 'semanal',
+            isRecurring: true
+          });
+
+        } catch (rowError: any) {
+          console.error(`Erro ao processar linha ${i + 2}:`, rowError);
+          results.errors.push({
+            row: i + 2,
+            error: rowError.message || 'Erro desconhecido'
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Importação concluída: ${results.created} clientes criados, ${results.updated} atualizados`,
+        results
+      });
+
+    } catch (error: any) {
+      console.error("Erro na importação em massa:", error);
+      res.status(500).json({ 
+        message: "Erro ao processar planilha", 
+        error: error.message 
+      });
+    }
+  });
+
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
