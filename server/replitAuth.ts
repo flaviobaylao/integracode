@@ -130,9 +130,35 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  const user = req.user as any;
+  // Verificar tanto req.user (Replit Auth) quanto req.session.user (login com senha)
+  const user = (req.user as any) || (req.session as any)?.user;
 
-  if (!req.isAuthenticated() || !user.expires_at) {
+  if (!user) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  // Verificar autenticação Passport (Replit Auth) ou sessão local (login com senha)
+  const isPassportAuth = req.isAuthenticated();
+  const isLocalAuth = !!(req.session as any)?.user;
+
+  if (!isPassportAuth && !isLocalAuth) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  // Se é autenticação local (login com senha), permitir
+  if (isLocalAuth && !isPassportAuth) {
+    // Verificar expiração se houver expires_at
+    if (user.expires_at) {
+      const now = Math.floor(Date.now() / 1000);
+      if (now > user.expires_at) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+    }
+    return next();
+  }
+
+  // Se é Replit Auth (Passport), fazer verificação completa com refresh token
+  if (!user.expires_at) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
