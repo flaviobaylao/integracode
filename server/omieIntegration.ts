@@ -1696,7 +1696,7 @@ export class OmieService {
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
           enviar_email: "N",
-          observacoes: `Pedido ${operationType || 'venda'} via CRM - Pagamento: ${paymentMethod || 'a_vista'} - Card: ${salesCard.id}`
+          observacoes_internas: `Pedido ${operationType || 'venda'} via CRM - Pagamento: ${paymentMethod || 'a_vista'} - Card: ${salesCard.id}`
         }
       };
 

@@ -4050,7 +4050,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         {
           id: 'crm-sale',
           name: `Venda via CRM - Card ${card.id}`,
-          price: parseFloat(card.saleValue),
+          unitPrice: parseFloat(card.saleValue),
           quantity: 1
         }
       ];
