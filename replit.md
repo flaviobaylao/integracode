@@ -23,6 +23,13 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - Mobile menu features user info header and auto-closes on menu item selection
   - Vendedor-specific menu labels: "Meus Cards de Venda", "Minha Carteira", "Minhas Metas", "Meus Faturamentos", "Meus Débitos Vencidos", "Meus Pedidos Bloqueados", "Minhas Entregas"
   - All 9 required vendedor functionalities validated: Dashboard, Agenda, Rota, Clientes, Metas, Faturamentos, Débitos Vencidos, Pedidos Bloqueados, Entregas
+- **User Management System**: Created comprehensive user management interface for administrators
+  - New POST /api/users endpoint with admin-only access and Zod validation (insertUserSchema)
+  - UserManagement component with user creation, listing, filtering by role, and activation/deactivation
+  - User creation form with fields: email, firstName, lastName, role (dropdown), and optional route
+  - Role-based filtering: filter users by admin, coordinator, administrative, vendedor, or telemarketing
+  - User status toggle: activate/deactivate users directly from the table
+  - Complete e2e testing validated: create user, filter by role, toggle status
 
 # User Preferences
 
