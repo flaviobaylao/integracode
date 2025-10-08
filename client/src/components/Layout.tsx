@@ -2,7 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState } from "react";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
@@ -17,9 +18,12 @@ interface LayoutProps {
 export default function Layout({ children, activeView, setActiveView, user }: LayoutProps) {
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
+  const isVendedor = user?.role === 'vendedor';
+  const isTelemarketing = user?.role === 'telemarketing';
   const [orderStepsOpen, setOrderStepsOpen] = useState(false);
   const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
@@ -47,13 +51,28 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
-    { id: 'billings', label: 'Faturamentos', icon: 'fas fa-file-invoice-dollar', available: canAccessReports },
+    { 
+      id: 'billings', 
+      label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', 
+      icon: 'fas fa-file-invoice-dollar', 
+      available: canAccessReports || isVendedor 
+    },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
-    { id: 'overdue-debts', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports },
-    { id: 'blocked-orders', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports },
+    { 
+      id: 'overdue-debts', 
+      label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
+      icon: 'fas fa-exclamation-triangle', 
+      available: canAccessReports || isVendedor 
+    },
+    { 
+      id: 'blocked-orders', 
+      label: isVendedor ? 'Meus Pedidos Bloqueados' : 'Pedidos Bloqueados', 
+      icon: 'fas fa-ban', 
+      available: canAccessReports || isVendedor 
+    },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
   ];
 
@@ -83,18 +102,150 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
+  const handleMenuItemClick = (itemId: string) => {
+    setActiveView(itemId);
+    setMobileMenuOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between">
+        {/* Mobile Menu Button */}
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="sm" className="md:hidden" data-testid="button-mobile-menu">
+              <Menu className="h-6 w-6" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="left" className="w-72 p-0 overflow-y-auto">
+            <div className="p-4">
+              {/* User Info */}
+              <div className="flex items-center space-x-3 pb-4 border-b border-gray-200">
+                <Avatar>
+                  <AvatarImage src={user?.profileImageUrl || ''} />
+                  <AvatarFallback>
+                    <i className="fas fa-user text-gray-600"></i>
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-sm font-medium text-gray-800">
+                    {user?.firstName} {user?.lastName}
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    {user?.role && getRoleLabel(user.role)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Menu Items */}
+              <ul className="space-y-2 mt-4">
+                {menuItems
+                  .filter(item => item.available)
+                  .map(item => (
+                    <li key={item.id}>
+                      <Button
+                        variant="ghost"
+                        className={`w-full justify-start space-x-3 ${
+                          activeView === item.id
+                            ? 'text-honest-blue bg-blue-50'
+                            : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                        onClick={() => handleMenuItemClick(item.id)}
+                        data-testid={`menu-${item.id}`}
+                      >
+                        <i className={item.icon}></i>
+                        <span className="font-medium">{item.label}</span>
+                      </Button>
+                    </li>
+                  ))}
+                
+                {/* Menu Sistema de Entregas */}
+                {(canAccessReports || isVendedor) && (
+                  <li>
+                    <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                        >
+                          <i className="fas fa-truck"></i>
+                          <span className="font-medium">{isVendedor ? 'Minhas Entregas' : 'Sistema de Entregas'}</span>
+                          {deliveryMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                        {deliveryMenuItems
+                          .filter(item => canAccessReports || (isVendedor && ['delivery-dashboard', 'delivery-management'].includes(item.id)))
+                          .map(item => (
+                          <Button
+                            key={item.id}
+                            variant="ghost"
+                            className={`w-full justify-start space-x-3 text-sm ${
+                              activeView === item.id
+                                ? 'text-honest-blue bg-blue-50'
+                                : 'text-gray-600 hover:bg-gray-50'
+                            }`}
+                            onClick={() => handleMenuItemClick(item.id)}
+                            data-testid={`menu-${item.id}`}
+                          >
+                            <i className={item.icon}></i>
+                            <span>{item.label}</span>
+                          </Button>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </li>
+                )}
+
+                {/* Menu Etapas dos Pedidos */}
+                {canAccessReports && (
+                  <li>
+                    <Collapsible open={orderStepsOpen} onOpenChange={setOrderStepsOpen}>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                        >
+                          <i className="fas fa-list-ol"></i>
+                          <span className="font-medium">Etapas dos Pedidos</span>
+                          {orderStepsOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                        {orderStepsItems.map(item => (
+                          <Button
+                            key={item.id}
+                            variant="ghost"
+                            className={`w-full justify-start space-x-3 text-sm ${
+                              activeView === item.id
+                                ? 'text-honest-blue bg-blue-50'
+                                : 'text-gray-600 hover:bg-gray-50'
+                            }`}
+                            onClick={() => handleMenuItemClick(item.id)}
+                            data-testid={`menu-${item.id}`}
+                          >
+                            <i className={item.icon}></i>
+                            <span>{item.label}</span>
+                          </Button>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </li>
+                )}
+              </ul>
+            </div>
+          </SheetContent>
+        </Sheet>
+
         <div className="flex items-center space-x-4">
           <div className="w-10 h-10 bg-honest-orange rounded-full flex items-center justify-center">
             <i className="fas fa-glass-whiskey text-white"></i>
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-800">Honest Sucos CRM</h1>
+            <h1 className="text-lg md:text-xl font-bold text-gray-800">Honest Sucos CRM</h1>
             {user?.route && (
-              <p className="text-sm text-gray-600">Rota: {user.route}</p>
+              <p className="text-xs md:text-sm text-gray-600">Rota: {user.route}</p>
             )}
           </div>
         </div>
@@ -145,8 +296,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       </header>
 
       <div className="flex">
-        {/* Sidebar Navigation */}
-        <nav className="w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200">
+        {/* Sidebar Navigation - Hidden on mobile */}
+        <nav className="hidden md:block w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200">
           <div className="p-4">
             <ul className="space-y-2">
               {menuItems
@@ -169,7 +320,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 ))}
               
               {/* Menu Sistema de Entregas */}
-              {canAccessReports && (
+              {(canAccessReports || isVendedor) && (
                 <li>
                   <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
                     <CollapsibleTrigger asChild>
@@ -178,12 +329,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                         className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
                       >
                         <i className="fas fa-truck"></i>
-                        <span className="font-medium">Sistema de Entregas</span>
+                        <span className="font-medium">{isVendedor ? 'Minhas Entregas' : 'Sistema de Entregas'}</span>
                         {deliveryMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
                       </Button>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="ml-4 mt-2 space-y-1">
-                      {deliveryMenuItems.map(item => (
+                      {deliveryMenuItems
+                        .filter(item => canAccessReports || (isVendedor && ['delivery-dashboard', 'delivery-management'].includes(item.id)))
+                        .map(item => (
                         <Button
                           key={item.id}
                           variant="ghost"
@@ -242,7 +395,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </nav>
 
         {/* Main Content Area */}
-        <main className="flex-1 p-6">
+        <main className="flex-1 p-4 md:p-6">
           {children}
         </main>
       </div>
