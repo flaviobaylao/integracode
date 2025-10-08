@@ -35,6 +35,12 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
     - Fixed Select component behavior using controlled value prop for reliable dialog interactions
     - Dedicated UserManagementPage at /admin/users route with admin-only access protection
   - Complete e2e testing validated: create user, filter by role, toggle status, edit role
+- **CPF/CNPJ Duplicate Validation**: Implemented validation to prevent duplicate CPF or CNPJ registration
+  - POST /api/customers validates CPF/CNPJ uniqueness before creating new customer
+  - PUT /api/customers/:id validates CPF/CNPJ uniqueness when updating (ignores current customer's own document)
+  - Returns HTTP 409 (Conflict) with detailed error message when duplicate is found
+  - Error response includes field name and existing customer information (id, name, cpf/cnpj)
+  - Uses existing storage methods: getCustomerByCpf() and getCustomerByCnpj()
 
 # User Preferences
 
