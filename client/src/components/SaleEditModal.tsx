@@ -302,7 +302,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           customerLatitude: customerLatitude || null,
           customerLongitude: customerLongitude || null,
           boletoDays: boletoDays,
-          completedDate: new Date(),
           scheduledDate: nextScheduledDate || undefined
         }
       });
