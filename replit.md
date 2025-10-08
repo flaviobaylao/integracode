@@ -2,6 +2,20 @@
 
 This is a Customer Relationship Management (CRM) system for Honest Sucos, a Brazilian juice company. The application provides sales management capabilities including customer management, product catalog, sales card tracking, and WhatsApp integration for communication. It supports multiple user roles (admin, coordinator, administrative, vendedor) with role-based access control and features comprehensive sales tracking and reporting functionality.
 
+# Recent Changes
+
+## October 8, 2025
+- **Check-in with Photo Feature**: Implemented mobile-friendly check-in system with camera photo capture, geolocation tracking, and distance calculation
+  - Created CheckInModal component with camera access and photo preview
+  - Backend route `/api/sales-cards/:id/check-in` now handles multipart/form-data with multer
+  - Photos stored in `checkInPhotoUrl` field (base64)
+  - Distance automatically calculated using Haversine formula when customer coordinates available
+  - Removed legacy JSON-based check-in mutation in favor of photo-based workflow
+- **Date Parsing Bug Fix**: Fixed critical date parsing issue in agenda filtering
+  - Changed from error-prone `new Date(string)` to explicit ISO UTC format: `new Date('YYYY-MM-DDT00:00:00.000Z')`
+  - Resolves "time zone displacement out of range" PostgreSQL errors
+  - Ensures consistent date handling across different timezones
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
@@ -60,6 +74,11 @@ Preferred communication style: Simple, everyday language.
 - **Billing Synchronization**: Accurate invoice synchronization with status mapping and validation filters (422 authorized invoices)
 - **Billing Filters & Stats**: Seller-based filtering with reactive statistics that update based on applied filters using efficient SQL aggregates
 - **Invoice Stage Mapping**: Properly documented invoice stage mapping (Etapa 20="Em Rota", Etapa 70="Entregue", Etapa 80="Aguardando Rota", Etapa 50/60="Faturado")
+- **Check-in with Photo**: Mobile-friendly check-in system with camera photo capture, geolocation tracking, and distance calculation using Haversine formula
+  - Backend handles multipart/form-data photo upload using multer
+  - Photos stored as base64 in checkInPhotoUrl field
+  - Distance automatically calculated when customer coordinates are available
+  - Modal-based workflow: geolocation capture → camera preview → photo confirmation → submission
 
 # External Dependencies
 
