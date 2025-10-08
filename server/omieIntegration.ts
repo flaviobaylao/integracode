@@ -1643,10 +1643,10 @@ export class OmieService {
       try {
         const searchResponse = await this.makeRequest('/geral/produtos/', 'ListarProdutos', searchPayload);
         
-        // Procurar o produto pelo código de integração na resposta
+        // Procurar o produto pelo código de integração ou código regular
         if (searchResponse.produto_servico_cadastro && searchResponse.produto_servico_cadastro.length > 0) {
           const crmProduct = searchResponse.produto_servico_cadastro.find(
-            (p: any) => p.codigo_produto_integracao === 'crm-sale'
+            (p: any) => p.codigo_produto_integracao === 'crm-sale' || p.codigo === 'CRM-SALE'
           );
           
           if (crmProduct) {
@@ -1670,11 +1670,24 @@ export class OmieService {
         valor_unitario: 0 // Será definido no pedido
       };
 
-      const createResponse = await this.makeRequest('/geral/produtos/', 'IncluirProduto', createPayload);
-      
-      if (createResponse && createResponse.codigo_produto) {
-        console.log('Produto CRM genérico criado no Omie:', createResponse.codigo_produto);
-        return createResponse.codigo_produto;
+      try {
+        const createResponse = await this.makeRequest('/geral/produtos/', 'IncluirProduto', createPayload);
+        
+        if (createResponse && createResponse.codigo_produto) {
+          console.log('Produto CRM genérico criado no Omie:', createResponse.codigo_produto);
+          return createResponse.codigo_produto;
+        }
+      } catch (createError: any) {
+        // Se o erro for 102 (produto já cadastrado), extrair o ID do erro
+        if (createError.message && createError.message.includes('102') && createError.message.includes('ID:')) {
+          const idMatch = createError.message.match(/ID:\s*(\d+)/);
+          if (idMatch && idMatch[1]) {
+            const existingId = parseInt(idMatch[1]);
+            console.log('Produto CRM já existe (extraído do erro):', existingId);
+            return existingId;
+          }
+        }
+        throw createError;
       }
 
       throw new Error('Não foi possível criar o produto genérico no Omie');

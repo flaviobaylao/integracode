@@ -4228,28 +4228,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: 'Omie integration not configured' });
       }
       
-      // Preparar produtos para envio ao Omie
-      let products = [];
-      
-      // Se o card tem produtos detalhados, usar eles
-      if (card.products && Array.isArray(card.products) && card.products.length > 0) {
-        products = card.products.map((p: any) => ({
-          id: p.id || p.productId || 'crm-sale',
-          name: p.name || p.description || 'Produto',
-          unitPrice: parseFloat(p.unitPrice || p.price || 0),
-          quantity: parseInt(p.quantity || 1)
-        }));
-      } else {
-        // Caso contrário, usar produto genérico
-        products = [
-          {
-            id: 'crm-sale',
-            name: `Venda via CRM - Card ${card.id}`,
-            unitPrice: parseFloat(card.saleValue),
-            quantity: 1
-          }
-        ];
-      }
+      // Usar sempre produto genérico CRM-SALE para evitar problemas de mapeamento
+      const products = [
+        {
+          id: 'crm-sale',
+          name: 'VENDA VIA CRM',
+          unitPrice: parseFloat(card.saleValue),
+          quantity: 1
+        }
+      ];
       
       const omieResponse = await omieService.createSalesOrder(
         card, 
