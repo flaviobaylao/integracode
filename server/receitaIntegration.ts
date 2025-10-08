@@ -3,8 +3,8 @@ import axios from 'axios';
 
 export interface ReceitaFederalResponse {
   cnpj: string;
-  razao_social: string;
-  nome_fantasia?: string;
+  nome: string; // Razão Social
+  fantasia?: string; // Nome Fantasia
   logradouro: string;
   numero: string;
   complemento?: string;

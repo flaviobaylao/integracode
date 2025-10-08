@@ -3436,13 +3436,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log('Dados da API Receita Federal:', JSON.stringify(dadosCNPJ, null, 2));
-
       // Formatar dados para retorno
       const dadosFormatados = {
         cnpj: receitaService.formatarCNPJ(dadosCNPJ.cnpj),
-        razaoSocial: dadosCNPJ.razao_social,
-        nomeFantasia: dadosCNPJ.nome_fantasia || '',
+        razaoSocial: dadosCNPJ.nome, // API retorna 'nome' como razão social
+        nomeFantasia: dadosCNPJ.fantasia || '', // API retorna 'fantasia' como nome fantasia
         endereco: receitaService.formatarEndereco(dadosCNPJ),
         cidade: dadosCNPJ.municipio,
         estado: dadosCNPJ.uf,
