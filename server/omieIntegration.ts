@@ -1656,7 +1656,8 @@ export class OmieService {
       // Preparar detalhes dos produtos
       const orderItems = products.map((product, index) => ({
         ide: {
-          codigo_item_integracao: `${integrationCode}-ITEM-${index + 1}`
+          // Limite de 30 caracteres para codigo_item_integracao
+          codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
         },
         produto: {
           codigo_produto_integracao: product.id,
