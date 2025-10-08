@@ -3985,7 +3985,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send card to Omie endpoint
   app.post('/api/sales-cards/:id/send-to-omie', isAuthenticated, async (req, res) => {
     try {
+      console.log('=== INICIANDO ENVIO PARA OMIE ===');
       const cardId = req.params.id;
+      console.log('Card ID:', cardId);
       
       // Buscar o card com dados relacionados
       const card = await storage.getSalesCard(cardId);
@@ -4067,7 +4069,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
     } catch (error) {
-      console.error('Erro ao enviar para Omie:', error);
+      console.error('=== ERRO AO ENVIAR PARA OMIE ===');
+      console.error('Erro completo:', error);
+      console.error('Mensagem do erro:', (error as Error).message);
+      console.error('Stack trace:', (error as Error).stack);
       res.status(500).json({ 
         message: 'Erro ao enviar para Omie: ' + (error as Error).message 
       });
