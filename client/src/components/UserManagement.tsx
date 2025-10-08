@@ -30,6 +30,8 @@ type UserFormData = z.infer<typeof userFormSchema>;
 export default function UserManagement() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [filterRole, setFilterRole] = useState<string>("all");
 
   const { data: users = [], isLoading } = useQuery<User[]>({
@@ -54,6 +56,17 @@ export default function UserManagement() {
       role: "vendedor",
       route: "",
       isActive: true,
+    },
+  });
+
+  const editRoleSchema = z.object({
+    role: z.enum(['admin', 'vendedor', 'telemarketing']),
+  });
+
+  const editForm = useForm<{ role: 'admin' | 'vendedor' | 'telemarketing' }>({
+    resolver: zodResolver(editRoleSchema),
+    defaultValues: {
+      role: "vendedor",
     },
   });
 
@@ -111,6 +124,34 @@ export default function UserManagement() {
     },
   });
 
+  const updateUserRoleMutation = useMutation({
+    mutationFn: async ({ id, role }: { id: string; role: string }) => {
+      const response = await fetch(`/api/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      if (!response.ok) throw new Error('Failed to update user role');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "Perfil atualizado",
+        description: "O perfil do usuário foi atualizado com sucesso.",
+      });
+      setIsEditDialogOpen(false);
+      setSelectedUser(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao atualizar perfil",
+        description: error.message || "Ocorreu um erro ao atualizar o perfil.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const getRoleLabel = (role: string) => {
     const roleLabels = {
       admin: 'Administrador',
@@ -135,6 +176,18 @@ export default function UserManagement() {
 
   const onSubmit = (data: UserFormData) => {
     createUserMutation.mutate(data);
+  };
+
+  const handleEditRole = (user: User) => {
+    setSelectedUser(user);
+    editForm.setValue('role', user.role as 'admin' | 'vendedor' | 'telemarketing');
+    setIsEditDialogOpen(true);
+  };
+
+  const onEditSubmit = (data: { role: string }) => {
+    if (selectedUser) {
+      updateUserRoleMutation.mutate({ id: selectedUser.id, role: data.role });
+    }
   };
 
   if (isLoading) {
@@ -272,6 +325,60 @@ export default function UserManagement() {
         </Dialog>
       </div>
 
+      {/* Dialog de Edição de Perfil */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Perfil de {selectedUser?.firstName} {selectedUser?.lastName}</DialogTitle>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
+              <FormField
+                control={editForm.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Perfil</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-edit-role">
+                          <SelectValue placeholder="Selecione o perfil" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="vendedor">Vendedor</SelectItem>
+                        <SelectItem value="telemarketing">Telemarketing</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsEditDialogOpen(false)}
+                  data-testid="button-cancel-edit"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  className="bg-honest-orange hover:bg-orange-600"
+                  disabled={updateUserRoleMutation.isPending}
+                  data-testid="button-submit-edit"
+                >
+                  {updateUserRoleMutation.isPending ? "Salvando..." : "Salvar"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -325,30 +432,41 @@ export default function UserManagement() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        updateUserStatusMutation.mutate({
-                          id: user.id,
-                          isActive: !user.isActive,
-                        })
-                      }
-                      disabled={updateUserStatusMutation.isPending}
-                      data-testid={`button-toggle-status-${user.id}`}
-                    >
-                      {user.isActive ? (
-                        <>
-                          <i className="fas fa-ban mr-2"></i>
-                          Desativar
-                        </>
-                      ) : (
-                        <>
-                          <i className="fas fa-check mr-2"></i>
-                          Ativar
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleEditRole(user)}
+                        data-testid={`button-edit-role-${user.id}`}
+                      >
+                        <i className="fas fa-user-edit mr-2"></i>
+                        Editar Perfil
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          updateUserStatusMutation.mutate({
+                            id: user.id,
+                            isActive: !user.isActive,
+                          })
+                        }
+                        disabled={updateUserStatusMutation.isPending}
+                        data-testid={`button-toggle-status-${user.id}`}
+                      >
+                        {user.isActive ? (
+                          <>
+                            <i className="fas fa-ban mr-2"></i>
+                            Desativar
+                          </>
+                        ) : (
+                          <>
+                            <i className="fas fa-check mr-2"></i>
+                            Ativar
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
