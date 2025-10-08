@@ -1695,8 +1695,7 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          enviar_email: "N",
-          observacoes_internas: `Pedido ${operationType || 'venda'} via CRM - Pagamento: ${paymentMethod || 'a_vista'} - Card: ${salesCard.id}`
+          enviar_email: "N"
         }
       };
 
