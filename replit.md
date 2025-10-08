@@ -5,6 +5,15 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
 # Recent Changes
 
 ## October 8, 2025
+- **Email/Password Authentication System**: Implemented complete email and password authentication for all users
+  - Added `password` field to users table with bcrypt hash (SALT_ROUNDS=10)
+  - Created authentication routes: POST /api/auth/login, POST /api/auth/set-password, POST /api/auth/change-password
+  - Login page at /login with email/password form
+  - Set password page at /set-password for first-time users to define their password
+  - Session-based authentication compatible with existing Replit Auth flow
+  - Password requirements: minimum 6 characters
+  - Landing page updated to redirect to /login instead of Replit OAuth
+  - Complete e2e testing validated: set password, login, session creation, dashboard access
 - **Check-in with Photo Feature**: Implemented mobile-friendly check-in system with camera photo capture, geolocation tracking, and distance calculation
   - Created CheckInModal component with camera access and photo preview
   - Backend route `/api/sales-cards/:id/check-in` now handles multipart/form-data with multer
