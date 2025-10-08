@@ -1662,6 +1662,7 @@ export class OmieService {
       // Se não encontrou, criar o produto
       console.log('Produto CRM genérico não encontrado, criando...');
       const createPayload = {
+        codigo: 'CRM-SALE', // Código do produto (obrigatório)
         codigo_produto_integracao: 'crm-sale',
         descricao: 'VENDA VIA CRM',
         unidade: 'UN',
