@@ -339,7 +339,10 @@ export default function UserManagement() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Perfil</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select 
+                      onValueChange={field.onChange} 
+                      value={field.value}
+                    >
                       <FormControl>
                         <SelectTrigger data-testid="select-edit-role">
                           <SelectValue placeholder="Selecione o perfil" />

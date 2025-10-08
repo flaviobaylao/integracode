@@ -18,6 +18,7 @@ import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
 import RoutesManagement from "@/pages/RoutesManagement";
+import UserManagementPage from "@/pages/UserManagementPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -40,6 +41,7 @@ function Router() {
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
           <Route path="/routes-management" component={RoutesManagement} />
+          <Route path="/admin/users" component={UserManagementPage} />
         </>
       )}
       <Route component={NotFound} />
