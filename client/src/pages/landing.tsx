@@ -23,17 +23,19 @@ export default function Landing() {
             <div className="space-y-2">
               <Button 
                 className="w-full bg-honest-blue hover:bg-blue-700"
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => window.location.href = '/login'}
+                data-testid="button-login"
               >
-                Entrar com Replit
+                Entrar no Sistema
               </Button>
               
               <Button 
                 variant="outline" 
                 className="w-full border-honest-orange text-honest-orange hover:bg-honest-orange hover:text-white"
-                onClick={() => window.location.href = '/admin-login'}
+                onClick={() => window.location.href = '/set-password'}
+                data-testid="button-set-password"
               >
-                Acesso Administrativo
+                Primeiro Acesso - Definir Senha
               </Button>
             </div>
             
