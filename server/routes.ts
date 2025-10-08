@@ -3454,6 +3454,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         naturezaJuridica: dadosCNPJ.natureza_juridica || ''
       };
 
+      console.log('=== DADOS FORMATADOS ===');
+      console.log('razaoSocial:', dadosFormatados.razaoSocial);
+      console.log('nomeFantasia:', dadosFormatados.nomeFantasia);
+      console.log('========================');
+
       res.json(dadosFormatados);
     } catch (error) {
       console.error("Error fetching CNPJ from Receita Federal:", error);
