@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { validateLocalAdmin, createLocalSession } from "./localAuth";
+import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda } from "./visitScheduleService";
@@ -38,7 +38,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
-  // Local login route for admin
+  // Local login route for admin (mantido para compatibilidade)
   app.post('/api/auth/local-login', async (req, res) => {
     try {
       const { username, password } = req.body;
@@ -61,6 +61,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error in local login:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Login com email e senha (para todos os usuários)
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email e senha são obrigatórios" });
+      }
+      
+      const user = await validateUser(email, password);
+      
+      if (!user) {
+        return res.status(401).json({ message: "Email ou senha inválidos" });
+      }
+      
+      // Criar sessão para o usuário
+      const sessionData = createLocalSession(user);
+      (req.session as any).user = sessionData;
+      
+      res.json({ success: true, user });
+    } catch (error) {
+      console.error("Erro no login:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // Definir primeira senha (usuário deve estar autenticado via Replit Auth ou ser criado por admin)
+  app.post('/api/auth/set-password', async (req, res) => {
+    try {
+      const { email, newPassword } = req.body;
+      
+      if (!email || !newPassword) {
+        return res.status(400).json({ message: "Email e nova senha são obrigatórios" });
+      }
+      
+      // Validar força da senha
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: "A senha deve ter no mínimo 6 caracteres" });
+      }
+      
+      // Buscar usuário por email
+      const user = await storage.getUserByEmail(email);
+      
+      if (!user) {
+        return res.status(404).json({ message: "Usuário não encontrado" });
+      }
+      
+      // Verificar se já tem senha
+      if (user.password) {
+        return res.status(400).json({ message: "Usuário já possui senha. Use a opção de trocar senha." });
+      }
+      
+      // Definir senha
+      const updatedUser = await setUserPassword(user.id, newPassword);
+      
+      if (!updatedUser) {
+        return res.status(500).json({ message: "Erro ao definir senha" });
+      }
+      
+      res.json({ success: true, message: "Senha definida com sucesso" });
+    } catch (error) {
+      console.error("Erro ao definir senha:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // Trocar senha (usuário deve estar autenticado)
+  app.post('/api/auth/change-password', authenticateUser, async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const currentUser = (req as any).currentUser;
+      
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Senha atual e nova senha são obrigatórias" });
+      }
+      
+      // Validar força da senha
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: "A senha deve ter no mínimo 6 caracteres" });
+      }
+      
+      // Validar senha atual
+      if (!currentUser.password) {
+        return res.status(400).json({ message: "Usuário não possui senha definida" });
+      }
+      
+      const user = await validateUser(currentUser.email!, currentPassword);
+      
+      if (!user) {
+        return res.status(401).json({ message: "Senha atual incorreta" });
+      }
+      
+      // Definir nova senha
+      const updatedUser = await setUserPassword(currentUser.id, newPassword);
+      
+      if (!updatedUser) {
+        return res.status(500).json({ message: "Erro ao trocar senha" });
+      }
+      
+      res.json({ success: true, message: "Senha alterada com sucesso" });
+    } catch (error) {
+      console.error("Erro ao trocar senha:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
 
