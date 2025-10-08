@@ -278,6 +278,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const data = insertCustomerSchema.parse(cleanedData);
+      
+      // Verificar duplicidade de CPF
+      if (data.cpf) {
+        const existingCustomer = await storage.getCustomerByCpf(data.cpf);
+        if (existingCustomer) {
+          return res.status(409).json({ 
+            message: "CPF já cadastrado", 
+            field: "cpf",
+            existingCustomer: {
+              id: existingCustomer.id,
+              name: existingCustomer.name,
+              cpf: existingCustomer.cpf
+            }
+          });
+        }
+      }
+      
+      // Verificar duplicidade de CNPJ
+      if (data.cnpj) {
+        const existingCustomer = await storage.getCustomerByCnpj(data.cnpj);
+        if (existingCustomer) {
+          return res.status(409).json({ 
+            message: "CNPJ já cadastrado", 
+            field: "cnpj",
+            existingCustomer: {
+              id: existingCustomer.id,
+              name: existingCustomer.name,
+              cnpj: existingCustomer.cnpj
+            }
+          });
+        }
+      }
+      
       const customer = await storage.createCustomer(data);
       res.json(customer);
     } catch (error) {
@@ -335,6 +368,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
           return res.status(403).json({ 
             message: "As coordenadas estão travadas e só podem ser modificadas por administradores, coordenadores ou administrativos" 
+          });
+        }
+      }
+      
+      // Verificar duplicidade de CPF (se está sendo alterado)
+      if (data.cpf && data.cpf !== currentCustomer.cpf) {
+        const existingCustomer = await storage.getCustomerByCpf(data.cpf);
+        if (existingCustomer && existingCustomer.id !== id) {
+          return res.status(409).json({ 
+            message: "CPF já cadastrado para outro cliente", 
+            field: "cpf",
+            existingCustomer: {
+              id: existingCustomer.id,
+              name: existingCustomer.name,
+              cpf: existingCustomer.cpf
+            }
+          });
+        }
+      }
+      
+      // Verificar duplicidade de CNPJ (se está sendo alterado)
+      if (data.cnpj && data.cnpj !== currentCustomer.cnpj) {
+        const existingCustomer = await storage.getCustomerByCnpj(data.cnpj);
+        if (existingCustomer && existingCustomer.id !== id) {
+          return res.status(409).json({ 
+            message: "CNPJ já cadastrado para outro cliente", 
+            field: "cnpj",
+            existingCustomer: {
+              id: existingCustomer.id,
+              name: existingCustomer.name,
+              cnpj: existingCustomer.cnpj
+            }
           });
         }
       }
