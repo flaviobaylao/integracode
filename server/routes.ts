@@ -1254,7 +1254,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!customer) {
             console.log(`Cliente não encontrado para CNPJ ${cnpj}, consultando Receita Federal...`);
             
-            const receitaData = await receitaService.consultCNPJ(cnpj);
+            const receitaData = await receitaService.consultarCNPJ(cnpj);
             
             if (!receitaData) {
               results.errors.push({
@@ -1268,8 +1268,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Criar cliente com dados da Receita
             customer = await storage.createCustomer({
               cnpj: receitaData.cnpj,
-              name: receitaData.razao_social,
-              fantasyName: receitaData.nome_fantasia || receitaData.razao_social,
+              name: receitaData.nome,
+              fantasyName: receitaData.fantasia || receitaData.nome,
               email: receitaData.email || '',
               phone: receitaData.telefone || '',
               address: receitaData.logradouro ? 
