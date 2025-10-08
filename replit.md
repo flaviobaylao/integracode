@@ -29,7 +29,12 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - User creation form with fields: email, firstName, lastName, role (dropdown), and optional route
   - Role-based filtering: filter users by admin, coordinator, administrative, vendedor, or telemarketing
   - User status toggle: activate/deactivate users directly from the table
-  - Complete e2e testing validated: create user, filter by role, toggle status
+  - **Role Editing**: Added ability to edit user profiles (admin, vendedor, telemarketing)
+    - "Editar Perfil" button in user table opens dialog for role selection
+    - PUT /api/users/:id endpoint handles role updates
+    - Fixed Select component behavior using controlled value prop for reliable dialog interactions
+    - Dedicated UserManagementPage at /admin/users route with admin-only access protection
+  - Complete e2e testing validated: create user, filter by role, toggle status, edit role
 
 # User Preferences
 
