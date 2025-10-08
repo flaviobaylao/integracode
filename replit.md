@@ -46,7 +46,7 @@ Preferred communication style: Simple, everyday language.
 - **Sales Cards Search**: Search functionality for sales cards by customer name or CNPJ.
 - **Boleto Payment Terms**: Conditional payment term selection for "Boleto" payment method, triggering blocking alerts for terms > 7 days.
 - **Bulk Sales Cards Import**: Mass creation of sales cards via Excel/CSV upload with automatic customer registration via Receita Federal API and next visit date calculation.
-- **Omie ERP Integration**: Synchronization of clients, vendors, products, and overdue debts. Protected fields (coordinates, weekdays, periodicity) are preserved during sync. Sales order export preserves critical sales data including vendor lookup, real product mapping, and payment method.
+- **Omie ERP Integration**: Synchronization of clients, vendors, products, and overdue debts. Protected fields (coordinates, weekdays, periodicity) are preserved during sync. Sales order export preserves critical sales data including vendor lookup, real product mapping, and payment method. Vendor resolution: getVendorByEmail function for email-based lookup, with fallback to client recomendacoes.codigo_vendedor when sellerId is invalid or missing. Invalid sellerId format (starting with 'omie-vendor-') is automatically detected and bypassed.
 - **Weekday-Based Route System**: Customers assigned to specific weekdays for visits; supports up to 2 days per week.
 - **Financial Tracking**: Overdue debt monitoring and credit analysis.
 - **Delivery Integration**: Real-time delivery tracking with App Entregas Honest, including webhook support for status updates.
