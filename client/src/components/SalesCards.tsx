@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Monitor, MapPin } from "lucide-react";
+import { Monitor, MapPin, Upload, FileSpreadsheet } from "lucide-react";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
@@ -37,6 +37,8 @@ export default function SalesCards() {
   const [selectedCardForEdit, setSelectedCardForEdit] = useState<SalesCardWithRelations | null>(null);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
   const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<SalesCardWithRelations | null>(null);
+  const [showBulkImportDialog, setShowBulkImportDialog] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -134,6 +136,61 @@ export default function SalesCards() {
       });
     },
   });
+
+  const bulkImportMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch('/api/sales-cards/bulk-import', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao importar planilha');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      setShowBulkImportDialog(false);
+      setImportFile(null);
+      
+      let description = data.message;
+      if (data.results?.errors?.length > 0) {
+        description += `\n\nErros encontrados: ${data.results.errors.length}`;
+      }
+      
+      toast({
+        title: "Importação Concluída",
+        description,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro na Importação",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleBulkImport = () => {
+    if (!importFile) {
+      toast({
+        title: "Erro",
+        description: "Selecione um arquivo para importar",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    bulkImportMutation.mutate(importFile);
+  };
 
   const handleStartService = (card: SalesCardWithRelations) => {
     updateCardMutation.mutate({
@@ -273,12 +330,22 @@ export default function SalesCards() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Cards de Venda</h2>
-        <Button
-          className="bg-honest-blue hover:bg-blue-700"
-          onClick={() => setShowModal(true)}
-        >
-          <i className="fas fa-plus mr-2"></i>Novo Card
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowBulkImportDialog(true)}
+            data-testid="button-bulk-import"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Importar Planilha
+          </Button>
+          <Button
+            className="bg-honest-blue hover:bg-blue-700"
+            onClick={() => setShowModal(true)}
+          >
+            <i className="fas fa-plus mr-2"></i>Novo Card
+          </Button>
+        </div>
       </div>
 
       {/* Campo de Pesquisa */}
@@ -682,6 +749,84 @@ export default function SalesCards() {
         }}
         card={selectedCardForNoSale}
       />
+
+      {/* Bulk Import Dialog */}
+      <Dialog open={showBulkImportDialog} onOpenChange={setShowBulkImportDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5" />
+              Importação em Massa de Cards
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
+              <h4 className="font-semibold text-sm text-blue-900">Formato da Planilha</h4>
+              <p className="text-sm text-blue-800">
+                A planilha deve conter as seguintes colunas:
+              </p>
+              <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
+                <li><strong>CNPJ</strong>: CNPJ do cliente (obrigatório)</li>
+                <li><strong>Dias da Semana</strong>: Dias separados por vírgula (ex: segunda,quarta)</li>
+                <li><strong>Periodicidade</strong>: semanal, quinzenal ou mensal</li>
+              </ul>
+              <p className="text-xs text-blue-700 mt-2">
+                💡 Se o CNPJ não existir no sistema, o cliente será cadastrado automaticamente via Receita Federal.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="import-file">Selecionar Arquivo</Label>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setImportFile(file);
+                }}
+                data-testid="input-import-file"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-600">
+                  Arquivo selecionado: {importFile.name}
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowBulkImportDialog(false);
+                  setImportFile(null);
+                }}
+                data-testid="button-cancel-import"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleBulkImport}
+                disabled={!importFile || bulkImportMutation.isPending}
+                className="bg-honest-blue hover:bg-blue-700"
+                data-testid="button-confirm-import"
+              >
+                {bulkImportMutation.isPending ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin mr-2"></i>
+                    Importando...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Importar
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

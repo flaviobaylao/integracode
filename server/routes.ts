@@ -1211,8 +1211,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Arquivo não enviado" });
       }
 
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
       
       if (!user) {
         return res.status(401).json({ message: "Usuário não encontrado" });
@@ -1278,7 +1277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               city: receitaData.municipio || '',
               state: receitaData.uf || '',
               zipCode: receitaData.cep || '',
-              sellerId: user.role === 'vendedor' ? userId : (row.Vendedor || user.id),
+              sellerId: user.role === 'vendedor' ? user.id : (row.Vendedor || user.id),
               weekdays: row['Dias da Semana'] ? JSON.stringify(
                 row['Dias da Semana'].toString().split(',').map((d: string) => d.trim().toLowerCase())
               ) : JSON.stringify([]),
@@ -1356,7 +1355,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Criar card de venda
           await storage.createSalesCard({
             customerId: customer.id,
-            sellerId: user.role === 'vendedor' ? userId : (customer.sellerId || user.id),
+            sellerId: user.role === 'vendedor' ? user.id : (customer.sellerId || user.id),
             status: 'pending',
             scheduledDate,
             routeDay,
