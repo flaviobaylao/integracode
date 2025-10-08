@@ -1628,10 +1628,62 @@ export class OmieService {
     }).format(value);
   }
 
+  // Garantir que o produto genérico CRM existe no Omie
+  async ensureCrmProductExists(): Promise<number> {
+    try {
+      // Tentar buscar o produto pelo código de integração
+      const searchPayload = {
+        pagina: 1,
+        registros_por_pagina: 1,
+        filtrar_por_codigo_integracao: 'crm-sale'
+      };
+
+      let productCode: number | null = null;
+
+      try {
+        const searchResponse = await this.makeRequest('/geral/produtos/', 'ListarProdutos', searchPayload);
+        
+        if (searchResponse.produto_servico_cadastro && searchResponse.produto_servico_cadastro.length > 0) {
+          productCode = searchResponse.produto_servico_cadastro[0].codigo_produto;
+          console.log('Produto CRM genérico já existe no Omie:', productCode);
+          return productCode;
+        }
+      } catch (searchError) {
+        console.log('Produto CRM genérico não encontrado, criando...');
+      }
+
+      // Se não encontrou, criar o produto
+      const createPayload = {
+        codigo_produto_integracao: 'crm-sale',
+        descricao: 'VENDA VIA CRM',
+        unidade: 'UN',
+        ncm: '00000000',
+        valor_unitario: 0, // Será definido no pedido
+        tipo: 'P', // Produto
+        indicador_escala: 'N'
+      };
+
+      const createResponse = await this.makeRequest('/geral/produtos/', 'IncluirProduto', createPayload);
+      
+      if (createResponse && createResponse.codigo_produto) {
+        console.log('Produto CRM genérico criado no Omie:', createResponse.codigo_produto);
+        return createResponse.codigo_produto;
+      }
+
+      throw new Error('Não foi possível criar o produto genérico no Omie');
+    } catch (error) {
+      console.error('Erro ao garantir produto CRM no Omie:', error);
+      throw error;
+    }
+  }
+
   // Criar pedido de venda no Omie
   async createSalesOrder(salesCard: any, customer: any, products: any[], paymentMethod?: string, operationType?: string): Promise<any> {
     try {
       console.log('Criando pedido no Omie para cliente:', customer.name);
+      
+      // Garantir que o produto genérico existe
+      await this.ensureCrmProductExists();
       
       // Gerar número único para o pedido
       const orderNumber = `HS-${Date.now()}`;
