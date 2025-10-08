@@ -41,6 +41,14 @@ This is a Customer Relationship Management (CRM) system for Honest Sucos, a Braz
   - Returns HTTP 409 (Conflict) with detailed error message when duplicate is found
   - Error response includes field name and existing customer information (id, name, cpf/cnpj)
   - Uses existing storage methods: getCustomerByCpf() and getCustomerByCnpj()
+- **Sales Cards Search**: Added search functionality to filter sales cards by customer name or CNPJ
+  - Search input field with icon and clear button in SalesCards component
+  - Filters by customer fantasy name (case-insensitive partial match) OR CNPJ (numeric digits only)
+  - CNPJ search removes formatting for flexible matching (accepts "12345678" or "12.345.678/0001-90")
+  - Prevents empty query bug: CNPJ comparison only runs when searchQueryClean.length > 0
+  - Integrates with existing status and route filters
+  - Clear all filters button resets search query along with other filters
+  - Complete e2e testing validated: search by name, CNPJ, clear search, no-match behavior
 
 # User Preferences
 
