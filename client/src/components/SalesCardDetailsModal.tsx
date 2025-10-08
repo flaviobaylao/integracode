@@ -648,6 +648,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                       onClick={handleSendToOmie}
                       disabled={sendToOmieMutation.isPending}
                       className="bg-orange-500 hover:bg-orange-600"
+                      data-testid="button-send-to-omie"
                     >
                       {sendToOmieMutation.isPending ? (
                         <>
