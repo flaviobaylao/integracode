@@ -111,32 +111,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     });
   };
 
-  // Mutation para check-in
-  const checkInMutation = useMutation({
-    mutationFn: async (data: { cardId: string, latitude: number, longitude: number, distance: number }) => {
-      await apiRequest('POST', `/api/sales-cards/${data.cardId}/check-in`, {
-        latitude: data.latitude,
-        longitude: data.longitude,
-        distance: data.distance
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      setIsCheckingIn(false);
-      toast({
-        title: "Check-in Realizado",
-        description: "Check-in registrado com sucesso!",
-      });
-    },
-    onError: (error) => {
-      setIsCheckingIn(false);
-      toast({
-        title: "Erro no Check-in",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  // Check-in is now handled by CheckInModal with photo capture - no mutation needed here
 
   // Mutation para check-out
   const checkOutMutation = useMutation({

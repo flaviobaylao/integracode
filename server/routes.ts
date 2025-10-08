@@ -1194,21 +1194,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       
-      // Parse dates more safely - treat as local date strings YYYY-MM-DD
+      // Parse dates safely - use ISO format with UTC timezone
       let start: Date;
       let end: Date;
       
       if (startDate) {
-        const [year, month, day] = (startDate as string).split('-').map(Number);
-        start = new Date(year, month - 1, day, 0, 0, 0, 0);
+        start = new Date(`${startDate}T00:00:00.000Z`);
       } else {
         start = new Date();
         start.setHours(0, 0, 0, 0);
       }
       
       if (endDate) {
-        const [year, month, day] = (endDate as string).split('-').map(Number);
-        end = new Date(year, month - 1, day, 23, 59, 59, 999);
+        end = new Date(`${endDate}T23:59:59.999Z`);
       } else {
         end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         end.setHours(23, 59, 59, 999);
