@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHOD_TO_OMIE_ACCOUNT } from '@shared/schema';
+import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE } from '@shared/schema';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -1841,8 +1841,12 @@ export class OmieService {
         ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
         : 2425423833; // Padrão: Caixinha (À vista)
 
-      // Determinar código da parcela baseado no método de pagamento
-      const parcelaCode = paymentMethod === 'boleto' ? '000' : '999'; // À vista para boleto (1 parcela), padrão para outros
+      // Determinar código da parcela baseado no método de pagamento e prazo
+      let parcelaCode = '999'; // Padrão
+      if (paymentMethod === 'boleto') {
+        const boletoDays = salesCard.boletoDays || 7; // Padrão 7 dias se não especificado
+        parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || '007';
+      }
 
       // Payload para API Omie (estrutura correta)
       const orderPayload: any = {
@@ -3223,6 +3227,7 @@ export async function createOmieOrder(orderData: {
   sellerId: string;
   paymentMethod?: string;
   operationType?: string;
+  boletoDays?: number;
 }) {
   const omieService = OmieService.createFromEnv();
 
@@ -3280,8 +3285,12 @@ export async function createOmieOrder(orderData: {
       ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[orderData.paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
       : 2425423833; // Padrão: Caixinha (À vista)
 
-    // Determinar código da parcela baseado no método de pagamento
-    const parcelaCode = orderData.paymentMethod === 'boleto' ? '000' : '999'; // À vista (1 parcela) para boleto, padrão para outros
+    // Determinar código da parcela baseado no método de pagamento e prazo
+    let parcelaCode = '999'; // Padrão
+    if (orderData.paymentMethod === 'boleto') {
+      const boletoDays = orderData.boletoDays || 7; // Padrão 7 dias se não especificado
+      parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || '007';
+    }
 
     const omieOrderPayload = {
       cabecalho: {
