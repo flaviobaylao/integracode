@@ -14,6 +14,7 @@ import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
 import SalesSchedule from "@/pages/SalesSchedule";
 import Billings from "@/pages/Billings";
+import BlockedOrdersPage from "@/pages/BlockedOrders";
 import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
@@ -40,6 +41,7 @@ function Router() {
           <Route path="/telemarketing" component={TelemarketingPage} />
           <Route path="/sales-schedule" component={SalesSchedule} />
           <Route path="/billings" component={Billings} />
+          <Route path="/blocked-orders" component={BlockedOrdersPage} />
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
           <Route path="/delivery-management" component={DeliveryManagement} />
           <Route path="/driver-management" component={DriverManagement} />
