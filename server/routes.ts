@@ -4317,7 +4317,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Buscar dados completos dos produtos para obter códigos Omie
         const productPromises = card.products.map(async (cardProduct: any) => {
           console.log('🔍 Buscando produto do card:', cardProduct.id, '- Nome:', cardProduct.name);
-          const product = await storage.getProduct(cardProduct.id);
+          
+          // Primeiro tentar buscar por ID direto
+          let product = await storage.getProduct(cardProduct.id);
+          
+          // Se não encontrar, tentar buscar por omie_code (caso o ID seja um código Omie)
+          if (!product) {
+            console.log('⚠️ Produto não encontrado por ID, tentando por omie_code:', cardProduct.id);
+            product = await storage.getProductByOmieCode(cardProduct.id);
+          }
+          
           console.log('📦 Produto do banco:', {
             id: product?.id,
             name: product?.name,
@@ -4325,6 +4334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             omieCodigo: product?.omieCodigo,
             omieCodigoProduto: product?.omieCodigoProduto
           });
+          
           return {
             id: product?.id || cardProduct.id,
             omieCode: product?.omieCode || null,
