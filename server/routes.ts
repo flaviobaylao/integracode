@@ -5150,7 +5150,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               description: product.descricao_detalhada || product.descricao || '',
               price: (product.valor_unitario || 0).toString(),
               stock: stockQuantity,
-              omieCode: omieCode,
+              omieCode: omieCode, // Mantém compatibilidade com código antigo
+              omieCodigo: product.codigo, // Código alfanumérico (ex: PRD00003)
+              omieCodigoProduto: product.codigo_produto, // ID numérico do Omie (ex: 2425693571)
               isActive: true
             };
 
