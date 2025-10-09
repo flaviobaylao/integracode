@@ -1770,21 +1770,35 @@ export class OmieService {
       let totalValue = 0;
       let useGenericProduct = false;
       
-      // Tentar usar códigos reais dos produtos quando disponíveis
+      // Buscar e validar códigos dos produtos no Omie
       const itemsWithOmieCode: any[] = [];
       const itemsWithoutOmieCode: any[] = [];
       
       for (const product of products) {
-        if (product.omieCodigoProduto) {
-          // Produto tem código Omie - usar código real
-          itemsWithOmieCode.push(product);
+        if (product.omieCode) {
+          // Buscar o codigo_produto correto do Omie usando o código
+          console.log(`🔍 Buscando codigo_produto para ${product.omieCode}...`);
+          const omieProduct = await this.getProductByCode(product.omieCode);
+          
+          if (omieProduct) {
+            // Produto encontrado no Omie - usar código real
+            console.log(`✅ Produto encontrado: ${omieProduct.codigo} -> ${omieProduct.codigo_produto}`);
+            itemsWithOmieCode.push({
+              ...product,
+              omieCodigoProduto: omieProduct.codigo_produto.toString()
+            });
+          } else {
+            // Produto não encontrado no Omie
+            console.log(`⚠️ Produto ${product.omieCode} não encontrado no Omie`);
+            itemsWithoutOmieCode.push(product);
+          }
         } else {
           // Produto sem código Omie - consolidar no genérico
           itemsWithoutOmieCode.push(product);
         }
       }
       
-      // Se todos os produtos têm código Omie, usar códigos reais
+      // Se todos os produtos têm código Omie válido, usar códigos reais
       if (itemsWithOmieCode.length > 0 && itemsWithoutOmieCode.length === 0) {
         console.log('✅ Usando códigos reais dos produtos Omie');
         orderItems = itemsWithOmieCode.map((product, index) => {
@@ -2861,6 +2875,41 @@ export class OmieService {
     } catch (error) {
       console.error('Erro ao listar produtos no Omie:', error);
       throw error;
+    }
+  }
+
+  // Buscar produto do Omie pelo código e retornar codigo_produto
+  async getProductByCode(codigo: string): Promise<{ codigo_produto: number; codigo: string } | null> {
+    try {
+      console.log(`🔍 Buscando produto no Omie pelo código: ${codigo}`);
+      
+      // Buscar produtos do Omie (primeira página contém os mais recentes)
+      const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
+        pagina: 1,
+        registros_por_pagina: 100 // Buscar bastante para garantir que encontramos
+      });
+
+      const products = response.produto_servico_cadastro || [];
+      console.log(`📦 Total de produtos encontrados: ${products.length}`);
+      
+      // Buscar produto pelo código (case-insensitive)
+      const product = products.find((p: any) => 
+        p.codigo && p.codigo.toUpperCase() === codigo.toUpperCase()
+      );
+
+      if (product) {
+        console.log(`✅ Produto encontrado: ${product.codigo} (ID: ${product.codigo_produto})`);
+        return {
+          codigo_produto: product.codigo_produto,
+          codigo: product.codigo
+        };
+      } else {
+        console.log(`❌ Produto não encontrado com código: ${codigo}`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`Erro ao buscar produto ${codigo} no Omie:`, error);
+      return null;
     }
   }
 
