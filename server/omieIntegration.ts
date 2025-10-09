@@ -1775,26 +1775,28 @@ export class OmieService {
       const itemsWithoutOmieCode: any[] = [];
       
       for (const product of products) {
-        // Usar omieCodigoProduto (numérico) se disponível, senão marcar como sem código
-        if (product.omieCodigoProduto) {
-          console.log(`🔍 Validando produto no Omie: ${product.name} (codigo_produto: ${product.omieCodigoProduto})...`);
-          const omieProduct = await this.getProductByCode(product.omieCodigoProduto);
+        // Usar omieCode/omieCodigo (alfanumérico tipo PRD-AC-350) para buscar
+        const codigoToSearch = product.omieCode || product.omieCodigo;
+        
+        if (codigoToSearch) {
+          console.log(`🔍 Buscando produto no Omie: ${product.name} (codigo: ${codigoToSearch})...`);
+          const omieProduct = await this.getProductByCode(codigoToSearch);
           
           if (omieProduct) {
-            // Produto encontrado e validado no Omie
-            console.log(`✅ Produto validado no Omie: ${omieProduct.codigo || product.name} (codigo_produto: ${omieProduct.codigo_produto})`);
+            // Produto encontrado - usar codigo_produto REAL do Omie
+            console.log(`✅ Produto encontrado: ${omieProduct.codigo} -> codigo_produto REAL: ${omieProduct.codigo_produto}`);
             itemsWithOmieCode.push({
               ...product,
-              omieCodigoProduto: omieProduct.codigo_produto.toString()
+              omieCodigoProduto: omieProduct.codigo_produto.toString() // Atualizar com codigo_produto correto
             });
           } else {
             // Produto não encontrado no Omie
-            console.log(`⚠️ Produto ${product.name} (codigo_produto: ${product.omieCodigoProduto}) não encontrado no Omie`);
+            console.log(`⚠️ Produto ${codigoToSearch} não encontrado no Omie`);
             itemsWithoutOmieCode.push(product);
           }
         } else {
-          // Produto sem omieCodigoProduto
-          console.log(`⚠️ Produto sem omieCodigoProduto: ${product.name}`);
+          // Produto sem código Omie
+          console.log(`⚠️ Produto sem código Omie: ${product.name}`);
           itemsWithoutOmieCode.push(product);
         }
       }
@@ -2871,28 +2873,28 @@ export class OmieService {
     }
   }
 
-  // Buscar produto do Omie pelo codigo_produto (numérico) e retornar dados completos
-  async getProductByCode(codigoProduto: string): Promise<{ codigo_produto: number; codigo: string } | null> {
+  // Buscar produto do Omie pelo campo "codigo" (alfanumérico tipo PRD-AC-350) e retornar codigo_produto numérico
+  async getProductByCode(codigo: string): Promise<{ codigo_produto: number; codigo: string } | null> {
     try {
-      console.log(`🔍 Buscando produto no Omie pelo codigo_produto: ${codigoProduto}`);
+      console.log(`🔍 Buscando produto no Omie pelo código: ${codigo}`);
       
-      // Usar a API ConsultarProduto com codigo_produto
+      // Usar a API ConsultarProduto com o campo codigo (alfanumérico)
       const response = await this.makeRequest('/geral/produtos/', 'ConsultarProduto', {
-        codigo_produto: parseInt(codigoProduto)
+        codigo: codigo
       });
 
       if (response && response.codigo_produto) {
-        console.log(`✅ Produto encontrado: ${response.codigo || 'sem código'} (ID: ${response.codigo_produto})`);
+        console.log(`✅ Produto encontrado: ${response.codigo} (codigo_produto: ${response.codigo_produto})`);
         return {
           codigo_produto: response.codigo_produto,
-          codigo: response.codigo || codigoProduto
+          codigo: response.codigo
         };
       } else {
-        console.log(`❌ Produto não encontrado com codigo_produto: ${codigoProduto}`);
+        console.log(`❌ Produto não encontrado com código: ${codigo}`);
         return null;
       }
     } catch (error) {
-      console.error(`Erro ao buscar produto ${codigoProduto} no Omie:`, error);
+      console.error(`Erro ao buscar produto ${codigo} no Omie:`, error);
       return null;
     }
   }
