@@ -2885,17 +2885,30 @@ export class OmieService {
     try {
       console.log(`🔍 Buscando produto no Omie pelo código: ${codigo}`);
       
-      // Buscar produtos do Omie (primeira página contém os mais recentes)
-      const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
-        pagina: 1,
-        registros_por_pagina: 100 // Buscar bastante para garantir que encontramos
-      });
+      let allProducts: any[] = [];
+      let currentPage = 1;
+      let totalPages = 1;
+      
+      // Buscar TODAS as páginas de produtos
+      do {
+        const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
+          pagina: currentPage,
+          registros_por_pagina: 500 // Máximo permitido pelo Omie
+        });
 
-      const products = response.produto_servico_cadastro || [];
-      console.log(`📦 Total de produtos encontrados: ${products.length}`);
+        const products = response.produto_servico_cadastro || [];
+        allProducts = allProducts.concat(products);
+        
+        totalPages = response.total_de_paginas || 1;
+        console.log(`📦 Página ${currentPage}/${totalPages}: ${products.length} produtos encontrados`);
+        
+        currentPage++;
+      } while (currentPage <= totalPages);
+
+      console.log(`📦 Total de produtos no Omie: ${allProducts.length}`);
       
       // Buscar produto pelo código (case-insensitive)
-      const product = products.find((p: any) => 
+      const product = allProducts.find((p: any) => 
         p.codigo && p.codigo.toUpperCase() === codigo.toUpperCase()
       );
 
@@ -2907,6 +2920,7 @@ export class OmieService {
         };
       } else {
         console.log(`❌ Produto não encontrado com código: ${codigo}`);
+        console.log(`📋 Códigos disponíveis no Omie:`, allProducts.map(p => p.codigo).filter(c => c).slice(0, 20).join(', '));
         return null;
       }
     } catch (error) {
