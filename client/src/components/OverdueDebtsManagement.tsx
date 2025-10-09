@@ -466,7 +466,9 @@ export default function OverdueDebtsManagement() {
                 {filteredDebts.map((debt, index) => (
                   <div
                     key={index}
-                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                    onClick={() => setSelectedDebt(debt)}
+                    data-testid={`card-debt-${index}`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
@@ -486,14 +488,9 @@ export default function OverdueDebtsManagement() {
                             {debt.diasMaximoAtraso} dias em atraso
                           </p>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedDebt(debt)}
-                          data-testid={`button-view-debt-${index}`}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+                        <div className="text-gray-400">
+                          <Eye className="h-5 w-5" />
+                        </div>
                       </div>
                     </div>
                     <div className="mt-3">
@@ -514,67 +511,100 @@ export default function OverdueDebtsManagement() {
 
       {/* Modal de detalhes do débito */}
       {selectedDebt && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-2xl max-h-[80vh] overflow-hidden">
-            <CardHeader className="border-b">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => setSelectedDebt(null)}
+          data-testid="modal-debt-details"
+        >
+          <Card 
+            className="w-full max-w-2xl max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CardHeader className="border-b bg-gray-50">
               <CardTitle className="flex items-center justify-between">
-                <span>Detalhes do Débito</span>
+                <div>
+                  <span className="text-xl">Notas Fiscais Vencidas</span>
+                  <p className="text-sm font-normal text-gray-600 mt-1">
+                    {selectedDebt.cliente.nome_fantasia}
+                  </p>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setSelectedDebt(null)}
+                  data-testid="button-close-modal"
                 >
                   ×
                 </Button>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-6 overflow-y-auto">
-              <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold text-lg">
-                    {selectedDebt.cliente.nome_fantasia}
-                  </h3>
-                  <p className="text-gray-600">{selectedDebt.cliente.cnpj_cpf}</p>
+              <div className="space-y-6">
+                {/* Informações do Cliente */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600">CNPJ/CPF</p>
+                      <p className="font-medium">{selectedDebt.cliente.cnpj_cpf}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Código Cliente Omie</p>
+                      <p className="font-medium">{selectedDebt.cliente.codigo_cliente_omie}</p>
+                    </div>
+                  </div>
                 </div>
 
+                {/* Resumo Financeiro */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Valor Total</p>
-                    <p className="font-bold text-lg text-red-600">
+                  <div className="bg-red-50 rounded-lg p-4">
+                    <p className="text-sm text-gray-600">Valor Total em Atraso</p>
+                    <p className="font-bold text-2xl text-red-600">
                       {formatCurrency(selectedDebt.valorTotal)}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Máximo em Atraso</p>
-                    <p className="font-bold text-lg">
+                  <div className="bg-orange-50 rounded-lg p-4">
+                    <p className="text-sm text-gray-600">Maior Atraso</p>
+                    <p className="font-bold text-2xl text-orange-600">
                       {selectedDebt.diasMaximoAtraso} dias
                     </p>
                   </div>
                 </div>
 
+                {/* Lista de Notas Fiscais */}
                 <div>
-                  <h4 className="font-semibold mb-3">Documentos Vencidos</h4>
-                  <div className="space-y-2">
+                  <h4 className="font-semibold mb-3 flex items-center">
+                    <AlertTriangle className="h-5 w-5 text-red-600 mr-2" />
+                    Notas Fiscais Vencidas ({selectedDebt.debitos.length})
+                  </h4>
+                  <div className="space-y-3">
                     {selectedDebt.debitos.map((documento, idx) => (
-                      <div key={idx} className="border rounded p-3 bg-gray-50">
+                      <div 
+                        key={idx} 
+                        className="border rounded-lg p-4 bg-white hover:bg-gray-50 transition-colors"
+                        data-testid={`invoice-${idx}`}
+                      >
                         <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-medium">Doc: {documento.numero_documento}</p>
-                            <p className="text-sm text-gray-600">
-                              Vencimento: {formatDate(documento.data_vencimento)}
-                            </p>
-                            <p className="text-sm text-gray-600">
-                              {documento.dias_atraso} dias em atraso
-                            </p>
-                            {documento.observacao && (
-                              <p className="text-sm text-gray-500 mt-1">
-                                {documento.observacao}
+                          <div className="flex-1">
+                            <p className="font-semibold text-lg">NF: {documento.numero_documento}</p>
+                            <div className="mt-2 space-y-1">
+                              <p className="text-sm text-gray-600">
+                                <span className="font-medium">Vencimento:</span> {formatDate(documento.data_vencimento)}
                               </p>
-                            )}
+                              <p className="text-sm text-red-600 font-medium">
+                                <span className="font-medium">Atraso:</span> {documento.dias_atraso} dias
+                              </p>
+                              {documento.observacao && (
+                                <p className="text-sm text-gray-500 mt-2 italic">
+                                  {documento.observacao}
+                                </p>
+                              )}
+                            </div>
                           </div>
-                          <p className="font-bold text-red-600">
-                            {formatCurrency(documento.valor)}
-                          </p>
+                          <div className="ml-4 text-right">
+                            <p className="font-bold text-xl text-red-600">
+                              {formatCurrency(documento.valor)}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     ))}
