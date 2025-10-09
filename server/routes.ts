@@ -3632,7 +3632,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               price: omieProduct.valor_unitario?.toString() || '0',
               stock: 0,
               isActive: true,
-              omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto.toString()
+              omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto.toString(),
+              omieCodigo: omieProduct.codigo || null,
+              omieCodigoProduto: omieProduct.codigo_produto || null
             };
 
             // Verificar se produto já existe pelo código Omie ou nome
@@ -3643,11 +3645,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             );
 
             if (existingProduct) {
-              // Atualizar produto existente
+              // Atualizar produto existente com TODOS os campos incluindo códigos Omie
               await storage.updateProduct(existingProduct.id, {
                 price: systemProduct.price,
                 isActive: systemProduct.isActive,
-                omieCode: systemProduct.omieCode
+                omieCode: systemProduct.omieCode,
+                omieCodigo: systemProduct.omieCodigo,
+                omieCodigoProduto: systemProduct.omieCodigoProduto
               });
               result.updated++;
             } else {
