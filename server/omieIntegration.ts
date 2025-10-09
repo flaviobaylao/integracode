@@ -1710,9 +1710,6 @@ export class OmieService {
       console.log('Método de pagamento:', paymentMethod);
       console.log('Vendedor ID:', sellerId);
       
-      // Garantir que o produto genérico existe
-      await this.ensureCrmProductExists();
-      
       // Gerar número único para o pedido
       const orderNumber = `HS-${Date.now()}`;
       const integrationCode = `CRM-${salesCard.id}`;
@@ -1768,47 +1765,24 @@ export class OmieService {
         }
       }
 
-      // Verificar se produtos têm códigos Omie válidos
-      // Códigos válidos são aqueles diferentes do ID (case-sensitive)
-      const hasValidOmieCodes = products.some(p => 
-        p.omieCode && 
-        p.omieCode !== p.id
-      );
-      
       let orderItems;
       let totalValue;
       
-      if (hasValidOmieCodes) {
-        // Usar produtos reais com códigos Omie (usar campo "codigo" ao invés de "codigo_produto_integracao")
-        orderItems = products.map((product, index) => ({
-          ide: {
-            // Limite de 30 caracteres para codigo_item_integracao
-            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
-          },
-          produto: {
-            codigo: product.omieCode || product.id, // Usar campo "codigo" do Omie
-            descricao: product.name,
-            quantidade: product.quantity,
-            valor_unitario: product.unitPrice
-          }
-        }));
-        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
-      } else {
-        // Usar produto genérico consolidado quando códigos Omie não disponíveis
-        console.log('⚠️ Produtos sem códigos Omie válidos, usando produto genérico CRM-SALE');
-        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
-        orderItems = [{
-          ide: {
-            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`
-          },
-          produto: {
-            codigo: 'CRM-SALE', // Usar campo "codigo"
-            descricao: 'VENDA VIA CRM',
-            quantidade: 1,
-            valor_unitario: totalValue
-          }
-        }];
-      }
+      // SEMPRE usar produto genérico consolidado CRM-SALE
+      // Os códigos do CRM (PRD-MA-350) não batem com os códigos do Omie (PRD00003)
+      console.log('⚠️ Usando produto genérico CRM-SALE para consolidar todos os itens');
+      totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+      orderItems = [{
+        ide: {
+          codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`
+        },
+        produto: {
+          codigo_produto: 4285815731, // ID do produto genérico CRM-SALE no Omie
+          descricao: 'VENDA VIA CRM',
+          quantidade: 1,
+          valor_unitario: totalValue
+        }
+      }];
 
       // Determinar conta do Omie baseada no método de pagamento
       const omieAccountCode = paymentMethod 
