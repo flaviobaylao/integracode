@@ -64,11 +64,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
   // Mutation para liberar pedidos selecionados
   const releaseOrdersMutation = useMutation({
     mutationFn: async (orderIds: string[]) => {
-      return await apiRequest('/api/blocked-orders/release', {
-        method: 'POST',
-        body: JSON.stringify({ orderIds }),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return await apiRequest('POST', '/api/blocked-orders/release', { orderIds });
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
