@@ -1814,10 +1814,10 @@ export class OmieService {
         }
       };
 
-      // Adicionar vendedor ao pedido se encontrado (codigo_vendedor em informacoes_adicionais)
+      // Adicionar vendedor ao pedido se encontrado (codVend em informacoes_adicionais)
       if (omieVendorCode) {
-        orderPayload.informacoes_adicionais.codigo_vendedor = omieVendorCode;
-        console.log('✅ Vendedor adicionado ao pedido (codigo_vendedor):', omieVendorCode);
+        orderPayload.informacoes_adicionais.codVend = omieVendorCode;
+        console.log('✅ Vendedor adicionado ao pedido (codVend):', omieVendorCode);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
