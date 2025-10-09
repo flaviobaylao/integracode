@@ -1800,48 +1800,40 @@ export class OmieService {
         }
       }
       
-      // Se todos os produtos têm código Omie válido, usar códigos reais
-      if (itemsWithOmieCode.length > 0 && itemsWithoutOmieCode.length === 0) {
-        console.log('✅ Usando códigos reais dos produtos Omie');
-        orderItems = itemsWithOmieCode.map((product, index) => {
-          const itemTotal = product.quantity * product.unitPrice;
-          totalValue += itemTotal;
-          return {
-            ide: {
-              codigo_item_integracao: `${orderNumber}-${index + 1}`,
-              simples_nacional: 'S'
-            },
-            produto: {
-              codigo_produto: parseInt(product.omieCodigoProduto), // Converter string para number
-              descricao: product.name || 'Produto',
-              quantidade: product.quantity,
-              valor_unitario: product.unitPrice,
-              valor_total: itemTotal
-            }
-          };
-        });
-      } else {
-        // Caso contrário, usar produto genérico CRM-SALE consolidado
-        console.log('⚠️ Usando produto genérico CRM-SALE para consolidar todos os itens');
-        if (itemsWithoutOmieCode.length > 0) {
-          console.log(`   ${itemsWithoutOmieCode.length} produtos sem código Omie encontrados`);
-        }
-        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
-        orderItems = [{
+      // VALIDAÇÃO: Todos os produtos DEVEM estar cadastrados no Omie
+      if (itemsWithoutOmieCode.length > 0) {
+        const produtosFaltando = itemsWithoutOmieCode.map(p => 
+          p.omieCode || p.omieCodigo || p.name
+        ).join(', ');
+        
+        console.error(`❌ ERRO: ${itemsWithoutOmieCode.length} produto(s) não encontrado(s) no Omie:`);
+        console.error(`   Produtos faltando: ${produtosFaltando}`);
+        
+        throw new Error(
+          `Os seguintes produtos não foram encontrados no Omie: ${produtosFaltando}. ` +
+          `Por favor, cadastre estes produtos no Omie ou corrija os códigos no CRM.`
+        );
+      }
+      
+      // Usar códigos reais dos produtos Omie
+      console.log('✅ Todos os produtos foram encontrados no Omie');
+      orderItems = itemsWithOmieCode.map((product, index) => {
+        const itemTotal = product.quantity * product.unitPrice;
+        totalValue += itemTotal;
+        return {
           ide: {
-            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`,
+            codigo_item_integracao: `${orderNumber}-${index + 1}`,
             simples_nacional: 'S'
           },
           produto: {
-            codigo_produto: 4285815731, // ID do produto genérico CRM-SALE no Omie
-            descricao: 'VENDA VIA CRM',
-            quantidade: 1,
-            valor_unitario: totalValue,
-            valor_total: totalValue
+            codigo_produto: parseInt(product.omieCodigoProduto),
+            descricao: product.name || 'Produto',
+            quantidade: product.quantity,
+            valor_unitario: product.unitPrice,
+            valor_total: itemTotal
           }
-        }];
-        useGenericProduct = true;
-      }
+        };
+      });
 
       // Determinar conta do Omie baseada no método de pagamento
       const omieAccountCode = paymentMethod 
