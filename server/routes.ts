@@ -3713,6 +3713,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para importar produtos manualmente via JSON
+  app.post('/api/products/import-manual', authenticateUser, async (req: any, res) => {
+    try {
+      const products = req.body.products;
+      
+      if (!Array.isArray(products)) {
+        return res.status(400).json({ message: 'Formato inválido. Esperado array de produtos.' });
+      }
+
+      const result = {
+        totalProcessed: 0,
+        imported: 0,
+        errors: [] as string[]
+      };
+
+      for (const product of products) {
+        result.totalProcessed++;
+        
+        try {
+          await storage.createProduct({
+            name: product.name,
+            description: product.name,
+            price: product.price.toString(),
+            stock: 0,
+            isActive: true,
+            omieCode: product.code || '',
+            omieCodigo: product.omieCodigo || product.code || null,
+            omieCodigoProduto: product.omieCodigoProduto || null
+          });
+          result.imported++;
+        } catch (error: any) {
+          console.error(`Erro ao importar produto ${product.name}:`, error);
+          result.errors.push(`${product.name}: ${error?.message || 'Erro desconhecido'}`);
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('Erro na importação manual:', error);
+      res.status(500).json({ message: 'Erro ao importar produtos' });
+    }
+  });
+
   // Rota para limpar cache do Omie
   app.post('/api/omie/clear-cache', authenticateUser, async (req: any, res) => {
     try {
