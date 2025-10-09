@@ -52,6 +52,7 @@ const OmieProductSchema = z.object({
   unidade: z.string().optional(),
   valor_unitario: z.number().optional(),
   inativo: z.string().optional(),
+  bloqueado: z.string().optional(), // Campo para indicar se produto está bloqueado
   ncm: z.string().optional(),
   ean: z.string().optional(),
   peso_liq: z.number().optional(),
@@ -2841,6 +2842,8 @@ export class OmieService {
         unidade: product.unidade,
         valor_unitario: product.valor_unitario,
         inativo: product.inativo,
+        bloqueado: product.bloqueado,
+        codigo_produto_integracao: product.codigo_produto_integracao,
         ncm: product.ncm,
         ean: product.ean,
         peso_liq: product.peso_liq,

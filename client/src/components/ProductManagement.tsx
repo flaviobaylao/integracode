@@ -34,7 +34,7 @@ export default function ProductManagement() {
       queryClient.invalidateQueries({ queryKey: ['/api/products'] });
       toast({
         title: "Sincronização concluída",
-        description: `${data.imported} novos produtos importados, ${data.updated} atualizados.`,
+        description: `${data.imported} novos produtos, ${data.updated} atualizados${data.skipped ? `, ${data.skipped} inativos pulados` : ''}.`,
       });
     },
     onError: (error: any) => {
