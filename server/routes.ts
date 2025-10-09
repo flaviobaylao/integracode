@@ -3756,6 +3756,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota TEMPORÁRIA (sem auth) para listar contas correntes do Omie
+  app.get('/api/omie/bank-accounts-debug', async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const accounts = await omieService.listBankAccounts();
+      
+      // Formatar para facilitar leitura
+      const formatted = accounts.map((acc: any) => ({
+        codigo: acc.nCodCC,
+        nome: acc.cDescrCC,
+        tipo: acc.cTipo,
+        banco: acc.cNomeBanco
+      }));
+      
+      res.json(formatted);
+    } catch (error) {
+      console.error('Erro ao listar contas correntes:', error);
+      res.status(500).json({ message: 'Erro interno do servidor', error: String(error) });
+    }
+  });
+
   // Rota para listar contas correntes do Omie
   app.get('/api/omie/bank-accounts', authenticateUser, async (req: any, res) => {
     try {

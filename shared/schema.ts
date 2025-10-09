@@ -796,9 +796,9 @@ export type OperationType = 'venda' | 'troca' | 'amostra';
 
 // Mapeamento dos métodos de pagamento para contas do Omie
 export const PAYMENT_METHOD_TO_OMIE_ACCOUNT = {
-  'a_vista': 2425423833,  // Caixinha
-  'boleto': 2427900197,   // Boleto
-  'pix': 2425423833       // PIX usa mesma conta da Caixinha por enquanto
+  'a_vista': 4081856009,  // Omie.CASH (à vista)
+  'boleto': 3275551305,   // BB - FILIAL (boleto)
+  'pix': 4081856009       // Omie.CASH (PIX)
 } as const;
 
 // Labels para exibição na interface
