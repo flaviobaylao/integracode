@@ -4231,15 +4231,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: 'Omie integration not configured' });
       }
       
-      // Usar sempre produto genérico CRM-SALE para evitar problemas de mapeamento
-      const products = [
-        {
-          id: 'crm-sale',
-          name: 'VENDA VIA CRM',
-          unitPrice: parseFloat(card.saleValue),
-          quantity: 1
-        }
-      ];
+      // Usar produtos reais da ficha se disponíveis
+      let products = [];
+      
+      if (card.products && Array.isArray(card.products) && card.products.length > 0) {
+        // Buscar dados completos dos produtos para obter omieCode
+        const productPromises = card.products.map(async (cardProduct: any) => {
+          const product = await storage.getProduct(cardProduct.id);
+          return {
+            id: product?.id || cardProduct.id,
+            omieCode: product?.omieCode || null,
+            name: cardProduct.name,
+            unitPrice: cardProduct.unitPrice || 0,
+            quantity: cardProduct.quantity || 1
+          };
+        });
+        products = await Promise.all(productPromises);
+      } else {
+        // Fallback: usar produto genérico se não houver produtos na ficha
+        products = [
+          {
+            id: 'crm-sale',
+            omieCode: 'crm-sale',
+            name: 'VENDA VIA CRM',
+            unitPrice: parseFloat(card.saleValue),
+            quantity: 1
+          }
+        ];
+      }
       
       const omieResponse = await omieService.createSalesOrder(
         card, 

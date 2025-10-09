@@ -1768,21 +1768,43 @@ export class OmieService {
         }
       }
 
-      // Preparar detalhes dos produtos
-      const orderItems = products.map((product, index) => ({
-        ide: {
-          // Limite de 30 caracteres para codigo_item_integracao
-          codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
-        },
-        produto: {
-          codigo_produto_integracao: product.omieCode || product.id, // Usar código Omie se disponível
-          descricao: product.name,
-          quantidade: product.quantity,
-          valor_unitario: product.unitPrice
-        }
-      }));
-
-      const totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+      // Verificar se produtos têm códigos Omie válidos
+      const hasValidOmieCodes = products.some(p => p.omieCode && p.omieCode !== p.id);
+      
+      let orderItems;
+      let totalValue;
+      
+      if (hasValidOmieCodes) {
+        // Usar produtos reais com códigos Omie
+        orderItems = products.map((product, index) => ({
+          ide: {
+            // Limite de 30 caracteres para codigo_item_integracao
+            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
+          },
+          produto: {
+            codigo_produto_integracao: product.omieCode || product.id,
+            descricao: product.name,
+            quantidade: product.quantity,
+            valor_unitario: product.unitPrice
+          }
+        }));
+        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+      } else {
+        // Usar produto genérico consolidado quando códigos Omie não disponíveis
+        console.log('⚠️ Produtos sem códigos Omie válidos, usando produto genérico CRM-SALE');
+        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+        orderItems = [{
+          ide: {
+            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`
+          },
+          produto: {
+            codigo_produto_integracao: 'crm-sale',
+            descricao: 'VENDA VIA CRM',
+            quantidade: 1,
+            valor_unitario: totalValue
+          }
+        }];
+      }
 
       // Determinar conta do Omie baseada no método de pagamento
       const omieAccountCode = paymentMethod 
