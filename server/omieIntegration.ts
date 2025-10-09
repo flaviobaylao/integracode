@@ -1769,7 +1769,11 @@ export class OmieService {
       }
 
       // Verificar se produtos têm códigos Omie válidos
-      const hasValidOmieCodes = products.some(p => p.omieCode && p.omieCode !== p.id);
+      // Códigos válidos são aqueles diferentes do ID (case-insensitive)
+      const hasValidOmieCodes = products.some(p => 
+        p.omieCode && 
+        p.omieCode.toLowerCase() !== p.id.toLowerCase()
+      );
       
       let orderItems;
       let totalValue;
