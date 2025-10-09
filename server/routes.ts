@@ -3608,6 +3608,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // 🗑️ LIMPAR todos os produtos antes de sincronizar
+      console.log('🗑️ Limpando base de produtos antes da sincronização...');
+      const existingProducts = await storage.getProducts();
+      for (const product of existingProducts) {
+        await storage.deleteProduct(product.id);
+      }
+      console.log(`✅ ${existingProducts.length} produtos removidos`);
+
       const result = {
         totalProcessed: 0,
         imported: 0,

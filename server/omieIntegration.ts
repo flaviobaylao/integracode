@@ -2824,10 +2824,11 @@ export class OmieService {
     currentPage: number;
   }> {
     try {
+      // Buscar apenas produtos ATIVOS usando o parâmetro correto
       const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
         pagina: page,
         registros_por_pagina: pageSize,
-        apenas_importado_api: 'S'
+        inativo_prod: 'N'  // N = Apenas produtos ATIVOS
       });
 
       console.log('Resposta da API Omie produtos:', JSON.stringify(response, null, 2));
