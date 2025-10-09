@@ -410,9 +410,11 @@ export const blockedOrders = pgTable("blocked_orders", {
   customerId: varchar("customer_id").notNull(),
   sellerId: varchar("seller_id").notNull(),
   status: blockedOrderStatusEnum("status").notNull().default('blocked'),
-  blockReason: varchar("block_reason").notNull(), // 'operation_type', 'overdue_debt', 'credit_limit'
+  blockReason: varchar("block_reason").notNull(), // 'operation_type', 'overdue_debt', 'credit_limit', 'payment_term'
   blockDetails: text("block_details"), // Detalhes específicos do bloqueio
   operationType: operationTypeEnum("operation_type"),
+  paymentMethod: paymentMethodEnum("payment_method"), // Método de pagamento
+  boletoDays: integer("boleto_days"), // Prazo do boleto em dias (se aplicável)
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
   products: jsonb("products").$type<Array<{
     id: string;

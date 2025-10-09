@@ -21,6 +21,7 @@ import {
   visitAgenda,
   users,
   salesCards,
+  blockedOrders,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
@@ -3534,10 +3535,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`Fetching blocked orders for user ${user.email} (role: ${user.role})`);
       
-      // Para implementação inicial, retornar lista vazia
-      // TODO: Implementar storage.getBlockedOrders quando schema estiver aplicado
-      const blockedOrders = [];
-      res.json(blockedOrders);
+      // Buscar pedidos bloqueados do banco de dados
+      const blockedOrdersData = await db.select()
+        .from(blockedOrders)
+        .where(eq(blockedOrders.status, 'blocked'));
+      
+      // Buscar dados relacionados (cliente e vendedor)
+      const enrichedOrders = await Promise.all(
+        blockedOrdersData.map(async (order) => {
+          const customer = await storage.getCustomer(order.customerId);
+          const seller = await storage.getUser(order.sellerId);
+          
+          return {
+            ...order,
+            customer: {
+              name: customer?.name || 'Cliente não encontrado',
+              phone: customer?.phone || '',
+              email: customer?.email || ''
+            },
+            seller: {
+              firstName: seller?.firstName || 'Vendedor',
+              lastName: seller?.lastName || 'não encontrado',
+              email: seller?.email || ''
+            }
+          };
+        })
+      );
+      
+      res.json(enrichedOrders);
     } catch (error) {
       console.error("Error fetching blocked orders:", error);
       res.status(500).json({ message: "Failed to fetch blocked orders" });
@@ -3556,12 +3581,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`Releasing ${orderIds.length} blocked orders by user ${req.currentUser.email}`);
       
-      // Para implementação inicial, simular liberação
-      // TODO: Implementar lógica real quando schema estiver aplicado
+      let released = 0;
+      const errors = [];
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Integração Omie não configurada' });
+      }
+      
+      for (const orderId of orderIds) {
+        try {
+          // Buscar pedido bloqueado
+          const blockedOrder = await db.select()
+            .from(blockedOrders)
+            .where(eq(blockedOrders.id, orderId))
+            .limit(1);
+          
+          if (blockedOrder.length === 0) {
+            errors.push(`Pedido ${orderId} não encontrado`);
+            continue;
+          }
+          
+          const order = blockedOrder[0];
+          
+          // Buscar sales card relacionado
+          const salesCard = await storage.getSalesCard(order.salesCardId);
+          if (!salesCard) {
+            errors.push(`Sales card ${order.salesCardId} não encontrado`);
+            continue;
+          }
+          
+          // Buscar dados completos dos produtos
+          let products = [];
+          if (order.products && Array.isArray(order.products) && order.products.length > 0) {
+            const productPromises = order.products.map(async (cardProduct: any) => {
+              let product = await storage.getProduct(cardProduct.id);
+              if (!product) {
+                product = await storage.getProductByOmieCode(cardProduct.id);
+              }
+              return {
+                id: product?.id || cardProduct.id,
+                omieCode: product?.omieCode || null,
+                omieCodigo: product?.omieCodigo || null,
+                omieCodigoProduto: product?.omieCodigoProduto || null,
+                name: cardProduct.name,
+                unitPrice: cardProduct.unitPrice || 0,
+                quantity: cardProduct.quantity || 1
+              };
+            });
+            products = await Promise.all(productPromises);
+          }
+          
+          // Enviar para Omie
+          const omieResponse = await omieService.createSalesOrder(
+            salesCard,
+            salesCard.customer,
+            products,
+            order.paymentMethod || 'a_vista',
+            order.operationType || 'venda',
+            order.sellerId
+          );
+          
+          // Atualizar sales card com ID do Omie
+          await storage.updateSalesCard(order.salesCardId, {
+            omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}`,
+            notes: (salesCard.notes || '') + `\n\nLiberado e enviado para Omie: ${new Date().toLocaleString('pt-BR')}`
+          });
+          
+          // Atualizar status do pedido bloqueado
+          await db.update(blockedOrders)
+            .set({
+              status: 'sent_to_omie',
+              releasedAt: new Date(),
+              releasedBy: userId,
+              omieOrderId: omieResponse.codigo_pedido?.toString()
+            })
+            .where(eq(blockedOrders.id, orderId));
+          
+          released++;
+          console.log(`✅ Pedido ${orderId} liberado e enviado para Omie`);
+          
+        } catch (error: any) {
+          console.error(`❌ Erro ao liberar pedido ${orderId}:`, error);
+          errors.push(`Pedido ${orderId}: ${error.message}`);
+        }
+      }
+      
       res.json({
-        released: orderIds.length,
-        errors: [],
-        message: `${orderIds.length} pedido(s) liberado(s) com sucesso`
+        released,
+        errors,
+        message: `${released} pedido(s) liberado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}`
       });
       
     } catch (error) {
@@ -4327,6 +4436,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (card.omieOrderId) {
         return res.status(400).json({ 
           message: 'Este pedido já foi enviado para o Omie' 
+        });
+      }
+      
+      // VERIFICAR BLOQUEIO POR PRAZO DE BOLETO
+      const paymentMethod = card.paymentMethod || 'a_vista';
+      const boletoDays = card.boletoDays || 7;
+      
+      if (paymentMethod === 'boleto' && boletoDays > 7) {
+        console.log(`⚠️ BLOQUEANDO PEDIDO: Boleto com prazo de ${boletoDays} dias (limite: 7 dias)`);
+        
+        // Criar registro de pedido bloqueado
+        const blockedOrderData = {
+          salesCardId: card.id,
+          customerId: card.customerId,
+          sellerId: card.sellerId,
+          blockReason: 'payment_term',
+          blockDetails: `Boleto com prazo de ${boletoDays} dias excede o limite de 7 dias permitido. Aguardando aprovação administrativa.`,
+          operationType: card.operationType || 'venda',
+          paymentMethod: paymentMethod,
+          boletoDays: boletoDays,
+          totalAmount: parseFloat(card.saleValue),
+          products: card.products || []
+        };
+        
+        await db.insert(blockedOrders).values(blockedOrderData);
+        
+        return res.status(403).json({ 
+          blocked: true,
+          message: `Pedido bloqueado: Boleto com prazo de ${boletoDays} dias excede o limite de 7 dias. O pedido foi enviado para aprovação administrativa.`,
+          blockReason: 'payment_term',
+          boletoDays: boletoDays
         });
       }
       

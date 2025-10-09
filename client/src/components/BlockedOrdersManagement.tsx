@@ -19,6 +19,8 @@ interface BlockedOrder {
   blockReason: string;
   blockDetails?: string;
   operationType: 'venda' | 'troca' | 'amostra';
+  paymentMethod?: string;
+  boletoDays?: number;
   totalAmount?: number;
   products: Array<{
     id: string;
@@ -132,7 +134,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
     }).format(value);
   };
 
-  const getBlockReasonLabel = (reason: string, operationType?: string) => {
+  const getBlockReasonLabel = (reason: string, operationType?: string, boletoDays?: number) => {
     switch (reason) {
       case 'operation_type':
         return operationType === 'troca' ? 'Pedido de Troca' : 'Pedido de Amostra';
@@ -140,6 +142,8 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
         return 'Cliente com Débito Vencido';
       case 'credit_limit':
         return 'Limite de Crédito Excedido';
+      case 'payment_term':
+        return `Prazo de Boleto Excedido (${boletoDays || 0} dias)`;
       default:
         return reason;
     }
@@ -279,7 +283,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                           <p><span className="font-medium">Vendedor:</span> {order.seller.firstName} {order.seller.lastName}</p>
                           <p><span className="font-medium">Telefone:</span> {order.customer.phone}</p>
-                          <p><span className="font-medium">Motivo:</span> {getBlockReasonLabel(order.blockReason, order.operationType)}</p>
+                          <p><span className="font-medium">Motivo:</span> {getBlockReasonLabel(order.blockReason, order.operationType, order.boletoDays)}</p>
                           <p><span className="font-medium">Bloqueado em:</span> {new Date(order.blockedAt).toLocaleDateString('pt-BR')}</p>
                         </div>
                         {order.blockDetails && (
