@@ -1770,30 +1770,32 @@ export class OmieService {
       let totalValue = 0;
       let useGenericProduct = false;
       
-      // Buscar e validar códigos dos produtos no Omie
+      // SEMPRE buscar e validar códigos dos produtos no Omie (não confiar no banco)
       const itemsWithOmieCode: any[] = [];
       const itemsWithoutOmieCode: any[] = [];
       
       for (const product of products) {
-        if (product.omieCode) {
-          // Buscar o codigo_produto correto do Omie usando o código
-          console.log(`🔍 Buscando codigo_produto para ${product.omieCode}...`);
-          const omieProduct = await this.getProductByCode(product.omieCode);
+        if (product.omieCode || product.omieCodigo) {
+          const codigoToSearch = product.omieCode || product.omieCodigo;
+          // SEMPRE buscar o codigo_produto correto do Omie usando o código
+          console.log(`🔍 Buscando codigo_produto REAL no Omie para ${codigoToSearch}...`);
+          const omieProduct = await this.getProductByCode(codigoToSearch);
           
           if (omieProduct) {
-            // Produto encontrado no Omie - usar código real
-            console.log(`✅ Produto encontrado: ${omieProduct.codigo} -> ${omieProduct.codigo_produto}`);
+            // Produto encontrado no Omie - usar codigo_produto REAL
+            console.log(`✅ Produto encontrado no Omie: ${omieProduct.codigo} -> codigo_produto REAL: ${omieProduct.codigo_produto}`);
             itemsWithOmieCode.push({
               ...product,
               omieCodigoProduto: omieProduct.codigo_produto.toString()
             });
           } else {
             // Produto não encontrado no Omie
-            console.log(`⚠️ Produto ${product.omieCode} não encontrado no Omie`);
+            console.log(`⚠️ Produto ${codigoToSearch} não encontrado no Omie`);
             itemsWithoutOmieCode.push(product);
           }
         } else {
           // Produto sem código Omie - consolidar no genérico
+          console.log(`⚠️ Produto sem código Omie: ${product.name}`);
           itemsWithoutOmieCode.push(product);
         }
       }
