@@ -3631,12 +3631,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               description: omieProduct.descricao || '',
               price: omieProduct.valor_unitario?.toString() || '0',
               stock: 0,
-              isActive: true
+              isActive: true,
+              omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto.toString()
             };
 
-            // Verificar se produto já existe pelo nome
+            // Verificar se produto já existe pelo código Omie ou nome
             const existingProducts = await storage.getProducts();
             const existingProduct = existingProducts.find(product => 
+              (product.omieCode && product.omieCode === systemProduct.omieCode) ||
               product.name === systemProduct.name
             );
 
@@ -3644,7 +3646,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Atualizar produto existente
               await storage.updateProduct(existingProduct.id, {
                 price: systemProduct.price,
-                isActive: systemProduct.isActive
+                isActive: systemProduct.isActive,
+                omieCode: systemProduct.omieCode
               });
               result.updated++;
             } else {
@@ -5118,22 +5121,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`Estoque indisponível para ${product.codigo}: ${stockError}`);
             }
 
-            // Verificar se produto já existe
+            // Verificar se produto já existe pelo código Omie
             const existingProducts = await storage.getProducts();
-            const existingProduct = existingProducts.find(p => p.omieProductId === product.codigo_produto);
+            const omieCode = product.codigo || product.codigo_produto.toString();
+            const existingProduct = existingProducts.find(p => p.omieCode === omieCode);
             
             const productData = {
               name: product.descricao || 'Produto sem nome',
               description: product.descricao_detalhada || product.descricao || '',
               price: (product.valor_unitario || 0).toString(),
               stock: stockQuantity,
-              stockQuantity: stockQuantity,
-              unit: product.unidade || 'UN',
-              omieProductId: product.codigo_produto,
-              omieCode: product.codigo || product.codigo_produto.toString(),
-              ncm: product.ncm || '',
-              ean: product.ean || '',
-              categoryId: 'bebidas-frutas',
+              omieCode: omieCode,
               isActive: true
             };
 
@@ -5143,10 +5141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`Produto atualizado: ${product.descricao} (Estoque: ${stockQuantity})`);
             } else {
               // Criar novo produto
-              await storage.createProduct({
-                id: `omie-${product.codigo_produto}`,
-                ...productData
-              });
+              await storage.createProduct(productData);
               console.log(`Produto importado: ${product.descricao} (Estoque: ${stockQuantity})`);
             }
 

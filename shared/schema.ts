@@ -123,6 +123,7 @@ export const customers = pgTable("customers", {
 // Products table
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  omieCode: varchar("omie_code"), // Código de integração do produto no Omie
   name: varchar("name").notNull(),
   description: text("description"),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),

@@ -47,6 +47,7 @@ const OmieVendorSchema = z.object({
 const OmieProductSchema = z.object({
   codigo_produto: z.number(),
   codigo: z.string().optional(),
+  codigo_produto_integracao: z.string().optional(), // Código de integração do produto
   descricao: z.string(),
   unidade: z.string().optional(),
   valor_unitario: z.number().optional(),
@@ -1774,7 +1775,7 @@ export class OmieService {
           codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
         },
         produto: {
-          codigo_produto_integracao: product.id,
+          codigo_produto_integracao: product.omieCode || product.id, // Usar código Omie se disponível
           descricao: product.name,
           quantidade: product.quantity,
           valor_unitario: product.unitPrice
