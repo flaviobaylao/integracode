@@ -2826,7 +2826,8 @@ export class OmieService {
     try {
       const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
         pagina: page,
-        registros_por_pagina: pageSize
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'S'
       });
 
       console.log('Resposta da API Omie produtos:', JSON.stringify(response, null, 2));
