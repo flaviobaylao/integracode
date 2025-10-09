@@ -1845,7 +1845,7 @@ export class OmieService {
       let parcelaCode = '999'; // Padrão
       if (paymentMethod === 'boleto') {
         const boletoDays = salesCard.boletoDays || 7; // Padrão 7 dias se não especificado
-        parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || '007';
+        parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
       }
 
       // Payload para API Omie (estrutura correta)
@@ -2931,16 +2931,17 @@ export class OmieService {
     try {
       console.log('💳 Listando códigos de parcela do Omie...');
       
-      const response = await this.makeRequest('/geral/tabeladeparcelas/', 'ListarTabelasDeParcelas', {
-        nPagina: 1,
-        nRegPorPagina: 100
+      const response = await this.makeRequest('/geral/parcelas/', 'ListarParcelas', {
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: 'N'
       });
 
-      if (response && response.listaTabelasDeParcelas) {
-        console.log(`✅ Encontradas ${response.listaTabelasDeParcelas.length} tabelas de parcelas`);
-        return response.listaTabelasDeParcelas;
+      if (response && response.parcelas_cadastro) {
+        console.log(`✅ Encontradas ${response.parcelas_cadastro.length} parcelas`);
+        return response.parcelas_cadastro;
       } else {
-        console.log('❌ Nenhuma tabela de parcela encontrada');
+        console.log('❌ Nenhuma parcela encontrada');
         return [];
       }
     } catch (error) {
@@ -3289,7 +3290,7 @@ export async function createOmieOrder(orderData: {
     let parcelaCode = '999'; // Padrão
     if (orderData.paymentMethod === 'boleto') {
       const boletoDays = orderData.boletoDays || 7; // Padrão 7 dias se não especificado
-      parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || '007';
+      parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
     }
 
     const omieOrderPayload = {

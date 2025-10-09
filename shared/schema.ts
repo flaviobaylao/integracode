@@ -801,14 +801,14 @@ export const PAYMENT_METHOD_TO_OMIE_ACCOUNT = {
   'pix': 4081856009       // Omie.CASH (PIX)
 } as const;
 
-// Mapeamento de dias de boleto para código de parcela do Omie
+// Mapeamento de dias de boleto para código de parcela do Omie (códigos reais da API)
 export const BOLETO_DAYS_TO_PARCELA_CODE = {
-  7: '007',   // 7 dias
-  14: '014',  // 14 dias
-  21: '021',  // 21 dias
-  28: '028',  // 28 dias
-  32: '032',  // 32 dias
-  35: '035'   // 35 dias
+  7: 'A07',   // Para 7 dias
+  14: 'A14',  // Para 14 dias
+  21: 'A21',  // Para 21 dias
+  28: 'A28',  // Para 28 dias
+  32: 'U85',  // Para 32 dias
+  35: 'A35'   // Para 35 dias
 } as const;
 
 // Opções de prazo de boleto disponíveis
