@@ -2899,6 +2899,29 @@ export class OmieService {
     }
   }
 
+  // Listar todas as contas correntes do Omie
+  async listBankAccounts(): Promise<any[]> {
+    try {
+      console.log('🏦 Listando contas correntes do Omie...');
+      
+      const response = await this.makeRequest('/geral/contacorrente/', 'ListarContasCorrentes', {
+        pagina: 1,
+        registros_por_pagina: 100
+      });
+
+      if (response && response.conta_corrente_lista) {
+        console.log(`✅ Encontradas ${response.conta_corrente_lista.length} contas correntes`);
+        return response.conta_corrente_lista;
+      } else {
+        console.log('❌ Nenhuma conta corrente encontrada');
+        return [];
+      }
+    } catch (error) {
+      console.error('Erro ao listar contas correntes do Omie:', error);
+      throw error;
+    }
+  }
+
   // Converter vendedor do Omie para formato do sistema
   convertVendorToSystemFormat(omieVendor: OmieVendor) {
     return {

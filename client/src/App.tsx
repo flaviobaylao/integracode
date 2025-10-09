@@ -21,6 +21,7 @@ import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
 import RoutesManagement from "@/pages/RoutesManagement";
 import UserManagementPage from "@/pages/UserManagementPage";
+import BankAccountsDebug from "@/pages/BankAccountsDebug";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -46,6 +47,7 @@ function Router() {
           <Route path="/visit-routes" component={VisitRoutes} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/admin/users" component={UserManagementPage} />
+          <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
       <Route component={NotFound} />

@@ -3756,6 +3756,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para listar contas correntes do Omie
+  app.get('/api/omie/bank-accounts', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const accounts = await omieService.listBankAccounts();
+      res.json(accounts);
+    } catch (error) {
+      console.error('Erro ao listar contas correntes:', error);
+      res.status(500).json({ message: 'Erro interno do servidor' });
+    }
+  });
+
   // Rota para limpar cache do Omie
   app.post('/api/omie/clear-cache', authenticateUser, async (req: any, res) => {
     try {
