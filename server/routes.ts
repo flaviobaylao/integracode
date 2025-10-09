@@ -3781,6 +3781,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota TEMPORÁRIA (sem auth) para listar códigos de parcela do Omie
+  app.get('/api/omie/payment-terms-debug', async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const terms = await omieService.listPaymentTerms();
+      res.json(terms);
+    } catch (error) {
+      console.error('Erro ao listar códigos de parcela:', error);
+      res.status(500).json({ message: 'Erro interno do servidor', error: String(error) });
+    }
+  });
+
   // Rota para listar contas correntes do Omie
   app.get('/api/omie/bank-accounts', authenticateUser, async (req: any, res) => {
     try {

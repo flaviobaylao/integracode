@@ -1842,7 +1842,7 @@ export class OmieService {
         : 2425423833; // Padrão: Caixinha (À vista)
 
       // Determinar código da parcela baseado no método de pagamento
-      const parcelaCode = paymentMethod === 'boleto' ? '030' : '999'; // 30 dias para boleto, à vista para outros
+      const parcelaCode = paymentMethod === 'boleto' ? '000' : '999'; // À vista para boleto (1 parcela), padrão para outros
 
       // Payload para API Omie (estrutura correta)
       const orderPayload: any = {
@@ -2922,6 +2922,29 @@ export class OmieService {
     }
   }
 
+  // Listar códigos de parcela disponíveis no Omie
+  async listPaymentTerms(): Promise<any[]> {
+    try {
+      console.log('💳 Listando códigos de parcela do Omie...');
+      
+      const response = await this.makeRequest('/geral/tabeladeparcelas/', 'ListarTabelasDeParcelas', {
+        nPagina: 1,
+        nRegPorPagina: 100
+      });
+
+      if (response && response.listaTabelasDeParcelas) {
+        console.log(`✅ Encontradas ${response.listaTabelasDeParcelas.length} tabelas de parcelas`);
+        return response.listaTabelasDeParcelas;
+      } else {
+        console.log('❌ Nenhuma tabela de parcela encontrada');
+        return [];
+      }
+    } catch (error) {
+      console.error('Erro ao listar códigos de parcela do Omie:', error);
+      throw error;
+    }
+  }
+
   // Converter vendedor do Omie para formato do sistema
   convertVendorToSystemFormat(omieVendor: OmieVendor) {
     return {
@@ -3258,7 +3281,7 @@ export async function createOmieOrder(orderData: {
       : 2425423833; // Padrão: Caixinha (À vista)
 
     // Determinar código da parcela baseado no método de pagamento
-    const parcelaCode = orderData.paymentMethod === 'boleto' ? '030' : '999';
+    const parcelaCode = orderData.paymentMethod === 'boleto' ? '000' : '999'; // À vista (1 parcela) para boleto, padrão para outros
 
     const omieOrderPayload = {
       cabecalho: {
