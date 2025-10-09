@@ -536,8 +536,13 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-gray-600">
-                    Esta operação irá buscar todos os produtos ativos do Omie e importar/atualizar no sistema.
+                    Esta operação irá buscar todos os produtos ativos do Omie e importar/atualizar no sistema com seus códigos de integração.
                   </p>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <p className="text-sm text-blue-800">
+                      ℹ️ <strong>Importante:</strong> Execute esta sincronização para atualizar os códigos Omie dos produtos. Isso é necessário para que as fichas de venda sejam enviadas corretamente ao Omie com os produtos reais.
+                    </p>
+                  </div>
                   
                   <div className="flex justify-center">
                     <Button
