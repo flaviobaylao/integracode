@@ -2881,11 +2881,15 @@ export class OmieService {
       let currentPage = 1;
       let totalPages = 1;
       
-      // Buscar TODAS as páginas de produtos
+      // Buscar TODAS as páginas de produtos (incluindo inativos, bloqueados, etc)
       do {
         const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
           pagina: currentPage,
-          registros_por_pagina: 500 // Máximo permitido pelo Omie
+          registros_por_pagina: 500, // Máximo permitido pelo Omie
+          apenas_importado_api: "N",  // Incluir produtos criados manualmente
+          filtrar_apenas_inativos: "N", // Incluir produtos ativos E inativos
+          filtrar_apenas_bloqueados: "N", // Incluir produtos não bloqueados
+          filtrar_apenas_omiepdv: "N" // Incluir produtos não-PDV
         });
 
         const products = response.produto_servico_cadastro || [];
