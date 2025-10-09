@@ -1792,7 +1792,7 @@ export class OmieService {
           totalValue += itemTotal;
           return {
             ide: {
-              codigo_item_integracao: `${product.id}-${index}`,
+              codigo_item_integracao: `${orderNumber}-${index + 1}`,
               simples_nacional: 'S'
             },
             produto: {
