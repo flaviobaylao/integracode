@@ -4235,12 +4235,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let products = [];
       
       if (card.products && Array.isArray(card.products) && card.products.length > 0) {
-        // Buscar dados completos dos produtos para obter omieCode
+        // Buscar dados completos dos produtos para obter códigos Omie
         const productPromises = card.products.map(async (cardProduct: any) => {
           const product = await storage.getProduct(cardProduct.id);
           return {
             id: product?.id || cardProduct.id,
             omieCode: product?.omieCode || null,
+            omieCodigo: product?.omieCodigo || null,
+            omieCodigoProduto: product?.omieCodigoProduto || null,
             name: cardProduct.name,
             unitPrice: cardProduct.unitPrice || 0,
             quantity: cardProduct.quantity || 1
@@ -4321,15 +4323,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Preparar lista de produtos (usar dados do request ou produtos padrão)
-      const products = req.body.products || [
-        {
+      // Preparar lista de produtos (usar dados do request ou buscar do card)
+      let products = req.body.products;
+      
+      if (!products && salesCard.products && salesCard.products.length > 0) {
+        // Buscar dados completos dos produtos para obter códigos Omie
+        const productPromises = salesCard.products.map(async (cardProduct: any) => {
+          const product = await storage.getProduct(cardProduct.id);
+          return {
+            id: product?.id || cardProduct.id,
+            omieCode: product?.omieCode || null,
+            omieCodigo: product?.omieCodigo || null,
+            omieCodigoProduto: product?.omieCodigoProduto || null,
+            name: cardProduct.name,
+            unitPrice: cardProduct.unitPrice || 0,
+            quantity: cardProduct.quantity || 1
+          };
+        });
+        products = await Promise.all(productPromises);
+      } else if (!products) {
+        // Fallback padrão
+        products = [{
           id: 'default-product',
           name: 'Produto de vendas',
-          price: salesCard.value || 0,
+          unitPrice: salesCard.value || 0,
           quantity: 1
-        }
-      ];
+        }];
+      }
 
       // Criar pedido no Omie com informações de entrega
       const omieOrder = await omieService.createSalesOrder(salesCard, customer, products);
@@ -4479,7 +4499,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Usar produtos do card ou produtos fornecidos no request
-      const orderProducts = products || salesCard.products || [];
+      let orderProducts = products;
+      
+      if (!orderProducts && salesCard.products && salesCard.products.length > 0) {
+        // Buscar dados completos dos produtos para obter códigos Omie
+        const productPromises = salesCard.products.map(async (cardProduct: any) => {
+          const product = await storage.getProduct(cardProduct.id);
+          return {
+            id: product?.id || cardProduct.id,
+            omieCode: product?.omieCode || null,
+            omieCodigo: product?.omieCodigo || null,
+            omieCodigoProduto: product?.omieCodigoProduto || null,
+            name: cardProduct.name,
+            unitPrice: cardProduct.unitPrice || 0,
+            quantity: cardProduct.quantity || 1
+          };
+        });
+        orderProducts = await Promise.all(productPromises);
+      } else if (!orderProducts) {
+        orderProducts = [];
+      }
 
       if (orderProducts.length === 0) {
         return res.status(400).json({ 

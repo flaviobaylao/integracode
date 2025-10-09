@@ -1766,23 +1766,71 @@ export class OmieService {
       }
 
       let orderItems;
-      let totalValue;
+      let totalValue = 0;
+      let useGenericProduct = false;
       
-      // SEMPRE usar produto genérico consolidado CRM-SALE
-      // Os códigos do CRM (PRD-MA-350) não batem com os códigos do Omie (PRD00003)
-      console.log('⚠️ Usando produto genérico CRM-SALE para consolidar todos os itens');
-      totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
-      orderItems = [{
-        ide: {
-          codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`
-        },
-        produto: {
-          codigo_produto: 4285815731, // ID do produto genérico CRM-SALE no Omie
-          descricao: 'VENDA VIA CRM',
-          quantidade: 1,
-          valor_unitario: totalValue
+      // Tentar usar códigos reais dos produtos quando disponíveis
+      const itemsWithOmieCode: any[] = [];
+      const itemsWithoutOmieCode: any[] = [];
+      
+      for (const product of products) {
+        if (product.omieCodigoProduto) {
+          // Produto tem código Omie - usar código real
+          itemsWithOmieCode.push(product);
+        } else {
+          // Produto sem código Omie - consolidar no genérico
+          itemsWithoutOmieCode.push(product);
         }
-      }];
+      }
+      
+      // Se todos os produtos têm código Omie, usar códigos reais
+      if (itemsWithOmieCode.length > 0 && itemsWithoutOmieCode.length === 0) {
+        console.log('✅ Usando códigos reais dos produtos Omie');
+        orderItems = itemsWithOmieCode.map((product, index) => {
+          const itemTotal = product.quantity * product.unitPrice;
+          totalValue += itemTotal;
+          return {
+            ide: {
+              codigo_item_integracao: `${product.id}-${index}`,
+              simples_nacional: 'S'
+            },
+            produto: {
+              codigo_produto: product.omieCodigoProduto,
+              descricao: product.name || 'Produto',
+              quantidade: product.quantity,
+              valor_unitario: product.unitPrice,
+              valor_total: itemTotal
+            },
+            inf_adic: {
+              numero_item: index + 1
+            }
+          };
+        });
+      } else {
+        // Caso contrário, usar produto genérico CRM-SALE consolidado
+        console.log('⚠️ Usando produto genérico CRM-SALE para consolidar todos os itens');
+        if (itemsWithoutOmieCode.length > 0) {
+          console.log(`   ${itemsWithoutOmieCode.length} produtos sem código Omie encontrados`);
+        }
+        totalValue = products.reduce((sum, p) => sum + (p.quantity * p.unitPrice), 0);
+        orderItems = [{
+          ide: {
+            codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`,
+            simples_nacional: 'S'
+          },
+          produto: {
+            codigo_produto: 4285815731, // ID do produto genérico CRM-SALE no Omie
+            descricao: 'VENDA VIA CRM',
+            quantidade: 1,
+            valor_unitario: totalValue,
+            valor_total: totalValue
+          },
+          inf_adic: {
+            numero_item: 1
+          }
+        }];
+        useGenericProduct = true;
+      }
 
       // Determinar conta do Omie baseada no método de pagamento
       const omieAccountCode = paymentMethod 
