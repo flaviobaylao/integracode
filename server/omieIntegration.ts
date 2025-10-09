@@ -1779,14 +1779,14 @@ export class OmieService {
       let totalValue;
       
       if (hasValidOmieCodes) {
-        // Usar produtos reais com códigos Omie
+        // Usar produtos reais com códigos Omie (usar campo "codigo" ao invés de "codigo_produto_integracao")
         orderItems = products.map((product, index) => ({
           ide: {
             // Limite de 30 caracteres para codigo_item_integracao
             codigo_item_integracao: `CARD-${salesCard.id.substring(0, 18)}-${index + 1}`
           },
           produto: {
-            codigo_produto_integracao: product.omieCode || product.id,
+            codigo: product.omieCode || product.id, // Usar campo "codigo" do Omie
             descricao: product.name,
             quantidade: product.quantity,
             valor_unitario: product.unitPrice
@@ -1802,7 +1802,7 @@ export class OmieService {
             codigo_item_integracao: `CARD-${salesCard.id.substring(0, 22)}`
           },
           produto: {
-            codigo_produto_integracao: 'crm-sale',
+            codigo: 'CRM-SALE', // Usar campo "codigo"
             descricao: 'VENDA VIA CRM',
             quantidade: 1,
             valor_unitario: totalValue
