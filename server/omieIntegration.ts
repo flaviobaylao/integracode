@@ -1795,7 +1795,7 @@ export class OmieService {
               simples_nacional: 'S'
             },
             produto: {
-              codigo_produto: product.omieCodigoProduto,
+              codigo_produto: parseInt(product.omieCodigoProduto), // Converter string para number
               descricao: product.name || 'Produto',
               quantidade: product.quantity,
               valor_unitario: product.unitPrice,

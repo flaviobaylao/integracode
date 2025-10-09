@@ -41,7 +41,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         imageUrl: editingProduct.imageUrl || '',
         omieCode: editingProduct.omieCode || '',
         omieCodigo: editingProduct.omieCodigo || '',
-        omieCodigoProduto: editingProduct.omieCodigoProduto?.toString() || '',
+        omieCodigoProduto: editingProduct.omieCodigoProduto || '',
       });
     } else {
       setFormData({
@@ -98,7 +98,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         imageUrl: formData.imageUrl || undefined,
         omieCode: formData.omieCode || undefined,
         omieCodigo: formData.omieCodigo || undefined,
-        omieCodigoProduto: formData.omieCodigoProduto ? parseInt(formData.omieCodigoProduto) : undefined,
+        omieCodigoProduto: formData.omieCodigoProduto || undefined,
       };
 
       const validatedData = insertProductSchema.parse(dataToValidate);
@@ -199,7 +199,6 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
                 <Label htmlFor="omieCodigoProduto">ID Numérico do Produto Omie</Label>
                 <Input
                   id="omieCodigoProduto"
-                  type="number"
                   value={formData.omieCodigoProduto}
                   onChange={(e) => setFormData(prev => ({ ...prev, omieCodigoProduto: e.target.value }))}
                   placeholder="Ex: 2425693571"

@@ -3632,9 +3632,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               price: omieProduct.valor_unitario?.toString() || '0',
               stock: 0,
               isActive: true,
-              omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto.toString(),
+              omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto?.toString() || '',
               omieCodigo: omieProduct.codigo || null,
-              omieCodigoProduto: omieProduct.codigo_produto || null
+              omieCodigoProduto: omieProduct.codigo_produto?.toString() || null
             };
 
             // Verificar se produto já existe pelo código Omie ou nome
