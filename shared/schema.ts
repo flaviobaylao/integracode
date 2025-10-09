@@ -123,7 +123,9 @@ export const customers = pgTable("customers", {
 // Products table
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  omieCode: varchar("omie_code"), // Código de integração do produto no Omie
+  omieCode: varchar("omie_code"), // Código de integração do produto no Omie (ex: PRD-MA-350)
+  omieCodigo: varchar("omie_codigo"), // Código alfanumérico do Omie (ex: PRD00003)
+  omieCodigoProduto: integer("omie_codigo_produto"), // ID numérico do produto no Omie (ex: 2425693571)
   name: varchar("name").notNull(),
   description: text("description"),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
