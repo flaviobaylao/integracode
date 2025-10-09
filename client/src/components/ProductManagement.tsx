@@ -1,12 +1,49 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import { RefreshCw } from "lucide-react";
 import type { Product } from "@shared/schema";
 
 export default function ProductManagement() {
-  const { data: products, isLoading } = useQuery({
+  const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
     retry: false,
+  });
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Mutation para sincronizar produtos do Omie
+  const syncProductsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/omie/sync-products', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || 'Erro ao sincronizar produtos');
+      }
+      
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({
+        title: "Sincronização concluída",
+        description: `${data.imported} novos produtos importados, ${data.updated} atualizados.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro na sincronização",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const formatCurrency = (value: number) => {
@@ -41,18 +78,33 @@ export default function ProductManagement() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Catálogo de Produtos</h2>
-        <div className="text-right">
-          <p className="text-sm text-gray-600 mb-2">
-            Produtos são importados apenas do Omie ERP
-          </p>
+        <div className="flex gap-2">
           <Button
-            className="bg-green-600 hover:bg-green-700 text-white"
+            variant="outline"
             onClick={() => {
-              // Redirecionar para a aba de integração Omie
               window.location.hash = '#omie-integration';
             }}
+            data-testid="button-omie-integration"
           >
-            <i className="fas fa-download mr-2"></i>Importar do Omie
+            <i className="fas fa-cog mr-2"></i>Configurações Omie
+          </Button>
+          <Button
+            className="bg-green-600 hover:bg-green-700 text-white"
+            onClick={() => syncProductsMutation.mutate()}
+            disabled={syncProductsMutation.isPending}
+            data-testid="button-sync-products"
+          >
+            {syncProductsMutation.isPending ? (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                Sincronizando...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Sincronizar Produtos
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -100,26 +152,18 @@ export default function ProductManagement() {
                     </div>
                   </div>
                   
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs text-gray-500 flex items-center">
-                      {product.omieProductId ? (
-                        <>
-                          <i className="fas fa-check-circle text-green-500 mr-1"></i>
-                          Produto Omie #{product.omieProductId}
-                        </>
-                      ) : (
-                        <>
-                          <i className="fas fa-info-circle text-blue-500 mr-1"></i>
-                          Produto Local
-                        </>
-                      )}
-                    </div>
-                    {product.stockQuantity !== undefined && (
-                      <div className="text-xs text-gray-500">
-                        Estoque Omie: {product.stockQuantity}
+                  {(product.omieCodigoProduto || product.omieCodigo) && (
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-gray-500 flex items-center">
+                        <i className="fas fa-check-circle text-green-500 mr-1"></i>
+                        <span>
+                          {product.omieCodigo && `Código: ${product.omieCodigo}`}
+                          {product.omieCodigo && product.omieCodigoProduto && ' | '}
+                          {product.omieCodigoProduto && `ID: ${product.omieCodigoProduto}`}
+                        </span>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

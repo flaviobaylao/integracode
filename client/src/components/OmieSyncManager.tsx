@@ -355,13 +355,13 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="no-seller">Sem vendedor atribuído</SelectItem>
-                          {users && Array.isArray(users) && (users as any[])
-                            .filter((user: any) => user.role === 'vendedor')
-                            .map((user: any) => (
+                          {users && Array.isArray(users) ? (users as User[])
+                            .filter((user: User) => user.role === 'vendedor')
+                            .map((user: User) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName}
                               </SelectItem>
-                            ))}
+                            )) : null}
                         </SelectContent>
                       </Select>
                     </div>
@@ -622,7 +622,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
           {activeTab === 'debts' && (
             <div className="space-y-6">
               {/* Estatísticas */}
-              {overdueDebts && (
+              {overdueDebts ? (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <Card>
                     <CardContent className="pt-6">
@@ -671,7 +671,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                     </CardContent>
                   </Card>
                 </div>
-              )}
+              ) : null}
 
               {/* Lista de Débitos */}
               <Card>
