@@ -3625,12 +3625,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const omieProduct of pageData.products) {
           result.totalProcessed++;
           
-          // FILTRO: Pular produtos inativos ou bloqueados
-          const isInactive = omieProduct.inativo === 'S' || omieProduct.inativo === 'true' || omieProduct.inativo === true;
+          // FILTRO: Pular apenas produtos BLOQUEADOS (o campo "inativo" da API não é confiável)
           const isBlocked = omieProduct.bloqueado === 'S' || omieProduct.bloqueado === 'true' || omieProduct.bloqueado === true;
           
-          if (isInactive || isBlocked) {
-            console.log(`⏭️ Pulando produto inativo/bloqueado: ${omieProduct.descricao} (inativo: ${omieProduct.inativo}, bloqueado: ${omieProduct.bloqueado})`);
+          if (isBlocked) {
+            console.log(`⏭️ Pulando produto bloqueado: ${omieProduct.descricao} (bloqueado: ${omieProduct.bloqueado})`);
             result.skipped++;
             continue;
           }
@@ -3692,7 +3691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`   📊 Total processado: ${result.totalProcessed}`);
       console.log(`   ➕ Importados: ${result.imported}`);
       console.log(`   🔄 Atualizados: ${result.updated}`);
-      console.log(`   ⏭️ Pulados (inativos/sem preço): ${result.skipped}`);
+      console.log(`   ⏭️ Pulados (bloqueados/sem preço): ${result.skipped}`);
       console.log(`   ❌ Erros: ${result.errors.length}`);
 
       res.json(result);
