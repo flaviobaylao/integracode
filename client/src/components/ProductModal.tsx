@@ -23,6 +23,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
     price: '',
     stock: '',
     imageUrl: '',
+    omieCode: '',
+    omieCodigo: '',
+    omieCodigoProduto: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -36,6 +39,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         price: editingProduct.price,
         stock: editingProduct.stock.toString(),
         imageUrl: editingProduct.imageUrl || '',
+        omieCode: editingProduct.omieCode || '',
+        omieCodigo: editingProduct.omieCodigo || '',
+        omieCodigoProduto: editingProduct.omieCodigoProduto?.toString() || '',
       });
     } else {
       setFormData({
@@ -44,6 +50,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         price: '',
         stock: '',
         imageUrl: '',
+        omieCode: '',
+        omieCodigo: '',
+        omieCodigoProduto: '',
       });
     }
     setErrors({});
@@ -87,6 +96,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         stock: parseInt(formData.stock),
         description: formData.description || undefined,
         imageUrl: formData.imageUrl || undefined,
+        omieCode: formData.omieCode || undefined,
+        omieCodigo: formData.omieCodigo || undefined,
+        omieCodigoProduto: formData.omieCodigoProduto ? parseInt(formData.omieCodigoProduto) : undefined,
       };
 
       const validatedData = insertProductSchema.parse(dataToValidate);
@@ -168,6 +180,36 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
             </div>
           </div>
           
+          <div className="border-t border-gray-200 pt-4">
+            <h3 className="text-sm font-semibold mb-3">Códigos do Omie (opcional)</h3>
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="omieCodigo">Código Alfanumérico Omie</Label>
+                <Input
+                  id="omieCodigo"
+                  value={formData.omieCodigo}
+                  onChange={(e) => setFormData(prev => ({ ...prev, omieCodigo: e.target.value }))}
+                  placeholder="Ex: PRD00003"
+                  data-testid="input-omie-codigo"
+                />
+                <p className="text-xs text-gray-500 mt-1">Código do produto no Omie (ex: PRD00003)</p>
+              </div>
+              
+              <div>
+                <Label htmlFor="omieCodigoProduto">ID Numérico do Produto Omie</Label>
+                <Input
+                  id="omieCodigoProduto"
+                  type="number"
+                  value={formData.omieCodigoProduto}
+                  onChange={(e) => setFormData(prev => ({ ...prev, omieCodigoProduto: e.target.value }))}
+                  placeholder="Ex: 2425693571"
+                  data-testid="input-omie-codigo-produto"
+                />
+                <p className="text-xs text-gray-500 mt-1">ID numérico do produto no Omie</p>
+              </div>
+            </div>
+          </div>
+          
           <div>
             <Label htmlFor="imageUrl">URL da Imagem</Label>
             <Input
@@ -177,18 +219,20 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
               onChange={(e) => setFormData(prev => ({ ...prev, imageUrl: e.target.value }))}
               className={errors.imageUrl ? "border-red-500" : ""}
               placeholder="https://exemplo.com/imagem.jpg"
+              data-testid="input-image-url"
             />
             {errors.imageUrl && <p className="text-sm text-red-500 mt-1">{errors.imageUrl}</p>}
           </div>
           
           <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose} data-testid="button-cancel">
               Cancelar
             </Button>
             <Button 
               type="submit" 
               className="bg-honest-blue hover:bg-blue-700"
               disabled={createProductMutation.isPending}
+              data-testid="button-save-product"
             >
               {createProductMutation.isPending 
                 ? 'Salvando...' 
