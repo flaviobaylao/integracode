@@ -1801,9 +1801,6 @@ export class OmieService {
               quantidade: product.quantity,
               valor_unitario: product.unitPrice,
               valor_total: itemTotal
-            },
-            inf_adic: {
-              numero_item: index + 1
             }
           };
         });
@@ -1825,9 +1822,6 @@ export class OmieService {
             quantidade: 1,
             valor_unitario: totalValue,
             valor_total: totalValue
-          },
-          inf_adic: {
-            numero_item: 1
           }
         }];
         useGenericProduct = true;
