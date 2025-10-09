@@ -52,6 +52,7 @@ Preferred communication style: Simple, everyday language.
 - **Delivery Integration**: Real-time delivery tracking with App Entregas Honest, including webhook support for status updates.
 - **Billing Synchronization**: Accurate invoice synchronization with status mapping and validation filters.
 - **Billing Filters & Stats**: Seller-based filtering with reactive statistics.
+- **Blocked Orders Management**: Automatic blocking system for orders requiring administrative approval. Orders with boleto payment terms exceeding 7 days are automatically blocked and require release by admin/coordinator/administrative users. Released orders are automatically sent to Omie ERP. Blocked orders management page at /blocked-orders shows order details, block reasons, and provides release functionality with proper authorization controls.
 
 # External Dependencies
 
