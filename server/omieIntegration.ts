@@ -2128,52 +2128,35 @@ export class OmieService {
           contaIndex++;
           totalProcessed++;
           
+          // Log primeiras contas para debug - MOSTRAR TODOS OS CAMPOS
+          if (totalProcessed === 1) {
+            console.log('\n📋 TODOS OS CAMPOS DO PRIMEIRO TÍTULO:');
+            console.log(JSON.stringify(conta, null, 2));
+          }
+          
           // Log primeiras contas para debug
           if (totalProcessed <= 10) {
             console.log(`\nConta ${totalProcessed + 1}:`);
             console.log(`  Numero: ${conta.numero_documento}`);
-            console.log(`  Data previsao: ${conta.data_previsao}`);
-            console.log(`  Status: ${conta.status_titulo}`);
+            console.log(`  Status Titulo: ${conta.status_titulo}`);
             console.log(`  Valor: ${conta.valor_documento}`);
-            console.log(`  Categoria: ${conta.codigo_categoria || 'N/A'}`);
-            console.log(`  Conta Corrente: ${conta.codigo_conta_corrente || 'N/A'}`);
+            console.log(`  Valor a receber: ${conta.valor_a_receber}`);
           }
-          
-          // Usar data de VENCIMENTO ao invés de previsão para calcular atraso real
-          if (!conta.data_vencimento) {
-            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
-            continue;
-          }
-          
-          // Converter data de VENCIMENTO do formato brasileiro DD/MM/YYYY
-          const [dia, mes, ano] = conta.data_vencimento.split('/');
-          const dataVencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-          const diffTime = hoje.getTime() - dataVencimento.getTime();
-          const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-          if (totalProcessed <= 10) {
-            console.log(`  -> Data hoje: ${hoje.toLocaleDateString()}`);
-            console.log(`  -> Data vencimento: ${dataVencimento.toLocaleDateString()}`);
-            console.log(`  -> Dias atraso: ${diasAtraso}`);
-          }
-
-          // FILTRO: Títulos VENCIDOS (diasAtraso > 0) E que estão REALMENTE em aberto
-          const isVencido = diasAtraso > 0;
           
           // Valor pendente a receber (pode ser diferente do valor total se houve pagamentos parciais)
           const valorReceber = parseFloat(conta.valor_a_receber || conta.valor_documento || '0');
           const temSaldoPendente = valorReceber > 0;
           
-          // FILTRO RIGOROSO: Aceitar APENAS status "ABERTO" (como faz o Excel do Omie)
-          // Isso exclui automaticamente: RECEBIDO, CANCELADO, PAGO, EM_PROCESSAMENTO, etc.
-          const isAberto = conta.status_titulo === 'ABERTO';
+          // FILTRO PRINCIPAL: Usar status_titulo === "ATRASADO"
+          // Este é o mesmo critério que o Excel do Omie usa para marcar débitos vencidos
+          const isAtrasado = conta.status_titulo === 'ATRASADO';
           
-          // Log dos status encontrados para entender quais estão sendo incluídos
-          if (isVencido && totalProcessed <= 30) {
-            console.log(`  Status: ${conta.status_titulo} - Valor a receber: ${valorReceber} - ${isAberto && temSaldoPendente ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento} - Dias: ${diasAtraso}`);
+          // Log dos status encontrados para debug
+          if (totalProcessed <= 30 && temSaldoPendente) {
+            console.log(`  Status: "${conta.status_titulo}" - Valor: ${valorReceber} - ${isAtrasado ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento}`);
           }
           
-          if (isVencido && isAberto && temSaldoPendente) {
+          if (isAtrasado && temSaldoPendente) {
             const clientId = conta.codigo_cliente_fornecedor;
             const valor = valorReceber;
             
