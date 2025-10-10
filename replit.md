@@ -53,6 +53,7 @@ Preferred communication style: Simple, everyday language.
 - **Billing Synchronization**: Accurate invoice synchronization with status mapping and validation filters.
 - **Billing Filters & Stats**: Seller-based filtering with reactive statistics.
 - **Blocked Orders Management**: Automatic blocking system for orders requiring administrative approval. Orders are blocked in two scenarios: (1) Boleto payment terms exceeding 7 days, or (2) Clients with overdue debts registered in the system. Blocks require release by admin/coordinator/administrative users. Released orders are automatically sent to Omie ERP. Blocked orders management page at /blocked-orders shows order details, block reasons, and provides release functionality with proper authorization controls.
+- **Daily Route Optimization**: Intelligent route planning system for sellers. Features include: TSP-based route optimization using Nearest Neighbor algorithm, starting and ending at seller's home location; automatic visit sequencing based on scheduled dates; visual route mapping using Leaflet with status-based markers; real-time distance tracking between checkpoints; automatic checkpoint registration during check-in/check-out; progress monitoring (visits completed, distances traveled); and geospatial visualization with polyline route display. System requires sellers to have configured home coordinates (homeLatitude/homeLongitude). Routes are stored in `daily_routes` table with checkpoints in `route_checkpoints` table. Route generation accessible via "Minha Rota do Dia" menu for vendedor role.
 
 # External Dependencies
 
@@ -68,6 +69,7 @@ Preferred communication style: Simple, everyday language.
 - **Radix UI**: Headless UI components.
 - **Lucide React**: Icon library.
 - **Tailwind CSS**: Utility-first CSS framework.
+- **Leaflet**: Interactive mapping library for route visualization (react-leaflet v4.2.1).
 
 ## Development Tools
 - **Vite**: Build tool.
