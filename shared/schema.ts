@@ -484,6 +484,67 @@ export const visitAgenda = pgTable("visit_agenda", {
   unique("unique_visit_agenda_customer_date").on(table.customerId, table.scheduledDate),
 ]);
 
+// Daily Routes table - rotas otimizadas diárias para vendedores
+export const dailyRoutes = pgTable("daily_routes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sellerId: varchar("seller_id").notNull(),
+  routeDate: timestamp("route_date").notNull(), // Data da rota
+  
+  // Ponto inicial (casa do vendedor)
+  startLatitude: decimal("start_latitude", { precision: 10, scale: 8 }).notNull(),
+  startLongitude: decimal("start_longitude", { precision: 11, scale: 8 }).notNull(),
+  startAddress: text("start_address"),
+  
+  // Rota otimizada (array de IDs de visitas na ordem)
+  optimizedOrder: jsonb("optimized_order").$type<string[]>().notNull(), // Array de visit IDs
+  
+  // Estatísticas da rota
+  totalEstimatedDistance: decimal("total_estimated_distance", { precision: 10, scale: 2 }), // km
+  totalActualDistance: decimal("total_actual_distance", { precision: 10, scale: 2 }), // km percorrido real
+  totalVisits: integer("total_visits").notNull(),
+  completedVisits: integer("completed_visits").notNull().default(0),
+  
+  // Status da rota
+  routeStatus: varchar("route_status").notNull().default('pending'), // pending, in_progress, completed
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_daily_routes_seller_date").on(table.sellerId, table.routeDate),
+  unique("unique_daily_route_seller_date").on(table.sellerId, table.routeDate),
+]);
+
+// Route Checkpoints table - registra cada ponto da rota (check-in/check-out)
+export const routeCheckpoints = pgTable("route_checkpoints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dailyRouteId: varchar("daily_route_id").notNull(),
+  visitId: varchar("visit_id").notNull(), // Referência à visitAgenda
+  sellerId: varchar("seller_id").notNull(),
+  
+  // Dados do checkpoint
+  checkpointType: varchar("checkpoint_type").notNull(), // check_in, check_out
+  checkpointLatitude: decimal("checkpoint_latitude", { precision: 10, scale: 8 }).notNull(),
+  checkpointLongitude: decimal("checkpoint_longitude", { precision: 11, scale: 8 }).notNull(),
+  checkpointTime: timestamp("checkpoint_time").notNull(),
+  
+  // Distância desde o ponto anterior
+  distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // km
+  
+  // Localização do ponto anterior
+  previousLatitude: decimal("previous_latitude", { precision: 10, scale: 8 }),
+  previousLongitude: decimal("previous_longitude", { precision: 11, scale: 8 }),
+  
+  // Sequência na rota
+  sequenceNumber: integer("sequence_number").notNull(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_route_checkpoints_route").on(table.dailyRouteId),
+  index("idx_route_checkpoints_visit").on(table.visitId),
+]);
+
 // Sales Goals table - para definição de metas mensais por vendedor
 export const salesGoals = pgTable("sales_goals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
