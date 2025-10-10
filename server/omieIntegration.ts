@@ -1560,17 +1560,22 @@ export class OmieService {
     diasEmAtraso?: number;
   }> {
     try {
-      // Primeiro, verificar se cliente está na lista de débitos vencidos
-      const overdueDebts = await this.getOverdueDebts();
-      const clienteComDebito = overdueDebts.debts.find(debt => 
-        debt.cliente.cnpj_cpf === cnpjCpf
-      );
+      // Primeiro, verificar se cliente está na lista de débitos vencidos SALVOS NO BANCO
+      // Isso é MUITO mais rápido que consultar a API do Omie
+      const cnpjLimpo = cnpjCpf.replace(/[^\d]/g, '');
+      const overdueDebt = await this.storage.getOverdueDebtByDocument(cnpjCpf);
+      
+      // Também tentar com CNPJ sem formatação
+      const overdueDebtLimpo = !overdueDebt ? await this.storage.getOverdueDebtByDocument(cnpjLimpo) : null;
+      
+      const clienteComDebito = overdueDebt || overdueDebtLimpo;
 
       if (clienteComDebito) {
+        console.log(`🚫 BLOQUEIO: Cliente ${cnpjCpf} possui débitos vencidos de R$ ${clienteComDebito.totalAmount}`);
         return {
           aprovado: false,
-          motivo: `Cliente com débitos vencidos: ${this.formatCurrency(clienteComDebito.valorTotal)}`,
-          diasEmAtraso: clienteComDebito.diasMaximoAtraso
+          motivo: `Cliente com débitos vencidos: ${this.formatCurrency(parseFloat(clienteComDebito.totalAmount))}`,
+          diasEmAtraso: clienteComDebito.maxDaysOverdue
         };
       }
 
