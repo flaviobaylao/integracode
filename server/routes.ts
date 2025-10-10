@@ -6028,6 +6028,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== ROUTE METRICS ENDPOINTS ==========
+  
+  // Buscar métricas diárias de um vendedor
+  app.get('/api/route-metrics/daily/:sellerId/:date', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date } = req.params;
+      
+      // Vendedor só pode ver suas próprias métricas
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { getDailyMetrics } = await import('./routeMetricsService');
+      const metrics = await getDailyMetrics(sellerId, new Date(date));
+      
+      res.json(metrics);
+    } catch (error: any) {
+      console.error('Erro ao buscar métricas diárias:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar métricas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar métricas mensais de um vendedor
+  app.get('/api/route-metrics/monthly/:sellerId/:year/:month', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, year, month } = req.params;
+      
+      // Vendedor só pode ver suas próprias métricas
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { getMonthlyMetrics } = await import('./routeMetricsService');
+      const metrics = await getMonthlyMetrics(sellerId, parseInt(year), parseInt(month));
+      
+      res.json(metrics);
+    } catch (error: any) {
+      console.error('Erro ao buscar métricas mensais:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar métricas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar métricas de todos os vendedores (admin)
+  app.get('/api/route-metrics/admin-dashboard/:year/:month', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { year, month } = req.params;
+      
+      // Apenas admin pode acessar
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { getAdminDashboardMetrics } = await import('./routeMetricsService');
+      const metrics = await getAdminDashboardMetrics(parseInt(year), parseInt(month));
+      
+      res.json(metrics);
+    } catch (error: any) {
+      console.error('Erro ao buscar métricas admin:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar métricas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar últimas rotas de um vendedor
+  app.get('/api/route-metrics/recent/:sellerId', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 7;
+      
+      // Vendedor só pode ver suas próprias rotas
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { getRecentRoutes } = await import('./routeMetricsService');
+      const routes = await getRecentRoutes(sellerId, limit);
+      
+      res.json(routes);
+    } catch (error: any) {
+      console.error('Erro ao buscar rotas recentes:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar rotas',
+        error: error.message 
+      });
+    }
+  });
+
 
   const httpServer = createServer(app);
   return httpServer;
