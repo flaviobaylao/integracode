@@ -20,6 +20,7 @@ import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
+import DailyRouteView from "@/pages/DailyRouteView";
 import UserManagement from "@/components/UserManagement";
 import { useState } from "react";
 
@@ -61,6 +62,8 @@ export default function Home() {
         return <SalesSchedule />;
       case 'visit-routes':
         return <VisitRoutes />;
+      case 'daily-route':
+        return <DailyRouteView />;
       case 'overdue-debts':
         return <OverdueDebtsManagement />;
       case 'blocked-orders':
