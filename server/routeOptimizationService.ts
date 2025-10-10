@@ -62,8 +62,9 @@ function calculateTotalRouteDistance(
 }
 
 /**
- * Algoritmo 2-opt para melhorar uma rota existente
+ * Algoritmo 2-opt otimizado para melhorar uma rota existente
  * Inverte segmentos da rota para reduzir a distância total
+ * Usa cálculo de delta ao invés de recalcular toda a rota
  */
 function twoOptOptimization(
   startLat: number,
@@ -72,10 +73,8 @@ function twoOptOptimization(
 ): RoutePoint[] {
   if (route.length <= 2) return route;
 
-  let improved = true;
   let bestRoute = [...route];
-  
-  // Limitar iterações para evitar processamento excessivo
+  let improved = true;
   let maxIterations = 50;
   let iteration = 0;
 
@@ -85,18 +84,34 @@ function twoOptOptimization(
 
     for (let i = 0; i < bestRoute.length - 1; i++) {
       for (let j = i + 2; j < bestRoute.length; j++) {
-        // Criar nova rota invertendo o segmento entre i e j
-        const newRoute = [
-          ...bestRoute.slice(0, i + 1),
-          ...bestRoute.slice(i + 1, j + 1).reverse(),
-          ...bestRoute.slice(j + 1)
-        ];
+        // Calcular apenas o delta de distância (mais eficiente)
+        // Pontos envolvidos na troca
+        const pointBeforeI = i === 0 
+          ? { latitude: startLat, longitude: startLon }
+          : bestRoute[i - 1];
+        const pointI = bestRoute[i];
+        const pointJ = bestRoute[j];
+        const pointAfterJ = j === bestRoute.length - 1
+          ? { latitude: startLat, longitude: startLon }
+          : bestRoute[j + 1];
 
-        const currentDistance = calculateTotalRouteDistance(startLat, startLon, bestRoute);
-        const newDistance = calculateTotalRouteDistance(startLat, startLon, newRoute);
+        // Distância das arestas que serão removidas
+        const oldDistance = 
+          calculateDistance(pointBeforeI.latitude, pointBeforeI.longitude, pointI.latitude, pointI.longitude) +
+          calculateDistance(pointJ.latitude, pointJ.longitude, pointAfterJ.latitude, pointAfterJ.longitude);
 
-        if (newDistance < currentDistance) {
-          bestRoute = newRoute;
+        // Distância das novas arestas após inversão
+        const newDistance = 
+          calculateDistance(pointBeforeI.latitude, pointBeforeI.longitude, pointJ.latitude, pointJ.longitude) +
+          calculateDistance(pointI.latitude, pointI.longitude, pointAfterJ.latitude, pointAfterJ.longitude);
+
+        // Se melhorar, aplicar a inversão
+        if (newDistance < oldDistance) {
+          bestRoute = [
+            ...bestRoute.slice(0, i),
+            ...bestRoute.slice(i, j + 1).reverse(),
+            ...bestRoute.slice(j + 1)
+          ];
           improved = true;
           break;
         }
