@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { getOmieService } from './omieIntegration';
 import { generateVisitAgenda } from './visitScheduleService';
 import { storage } from './storage';
+import { generateDailyRoute } from './routeOptimizationService';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -101,7 +102,71 @@ cron.schedule('0 2 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
+// Geração automática de rotas diárias para todos os vendedores às 05:00h
+cron.schedule('0 5 * * *', async () => {
+  console.log('🗺️ [SCHEDULER] Iniciando geração automática de rotas diárias às 05:00h...');
+  
+  try {
+    const db = (await import('./db')).db;
+    const { users } = await import('../shared/schema');
+    const { eq } = await import('drizzle-orm');
+    
+    // Buscar todos os vendedores ativos com coordenadas configuradas
+    const vendedores = await db.select()
+      .from(users)
+      .where(eq(users.role, 'vendedor'));
+    
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    
+    let routesGenerated = 0;
+    let routesSkipped = 0;
+    let errors = 0;
+    
+    for (const vendedor of vendedores) {
+      try {
+        // Verificar se vendedor tem coordenadas configuradas
+        if (!vendedor.homeLatitude || !vendedor.homeLongitude) {
+          console.log(`⚠️ [SCHEDULER] Vendedor ${vendedor.firstName} ${vendedor.lastName} sem coordenadas de casa configuradas`);
+          routesSkipped++;
+          continue;
+        }
+        
+        // Verificar se já existe rota para hoje
+        const existingRoute = await storage.getDailyRouteBySellerAndDate(vendedor.id, hoje);
+        if (existingRoute) {
+          console.log(`ℹ️ [SCHEDULER] Rota já existe para ${vendedor.firstName} ${vendedor.lastName}`);
+          routesSkipped++;
+          continue;
+        }
+        
+        // Gerar rota
+        const result = await generateDailyRoute(storage, vendedor.id, hoje);
+        
+        if (result.warnings && result.warnings.length > 0) {
+          console.log(`⚠️ [SCHEDULER] Rota gerada para ${vendedor.firstName} ${vendedor.lastName} com alertas:`, result.warnings);
+        } else {
+          console.log(`✅ [SCHEDULER] Rota gerada para ${vendedor.firstName} ${vendedor.lastName}: ${result.totalVisits} visitas`);
+        }
+        
+        routesGenerated++;
+      } catch (error) {
+        console.error(`❌ [SCHEDULER] Erro ao gerar rota para ${vendedor.firstName} ${vendedor.lastName}:`, error);
+        errors++;
+      }
+    }
+    
+    console.log(`✨ [SCHEDULER] Geração de rotas concluída: ${routesGenerated} geradas, ${routesSkipped} puladas, ${errors} erros`);
+    
+  } catch (error) {
+    console.error('❌ [SCHEDULER] Erro na geração automática de rotas:', error);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
+
 console.log('✅ Agendador configurado:');
 console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
+console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização de débitos vencidos às 06:00h, 12:00h e 15:00h (UTC-3)');
 console.log('   - Geração de agenda de visitas às 06:00h (UTC-3)');
