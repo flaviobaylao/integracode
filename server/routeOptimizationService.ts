@@ -1,7 +1,9 @@
 import { DatabaseStorage } from './storage';
+import { calculateRouteDistances, calculateTotalRouteDistance as calculateRealRouteDistance } from './routingService';
 
 // Função Haversine para calcular distância entre dois pontos (em km)
-export function calculateDistance(
+// Usada para otimização rápida, mas não para distâncias finais
+function calculateHaversineDistance(
   lat1: number,
   lon1: number,
   lat2: number,
@@ -17,6 +19,16 @@ export function calculateDistance(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c;
   return Math.round(distance * 100) / 100; // Arredondar para 2 casas decimais
+}
+
+// Mantém função pública para compatibilidade (usa Haversine para otimização)
+export function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  return calculateHaversineDistance(lat1, lon1, lat2, lon2);
 }
 
 interface RoutePoint {
@@ -125,14 +137,15 @@ function twoOptOptimization(
 
 /**
  * Otimiza a rota usando Nearest Neighbor + 2-opt
- * 1. Nearest Neighbor: construção inicial gulosa (rápida)
- * 2. 2-opt: refinamento para melhorar a solução
+ * 1. Nearest Neighbor: construção inicial gulosa (rápida) usando Haversine
+ * 2. 2-opt: refinamento para melhorar a solução usando Haversine
+ * 3. Cálculo de distâncias reais de moto usando OSRM para a rota final
  */
-export function optimizeRoute(
+export async function optimizeRoute(
   startLat: number,
   startLon: number,
   points: RoutePoint[]
-): OptimizedRoute {
+): Promise<OptimizedRoute> {
   if (points.length === 0) {
     return {
       orderedPoints: [],
@@ -147,14 +160,14 @@ export function optimizeRoute(
   let currentLat = startLat;
   let currentLon = startLon;
 
-  // FASE 1: Nearest Neighbor (construção inicial)
+  // FASE 1: Nearest Neighbor (construção inicial usando Haversine para velocidade)
   while (unvisited.length > 0) {
     let nearestIndex = 0;
     let nearestDistance = Infinity;
 
     // Encontrar o ponto mais próximo (sem prioridade, apenas distância)
     for (let i = 0; i < unvisited.length; i++) {
-      const distance = calculateDistance(
+      const distance = calculateHaversineDistance(
         currentLat,
         currentLon,
         unvisited[i].latitude,
@@ -175,52 +188,101 @@ export function optimizeRoute(
     unvisited.splice(nearestIndex, 1);
   }
 
-  // FASE 2: 2-opt (otimização e refinamento)
+  // FASE 2: 2-opt (otimização usando Haversine para velocidade)
   const optimizedPoints = twoOptOptimization(startLat, startLon, orderedPoints);
 
-  // Calcular segmentos e distância total da rota otimizada
-  const segments: OptimizedRoute['segments'] = [];
-  let totalDistance = 0;
-  let currentPoint: any = startPoint;
-  currentLat = startLat;
-  currentLon = startLon;
+  // FASE 3: Calcular distâncias REAIS de moto usando OSRM
+  const coordinates = [
+    { lat: startLat, lon: startLon }, // Casa do vendedor
+    ...optimizedPoints.map(p => ({ lat: p.latitude, lon: p.longitude })),
+    { lat: startLat, lon: startLon } // Retorno para casa
+  ];
 
-  for (const point of optimizedPoints) {
-    const distance = calculateDistance(currentLat, currentLon, point.latitude, point.longitude);
+  try {
+    // Calcular distâncias reais de moto
+    const realDistances = await calculateRouteDistances(coordinates);
+    
+    // Construir segmentos com distâncias reais (em metros, converter para km)
+    const segments: OptimizedRoute['segments'] = [];
+    let totalDistance = 0;
+    let currentPoint: any = startPoint;
+
+    for (let i = 0; i < optimizedPoints.length; i++) {
+      const distance = realDistances[i] / 1000; // metros para km
+      
+      segments.push({
+        from: currentPoint,
+        to: optimizedPoints[i],
+        distance
+      });
+
+      totalDistance += distance;
+      currentPoint = optimizedPoints[i];
+    }
+
+    // Retornar à casa do vendedor
+    const returnDistance = realDistances[optimizedPoints.length] / 1000; // metros para km
     
     segments.push({
       from: currentPoint,
-      to: point,
-      distance
+      to: { ...startPoint, id: 'home', customerName: 'Retorno (Casa)', customerAddress: '' } as RoutePoint,
+      distance: returnDistance
     });
 
-    totalDistance += distance;
-    currentLat = point.latitude;
-    currentLon = point.longitude;
-    currentPoint = point;
+    totalDistance += returnDistance;
+
+    return {
+      orderedPoints: optimizedPoints,
+      totalDistance: Math.round(totalDistance * 100) / 100,
+      segments
+    };
+  } catch (error) {
+    console.error('Erro ao calcular distâncias reais, usando Haversine:', error);
+    
+    // Fallback: usar Haversine se OSRM falhar
+    const segments: OptimizedRoute['segments'] = [];
+    let totalDistance = 0;
+    let currentPoint: any = startPoint;
+    currentLat = startLat;
+    currentLon = startLon;
+
+    for (const point of optimizedPoints) {
+      const distance = calculateHaversineDistance(currentLat, currentLon, point.latitude, point.longitude);
+      
+      segments.push({
+        from: currentPoint,
+        to: point,
+        distance
+      });
+
+      totalDistance += distance;
+      currentLat = point.latitude;
+      currentLon = point.longitude;
+      currentPoint = point;
+    }
+
+    // Retornar à casa do vendedor
+    const returnDistance = calculateHaversineDistance(
+      currentLat,
+      currentLon,
+      startLat,
+      startLon
+    );
+    
+    segments.push({
+      from: currentPoint,
+      to: { ...startPoint, id: 'home', customerName: 'Retorno (Casa)', customerAddress: '' } as RoutePoint,
+      distance: returnDistance
+    });
+
+    totalDistance += returnDistance;
+
+    return {
+      orderedPoints: optimizedPoints,
+      totalDistance: Math.round(totalDistance * 100) / 100,
+      segments
+    };
   }
-
-  // Retornar à casa do vendedor
-  const returnDistance = calculateDistance(
-    currentLat,
-    currentLon,
-    startLat,
-    startLon
-  );
-  
-  segments.push({
-    from: currentPoint,
-    to: { ...startPoint, id: 'home', customerName: 'Retorno (Casa)', customerAddress: '' } as RoutePoint,
-    distance: returnDistance
-  });
-
-  totalDistance += returnDistance;
-
-  return {
-    orderedPoints: optimizedPoints,
-    totalDistance: Math.round(totalDistance * 100) / 100,
-    segments
-  };
 }
 
 /**
@@ -282,8 +344,8 @@ export async function generateDailyRoute(
     customerAddress: v.customerAddress || ''
   }));
 
-  // Otimizar a rota
-  const optimizedRoute = optimizeRoute(
+  // Otimizar a rota (usando distâncias reais de moto)
+  const optimizedRoute = await optimizeRoute(
     parseFloat(seller.homeLatitude as any),
     parseFloat(seller.homeLongitude as any),
     routePoints
