@@ -4440,46 +4440,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // VERIFICAR BLOQUEIO POR DÉBITO VENCIDO
-      const omieService = getOmieService(storage);
-      if (omieService) {
-        try {
-          const clientDocument = card.customer.cnpj || card.customer.cpf || '';
-          const overdueDebts = await omieService.getOverdueDebts();
-          const clienteComDebito = overdueDebts.debts.find(debt => 
-            debt.cliente.cnpj_cpf === clientDocument
-          );
+      try {
+        const clientDocument = card.customer.cnpj || card.customer.cpf || '';
+        const clienteComDebito = await storage.getOverdueDebtByDocument(clientDocument);
 
-          if (clienteComDebito) {
-            console.log(`⚠️ BLOQUEANDO PEDIDO: Cliente ${clienteComDebito.cliente.nome_fantasia} com débito vencido`);
-            
-            // Criar registro de pedido bloqueado
-            const blockedOrderData = {
-              salesCardId: card.id,
-              customerId: card.customerId,
-              sellerId: card.sellerId,
-              blockReason: 'overdue_debt',
-              blockDetails: `Cliente possui débito vencido de ${omieService.formatCurrency(clienteComDebito.valorTotal)} com ${clienteComDebito.diasMaximoAtraso} dias de atraso. Aguardando regularização financeira.`,
-              operationType: card.operationType || 'venda',
-              paymentMethod: card.paymentMethod || 'a_vista',
-              boletoDays: card.boletoDays || null,
-              totalAmount: parseFloat(card.saleValue),
-              products: card.products || []
-            };
-            
-            await db.insert(blockedOrders).values(blockedOrderData);
-            
-            return res.status(403).json({ 
-              blocked: true,
-              message: `Pedido bloqueado: Cliente possui débito vencido de ${omieService.formatCurrency(clienteComDebito.valorTotal)} com ${clienteComDebito.diasMaximoAtraso} dias de atraso. Regularize a situação financeira antes de realizar novas vendas.`,
-              blockReason: 'overdue_debt',
-              debtAmount: clienteComDebito.valorTotal,
-              daysOverdue: clienteComDebito.diasMaximoAtraso
-            });
-          }
-        } catch (error) {
-          console.error('Erro ao verificar débitos vencidos:', error);
-          // Continua o fluxo mesmo se houver erro na consulta de débitos
+        if (clienteComDebito) {
+          console.log(`⚠️ BLOQUEANDO PEDIDO: Cliente ${clienteComDebito.clientName} com débito vencido`);
+          
+          // Criar registro de pedido bloqueado
+          const blockedOrderData = {
+            salesCardId: card.id,
+            customerId: card.customerId,
+            sellerId: card.sellerId,
+            blockReason: 'overdue_debt',
+            blockDetails: `Cliente possui débito vencido de R$ ${parseFloat(clienteComDebito.totalAmount).toFixed(2)} com ${clienteComDebito.maxDaysOverdue} dias de atraso. Aguardando regularização financeira.`,
+            operationType: card.operationType || 'venda',
+            paymentMethod: card.paymentMethod || 'a_vista',
+            boletoDays: card.boletoDays || null,
+            totalAmount: parseFloat(card.saleValue),
+            products: card.products || []
+          };
+          
+          await db.insert(blockedOrders).values(blockedOrderData);
+          
+          return res.status(403).json({ 
+            blocked: true,
+            message: `Pedido bloqueado: Cliente possui débito vencido de R$ ${parseFloat(clienteComDebito.totalAmount).toFixed(2)} com ${clienteComDebito.maxDaysOverdue} dias de atraso. Regularize a situação financeira antes de realizar novas vendas.`,
+            blockReason: 'overdue_debt',
+            debtAmount: parseFloat(clienteComDebito.totalAmount),
+            daysOverdue: clienteComDebito.maxDaysOverdue
+          });
         }
+      } catch (error) {
+        console.error('Erro ao verificar débitos vencidos:', error);
+        // Continua o fluxo mesmo se houver erro na consulta de débitos
       }
       
       // VERIFICAR BLOQUEIO POR PRAZO DE BOLETO

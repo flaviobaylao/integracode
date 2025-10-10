@@ -18,9 +18,14 @@ async function syncOverdueDebts(horario: string) {
 
     const result = await omieService.getOverdueDebts();
     
+    // Salvar débitos no banco de dados
+    const storage = (await import('./storage')).storage;
+    await storage.syncOverdueDebts(result.debts);
+    
     console.log(`✅ Sincronização automática concluída (${horario}):`);
     console.log(`   - ${result.totalClients} clientes com débitos vencidos`);
     console.log(`   - Total: R$ ${result.totalAmount.toFixed(2)}`);
+    console.log(`   - Débitos salvos no banco de dados`);
     
   } catch (error) {
     console.error(`❌ Erro na sincronização automática de débitos vencidos (${horario}):`, error);

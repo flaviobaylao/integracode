@@ -10,6 +10,7 @@ import {
   locations,
   salesGoals,
   billings,
+  overdueDebts,
   type User,
   type UpsertUser,
   type Route,
@@ -186,6 +187,12 @@ export interface IStorage {
     reason?: string;
     action?: 'created' | 'updated' | 'skipped';
   }>;
+
+  // Overdue debts operations
+  getOverdueDebts(): Promise<any[]>;
+  getOverdueDebtByDocument(document: string): Promise<any | undefined>;
+  syncOverdueDebts(debts: any[]): Promise<void>;
+  clearOverdueDebts(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2709,6 +2716,44 @@ export class DatabaseStorage implements IStorage {
       FROM delivery_drivers
     `);
     return result.rows[0] || { total: 0, active: 0, inactive: 0 };
+  }
+
+  // Overdue debts operations
+  async getOverdueDebts(): Promise<any[]> {
+    return await db.select().from(overdueDebts).orderBy(desc(overdueDebts.lastSyncAt));
+  }
+
+  async getOverdueDebtByDocument(document: string): Promise<any | undefined> {
+    const [debt] = await db
+      .select()
+      .from(overdueDebts)
+      .where(eq(overdueDebts.clientDocument, document))
+      .limit(1);
+    return debt;
+  }
+
+  async syncOverdueDebts(debts: any[]): Promise<void> {
+    // Clear existing debts
+    await db.delete(overdueDebts);
+    
+    // Insert new debts
+    if (debts.length > 0) {
+      const debtsToInsert = debts.map(debt => ({
+        clientId: debt.cliente.codigo_cliente_omie?.toString() || 'unknown',
+        omieClientId: debt.cliente.codigo_cliente_omie?.toString() || '0',
+        clientName: debt.cliente.nome_fantasia || 'Cliente Desconhecido',
+        clientDocument: debt.cliente.cnpj_cpf || '',
+        totalAmount: debt.valorTotal.toString(),
+        maxDaysOverdue: debt.diasMaximoAtraso,
+        debts: debt.debitos || []
+      }));
+      
+      await db.insert(overdueDebts).values(debtsToInsert);
+    }
+  }
+
+  async clearOverdueDebts(): Promise<void> {
+    await db.delete(overdueDebts);
   }
 }
 
