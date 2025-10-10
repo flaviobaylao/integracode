@@ -2220,10 +2220,14 @@ export class OmieService {
               if (!debtorsMap.has(clientId)) {
                 // Usar dados que já vêm na resposta de contas a receber
                 // Evita chamadas extras à API para melhor performance
+                // PRIORIZAR nome_fantasia sobre razao_social
+                const nomeFantasia = conta.nome_fantasia || conta.razao_social || `Cliente ${clientId}`;
+                const cnpjCpf = conta.cpf_cnpj || 'Documento não informado';
+                
                 const clienteBasico = {
                   codigo_cliente_omie: clientId,
-                  nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
-                  cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
+                  nome_fantasia: `${nomeFantasia} - ${cnpjCpf}`,
+                  cnpj_cpf: cnpjCpf
                 };
                 
                 debtorsMap.set(clientId, {
