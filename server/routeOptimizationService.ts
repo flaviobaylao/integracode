@@ -390,6 +390,7 @@ export async function generateDailyRoute(
 
 /**
  * Registra um checkpoint (check-in ou check-out) e calcula distância percorrida
+ * Usa distância real de moto (OSRM) quando possível
  */
 export async function registerCheckpoint(
   storage: DatabaseStorage,
@@ -410,14 +411,32 @@ export async function registerCheckpoint(
   if (lastCheckpoint) {
     previousLat = parseFloat(lastCheckpoint.checkpointLatitude as any);
     previousLon = parseFloat(lastCheckpoint.checkpointLongitude as any);
-    distanceFromPrevious = calculateDistance(previousLat, previousLon, latitude, longitude);
+    
+    // Calcular distância real de moto entre checkpoints
+    try {
+      const { calculateRealDistance } = await import('./routingService');
+      const distanceMeters = await calculateRealDistance(previousLat, previousLon, latitude, longitude);
+      distanceFromPrevious = distanceMeters / 1000; // Converter para km
+    } catch (error) {
+      console.error('Erro ao calcular distância real, usando Haversine:', error);
+      distanceFromPrevious = calculateHaversineDistance(previousLat, previousLon, latitude, longitude);
+    }
   } else {
     // Primeiro checkpoint - calcular distância da casa do vendedor
     const route = await storage.getDailyRoute(dailyRouteId);
     if (route) {
       previousLat = parseFloat(route.startLatitude as any);
       previousLon = parseFloat(route.startLongitude as any);
-      distanceFromPrevious = calculateDistance(previousLat, previousLon, latitude, longitude);
+      
+      // Calcular distância real de moto da casa até primeiro checkpoint
+      try {
+        const { calculateRealDistance } = await import('./routingService');
+        const distanceMeters = await calculateRealDistance(previousLat, previousLon, latitude, longitude);
+        distanceFromPrevious = distanceMeters / 1000; // Converter para km
+      } catch (error) {
+        console.error('Erro ao calcular distância real, usando Haversine:', error);
+        distanceFromPrevious = calculateHaversineDistance(previousLat, previousLon, latitude, longitude);
+      }
     }
   }
 
