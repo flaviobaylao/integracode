@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { RefreshCw, RotateCcw } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 import { apiRequest } from "@/lib/queryClient";
+import AdminRouteMetrics from "./AdminRouteMetrics";
+import RouteMetricsCard from "./RouteMetricsCard";
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -711,6 +713,21 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* Métricas de Rotas */}
+      {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
+        <AdminRouteMetrics />
+      )}
+
+      {/* Métricas de Rotas para Vendedores */}
+      {user && user.role === 'vendedor' && (
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-4">
+            Minhas Métricas de Rotas
+          </h2>
+          <RouteMetricsCard sellerId={user.id} showDetailed={true} />
         </div>
       )}
     </div>
