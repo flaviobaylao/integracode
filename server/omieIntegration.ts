@@ -2137,13 +2137,19 @@ export class OmieService {
       const executionId = Date.now();
       console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with strict filters...`);
       
+      // CRÍTICO: Data atual com horas zeradas para comparação correta de datas
       const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+      
       const debtorsMap = new Map();
       let totalAmount = 0;
       let totalProcessed = 0;
       
       // Data de hoje no formato DD/MM/YYYY para o filtro da API
       const dataHoje = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+      
+      console.log(`⚠️  IMPORTANTE: Débitos que vencem HOJE (${dataHoje}) NÃO são considerados vencidos`);
+      console.log(`📅 Serão incluídos apenas débitos com data_previsao < ${dataHoje}`);
       
       // Implementar paginação para buscar TODOS os títulos
       let currentPage = 1;
@@ -2191,8 +2197,10 @@ export class OmieService {
           // Converter data de PREVISÃO do formato brasileiro DD/MM/YYYY
           const [dia, mes, ano] = conta.data_previsao.split('/');
           const dataPrevisao = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          dataPrevisao.setHours(0, 0, 0, 0); // CRÍTICO: Zerar horas para comparar apenas datas
+          
           const diffTime = hoje.getTime() - dataPrevisao.getTime();
-          const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const diasAtraso = Math.floor(diffTime / (1000 * 60 * 60 * 24)); // Math.floor para não arredondar parciais
 
           // Verificar status do título - Ignorar títulos já RECEBIDOS ou CANCELADOS
           const status = (conta.status_titulo || '').toUpperCase();

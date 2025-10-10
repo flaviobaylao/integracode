@@ -4560,6 +4560,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cardId = req.params.id;
       console.log('Card ID:', cardId);
       
+      // Inicializar serviço Omie
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Integração Omie não configurada' });
+      }
+      
       // Buscar o card com dados relacionados
       const card = await storage.getSalesCard(cardId);
       
@@ -4677,11 +4683,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: saleData.paymentMethod,
         operationType: saleData.operationType
       });
-      
-      // Enviar para Omie (omieService já foi declarado acima)
-      if (!omieService) {
-        return res.status(503).json({ message: 'Omie integration not configured' });
-      }
       
       // Usar produtos reais da ficha se disponíveis
       let products = [];
