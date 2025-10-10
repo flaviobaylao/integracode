@@ -2084,12 +2084,15 @@ export class OmieService {
   }> {
     try {
       const executionId = Date.now();
-      console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with situacao filter...`);
+      console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with strict filters...`);
       
       const hoje = new Date();
       const debtorsMap = new Map();
       let totalAmount = 0;
       let totalProcessed = 0;
+      
+      // Data de hoje no formato DD/MM/YYYY para o filtro da API
+      const dataHoje = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
       
       // Implementar paginação para buscar TODOS os títulos
       let currentPage = 1;
@@ -2132,6 +2135,8 @@ export class OmieService {
             console.log(`  Data previsao: ${conta.data_previsao}`);
             console.log(`  Status: ${conta.status_titulo}`);
             console.log(`  Valor: ${conta.valor_documento}`);
+            console.log(`  Categoria: ${conta.codigo_categoria || 'N/A'}`);
+            console.log(`  Conta Corrente: ${conta.codigo_conta_corrente || 'N/A'}`);
           }
           
           // Usar data de VENCIMENTO ao invés de previsão para calcular atraso real
@@ -2159,9 +2164,9 @@ export class OmieService {
           const valorReceber = parseFloat(conta.valor_a_receber || conta.valor_documento || '0');
           const temSaldoPendente = valorReceber > 0;
           
-          // Lista rígida de status que indicam títulos PAGOS/CANCELADOS/RESOLVIDOS
-          const statusesFechados = ['RECEBIDO', 'CANCELADO', 'LIQUIDADO', 'BAIXADO', 'PAGO', 'QUITADO', 'COMPENSADO', 'ESTORNADO'];
-          const isAberto = !statusesFechados.includes(conta.status_titulo);
+          // FILTRO RIGOROSO: Aceitar APENAS status "ABERTO" (como faz o Excel do Omie)
+          // Isso exclui automaticamente: RECEBIDO, CANCELADO, PAGO, EM_PROCESSAMENTO, etc.
+          const isAberto = conta.status_titulo === 'ABERTO';
           
           // Log dos status encontrados para entender quais estão sendo incluídos
           if (isVencido && totalProcessed <= 30) {
