@@ -6102,6 +6102,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar métricas do dia atual de todos os vendedores
+  app.get('/api/route-metrics/today', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode acessar
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { getTodayMetrics } = await import('./routeMetricsService');
+      const metrics = await getTodayMetrics();
+      
+      res.json(metrics);
+    } catch (error: any) {
+      console.error('Erro ao buscar métricas do dia:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar métricas do dia',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar últimas rotas de um vendedor
   app.get('/api/route-metrics/recent/:sellerId', authenticateUser, async (req: any, res) => {
     try {
