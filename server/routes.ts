@@ -2682,11 +2682,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(visitAgenda.id, id));
 
+      // Registrar checkpoint na rota diária (se existir)
+      let routeProgress = null;
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
+        
+        if (dailyRoute) {
+          const { registerCheckpoint } = await import('./routeOptimizationService');
+          routeProgress = await registerCheckpoint(
+            storage,
+            dailyRoute.id,
+            id,
+            currentVisit.sellerId,
+            'check_in',
+            latitude,
+            longitude
+          );
+        }
+      } catch (error) {
+        console.error('Erro ao registrar checkpoint:', error);
+      }
+
       res.json({
         success: true,
         message: 'Check-in realizado com sucesso',
         checkInTime: new Date(),
-        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null
+        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null,
+        routeProgress: routeProgress ? {
+          distanceFromPrevious: routeProgress.distanceFromPrevious,
+          totalDistanceSoFar: routeProgress.totalDistanceSoFar,
+          completedVisits: routeProgress.completedVisits
+        } : null
       });
 
     } catch (error: any) {
@@ -2785,12 +2813,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(visitAgenda.id, id));
 
+      // Registrar checkpoint na rota diária (se existir)
+      let routeProgress = null;
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
+        
+        if (dailyRoute) {
+          const { registerCheckpoint } = await import('./routeOptimizationService');
+          routeProgress = await registerCheckpoint(
+            storage,
+            dailyRoute.id,
+            id,
+            currentVisit.sellerId,
+            'check_out',
+            latitude,
+            longitude
+          );
+        }
+      } catch (error) {
+        console.error('Erro ao registrar checkpoint:', error);
+      }
+
       res.json({
         success: true,
         message: 'Check-out realizado com sucesso',
         checkOutTime,
         visitDuration,
-        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null
+        distance: distanceToCustomer ? Math.round(distanceToCustomer) : null,
+        routeProgress: routeProgress ? {
+          distanceFromPrevious: routeProgress.distanceFromPrevious,
+          totalDistanceSoFar: routeProgress.totalDistanceSoFar,
+          completedVisits: routeProgress.completedVisits
+        } : null
       });
 
     } catch (error: any) {
@@ -5758,6 +5814,164 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         success: false,
         message: `Falha na importação: ${error.message}` 
+      });
+    }
+  });
+
+  // ========================================
+  // ROTAS DE ROTEIRIZAÇÃO DIÁRIA
+  // ========================================
+  
+  // Importar serviço de otimização de rotas
+  const { generateDailyRoute, registerCheckpoint } = await import('./routeOptimizationService');
+
+  // Gerar rota otimizada do dia para um vendedor
+  app.post('/api/daily-routes/generate', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date } = req.body;
+      
+      // Vendedor só pode gerar sua própria rota
+      const targetSellerId = user.role === 'vendedor' ? user.id : (sellerId || user.id);
+      
+      if (!date) {
+        return res.status(400).json({ message: 'Data é obrigatória' });
+      }
+
+      const routeDate = new Date(date);
+      
+      // Verificar se já existe rota para este dia
+      const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
+      
+      if (existingRoute) {
+        return res.json({
+          message: 'Rota já existe para esta data',
+          route: existingRoute,
+          alreadyExists: true
+        });
+      }
+
+      // Gerar nova rota
+      const result = await generateDailyRoute(storage, targetSellerId, routeDate);
+      
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (error: any) {
+      console.error('Erro ao gerar rota diária:', error);
+      res.status(500).json({ 
+        message: 'Erro ao gerar rota',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar rota do dia atual para um vendedor
+  app.get('/api/daily-routes/:sellerId/today', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId } = req.params;
+      
+      // Vendedor só pode ver sua própria rota
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const route = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+      
+      if (!route) {
+        return res.json({
+          message: 'Nenhuma rota encontrada para hoje. Gere uma rota primeiro.',
+          route: null
+        });
+      }
+
+      // Buscar detalhes das visitas na ordem otimizada
+      const visits = await Promise.all(
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          const [visit] = await db.select()
+            .from(visitAgenda)
+            .where(eq(visitAgenda.id, visitId))
+            .limit(1);
+          return visit;
+        })
+      );
+
+      // Buscar checkpoints da rota
+      const checkpoints = await storage.getRouteCheckpoints(route.id);
+
+      res.json({
+        route: {
+          ...route,
+          visits: visits.filter(Boolean),
+          checkpoints,
+          progress: {
+            totalVisits: route.totalVisits || 0,
+            completedVisits: route.completedVisits || 0,
+            totalEstimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
+            totalActualDistance: parseFloat(route.totalActualDistance || '0'),
+            percentComplete: route.totalVisits > 0 
+              ? Math.round((route.completedVisits / route.totalVisits) * 100) 
+              : 0
+          }
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar rota do dia:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar rota',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar rota específica com detalhes
+  app.get('/api/daily-routes/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      const route = await storage.getDailyRoute(id);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+
+      // Vendedor só pode ver sua própria rota
+      if (user.role === 'vendedor' && route.sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      // Buscar detalhes das visitas
+      const visits = await Promise.all(
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          const [visit] = await db.select()
+            .from(visitAgenda)
+            .where(eq(visitAgenda.id, visitId))
+            .limit(1);
+          return visit;
+        })
+      );
+
+      // Buscar checkpoints
+      const checkpoints = await storage.getRouteCheckpoints(route.id);
+
+      res.json({
+        route: {
+          ...route,
+          visits: visits.filter(Boolean),
+          checkpoints
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar rota',
+        error: error.message 
       });
     }
   });
