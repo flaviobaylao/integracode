@@ -2282,10 +2282,15 @@ export class OmieService {
       
       const clienteEntries = Array.from(debtorsMap.entries());
       
-      // Buscar todos os clientes em paralelo (batch de 10 por vez para não sobrecarregar a API)
-      const batchSize = 10;
+      // Buscar todos os clientes em paralelo (batch de 3 por vez para respeitar limites da API Omie)
+      const batchSize = 3;
       for (let i = 0; i < clienteEntries.length; i += batchSize) {
         const batch = clienteEntries.slice(i, i + batchSize);
+        
+        // Aguardar 500ms entre batches para evitar rate limit
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
         
         await Promise.all(
           batch.map(async ([clientId, debtor]) => {
