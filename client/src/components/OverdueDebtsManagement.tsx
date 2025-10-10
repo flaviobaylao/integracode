@@ -173,14 +173,12 @@ export default function OverdueDebtsManagement() {
       filteredDebts.forEach((debt) => {
         debt.debitos.forEach((documento) => {
           detalhesData.push({
-            'Código Cliente': debt.cliente.codigo_cliente_omie,
-            'Nome/Razão Social': debt.cliente.nome_fantasia,
+            'Cliente': debt.cliente.nome_fantasia,
             'CNPJ/CPF': debt.cliente.cnpj_cpf,
-            'Número Documento': documento.numero_documento,
+            'Nº Nota Fiscal': documento.numero_documento_fiscal || documento.numero_documento || 'N/A',
             'Valor': documento.valor,
             'Data Vencimento': documento.data_vencimento,
-            'Dias em Atraso': documento.dias_atraso,
-            'Observação': documento.observacao || '',
+            'Dias Atraso': documento.dias_atraso,
           });
         });
       });
