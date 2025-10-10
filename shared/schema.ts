@@ -701,9 +701,10 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   cnpj: z.string().nullable().optional(),
   // Data de início do fornecimento como opcional
   serviceStartDate: z.date().nullable().optional(),
-  // Validação de weekdays: deve ser JSON array com 1 ou 2 dias
+  // Validação de weekdays: deve ser JSON array com 1 ou 2 dias (opcional)
   weekdays: z.string().refine(
     (val) => {
+      if (!val) return true; // Permitir vazio
       try {
         const days = JSON.parse(val);
         return Array.isArray(days) && days.length >= 1 && days.length <= 2;
@@ -712,7 +713,7 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
       }
     },
     { message: "Cliente deve ter entre 1 e 2 dias de rota por semana" }
-  ),
+  ).optional(),
 }).refine(
   (data) => data.cpf || data.cnpj,
   {

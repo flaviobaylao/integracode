@@ -393,6 +393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+        route: req.body.route || '', // Default vazio para route (campo deprecated)
       };
       
       const data = insertCustomerSchema.parse(cleanedData);
@@ -1176,16 +1177,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Verificar se já existe um card para este cliente
+      // Verificar se já existe um card ativo para este cliente
+      // Cards ativos são aqueles com status 'pending' ou 'telemarketing'
+      const ACTIVE_STATUSES = ['pending', 'telemarketing'];
       const existingCards = await storage.getSalesCards(processedData.sellerId);
-      const customerHasCard = existingCards.some(card => 
+      const activeCard = existingCards.find(card => 
         card.customerId === processedData.customerId && 
-        card.status === 'pending'
+        ACTIVE_STATUSES.includes(card.status)
       );
       
-      if (customerHasCard) {
+      if (activeCard) {
+        const statusLabel = activeCard.status === 'pending' ? 'pendente' : 'em telemarketing';
         return res.status(400).json({ 
-          message: `Este cliente já possui um card de vendas pendente. Por favor, utilize o card existente.` 
+          message: `Este cliente já possui um card de vendas ativo (${statusLabel}). Por favor, utilize o card existente antes de criar um novo.` 
         });
       }
       
@@ -1320,16 +1324,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Verificar se já existe card pendente para este cliente
           const existingCards = await storage.getSalesCards();
-          const hasPendingCard = existingCards.some(
-            card => card.customerId === customer.id && card.status === 'pending'
+          const ACTIVE_STATUSES = ['pending', 'telemarketing'];
+          const hasActiveCard = existingCards.some(
+            card => card.customerId === customer.id && ACTIVE_STATUSES.includes(card.status)
           );
 
-          if (hasPendingCard) {
+          if (hasActiveCard) {
             results.errors.push({
               row: i + 2,
               cnpj,
               customer: customer.fantasyName,
-              error: "Cliente já possui card pendente"
+              error: "Cliente já possui card ativo (pendente ou em telemarketing)"
             });
             continue;
           }
