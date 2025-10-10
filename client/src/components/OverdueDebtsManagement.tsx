@@ -139,7 +139,10 @@ export default function OverdueDebtsManagement() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR');
+    // A data já vem no formato brasileiro DD/MM/YYYY da API do Omie
+    // Apenas retornar como está, sem conversão
+    if (!dateString) return '-';
+    return dateString;
   };
 
   // Função para exportar débitos para Excel
@@ -445,7 +448,7 @@ export default function OverdueDebtsManagement() {
         </div>
       )}
 
-      {/* Débitos List */}
+      {/* Débitos List - Tabela Detalhada */}
       {overdueDebts && (
         <Card>
           <CardHeader>
@@ -462,47 +465,54 @@ export default function OverdueDebtsManagement() {
                 {searchTerm ? 'Nenhum débito encontrado para a busca.' : 'Nenhum débito vencido encontrado.'}
               </div>
             ) : (
-              <div className="space-y-4">
-                {filteredDebts.map((debt, index) => (
-                  <div
-                    key={index}
-                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
-                    onClick={() => setSelectedDebt(debt)}
-                    data-testid={`card-debt-${index}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-lg text-gray-900">
-                          {debt.cliente.nome_fantasia}
-                        </h3>
-                        <p className="text-sm text-gray-600">
-                          {debt.cliente.cnpj_cpf}
-                        </p>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <div className="text-right">
-                          <p className="font-bold text-lg text-red-600">
-                            {formatCurrency(debt.valorTotal)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {debt.diasMaximoAtraso} dias em atraso
-                          </p>
-                        </div>
-                        <div className="text-gray-400">
-                          <Eye className="h-5 w-5" />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <Badge 
-                        variant={debt.diasMaximoAtraso > 60 ? "destructive" : 
-                               debt.diasMaximoAtraso > 30 ? "secondary" : "outline"}
-                      >
-                        {debt.debitos.length} documento(s) vencido(s)
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse" data-testid="table-debts">
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Cliente</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700">CNPJ/CPF</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Nº Nota Fiscal</th>
+                      <th className="text-right p-3 font-semibold text-sm text-gray-700">Valor</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Data Vencimento</th>
+                      <th className="text-right p-3 font-semibold text-sm text-gray-700">Dias Atraso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDebts.map((debt, debtIndex) => (
+                      debt.debitos.map((documento, docIndex) => (
+                        <tr 
+                          key={`${debtIndex}-${docIndex}`}
+                          className="border-b hover:bg-gray-50 transition-colors"
+                          data-testid={`row-debt-${debtIndex}-${docIndex}`}
+                        >
+                          <td className="p-3">
+                            <div className="font-medium text-gray-900">{debt.cliente.nome_fantasia}</div>
+                          </td>
+                          <td className="p-3 text-sm text-gray-600">{debt.cliente.cnpj_cpf}</td>
+                          <td className="p-3">
+                            <div className="font-medium text-gray-900">{documento.numero_documento}</div>
+                          </td>
+                          <td className="p-3 text-right">
+                            <span className="font-semibold text-red-600">
+                              {formatCurrency(documento.valor)}
+                            </span>
+                          </td>
+                          <td className="p-3 text-sm text-gray-600">
+                            {formatDate(documento.data_vencimento)}
+                          </td>
+                          <td className="p-3 text-right">
+                            <Badge 
+                              variant={documento.dias_atraso > 60 ? "destructive" : 
+                                     documento.dias_atraso > 30 ? "secondary" : "outline"}
+                            >
+                              {documento.dias_atraso} dias
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </CardContent>
