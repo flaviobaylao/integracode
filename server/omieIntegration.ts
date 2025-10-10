@@ -2128,35 +2128,32 @@ export class OmieService {
           contaIndex++;
           totalProcessed++;
           
-          // Log primeiras contas para debug - MOSTRAR TODOS OS CAMPOS
-          if (totalProcessed === 1) {
-            console.log('\n📋 TODOS OS CAMPOS DO PRIMEIRO TÍTULO:');
-            console.log(JSON.stringify(conta, null, 2));
-          }
-          
-          // Log primeiras contas para debug
-          if (totalProcessed <= 10) {
-            console.log(`\nConta ${totalProcessed + 1}:`);
-            console.log(`  Numero: ${conta.numero_documento}`);
-            console.log(`  Status Titulo: ${conta.status_titulo}`);
-            console.log(`  Valor: ${conta.valor_documento}`);
-            console.log(`  Valor a receber: ${conta.valor_a_receber}`);
-          }
-          
-          // Valor pendente a receber (pode ser diferente do valor total se houve pagamentos parciais)
+          // Valor pendente a receber (saldo ainda não pago)
           const valorReceber = parseFloat(conta.valor_a_receber || conta.valor_documento || '0');
-          const temSaldoPendente = valorReceber > 0;
           
-          // FILTRO PRINCIPAL: Usar status_titulo === "ATRASADO"
-          // Este é o mesmo critério que o Excel do Omie usa para marcar débitos vencidos
-          const isAtrasado = conta.status_titulo === 'ATRASADO';
+          // Pular se não tem saldo pendente
+          if (valorReceber <= 0) continue;
           
-          // Log dos status encontrados para debug
-          if (totalProcessed <= 30 && temSaldoPendente) {
-            console.log(`  Status: "${conta.status_titulo}" - Valor: ${valorReceber} - ${isAtrasado ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento}`);
+          // Verificar se a data de previsão é anterior à data atual (título atrasado)
+          if (!conta.data_previsao) continue;
+          
+          // Converter data de PREVISÃO do formato brasileiro DD/MM/YYYY
+          const [dia, mes, ano] = conta.data_previsao.split('/');
+          const dataPrevisao = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - dataPrevisao.getTime();
+          const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+          // FILTRO: Título está atrasado se:
+          // 1. data_previsao < hoje (diasAtraso > 0)
+          // 2. valor_a_receber > 0
+          const isAtrasado = diasAtraso > 0;
+          
+          // Log dos primeiros títulos para debug
+          if (totalProcessed <= 30) {
+            console.log(`${totalProcessed}. ${conta.numero_documento} - Previsão: ${conta.data_previsao} (${diasAtraso} dias) - Valor: R$ ${valorReceber} - ${isAtrasado ? '✓ ATRASADO' : '✗ OK'}`);
           }
           
-          if (isAtrasado && temSaldoPendente) {
+          if (isAtrasado) {
             const clientId = conta.codigo_cliente_fornecedor;
             const valor = valorReceber;
             
@@ -2241,10 +2238,13 @@ export class OmieService {
         totalClients: debtorsMap.size
       };
       
-      console.log(`Processamento completo: ${totalProcessed} registros analisados`);
-      console.log(`Débitos vencidos encontrados: ${result.totalClients} clientes, Total: R$ ${result.totalAmount.toFixed(2)}`);
-      
-      console.log(`[${new Date().toISOString()}] Overdue debts fetch complete - returning ${result.totalClients} clients`);
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`📊 RESULTADO DA SINCRONIZAÇÃO DE DÉBITOS VENCIDOS`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(`✅ Registros analisados: ${totalProcessed}`);
+      console.log(`👥 Clientes com débito: ${result.totalClients}`);
+      console.log(`💰 Valor total: R$ ${result.totalAmount.toFixed(2).replace('.', ',')}`);
+      console.log(`${'='.repeat(80)}\n`);
       
       return result;
     } catch (error) {
