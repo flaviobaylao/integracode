@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +39,6 @@ interface DailyRoute {
 export default function DailyRouteView() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Buscar rota do dia
   const { data: routeData, isLoading, refetch } = useQuery({
@@ -54,47 +52,6 @@ export default function DailyRouteView() {
   });
 
   const route: DailyRoute | null = routeData?.route || null;
-
-  // Mutation para gerar rota
-  const generateRouteMutation = useMutation({
-    mutationFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
-      return apiRequest('POST', '/api/daily-routes/generate', {
-        sellerId: user?.id,
-        date: today
-      });
-    },
-    onSuccess: (data) => {
-      if (data.alreadyExists) {
-        toast({
-          title: "Rota já existe",
-          description: "A rota para hoje já foi gerada.",
-        });
-      } else {
-        toast({
-          title: "Rota gerada!",
-          description: `${data.message} - ${data.totalVisits} visitas organizadas`,
-        });
-      }
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao gerar rota",
-        description: error.message || "Erro ao gerar rota otimizada",
-        variant: "destructive",
-      });
-    }
-  });
-
-  const handleGenerateRoute = async () => {
-    setIsGenerating(true);
-    try {
-      await generateRouteMutation.mutateAsync();
-    } finally {
-      setIsGenerating(false);
-    }
-  };
 
   // Verificar se vendedor tem coordenadas configuradas
   const hasHomeCoordinates = user?.homeLatitude && user?.homeLongitude;
@@ -160,28 +117,13 @@ export default function DailyRouteView() {
         <Card>
           <CardContent className="py-12 text-center">
             <Route className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Nenhuma rota gerada para hoje</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              Gere sua rota otimizada para começar o dia
+            <h3 className="text-lg font-semibold mb-2">Nenhuma rota disponível para hoje</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-2">
+              As rotas são geradas automaticamente pelo sistema todos os dias às 05:00h.
             </p>
-            <Button
-              onClick={handleGenerateRoute}
-              disabled={isGenerating}
-              className="bg-honest-blue hover:bg-blue-700"
-              data-testid="button-generate-route"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  Gerando...
-                </>
-              ) : (
-                <>
-                  <Navigation className="mr-2 h-4 w-4" />
-                  Gerar Rota Otimizada
-                </>
-              )}
-            </Button>
+            <p className="text-sm text-gray-500 dark:text-gray-500">
+              Certifique-se de ter visitas agendadas e coordenadas de casa configuradas.
+            </p>
           </CardContent>
         </Card>
       </div>
