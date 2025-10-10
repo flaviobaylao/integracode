@@ -792,6 +792,21 @@ export type InsertBilling = z.infer<typeof insertBillingSchema>;
 export type SyncState = typeof syncStates.$inferSelect;
 export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
 
+// Exported Reports table - stores automatically generated Excel reports
+export const exportedReports = pgTable("exported_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reportType: varchar("report_type").notNull(), // 'overdue_debts', 'sales', etc.
+  fileName: varchar("file_name").notNull(),
+  fileData: text("file_data").notNull(), // Base64 encoded Excel file
+  metadata: jsonb("metadata"), // Store additional info like totalClients, totalAmount, etc.
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: varchar("created_by"),
+});
+
+export const insertExportedReportSchema = createInsertSchema(exportedReports).omit({ id: true, createdAt: true });
+export type ExportedReport = typeof exportedReports.$inferSelect;
+export type InsertExportedReport = z.infer<typeof insertExportedReportSchema>;
+
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
 export type OperationType = 'venda' | 'troca' | 'amostra';

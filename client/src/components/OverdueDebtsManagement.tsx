@@ -58,6 +58,12 @@ export default function OverdueDebtsManagement() {
     staleTime: 1000 * 60 * 10, // 10 minutos
   });
 
+  // Query para buscar informações da última planilha salva
+  const { data: savedReportInfo, refetch: refetchReportInfo } = useQuery<any>({
+    queryKey: ['/api/reports/overdue-debts/info'],
+    staleTime: 1000 * 60, // 1 minuto
+  });
+
   // Debug logs para vendedores
   React.useEffect(() => {
     console.log('Estado vendedores:', { vendedores: vendedores?.slice(0, 5), isLoadingVendedores, vendedoresError });
@@ -96,9 +102,11 @@ export default function OverdueDebtsManagement() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(['/api/omie/overdue-debts'], data);
+      // Atualizar informações da planilha salva
+      refetchReportInfo();
       toast({
         title: "Sincronização concluída",
-        description: `${data.totalClients} clientes com débitos vencidos encontrados.`,
+        description: `${data.totalClients} clientes com débitos vencidos encontrados. Planilha salva automaticamente.`,
       });
     },
     onError: (error: Error) => {
@@ -109,6 +117,57 @@ export default function OverdueDebtsManagement() {
       });
     },
   });
+
+  // Função para baixar a planilha salva
+  const downloadSavedReport = async () => {
+    try {
+      const response = await fetch('/api/reports/overdue-debts/latest', {
+        method: 'GET',
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Erro ao baixar planilha');
+      }
+
+      // Criar blob a partir da resposta
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      
+      // Obter nome do arquivo do header Content-Disposition
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let fileName = 'debitos-vencidos.xlsx';
+      if (contentDisposition) {
+        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (fileNameMatch && fileNameMatch[1]) {
+          fileName = fileNameMatch[1];
+        }
+      }
+
+      // Criar link temporário e fazer download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Limpar
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Download concluído",
+        description: `Arquivo "${fileName}" baixado com sucesso.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro no download",
+        description: error.message || 'Erro ao baixar planilha salva',
+        variant: "destructive",
+      });
+    }
+  };
 
   const filteredDebts = overdueDebts?.debts?.filter(debt => {
     const searchLower = searchTerm.toLowerCase();
@@ -302,18 +361,27 @@ export default function OverdueDebtsManagement() {
             Gerencie os débitos vencidos dos clientes no Omie ERP
           </p>
         </div>
-        <div className="flex space-x-3">
-          {overdueDebts && filteredDebts.length > 0 && (
-            <>
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          {savedReportInfo?.exists && (
+            <div className="flex items-center gap-3">
               <Button 
-                onClick={exportToExcel}
+                onClick={downloadSavedReport}
                 variant="outline"
-                data-testid="button-export-excel"
+                data-testid="button-download-saved-report"
               >
                 <Download className="h-4 w-4 mr-2" />
-                Exportar Excel
+                Baixar Planilha Salva
               </Button>
-            </>
+              <span className="text-sm text-gray-600">
+                Última planilha: {new Date(savedReportInfo.createdAt).toLocaleDateString('pt-BR', { 
+                  day: '2-digit', 
+                  month: '2-digit', 
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </span>
+            </div>
           )}
           <Button 
             onClick={() => syncOverdueDebts.mutate()}

@@ -11,6 +11,7 @@ import {
   salesGoals,
   billings,
   overdueDebts,
+  exportedReports,
   type User,
   type UpsertUser,
   type Route,
@@ -33,6 +34,7 @@ import {
   type InsertSalesGoal,
   type Billing,
   type InsertBilling,
+  type ExportedReport,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -193,6 +195,11 @@ export interface IStorage {
   getOverdueDebtByDocument(document: string): Promise<any | undefined>;
   syncOverdueDebts(debts: any[]): Promise<void>;
   clearOverdueDebts(): Promise<void>;
+
+  // Exported reports operations
+  saveExportedReport(reportType: string, fileName: string, fileData: string, metadata?: any, createdBy?: string): Promise<any>;
+  getLatestExportedReport(reportType: string): Promise<any | undefined>;
+  deleteOldReports(reportType: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2754,6 +2761,42 @@ export class DatabaseStorage implements IStorage {
 
   async clearOverdueDebts(): Promise<void> {
     await db.delete(overdueDebts);
+  }
+
+  // Exported reports operations
+  async saveExportedReport(reportType: string, fileName: string, fileData: string, metadata?: any, createdBy?: string): Promise<ExportedReport> {
+    // Delete old reports of the same type before saving new one
+    await this.deleteOldReports(reportType);
+    
+    const [report] = await db
+      .insert(exportedReports)
+      .values({
+        reportType,
+        fileName,
+        fileData,
+        metadata,
+        createdBy
+      })
+      .returning();
+    
+    return report;
+  }
+
+  async getLatestExportedReport(reportType: string): Promise<ExportedReport | undefined> {
+    const [report] = await db
+      .select()
+      .from(exportedReports)
+      .where(eq(exportedReports.reportType, reportType))
+      .orderBy(desc(exportedReports.createdAt))
+      .limit(1);
+    
+    return report;
+  }
+
+  async deleteOldReports(reportType: string): Promise<void> {
+    await db
+      .delete(exportedReports)
+      .where(eq(exportedReports.reportType, reportType));
   }
 }
 

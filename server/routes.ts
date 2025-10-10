@@ -3350,12 +3350,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[${timestamp}] Fetching overdue debts from Omie - NO CACHE...`);
       const overdueData = await omieService.getOverdueDebts();
       console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients`);
+      
+      // Gerar e salvar planilha Excel automaticamente após a sincronização
+      try {
+        const fileName = `debitos-vencidos-${new Date().toISOString().split('T')[0]}.xlsx`;
+        
+        // Preparar dados detalhados (todos os documentos)
+        const detalhesData: any[] = [];
+        overdueData.debts.forEach((debt: any) => {
+          debt.debitos.forEach((documento: any) => {
+            detalhesData.push({
+              'Cliente': debt.cliente.nome_fantasia,
+              'CNPJ/CPF': debt.cliente.cnpj_cpf,
+              'Nº Nota Fiscal': documento.numero_documento_fiscal || documento.numero_documento || 'N/A',
+              'Valor': documento.valor,
+              'Data Vencimento': documento.data_vencimento,
+              'Dias Atraso': documento.dias_atraso,
+            });
+          });
+        });
+
+        // Criar workbook
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(detalhesData);
+        XLSX.utils.book_append_sheet(wb, ws, 'Detalhes dos Documentos');
+
+        // Gerar buffer e converter para base64
+        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        const base64Data = excelBuffer.toString('base64');
+
+        // Salvar no banco de dados
+        await storage.saveExportedReport(
+          'overdue_debts',
+          fileName,
+          base64Data,
+          {
+            totalClients: overdueData.totalClients,
+            totalAmount: overdueData.totalAmount,
+            syncDate: new Date().toISOString()
+          },
+          req.user?.id
+        );
+
+        console.log(`[${timestamp}] Excel report saved successfully: ${fileName}`);
+      } catch (excelError) {
+        console.error('Error generating/saving Excel report:', excelError);
+        // Não falhar a requisição se o Excel falhar
+      }
+      
       res.json(overdueData);
 
     } catch (error) {
       console.error("Error fetching overdue debts from Omie:", error);
       res.status(500).json({ 
         message: "Erro ao buscar débitos em atraso no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Endpoint para download da planilha salva
+  app.get('/api/reports/overdue-debts/latest', authenticateUser, async (req: any, res) => {
+    try {
+      const report = await storage.getLatestExportedReport('overdue_debts');
+      
+      if (!report) {
+        return res.status(404).json({ 
+          message: "Nenhuma planilha encontrada. Execute a sincronização primeiro." 
+        });
+      }
+
+      // Converter base64 de volta para buffer
+      const excelBuffer = Buffer.from(report.fileData, 'base64');
+
+      // Configurar headers para download
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${report.fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length);
+
+      res.send(excelBuffer);
+    } catch (error) {
+      console.error("Error downloading saved report:", error);
+      res.status(500).json({ 
+        message: "Erro ao baixar planilha salva",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Endpoint para obter informações sobre a última planilha (sem fazer download)
+  app.get('/api/reports/overdue-debts/info', authenticateUser, async (req: any, res) => {
+    try {
+      const report = await storage.getLatestExportedReport('overdue_debts');
+      
+      if (!report) {
+        return res.json({ 
+          exists: false,
+          message: "Nenhuma planilha salva" 
+        });
+      }
+
+      res.json({
+        exists: true,
+        fileName: report.fileName,
+        createdAt: report.createdAt,
+        metadata: report.metadata
+      });
+    } catch (error) {
+      console.error("Error fetching report info:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar informações da planilha",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
       });
     }
