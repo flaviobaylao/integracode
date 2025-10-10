@@ -25,7 +25,6 @@ interface RoutePoint {
   longitude: number;
   customerName: string;
   customerAddress?: string;
-  priority?: number;
 }
 
 interface OptimizedRoute {
@@ -39,9 +38,80 @@ interface OptimizedRoute {
 }
 
 /**
- * Otimiza a rota usando o algoritmo Nearest Neighbor (vizinho mais próximo)
- * Começa da casa do vendedor, sempre escolhe o próximo ponto mais próximo
- * e retorna à casa no final
+ * Calcula a distância total de uma rota (incluindo volta para casa)
+ */
+function calculateTotalRouteDistance(
+  startLat: number,
+  startLon: number,
+  route: RoutePoint[]
+): number {
+  let totalDistance = 0;
+  let currentLat = startLat;
+  let currentLon = startLon;
+
+  for (const point of route) {
+    totalDistance += calculateDistance(currentLat, currentLon, point.latitude, point.longitude);
+    currentLat = point.latitude;
+    currentLon = point.longitude;
+  }
+
+  // Retorno para casa
+  totalDistance += calculateDistance(currentLat, currentLon, startLat, startLon);
+  
+  return totalDistance;
+}
+
+/**
+ * Algoritmo 2-opt para melhorar uma rota existente
+ * Inverte segmentos da rota para reduzir a distância total
+ */
+function twoOptOptimization(
+  startLat: number,
+  startLon: number,
+  route: RoutePoint[]
+): RoutePoint[] {
+  if (route.length <= 2) return route;
+
+  let improved = true;
+  let bestRoute = [...route];
+  
+  // Limitar iterações para evitar processamento excessivo
+  let maxIterations = 50;
+  let iteration = 0;
+
+  while (improved && iteration < maxIterations) {
+    improved = false;
+    iteration++;
+
+    for (let i = 0; i < bestRoute.length - 1; i++) {
+      for (let j = i + 2; j < bestRoute.length; j++) {
+        // Criar nova rota invertendo o segmento entre i e j
+        const newRoute = [
+          ...bestRoute.slice(0, i + 1),
+          ...bestRoute.slice(i + 1, j + 1).reverse(),
+          ...bestRoute.slice(j + 1)
+        ];
+
+        const currentDistance = calculateTotalRouteDistance(startLat, startLon, bestRoute);
+        const newDistance = calculateTotalRouteDistance(startLat, startLon, newRoute);
+
+        if (newDistance < currentDistance) {
+          bestRoute = newRoute;
+          improved = true;
+          break;
+        }
+      }
+      if (improved) break;
+    }
+  }
+
+  return bestRoute;
+}
+
+/**
+ * Otimiza a rota usando Nearest Neighbor + 2-opt
+ * 1. Nearest Neighbor: construção inicial gulosa (rápida)
+ * 2. 2-opt: refinamento para melhorar a solução
  */
 export function optimizeRoute(
   startLat: number,
@@ -59,18 +129,15 @@ export function optimizeRoute(
   const startPoint = { latitude: startLat, longitude: startLon, name: 'Início (Casa)' };
   const unvisited = [...points];
   const orderedPoints: RoutePoint[] = [];
-  const segments: OptimizedRoute['segments'] = [];
-  let totalDistance = 0;
   let currentLat = startLat;
   let currentLon = startLon;
-  let currentPoint: any = startPoint;
 
-  // Algoritmo Nearest Neighbor
+  // FASE 1: Nearest Neighbor (construção inicial)
   while (unvisited.length > 0) {
     let nearestIndex = 0;
     let nearestDistance = Infinity;
 
-    // Encontrar o ponto mais próximo
+    // Encontrar o ponto mais próximo (sem prioridade, apenas distância)
     for (let i = 0; i < unvisited.length; i++) {
       const distance = calculateDistance(
         currentLat,
@@ -79,31 +146,43 @@ export function optimizeRoute(
         unvisited[i].longitude
       );
 
-      // Aplicar bônus de prioridade (clientes prioritários ficam "mais próximos")
-      const priorityBonus = (unvisited[i].priority || 0) * 0.5;
-      const adjustedDistance = distance - priorityBonus;
-
-      if (adjustedDistance < nearestDistance) {
-        nearestDistance = distance; // Usar distância real, não ajustada
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
         nearestIndex = i;
       }
     }
 
-    // Adicionar o ponto mais próximo à rota
     const nextPoint = unvisited[nearestIndex];
     orderedPoints.push(nextPoint);
     
-    segments.push({
-      from: currentPoint,
-      to: nextPoint,
-      distance: nearestDistance
-    });
-
-    totalDistance += nearestDistance;
     currentLat = nextPoint.latitude;
     currentLon = nextPoint.longitude;
-    currentPoint = nextPoint;
     unvisited.splice(nearestIndex, 1);
+  }
+
+  // FASE 2: 2-opt (otimização e refinamento)
+  const optimizedPoints = twoOptOptimization(startLat, startLon, orderedPoints);
+
+  // Calcular segmentos e distância total da rota otimizada
+  const segments: OptimizedRoute['segments'] = [];
+  let totalDistance = 0;
+  let currentPoint: any = startPoint;
+  currentLat = startLat;
+  currentLon = startLon;
+
+  for (const point of optimizedPoints) {
+    const distance = calculateDistance(currentLat, currentLon, point.latitude, point.longitude);
+    
+    segments.push({
+      from: currentPoint,
+      to: point,
+      distance
+    });
+
+    totalDistance += distance;
+    currentLat = point.latitude;
+    currentLon = point.longitude;
+    currentPoint = point;
   }
 
   // Retornar à casa do vendedor
@@ -123,7 +202,7 @@ export function optimizeRoute(
   totalDistance += returnDistance;
 
   return {
-    orderedPoints,
+    orderedPoints: optimizedPoints,
     totalDistance: Math.round(totalDistance * 100) / 100,
     segments
   };
@@ -185,8 +264,7 @@ export async function generateDailyRoute(
     latitude: parseFloat(v.customerLatitude as any),
     longitude: parseFloat(v.customerLongitude as any),
     customerName: v.customerName,
-    customerAddress: v.customerAddress || '',
-    priority: v.recurrenceType === 'semanal' ? 5 : v.recurrenceType === 'quinzenal' ? 3 : 1
+    customerAddress: v.customerAddress || ''
   }));
 
   // Otimizar a rota
