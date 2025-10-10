@@ -202,6 +202,14 @@ export async function optimizeRoute(
     // Calcular distâncias reais de moto
     const realDistances = await calculateRouteDistances(coordinates);
     
+    // Verificar se OSRM retornou distâncias suficientes
+    const expectedLegs = optimizedPoints.length + 1; // +1 para o retorno
+    
+    if (!realDistances || realDistances.length < optimizedPoints.length) {
+      // OSRM falhou ou não retornou distâncias suficientes, usar Haversine
+      throw new Error('OSRM não retornou distâncias suficientes, usando fallback');
+    }
+    
     // Construir segmentos com distâncias reais (em metros, converter para km)
     const segments: OptimizedRoute['segments'] = [];
     let totalDistance = 0;
@@ -221,7 +229,22 @@ export async function optimizeRoute(
     }
 
     // Retornar à casa do vendedor
-    const returnDistance = realDistances[optimizedPoints.length] / 1000; // metros para km
+    // OSRM pode não retornar o último leg, calcular separadamente se necessário
+    let returnDistance = 0;
+    if (realDistances.length > optimizedPoints.length) {
+      returnDistance = realDistances[optimizedPoints.length] / 1000; // metros para km
+    } else {
+      // Calcular distância de retorno separadamente
+      const { calculateRealDistance } = await import('./routingService');
+      const lastPoint = optimizedPoints[optimizedPoints.length - 1];
+      const returnDistanceMeters = await calculateRealDistance(
+        lastPoint.latitude,
+        lastPoint.longitude,
+        startLat,
+        startLon
+      );
+      returnDistance = returnDistanceMeters / 1000;
+    }
     
     segments.push({
       from: currentPoint,
@@ -239,7 +262,7 @@ export async function optimizeRoute(
   } catch (error) {
     console.error('Erro ao calcular distâncias reais, usando Haversine:', error);
     
-    // Fallback: usar Haversine se OSRM falhar
+    // Fallback: usar Haversine se OSRM falhar completamente
     const segments: OptimizedRoute['segments'] = [];
     let totalDistance = 0;
     let currentPoint: any = startPoint;
