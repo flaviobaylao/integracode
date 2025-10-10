@@ -24,6 +24,7 @@ import RoutesManagement from "@/pages/RoutesManagement";
 import UserManagementPage from "@/pages/UserManagementPage";
 import BankAccountsDebug from "@/pages/BankAccountsDebug";
 import ContasReceber from "@/pages/ContasReceber";
+import OverdueDebtsPage from "@/pages/OverdueDebts";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -44,6 +45,7 @@ function Router() {
           <Route path="/billings" component={Billings} />
           <Route path="/blocked-orders" component={BlockedOrdersPage} />
           <Route path="/contas-receber" component={ContasReceber} />
+          <Route path="/overdue-debts" component={OverdueDebtsPage} />
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
           <Route path="/delivery-management" component={DeliveryManagement} />
           <Route path="/driver-management" component={DriverManagement} />

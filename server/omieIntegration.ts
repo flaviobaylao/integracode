@@ -2211,6 +2211,18 @@ export class OmieService {
           }
           
           if (isAtrasado) {
+            // Log detalhado da estrutura do primeiro débito atrasado para debug
+            if (debtorsMap.size === 0) {
+              console.log('\n=== ESTRUTURA COMPLETA DO PRIMEIRO DÉBITO ===');
+              console.log('Campos disponíveis:', Object.keys(conta).join(', '));
+              console.log('numero_documento:', conta.numero_documento);
+              console.log('numero_documento_fiscal:', conta.numero_documento_fiscal);
+              console.log('numero_nf:', conta.numero_nf);
+              console.log('numero_nota_fiscal:', conta.numero_nota_fiscal);
+              console.log('numero_doc:', conta.numero_doc);
+              console.log('nNumeroDocumento:', conta.nNumeroDocumento);
+              console.log('=========================================\n');
+            }
             const clientId = conta.codigo_cliente_fornecedor;
             const valor = valorReceber;
             
@@ -2240,9 +2252,26 @@ export class OmieService {
               }
 
               const debtor = debtorsMap.get(clientId);
+              
+              // Log para debug - mostrar estrutura da conta nos primeiros registros
+              if (totalProcessed <= 5 && conta.numero_documento_fiscal) {
+                console.log(`DEBUG - Conta com NF: ${conta.numero_documento}, NF Fiscal: ${conta.numero_documento_fiscal}`);
+              }
+              
+              // Tentar obter número da nota fiscal de múltiplos campos possíveis
+              const numeroNF = conta.numero_documento_fiscal || 
+                              conta.numero_nf || 
+                              conta.numero_nota_fiscal || 
+                              conta.num_nota_fiscal ||
+                              conta.nNotaFiscal ||
+                              conta.numero_doc_fiscal ||
+                              conta.nNumeroDocumento ||
+                              conta.numero_documento || 
+                              'N/A';
+              
               debtor.debitos.push({
                 numero_documento: conta.numero_documento || 'N/A',
-                numero_documento_fiscal: conta.numero_documento_fiscal || 'N/A',
+                numero_documento_fiscal: numeroNF,
                 codigo_lancamento_omie: conta.codigo_lancamento_omie,
                 valor: valor,
                 data_vencimento: conta.data_vencimento,
@@ -2252,7 +2281,7 @@ export class OmieService {
                 observacao: conta.observacao || '',
                 status_titulo: conta.status_titulo || 'N/A',
                 // Novos campos solicitados
-                nota_fiscal_cupom: conta.numero_documento_fiscal || conta.numero_documento || 'N/A',
+                nota_fiscal_cupom: numeroNF,
                 tipo_documento: conta.codigo_tipo_documento || 'N/A',
                 codigo_vendedor: conta.codigo_vendedor || null
               });
