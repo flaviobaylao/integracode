@@ -3298,6 +3298,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Nova rota: Buscar TODAS as contas a receber (sem filtros)
+  app.get('/api/omie/contas-receber', authenticateUser, async (req: any, res) => {
+    try {
+      // Evitar cache
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] Fetching ALL contas receber from Omie...`);
+      const contasData = await omieService.getAllContasReceber();
+      console.log(`[${timestamp}] Contas receber fetch complete - returning ${contasData.totalTitulos} títulos`);
+      res.json(contasData);
+
+    } catch (error) {
+      console.error("Error fetching contas receber from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar contas a receber no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
       // Evitar cache

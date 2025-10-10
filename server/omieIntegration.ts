@@ -2076,6 +2076,57 @@ export class OmieService {
     }
   }
 
+  // Buscar TODAS as contas a receber (sem filtros)
+  async getAllContasReceber(): Promise<{
+    titulos: any[];
+    totalTitulos: number;
+    totalPages: number;
+  }> {
+    try {
+      console.log('🔄 Buscando TODAS as contas a receber do Omie...');
+      
+      const allTitulos: any[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+      const pageSize = 500;
+      let totalPages = 1;
+      
+      while (hasMorePages) {
+        console.log(`📄 Buscando página ${currentPage}...`);
+        
+        const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
+          pagina: currentPage,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: 'N'
+        });
+
+        const contas = response.conta_receber_cadastro || 
+                       response.cadastro || 
+                       response.contasReceber || 
+                       response.lista_contas_receber || 
+                       [];
+
+        // Adicionar todos os títulos ao array
+        allTitulos.push(...contas);
+        
+        totalPages = response.total_de_paginas || 1;
+        hasMorePages = currentPage < totalPages;
+        currentPage++;
+      }
+
+      console.log(`✅ Total de títulos carregados: ${allTitulos.length}`);
+      
+      return {
+        titulos: allTitulos,
+        totalTitulos: allTitulos.length,
+        totalPages
+      };
+    } catch (error) {
+      console.error('Erro ao buscar contas a receber do Omie:', error);
+      throw error;
+    }
+  }
+
   // Buscar débitos em atraso - TODOS os títulos vencidos
   async getOverdueDebts(): Promise<{
     debts: any[];
