@@ -171,6 +171,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Logout route
+  app.get('/api/logout', (req: any, res) => {
+    req.session.destroy((err: any) => {
+      if (err) {
+        console.error("Erro ao fazer logout:", err);
+        return res.status(500).json({ message: "Erro ao fazer logout" });
+      }
+      res.redirect('/');
+    });
+  });
+
   // Auth routes
   app.get('/api/auth/user', async (req: any, res) => {
     try {

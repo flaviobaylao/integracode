@@ -293,17 +293,28 @@ export default function UserProfileModal({ isOpen, onClose, user }: UserProfileM
             </Card>
 
             {/* Botões */}
-            <div className="flex justify-end space-x-2">
-              <Button type="button" variant="outline" onClick={onClose}>
-                Cancelar
-              </Button>
+            <div className="flex justify-between items-center">
               <Button 
-                type="submit" 
-                disabled={userMutation.isPending}
-                className="bg-honest-blue hover:bg-honest-blue/90"
+                type="button" 
+                variant="destructive" 
+                onClick={() => window.location.href = '/api/logout'}
+                data-testid="button-logout"
               >
-                {userMutation.isPending ? 'Salvando...' : 'Salvar Alterações'}
+                <i className="fas fa-sign-out-alt mr-2"></i>
+                Sair
               </Button>
+              <div className="flex space-x-2">
+                <Button type="button" variant="outline" onClick={onClose}>
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={userMutation.isPending}
+                  className="bg-honest-blue hover:bg-honest-blue/90"
+                >
+                  {userMutation.isPending ? 'Salvando...' : 'Salvar Alterações'}
+                </Button>
+              </div>
             </div>
           </form>
         </Form>
