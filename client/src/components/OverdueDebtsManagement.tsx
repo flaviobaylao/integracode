@@ -46,10 +46,11 @@ export default function OverdueDebtsManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Query para buscar débitos vencidos do Omie
+  // Query para buscar débitos vencidos do banco (dados persistidos)
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
-    queryKey: ['/api/omie/overdue-debts'],
-    enabled: false, // Não carregar automaticamente
+    queryKey: ['/api/omie/overdue-debts/cached'],
+    staleTime: 1000 * 60 * 30, // 30 minutos - dados considerados "frescos"
+    gcTime: 1000 * 60 * 60 * 24, // 24 horas - mantém em cache mesmo sem uso
   });
 
   // Query para buscar vendedores
@@ -101,7 +102,10 @@ export default function OverdueDebtsManagement() {
       return await response.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(['/api/omie/overdue-debts'], data);
+      // Atualizar cache com dados da sincronização
+      queryClient.setQueryData(['/api/omie/overdue-debts/cached'], data);
+      // Invalidar para forçar reload do banco
+      queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts/cached'] });
       // Atualizar informações da planilha salva
       refetchReportInfo();
       toast({

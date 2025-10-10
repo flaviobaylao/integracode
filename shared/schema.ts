@@ -337,6 +337,7 @@ export const overdueDebts = pgTable("overdue_debts", {
   clientDocument: varchar("client_document"), // CPF/CNPJ
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   maxDaysOverdue: integer("max_days_overdue").notNull(),
+  vendedores: jsonb("vendedores").$type<number[]>(), // Array de códigos de vendedores
   debts: jsonb("debts").$type<Array<{
     numero_documento: string;
     valor: number;

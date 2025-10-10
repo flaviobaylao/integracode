@@ -2752,6 +2752,7 @@ export class DatabaseStorage implements IStorage {
         clientDocument: debt.cliente.cnpj_cpf || '',
         totalAmount: debt.valorTotal.toString(),
         maxDaysOverdue: debt.diasMaximoAtraso,
+        vendedores: debt.vendedores || [], // Salvar array de vendedores
         debts: debt.debitos || []
       }));
       

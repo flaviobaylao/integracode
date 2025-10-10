@@ -3330,6 +3330,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para buscar débitos salvos no banco (carregamento rápido)
+  app.get('/api/omie/overdue-debts/cached', authenticateUser, async (req: any, res) => {
+    try {
+      const savedDebts = await storage.getOverdueDebts();
+      
+      if (!savedDebts || savedDebts.length === 0) {
+        return res.json({
+          debts: [],
+          totalAmount: 0,
+          totalClients: 0,
+          message: "Nenhum débito salvo. Execute a sincronização."
+        });
+      }
+
+      // Transformar dados do banco para o formato esperado pelo frontend
+      // Cada linha já representa UM cliente com TODOS os seus débitos
+      const debts = savedDebts.map(debt => ({
+        cliente: {
+          codigo_cliente_omie: parseInt(debt.omieClientId),
+          nome_fantasia: debt.clientName,
+          cnpj_cpf: debt.clientDocument || ''
+        },
+        debitos: debt.debts || [],
+        valorTotal: parseFloat(debt.totalAmount),
+        diasMaximoAtraso: debt.maxDaysOverdue,
+        vendedores: debt.vendedores || [] // Usar vendedores salvos no banco
+      }));
+
+      const totalAmount = debts.reduce((sum, d) => sum + d.valorTotal, 0);
+
+      res.json({
+        debts,
+        totalAmount,
+        totalClients: debts.length
+      });
+    } catch (error) {
+      console.error("Error fetching cached overdue debts:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar débitos salvos",
+        debts: [],
+        totalAmount: 0,
+        totalClients: 0
+      });
+    }
+  });
+
+  // Rota para sincronizar débitos do Omie (operação demorada)
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
       // Evitar cache
@@ -3350,6 +3397,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[${timestamp}] Fetching overdue debts from Omie - NO CACHE...`);
       const overdueData = await omieService.getOverdueDebts();
       console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients`);
+      
+      // Salvar débitos no banco de dados
+      try {
+        await storage.syncOverdueDebts(overdueData.debts);
+        console.log('✅ Débitos salvos no banco de dados');
+      } catch (saveError) {
+        console.error('❌ Erro ao salvar débitos no banco:', saveError);
+      }
       
       // Gerar e salvar planilha Excel automaticamente após a sincronização
       try {
