@@ -18,6 +18,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 
 const userFormSchema = z.object({
   email: z.string().email("Email inválido"),
+  password: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
   firstName: z.string().min(1, "Nome é obrigatório"),
   lastName: z.string().min(1, "Sobrenome é obrigatório"),
   role: z.enum(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']),
@@ -51,6 +52,7 @@ export default function UserManagement() {
     resolver: zodResolver(userFormSchema),
     defaultValues: {
       email: "",
+      password: "",
       firstName: "",
       lastName: "",
       role: "vendedor",
@@ -227,6 +229,25 @@ export default function UserManagement() {
                           type="email"
                           placeholder="usuario@exemplo.com"
                           data-testid="input-email"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Senha</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          type="password"
+                          placeholder="Mínimo 6 caracteres"
+                          data-testid="input-password"
                         />
                       </FormControl>
                       <FormMessage />

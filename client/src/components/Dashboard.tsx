@@ -13,6 +13,70 @@ import RouteMetricsCard from "./RouteMetricsCard";
 import { DailyRoutesOverview } from "./DailyRoutesOverview";
 import { MonthlyMetricsOverview } from "./MonthlyMetricsOverview";
 
+interface DashboardStats {
+  todaySales: string;
+  todayClients: string;
+  overdueClients?: string;
+  conversionRate: string;
+}
+
+interface TodayClient {
+  id: string;
+  customerId: string;
+  customerName: string;
+  sellerId: string;
+  sellerFirstName?: string;
+  sellerLastName?: string;
+  visitDate: string;
+  status: string;
+}
+
+interface OverdueClient {
+  id: string;
+  customerId: string;
+  customerName: string;
+  sellerId: string;
+  sellerFirstName?: string;
+  sellerLastName?: string;
+  visitDate: string;
+  status: string;
+}
+
+interface SellerStats {
+  sellerId: string;
+  sellerFirstName: string;
+  sellerLastName: string;
+  totalVisits: number;
+  completedVisits: number;
+  totalRevenue: number;
+}
+
+interface VisitPerformance {
+  overview: {
+    totalVisits: number;
+    completed: number;
+    pending: number;
+    overdue: number;
+    completionRate: number;
+    avgTimePerVisit: number;
+    averageVisitTime?: number;
+    completedVisits?: number;
+    inProgressVisits?: number;
+    pendingVisits?: number;
+    totalSales?: number;
+    averageSaleValue?: number;
+    conversionRate?: number;
+  };
+  performanceBySeller: Array<{
+    sellerId: string;
+    sellerFirstName: string;
+    sellerLastName: string;
+    totalVisits: number;
+    completedVisits: number;
+    averageTime: number;
+  }>;
+}
+
 export default function Dashboard() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -35,31 +99,31 @@ export default function Dashboard() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ['/api/dashboard/stats'],
     retry: false,
   });
 
-  const { data: todayClients, isLoading: todayClientsLoading } = useQuery({
+  const { data: todayClients, isLoading: todayClientsLoading } = useQuery<TodayClient[]>({
     queryKey: ['/api/dashboard/today-clients'],
     retry: false,
   });
 
-  const { data: overdueClients, isLoading: overdueClientsLoading } = useQuery({
+  const { data: overdueClients, isLoading: overdueClientsLoading } = useQuery<OverdueClient[]>({
     queryKey: ['/api/dashboard/overdue-clients'],
     retry: false,
   });
 
   // Query para estatísticas dos vendedores (apenas para admin e coordinator)
   const [sellersStatsKey, setSellersStatsKey] = useState(Date.now());
-  const { data: sellersStats, isLoading: sellersStatsLoading } = useQuery({
+  const { data: sellersStats, isLoading: sellersStatsLoading } = useQuery<SellerStats[]>({
     queryKey: ['/api/dashboard/sellers-stats', sellersStatsKey],
     enabled: user && ['admin', 'coordinator'].includes(user.role),
     retry: false,
   });
 
   // Query para métricas de performance de visitas
-  const { data: visitPerformance, isLoading: visitPerformanceLoading } = useQuery({
+  const { data: visitPerformance, isLoading: visitPerformanceLoading } = useQuery<VisitPerformance>({
     queryKey: ['/api/dashboard/visit-performance'],
     retry: false,
   });
@@ -240,7 +304,7 @@ export default function Dashboard() {
               <div>
                 <p className="text-sm text-gray-600">Vendas Hoje</p>
                 <p className="text-2xl font-bold text-gray-800">
-                  {formatCurrency(stats?.todaySales || 0)}
+                  {formatCurrency(parseFloat(stats?.todaySales || '0'))}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -678,7 +742,7 @@ export default function Dashboard() {
                         <div 
                           className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm ${getVendorColor(seller.sellerId)}`}
                         >
-                          {getVendorInitials(seller.sellerFirstName, seller.sellerLastName)}
+                          {getVendorInitials(`${seller.sellerFirstName} ${seller.sellerLastName}`)}
                         </div>
                         <div>
                           <p className="font-medium text-gray-800">
