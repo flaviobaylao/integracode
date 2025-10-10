@@ -63,10 +63,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-money-bill-wave', 
       available: canAccessReports 
     },
-    { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
-    { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
-    { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
-    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { 
       id: 'overdue-debts', 
       label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
@@ -79,6 +75,10 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-ban', 
       available: canAccessReports || isVendedor 
     },
+    { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
+    { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
+    { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
   ];
 
