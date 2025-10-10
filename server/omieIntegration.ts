@@ -2277,6 +2277,31 @@ export class OmieService {
         hasMorePages = currentPage <= totalPages && contas.length === pageSize;
       }
 
+      // Buscar informações completas de cada cliente
+      console.log(`\n📋 Buscando informações completas de ${debtorsMap.size} clientes...`);
+      
+      const clienteEntries = Array.from(debtorsMap.entries());
+      for (const [clientId, debtor] of clienteEntries) {
+        try {
+          const clienteCompleto = await this.getClientByCode(clientId);
+          
+          if (clienteCompleto) {
+            const nomeFantasia = clienteCompleto.nome_fantasia || clienteCompleto.razao_social || `Cliente ${clientId}`;
+            const cnpjCpf = clienteCompleto.cnpj_cpf || 'Documento não informado';
+            
+            // Atualizar dados do cliente com informações completas
+            debtor.cliente = {
+              codigo_cliente_omie: clientId,
+              nome_fantasia: `${nomeFantasia} - ${cnpjCpf}`,
+              cnpj_cpf: cnpjCpf
+            };
+          }
+        } catch (error) {
+          console.error(`Erro ao buscar cliente ${clientId}:`, error);
+          // Manter dados básicos em caso de erro
+        }
+      }
+      
       // Converter Sets de vendedores para arrays antes de retornar
       const debtsList = Array.from(debtorsMap.values()).map(debtor => ({
         ...debtor,
