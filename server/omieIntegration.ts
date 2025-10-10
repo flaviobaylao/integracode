@@ -2161,19 +2161,9 @@ export class OmieService {
               totalAmount += valor;
 
               if (!debtorsMap.has(clientId)) {
-                // Buscar dados reais do cliente no Omie (com cache para otimizar)
-                let clienteCompleto;
-                try {
-                  clienteCompleto = await this.getClientByCode(clientId);
-                } catch (error) {
-                  console.warn(`Failed to fetch client ${clientId}, using basic data`);
-                }
-                
-                const clienteBasico = clienteCompleto ? {
-                  codigo_cliente_omie: clienteCompleto.codigo_cliente_omie,
-                  nome_fantasia: clienteCompleto.nome_fantasia || clienteCompleto.razao_social,
-                  cnpj_cpf: clienteCompleto.cnpj_cpf
-                } : {
+                // Usar dados que já vêm na resposta de contas a receber
+                // Evita chamadas extras à API para melhor performance
+                const clienteBasico = {
                   codigo_cliente_omie: clientId,
                   nome_fantasia: conta.razao_social || conta.nome_fantasia || `Cliente ${clientId}`,
                   cnpj_cpf: conta.cpf_cnpj || 'Documento não informado'
