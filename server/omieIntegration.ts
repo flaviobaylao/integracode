@@ -2194,10 +2194,16 @@ export class OmieService {
           const diffTime = hoje.getTime() - dataPrevisao.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
+          // Verificar status do título - Ignorar títulos já RECEBIDOS ou CANCELADOS
+          const status = (conta.status_titulo || '').toUpperCase();
+          const statusIgnorados = ['RECEBIDO', 'CANCELADO', 'RECEBIMENTO CONFIRMADO'];
+          const isStatusValido = !statusIgnorados.includes(status);
+          
           // FILTRO: Título está atrasado se:
           // 1. data_previsao < hoje (diasAtraso > 0)
           // 2. valor_a_receber > 0
-          const isAtrasado = diasAtraso > 0;
+          // 3. status_titulo não é RECEBIDO nem CANCELADO
+          const isAtrasado = diasAtraso > 0 && isStatusValido;
           
           // Log dos primeiros títulos para debug
           if (totalProcessed <= 30) {
