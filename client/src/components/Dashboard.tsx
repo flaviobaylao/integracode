@@ -9,8 +9,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { RefreshCw, RotateCcw } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 import { apiRequest } from "@/lib/queryClient";
-import AdminRouteMetrics from "./AdminRouteMetrics";
 import RouteMetricsCard from "./RouteMetricsCard";
+import { DailyRoutesOverview } from "./DailyRoutesOverview";
+import { MonthlyMetricsOverview } from "./MonthlyMetricsOverview";
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -716,9 +717,23 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Métricas de Rotas */}
+      {/* Métricas de Rotas - Admin */}
       {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
-        <AdminRouteMetrics />
+        <div className="space-y-8">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">
+              Rotas do Dia
+            </h2>
+            <DailyRoutesOverview />
+          </div>
+          
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">
+              Resumo Mensal
+            </h2>
+            <MonthlyMetricsOverview />
+          </div>
+        </div>
       )}
 
       {/* Métricas de Rotas para Vendedores */}
