@@ -1,0 +1,429 @@
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { 
+  Route, MapPin, Clock, Navigation, Home, CheckCircle, 
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp
+} from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import RouteMap from "@/components/RouteMap";
+
+interface DailyRoute {
+  id: string;
+  sellerId: string;
+  routeDate: string;
+  optimizedOrder: string[];
+  totalVisits: number;
+  completedVisits: number;
+  totalEstimatedDistance: string;
+  totalActualDistance: string;
+  status: string;
+  visits: any[];
+  checkpoints: any[];
+  progress: {
+    totalVisits: number;
+    completedVisits: number;
+    totalEstimatedDistance: number;
+    totalActualDistance: number;
+    percentComplete: number;
+  };
+}
+
+export default function DailyRouteView() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Buscar rota do dia
+  const { data: routeData, isLoading, refetch } = useQuery({
+    queryKey: ['/api/daily-routes', user?.id, 'today'],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const response = await apiRequest('GET', `/api/daily-routes/${user.id}/today`);
+      return response;
+    },
+    enabled: !!user?.id
+  });
+
+  const route: DailyRoute | null = routeData?.route || null;
+
+  // Mutation para gerar rota
+  const generateRouteMutation = useMutation({
+    mutationFn: async () => {
+      const today = new Date().toISOString().split('T')[0];
+      return apiRequest('POST', '/api/daily-routes/generate', {
+        sellerId: user?.id,
+        date: today
+      });
+    },
+    onSuccess: (data) => {
+      if (data.alreadyExists) {
+        toast({
+          title: "Rota já existe",
+          description: "A rota para hoje já foi gerada.",
+        });
+      } else {
+        toast({
+          title: "Rota gerada!",
+          description: `${data.message} - ${data.totalVisits} visitas organizadas`,
+        });
+      }
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao gerar rota",
+        description: error.message || "Erro ao gerar rota otimizada",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const handleGenerateRoute = async () => {
+    setIsGenerating(true);
+    try {
+      await generateRouteMutation.mutateAsync();
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Verificar se vendedor tem coordenadas configuradas
+  const hasHomeCoordinates = user?.homeLatitude && user?.homeLongitude;
+
+  const formatDistance = (meters: number) => {
+    if (meters < 1000) return `${Math.round(meters)}m`;
+    return `${(meters / 1000).toFixed(1)}km`;
+  };
+
+  const getVisitStatus = (visit: any) => {
+    if (visit.actualCheckOut) return 'completed';
+    if (visit.actualCheckIn) return 'in_progress';
+    return 'pending';
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return <Badge className="bg-green-600"><CheckCircle className="h-3 w-3 mr-1" />Concluída</Badge>;
+      case 'in_progress':
+        return <Badge className="bg-blue-600"><Clock className="h-3 w-3 mr-1" />Em andamento</Badge>;
+      default:
+        return <Badge variant="outline">Pendente</Badge>;
+    }
+  };
+
+  if (!hasHomeCoordinates) {
+    return (
+      <div className="p-6">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            Configure suas coordenadas de casa no perfil para usar o sistema de roteirização.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6 flex justify-center items-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-honest-blue" />
+      </div>
+    );
+  }
+
+  if (!route) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
+              <Route className="mr-2" />
+              Minha Rota do Dia
+            </h1>
+            <p className="text-gray-600 dark:text-gray-400">
+              Visualize e acompanhe sua rota otimizada
+            </p>
+          </div>
+        </div>
+
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Route className="h-16 w-16 mx-auto text-gray-400 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Nenhuma rota gerada para hoje</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Gere sua rota otimizada para começar o dia
+            </p>
+            <Button
+              onClick={handleGenerateRoute}
+              disabled={isGenerating}
+              className="bg-honest-blue hover:bg-blue-700"
+              data-testid="button-generate-route"
+            >
+              {isGenerating ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Gerando...
+                </>
+              ) : (
+                <>
+                  <Navigation className="mr-2 h-4 w-4" />
+                  Gerar Rota Otimizada
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
+            <Route className="mr-2" />
+            Minha Rota do Dia
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400">
+            {format(new Date(route.routeDate), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+          </p>
+        </div>
+        <Button
+          onClick={() => refetch()}
+          variant="outline"
+          size="sm"
+          data-testid="button-refresh-route"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {/* Estatísticas da Rota */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Progresso</p>
+                <p className="text-2xl font-bold text-honest-blue">
+                  {route.progress.percentComplete}%
+                </p>
+              </div>
+              <TrendingUp className="h-8 w-8 text-honest-blue" />
+            </div>
+            <Progress value={route.progress.percentComplete} className="mt-2" />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Visitas</p>
+                <p className="text-2xl font-bold">
+                  {route.progress.completedVisits}/{route.progress.totalVisits}
+                </p>
+              </div>
+              <CheckCircle className="h-8 w-8 text-green-600" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Dist. Estimada</p>
+                <p className="text-2xl font-bold">
+                  {formatDistance(route.progress.totalEstimatedDistance)}
+                </p>
+              </div>
+              <MapPin className="h-8 w-8 text-purple-600" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Dist. Percorrida</p>
+                <p className="text-2xl font-bold text-honest-blue">
+                  {formatDistance(route.progress.totalActualDistance)}
+                </p>
+              </div>
+              <Navigation className="h-8 w-8 text-honest-blue" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Mapa da Rota */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <MapPin className="mr-2 h-4 w-4" />
+            Visualização da Rota
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {user?.homeLatitude && user?.homeLongitude && (
+            <RouteMap
+              homeLocation={{
+                latitude: parseFloat(user.homeLatitude),
+                longitude: parseFloat(user.homeLongitude)
+              }}
+              visits={route.visits || []}
+              optimizedOrder={route.optimizedOrder || []}
+              checkpoints={route.checkpoints || []}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Lista de Visitas */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Navigation className="mr-2 h-4 w-4" />
+            Rota Otimizada
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* Início - Casa */}
+          <div className="flex items-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mb-2 border border-green-200 dark:border-green-800">
+            <Home className="h-5 w-5 text-green-600 mr-3" />
+            <div className="flex-1">
+              <p className="font-semibold text-green-800 dark:text-green-200">Início - Sua Casa</p>
+              <p className="text-sm text-green-700 dark:text-green-300">
+                {user?.homeLatitude}, {user?.homeLongitude}
+              </p>
+            </div>
+          </div>
+
+          {/* Visitas */}
+          <div className="space-y-2">
+            {route.visits && route.visits.map((visit: any, index: number) => {
+              const status = getVisitStatus(visit);
+              const checkpoint = route.checkpoints?.find(cp => cp.visitId === visit.id);
+
+              return (
+                <div 
+                  key={visit.id}
+                  className={`flex items-start p-4 rounded-lg border ${
+                    status === 'completed' 
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                      : status === 'in_progress'
+                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                  }`}
+                  data-testid={`route-visit-${index}`}
+                >
+                  <div className="flex items-center mr-4">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                      status === 'completed' ? 'bg-green-600' : 
+                      status === 'in_progress' ? 'bg-blue-600' : 
+                      'bg-gray-400'
+                    }`}>
+                      {index + 1}
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-gray-400 ml-2" />
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between mb-1">
+                      <div>
+                        <h4 className="font-semibold text-gray-900 dark:text-white">
+                          {visit.customerName}
+                        </h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {visit.customerAddress || 'Endereço não disponível'}
+                        </p>
+                      </div>
+                      {getStatusBadge(status)}
+                    </div>
+
+                    {checkpoint && (
+                      <div className="mt-2 text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                        <div className="flex items-center">
+                          <MapPin className="h-3 w-3 mr-1" />
+                          Distância do ponto anterior: {formatDistance(parseFloat(checkpoint.distanceFromPrevious || '0'))}
+                        </div>
+                        {checkpoint.timestamp && (
+                          <div className="flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            {format(new Date(checkpoint.timestamp), "HH:mm", { locale: ptBR })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Fim - Casa */}
+          <div className="flex items-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-2 border border-green-200 dark:border-green-800">
+            <Home className="h-5 w-5 text-green-600 mr-3" />
+            <div className="flex-1">
+              <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
+              <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Informações Adicionais */}
+      {route.checkpoints && route.checkpoints.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Clock className="mr-2 h-4 w-4" />
+              Histórico de Checkpoints
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {route.checkpoints.map((cp: any, index: number) => (
+                <div key={cp.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                  <div className="flex items-center">
+                    <div className="w-6 h-6 rounded-full bg-honest-blue text-white flex items-center justify-center text-xs font-bold mr-3">
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-900 dark:text-white">
+                        {cp.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}
+                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {format(new Date(cp.timestamp), "HH:mm:ss", { locale: ptBR })}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                      {formatDistance(parseFloat(cp.distanceFromPrevious || '0'))}
+                    </p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">do anterior</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
