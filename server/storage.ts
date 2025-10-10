@@ -12,6 +12,9 @@ import {
   billings,
   overdueDebts,
   exportedReports,
+  visitAgenda,
+  dailyRoutes,
+  routeCheckpoints,
   type User,
   type UpsertUser,
   type Route,
@@ -2798,6 +2801,114 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(exportedReports)
       .where(eq(exportedReports.reportType, reportType));
+  }
+
+  // Route optimization operations
+  async getUserById(id: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+    return user;
+  }
+
+  async getVisitAgenda(filters: {
+    sellerId?: string;
+    startDate?: string;
+    endDate?: string;
+    visitStatus?: string;
+  }): Promise<any[]> {
+    const conditions = [];
+    
+    if (filters.sellerId) {
+      conditions.push(eq(visitAgenda.sellerId, filters.sellerId));
+    }
+    if (filters.startDate) {
+      conditions.push(gte(visitAgenda.scheduledDate, new Date(filters.startDate)));
+    }
+    if (filters.endDate) {
+      conditions.push(lte(visitAgenda.scheduledDate, new Date(filters.endDate)));
+    }
+    if (filters.visitStatus) {
+      conditions.push(eq(visitAgenda.visitStatus, filters.visitStatus));
+    }
+
+    return await db
+      .select()
+      .from(visitAgenda)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(visitAgenda.scheduledDate);
+  }
+
+  async createDailyRoute(data: any): Promise<any> {
+    const [route] = await db
+      .insert(dailyRoutes)
+      .values(data)
+      .returning();
+    return route;
+  }
+
+  async getDailyRoute(id: string): Promise<any | undefined> {
+    const [route] = await db
+      .select()
+      .from(dailyRoutes)
+      .where(eq(dailyRoutes.id, id))
+      .limit(1);
+    return route;
+  }
+
+  async getDailyRouteBySellerAndDate(sellerId: string, date: Date): Promise<any | undefined> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [route] = await db
+      .select()
+      .from(dailyRoutes)
+      .where(and(
+        eq(dailyRoutes.sellerId, sellerId),
+        gte(dailyRoutes.routeDate, startOfDay),
+        lte(dailyRoutes.routeDate, endOfDay)
+      ))
+      .limit(1);
+    return route;
+  }
+
+  async updateDailyRoute(id: string, data: any): Promise<any> {
+    const [route] = await db
+      .update(dailyRoutes)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(dailyRoutes.id, id))
+      .returning();
+    return route;
+  }
+
+  async getLastCheckpoint(dailyRouteId: string): Promise<any | undefined> {
+    const [checkpoint] = await db
+      .select()
+      .from(routeCheckpoints)
+      .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
+      .orderBy(desc(routeCheckpoints.sequenceNumber))
+      .limit(1);
+    return checkpoint;
+  }
+
+  async getRouteCheckpoints(dailyRouteId: string): Promise<any[]> {
+    return await db
+      .select()
+      .from(routeCheckpoints)
+      .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
+      .orderBy(routeCheckpoints.sequenceNumber);
+  }
+
+  async createRouteCheckpoint(data: any): Promise<any> {
+    const [checkpoint] = await db
+      .insert(routeCheckpoints)
+      .values(data)
+      .returning();
+    return checkpoint;
   }
 }
 
