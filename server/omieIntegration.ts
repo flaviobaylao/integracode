@@ -2134,25 +2134,30 @@ export class OmieService {
             console.log(`  Valor: ${conta.valor_documento}`);
           }
           
-          if (!conta.data_previsao) {
-            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE PREVISÃO, pulando`);
+          // Usar data de VENCIMENTO ao invés de previsão para calcular atraso real
+          if (!conta.data_vencimento) {
+            if (totalProcessed <= 5) console.log(`  -> SEM DATA DE VENCIMENTO, pulando`);
             continue;
           }
           
-          // Converter data de PREVISÃO do formato brasileiro DD/MM/YYYY
-          const [dia, mes, ano] = conta.data_previsao.split('/');
-          const dataPrevisao = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-          const diffTime = hoje.getTime() - dataPrevisao.getTime();
+          // Converter data de VENCIMENTO do formato brasileiro DD/MM/YYYY
+          const [dia, mes, ano] = conta.data_vencimento.split('/');
+          const dataVencimento = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const diffTime = hoje.getTime() - dataVencimento.getTime();
           const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
           if (totalProcessed <= 10) {
             console.log(`  -> Data hoje: ${hoje.toLocaleDateString()}`);
-            console.log(`  -> Data previsão: ${dataPrevisao.toLocaleDateString()}`);
+            console.log(`  -> Data vencimento: ${dataVencimento.toLocaleDateString()}`);
             console.log(`  -> Dias atraso: ${diasAtraso}`);
           }
 
-          // FILTRO: Títulos com previsão de recebimento vencida (diasAtraso > 0) E que estão REALMENTE em aberto
+          // FILTRO: Títulos VENCIDOS (diasAtraso > 0) E que estão REALMENTE em aberto
           const isVencido = diasAtraso > 0;
+          
+          // Valor pendente a receber (pode ser diferente do valor total se houve pagamentos parciais)
+          const valorReceber = parseFloat(conta.valor_a_receber || conta.valor_documento || '0');
+          const temSaldoPendente = valorReceber > 0;
           
           // Lista rígida de status que indicam títulos PAGOS/CANCELADOS/RESOLVIDOS
           const statusesFechados = ['RECEBIDO', 'CANCELADO', 'LIQUIDADO', 'BAIXADO', 'PAGO', 'QUITADO', 'COMPENSADO', 'ESTORNADO'];
@@ -2160,12 +2165,12 @@ export class OmieService {
           
           // Log dos status encontrados para entender quais estão sendo incluídos
           if (isVencido && totalProcessed <= 30) {
-            console.log(`  Status: ${conta.status_titulo} - ${isAberto ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento} - Valor: ${conta.valor_documento} - Dias: ${diasAtraso}`);
+            console.log(`  Status: ${conta.status_titulo} - Valor a receber: ${valorReceber} - ${isAberto && temSaldoPendente ? '✓ INCLUÍDO' : '✗ EXCLUÍDO'} - Doc: ${conta.numero_documento} - Dias: ${diasAtraso}`);
           }
           
-          if (isVencido && isAberto) {
+          if (isVencido && isAberto && temSaldoPendente) {
             const clientId = conta.codigo_cliente_fornecedor;
-            const valor = parseFloat(conta.valor_documento || '0');
+            const valor = valorReceber;
             
             if (valor > 0) {
               totalAmount += valor;

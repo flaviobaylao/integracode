@@ -5,27 +5,38 @@ import { storage } from './storage';
 
 console.log('Inicializando agendador de tarefas...');
 
-// Sincronização automática de débitos vencidos todos os dias às 07:00h
-cron.schedule('0 7 * * *', async () => {
-  console.log('Iniciando sincronização automática de débitos vencidos às 07:00h...');
+// Função para sincronizar débitos vencidos
+async function syncOverdueDebts(horario: string) {
+  console.log(`🕐 Iniciando sincronização automática de débitos vencidos às ${horario}...`);
   
   try {
     const omieService = getOmieService();
     if (!omieService) {
-      console.error('Serviço Omie não configurado para sincronização automática');
+      console.error('❌ Serviço Omie não configurado para sincronização automática');
       return;
     }
 
     const result = await omieService.getOverdueDebts();
     
-    console.log(`✅ Sincronização automática concluída:`);
+    console.log(`✅ Sincronização automática concluída (${horario}):`);
     console.log(`   - ${result.totalClients} clientes com débitos vencidos`);
     console.log(`   - Total: R$ ${result.totalAmount.toFixed(2)}`);
     
   } catch (error) {
-    console.error('❌ Erro na sincronização automática de débitos vencidos:', error);
+    console.error(`❌ Erro na sincronização automática de débitos vencidos (${horario}):`, error);
   }
-}, {
+}
+
+// Sincronização automática de débitos vencidos 3x ao dia: 06:00h, 12:00h e 15:00h
+cron.schedule('0 6 * * *', () => syncOverdueDebts('06:00h'), {
+  timezone: "America/Sao_Paulo"
+});
+
+cron.schedule('0 12 * * *', () => syncOverdueDebts('12:00h'), {
+  timezone: "America/Sao_Paulo"
+});
+
+cron.schedule('0 15 * * *', () => syncOverdueDebts('15:00h'), {
   timezone: "America/Sao_Paulo"
 });
 
@@ -87,5 +98,5 @@ cron.schedule('0 2 * * *', async () => {
 
 console.log('✅ Agendador configurado:');
 console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
+console.log('   - Sincronização de débitos vencidos às 06:00h, 12:00h e 15:00h (UTC-3)');
 console.log('   - Geração de agenda de visitas às 06:00h (UTC-3)');
-console.log('   - Sincronização de débitos vencidos às 07:00h (UTC-3)');
