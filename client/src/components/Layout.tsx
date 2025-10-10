@@ -57,6 +57,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-file-invoice-dollar', 
       available: canAccessReports || isVendedor 
     },
+    { 
+      id: 'contas-receber', 
+      label: 'Contas a Receber', 
+      icon: 'fas fa-money-bill-wave', 
+      available: canAccessReports 
+    },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
