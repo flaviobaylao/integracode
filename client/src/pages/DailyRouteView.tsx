@@ -260,6 +260,7 @@ export default function DailyRouteView() {
             {route.visits && route.visits.map((visit: any, index: number) => {
               const status = getVisitStatus(visit);
               const checkpoint = route.checkpoints?.find(cp => cp.visitId === visit.id);
+              const segment = route.segments?.find((s: any) => s.visitId === visit.id);
 
               return (
                 <div 
@@ -297,11 +298,27 @@ export default function DailyRouteView() {
                       {getStatusBadge(status)}
                     </div>
 
+                    {/* Distância estimada (sempre visível) */}
+                    {segment && (
+                      <div className="mt-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-md">
+                        <div className="flex items-center text-sm font-medium text-blue-800 dark:text-blue-200">
+                          <Navigation className="h-4 w-4 mr-2" />
+                          <span className="text-xs text-blue-600 dark:text-blue-300 mr-2">
+                            {segment.from} →
+                          </span>
+                          <span className="font-bold text-blue-900 dark:text-blue-100">
+                            {formatDistance(segment.distance * 1000)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Distância real (após check-in/out) */}
                     {checkpoint && (
                       <div className="mt-2 text-sm text-gray-600 dark:text-gray-400 space-y-1">
                         <div className="flex items-center">
                           <MapPin className="h-3 w-3 mr-1" />
-                          Distância do ponto anterior: {formatDistance(parseFloat(checkpoint.distanceFromPrevious || '0'))}
+                          Distância percorrida: {formatDistance(parseFloat(checkpoint.distanceFromPrevious || '0'))}
                         </div>
                         {checkpoint.timestamp && (
                           <div className="flex items-center">
@@ -318,12 +335,28 @@ export default function DailyRouteView() {
           </div>
 
           {/* Fim - Casa */}
-          <div className="flex items-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-2 border border-green-200 dark:border-green-800">
-            <Home className="h-5 w-5 text-green-600 mr-3" />
-            <div className="flex-1">
-              <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
-              <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
+          <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-2 border border-green-200 dark:border-green-800">
+            <div className="flex items-center">
+              <Home className="h-5 w-5 text-green-600 mr-3" />
+              <div className="flex-1">
+                <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
+                <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
+              </div>
             </div>
+            {/* Distância de retorno */}
+            {route.segments && route.segments.find((s: any) => s.visitId === 'return') && (
+              <div className="mt-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-md">
+                <div className="flex items-center text-sm font-medium text-green-800 dark:text-green-200">
+                  <Navigation className="h-4 w-4 mr-2" />
+                  <span className="text-xs text-green-600 dark:text-green-300 mr-2">
+                    {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
+                  </span>
+                  <span className="font-bold text-green-900 dark:text-green-100">
+                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance * 1000)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -5901,6 +5901,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
+      // Calcular distâncias estimadas entre pontos
+      const { calculateDistance } = await import('./routeOptimizationService');
+      const segments = [];
+      
+      if (visits.length > 0) {
+        let prevLat = parseFloat(route.startLatitude);
+        let prevLon = parseFloat(route.startLongitude);
+        
+        for (let i = 0; i < visits.length; i++) {
+          const visit = visits[i];
+          if (visit && visit.customerLatitude && visit.customerLongitude) {
+            const distance = calculateDistance(
+              prevLat, 
+              prevLon,
+              parseFloat(visit.customerLatitude as any),
+              parseFloat(visit.customerLongitude as any)
+            );
+            
+            segments.push({
+              visitId: visit.id,
+              from: i === 0 ? 'Casa' : visits[i-1]?.customerName,
+              to: visit.customerName,
+              distance: distance
+            });
+            
+            prevLat = parseFloat(visit.customerLatitude as any);
+            prevLon = parseFloat(visit.customerLongitude as any);
+          }
+        }
+        
+        // Distância de retorno para casa
+        if (visits.length > 0) {
+          const lastVisit = visits[visits.length - 1];
+          if (lastVisit?.customerLatitude && lastVisit?.customerLongitude) {
+            const returnDistance = calculateDistance(
+              parseFloat(lastVisit.customerLatitude as any),
+              parseFloat(lastVisit.customerLongitude as any),
+              parseFloat(route.startLatitude),
+              parseFloat(route.startLongitude)
+            );
+            
+            segments.push({
+              visitId: 'return',
+              from: lastVisit.customerName,
+              to: 'Casa',
+              distance: returnDistance
+            });
+          }
+        }
+      }
+
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
 
@@ -5909,6 +5960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...route,
           visits: visits.filter(Boolean),
           checkpoints,
+          segments,
           progress: {
             totalVisits: route.totalVisits || 0,
             completedVisits: route.completedVisits || 0,

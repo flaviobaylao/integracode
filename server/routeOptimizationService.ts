@@ -1,7 +1,7 @@
 import { DatabaseStorage } from './storage';
 
 // Função Haversine para calcular distância entre dois pontos (em km)
-function calculateDistance(
+export function calculateDistance(
   lat1: number,
   lon1: number,
   lat2: number,
