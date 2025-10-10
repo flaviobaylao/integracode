@@ -21,6 +21,7 @@ interface OverdueDebt {
   };
   debitos: Array<{
     numero_documento: string;
+    numero_documento_fiscal?: string;
     valor: number;
     data_vencimento: string;
     dias_atraso: number;
@@ -490,7 +491,7 @@ export default function OverdueDebtsManagement() {
                           </td>
                           <td className="p-3 text-sm text-gray-600">{debt.cliente.cnpj_cpf}</td>
                           <td className="p-3">
-                            <div className="font-medium text-gray-900">{documento.numero_documento}</div>
+                            <div className="font-medium text-gray-900">{documento.numero_documento_fiscal || documento.numero_documento || 'N/A'}</div>
                           </td>
                           <td className="p-3 text-right">
                             <span className="font-semibold text-red-600">
