@@ -2984,12 +2984,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         console.log('⏰ Sincronizando débitos vencidos...');
         const overdueData = await omieService.getOverdueDebts();
+        
+        // Salvar débitos no banco de dados
+        await storage.syncOverdueDebts(overdueData.debts);
+        
         results.overdueDebts = {
           totalClients: overdueData.totalClients || 0,
           totalAmount: overdueData.totalAmount || 0,
           debts: overdueData.debts ? overdueData.debts.length : 0
         };
-        console.log('✅ Débitos vencidos sincronizados:', results.overdueDebts);
+        console.log('✅ Débitos vencidos sincronizados e salvos no banco:', results.overdueDebts);
       } catch (error: any) {
         console.error('❌ Erro na sincronização de débitos:', error);
         results.errors.push(`Débitos: ${error.message}`);
