@@ -362,27 +362,39 @@ export default function OverdueDebtsManagement() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-          {savedReportInfo?.exists && (
-            <div className="flex items-center gap-3">
+          <div className="flex gap-3 flex-wrap">
+            {overdueDebts && filteredDebts.length > 0 && (
               <Button 
-                onClick={downloadSavedReport}
+                onClick={exportToExcel}
                 variant="outline"
-                data-testid="button-download-saved-report"
+                data-testid="button-export-excel"
               >
                 <Download className="h-4 w-4 mr-2" />
-                Baixar Planilha Salva
+                Exportar Excel
               </Button>
-              <span className="text-sm text-gray-600">
-                Última planilha: {new Date(savedReportInfo.createdAt).toLocaleDateString('pt-BR', { 
-                  day: '2-digit', 
-                  month: '2-digit', 
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </span>
-            </div>
-          )}
+            )}
+            {savedReportInfo?.exists && (
+              <div className="flex items-center gap-3">
+                <Button 
+                  onClick={downloadSavedReport}
+                  variant="outline"
+                  data-testid="button-download-saved-report"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Baixar Planilha Salva
+                </Button>
+                <span className="text-sm text-gray-600">
+                  Última: {new Date(savedReportInfo.createdAt).toLocaleDateString('pt-BR', { 
+                    day: '2-digit', 
+                    month: '2-digit', 
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </div>
+            )}
+          </div>
           <Button 
             onClick={() => syncOverdueDebts.mutate()}
             disabled={syncOverdueDebts.isPending}
