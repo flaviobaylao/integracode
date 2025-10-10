@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -5,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
-  AlertTriangle, RefreshCw, ChevronRight, TrendingUp
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -39,22 +41,50 @@ interface DailyRoute {
 export default function DailyRouteView() {
   const { user } = useAuth();
   const { toast } = useToast();
+  
+  // Estado para vendedor selecionado (admin pode escolher)
+  const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
+  const [selectedSellerId, setSelectedSellerId] = useState<string>(user?.id || '');
 
-  // Buscar rota do dia
-  const { data: routeData, isLoading, refetch } = useQuery({
-    queryKey: ['/api/daily-routes', user?.id, 'today'],
+  // Buscar lista de vendedores (apenas para admin)
+  const { data: sellersData } = useQuery({
+    queryKey: ['/api/users'],
     queryFn: async () => {
-      if (!user?.id) return null;
-      const response = await apiRequest('GET', `/api/daily-routes/${user.id}/today`);
+      const response = await apiRequest('GET', '/api/users');
       return response;
     },
-    enabled: !!user?.id
+    enabled: isAdmin
+  });
+
+  const sellers = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
+
+  // Buscar dados do vendedor selecionado
+  const { data: sellerData } = useQuery({
+    queryKey: ['/api/users', selectedSellerId],
+    queryFn: async () => {
+      if (!selectedSellerId) return null;
+      const response = await apiRequest('GET', `/api/users/${selectedSellerId}`);
+      return response;
+    },
+    enabled: !!selectedSellerId && isAdmin
+  });
+
+  // Buscar rota do dia do vendedor selecionado
+  const { data: routeData, isLoading, refetch } = useQuery({
+    queryKey: ['/api/daily-routes', selectedSellerId, 'today'],
+    queryFn: async () => {
+      if (!selectedSellerId) return null;
+      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/today`);
+      return response;
+    },
+    enabled: !!selectedSellerId
   });
 
   const route: DailyRoute | null = routeData?.route || null;
 
   // Verificar se vendedor tem coordenadas configuradas
-  const hasHomeCoordinates = user?.homeLatitude && user?.homeLongitude;
+  const currentSeller = isAdmin ? sellerData : user;
+  const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
   const formatDistance = (meters: number) => {
     if (meters < 1000) return `${Math.round(meters)}m`;
@@ -78,13 +108,38 @@ export default function DailyRouteView() {
     }
   };
 
-  if (!hasHomeCoordinates) {
+  if (!hasHomeCoordinates && selectedSellerId) {
     return (
       <div className="p-6">
+        {isAdmin && sellers.length > 0 && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              Selecionar Vendedor
+            </label>
+            <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+              <SelectTrigger className="w-full md:w-96">
+                <SelectValue placeholder="Selecione um vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                {sellers.map((seller: any) => (
+                  <SelectItem key={seller.id} value={seller.id}>
+                    <div className="flex items-center">
+                      <Users className="h-4 w-4 mr-2" />
+                      {seller.firstName} {seller.lastName || ''} ({seller.email})
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            Configure suas coordenadas de casa no perfil para usar o sistema de roteirização.
+            {isAdmin 
+              ? `O vendedor ${currentSeller?.firstName || 'selecionado'} não tem coordenadas de casa configuradas.`
+              : 'Configure suas coordenadas de casa no perfil para usar o sistema de roteirização.'
+            }
           </AlertDescription>
         </Alert>
       </div>
@@ -106,13 +161,36 @@ export default function DailyRouteView() {
           <div>
             <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
               <Route className="mr-2" />
-              Minha Rota do Dia
+              {isAdmin ? 'Rotas dos Vendedores' : 'Minha Rota do Dia'}
             </h1>
             <p className="text-gray-600 dark:text-gray-400">
-              Visualize e acompanhe sua rota otimizada
+              Visualize e acompanhe {isAdmin ? 'as rotas dos vendedores' : 'sua rota otimizada'}
             </p>
           </div>
         </div>
+
+        {isAdmin && sellers.length > 0 && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              Selecionar Vendedor
+            </label>
+            <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+              <SelectTrigger className="w-full md:w-96" data-testid="select-seller">
+                <SelectValue placeholder="Selecione um vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                {sellers.map((seller: any) => (
+                  <SelectItem key={seller.id} value={seller.id}>
+                    <div className="flex items-center">
+                      <Users className="h-4 w-4 mr-2" />
+                      {seller.firstName} {seller.lastName || ''} ({seller.email})
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <Card>
           <CardContent className="py-12 text-center">
@@ -136,10 +214,11 @@ export default function DailyRouteView() {
         <div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
             <Route className="mr-2" />
-            Minha Rota do Dia
+            {isAdmin ? 'Rotas dos Vendedores' : 'Minha Rota do Dia'}
           </h1>
           <p className="text-gray-600 dark:text-gray-400">
             {format(new Date(route.routeDate), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+            {isAdmin && currentSeller && ` - ${currentSeller.firstName} ${currentSeller.lastName || ''}`}
           </p>
         </div>
         <Button
@@ -151,6 +230,30 @@ export default function DailyRouteView() {
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Seletor de vendedor para admin */}
+      {isAdmin && sellers.length > 0 && (
+        <div className="mb-6">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+            Selecionar Vendedor
+          </label>
+          <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+            <SelectTrigger className="w-full md:w-96" data-testid="select-seller">
+              <SelectValue placeholder="Selecione um vendedor" />
+            </SelectTrigger>
+            <SelectContent>
+              {sellers.map((seller: any) => (
+                <SelectItem key={seller.id} value={seller.id}>
+                  <div className="flex items-center">
+                    <Users className="h-4 w-4 mr-2" />
+                    {seller.firstName} {seller.lastName || ''} ({seller.email})
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Estatísticas da Rota */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -221,11 +324,11 @@ export default function DailyRouteView() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {user?.homeLatitude && user?.homeLongitude && (
+          {currentSeller?.homeLatitude && currentSeller?.homeLongitude && (
             <RouteMap
               homeLocation={{
-                latitude: parseFloat(user.homeLatitude),
-                longitude: parseFloat(user.homeLongitude)
+                latitude: parseFloat(currentSeller.homeLatitude),
+                longitude: parseFloat(currentSeller.homeLongitude)
               }}
               visits={route.visits || []}
               optimizedOrder={route.optimizedOrder || []}
@@ -248,9 +351,11 @@ export default function DailyRouteView() {
           <div className="flex items-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mb-2 border border-green-200 dark:border-green-800">
             <Home className="h-5 w-5 text-green-600 mr-3" />
             <div className="flex-1">
-              <p className="font-semibold text-green-800 dark:text-green-200">Início - Sua Casa</p>
+              <p className="font-semibold text-green-800 dark:text-green-200">
+                Início - {isAdmin ? `Casa do ${currentSeller?.firstName}` : 'Sua Casa'}
+              </p>
               <p className="text-sm text-green-700 dark:text-green-300">
-                {user?.homeLatitude}, {user?.homeLongitude}
+                {currentSeller?.homeLatitude}, {currentSeller?.homeLongitude}
               </p>
             </div>
           </div>
