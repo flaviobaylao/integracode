@@ -59,7 +59,7 @@ export default function DailyRouteView() {
   const sellers = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
 
   // Buscar dados do vendedor selecionado
-  const { data: sellerData } = useQuery({
+  const { data: sellerData, isLoading: isLoadingSeller } = useQuery({
     queryKey: ['/api/users', selectedSellerId],
     queryFn: async () => {
       if (!selectedSellerId) return null;
@@ -83,7 +83,10 @@ export default function DailyRouteView() {
   const route: DailyRoute | null = routeData?.route || null;
 
   // Verificar se vendedor tem coordenadas configuradas
-  const currentSeller = isAdmin ? sellerData : user;
+  // Para admin, usa os dados completos ou busca na lista de vendedores
+  const currentSeller = isAdmin 
+    ? (sellerData || sellers.find((s: any) => s.id === selectedSellerId))
+    : user;
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
   const formatDistance = (meters: number) => {
