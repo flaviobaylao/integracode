@@ -31,7 +31,7 @@ Preferred communication style: Simple, everyday language.
 - **Authentication Provider**: Replit OpenID Connect integration, supplemented by internal email/password.
 - **Session Storage**: PostgreSQL.
 - **Authorization**: Role-based access control (admin, coordinator, administrative, vendedor, telemarketing).
-- **User Management**: Comprehensive user management interface accessible via sidebar menu "Usuários" (admin-only). Admin can create users with full control over: email, password (min 6 chars, bcrypt hashed), first/last name, role selection, and route assignment. Interface includes user listing with filtering, activation/deactivation toggles, and role editing. Backend enforces admin-only access via requireRole(['admin']) middleware on POST /api/users endpoint.
+- **User Management**: Comprehensive user management interface accessible via sidebar menu "Usuários" (admin-only). Admin can create users with full control over: email, password (min 6 chars, bcrypt hashed), first/last name, role selection, and route assignment. Interface includes user listing with filtering, activation/deactivation toggles, role editing, password editing, and user deletion. Password updates are admin-only (PUT /api/users/:id/password) with bcrypt hashing. User deletion is admin-only (DELETE /api/users/:id) with self-deletion prevention and confirmation dialog. Backend enforces admin-only access via requireRole(['admin']) middleware on user management endpoints.
 - **Admin Credentials**: Email: flavio@bebahonest.com.br, Password: M@riafe1 (user ID: admin-flavio).
 
 ## UI/UX Decisions
