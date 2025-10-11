@@ -694,6 +694,7 @@ export class OmieService {
     updated: number;
     skipped: number;
     errors: any[];
+    rejectedInvoices?: any[];
   }> {
     try {
       console.log(`🔄 Sincronizando TODOS os pedidos do Omie (faturados e não faturados)...`);
@@ -704,6 +705,7 @@ export class OmieService {
       let updated = 0;
       let skipped = 0;
       const errors: any[] = [];
+      const rejectedInvoices: any[] = [];
       
       let page = 1;
       let hasMorePages = true;
@@ -753,12 +755,21 @@ export class OmieService {
                   totalProcessed++;
                 } else {
                   // Registro rejeitado pela validação
-                  console.log(`⚠️ REJEITADO - Pedido ${order.numero_pedido}: ${result.reason}`);
-                  errors.push({ 
-                    orderNumber: order.numero_pedido, 
+                  const nfNumber = billingData.invoiceNumber || 'N/A';
+                  console.log(`⚠️ PEDIDO REJEITADO: NF ${nfNumber}, Pedido ${order.numero_pedido}, Etapa "${billingData.invoiceStage}", Motivo: ${result.reason}`);
+                  
+                  const rejectionInfo = { 
+                    orderNumber: order.numero_pedido,
+                    invoiceNumber: nfNumber,
+                    stage: billingData.invoiceStage,
+                    reason: result.reason,
                     error: `Validation failed: ${result.reason}`,
                     type: 'validation_rejected'
-                  });
+                  };
+                  
+                  errors.push(rejectionInfo);
+                  rejectedInvoices.push(rejectionInfo);
+                  skipped++;
                 }
               }
             } catch (error: any) {
@@ -793,12 +804,20 @@ export class OmieService {
       
       console.log(`✅ Sincronização de pedidos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
       
+      if (rejectedInvoices.length > 0) {
+        console.log(`📋 NOTAS FISCAIS REJEITADAS (${rejectedInvoices.length}):`);
+        rejectedInvoices.forEach(r => {
+          console.log(`   - NF ${r.invoiceNumber}, Pedido ${r.orderNumber}, Etapa "${r.stage}", Motivo: ${r.reason}`);
+        });
+      }
+      
       return {
         totalProcessed,
         imported,
         updated,
         skipped,
-        errors
+        errors,
+        rejectedInvoices
       };
       
     } catch (error) {
