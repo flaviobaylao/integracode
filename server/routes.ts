@@ -4312,6 +4312,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para sincronizar pedidos ESPECÍFICOS (fallback para pedidos não listados)
+  app.post('/api/omie/sync-specific-orders', authenticateUser, async (req: any, res) => {
+    try {
+      const { orderNumbers } = req.body;
+      
+      if (!orderNumbers || !Array.isArray(orderNumbers) || orderNumbers.length === 0) {
+        return res.status(400).json({ 
+          message: 'Lista de números de pedidos é obrigatória' 
+        });
+      }
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      // Limpar cache antes da sincronização
+      omieService.clearCache();
+      
+      const result = await omieService.syncSpecificOrders(orderNumbers);
+      res.json(result);
+    } catch (error: any) {
+      console.error('Erro na sincronização de pedidos específicos:', error);
+      res.status(500).json({ 
+        message: 'Erro interno do servidor',
+        error: error.message 
+      });
+    }
+  });
+
   // Rota LEGADO para sincronizar apenas notas fiscais do Omie
   app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
     try {

@@ -826,6 +826,120 @@ export class OmieService {
     }
   }
 
+  // Método para sincronizar pedidos específicos por número (fallback)
+  async syncSpecificOrders(orderNumbers: string[]): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    skipped: number;
+    errors: any[];
+    rejectedInvoices?: any[];
+  }> {
+    try {
+      console.log(`🔄 Sincronizando ${orderNumbers.length} pedidos específicos: ${orderNumbers.join(', ')}`);
+      
+      let totalProcessed = 0;
+      let imported = 0;
+      let updated = 0;
+      let skipped = 0;
+      const errors: any[] = [];
+      const rejectedInvoices: any[] = [];
+      
+      for (const orderNumber of orderNumbers) {
+        try {
+          console.log(`📋 Buscando pedido ${orderNumber}...`);
+          
+          // Buscar pedido específico via ConsultarPedido
+          const response = await this.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
+            numero_pedido: orderNumber
+          });
+          
+          const order = response.pedido_venda_produto;
+          
+          if (!order) {
+            console.log(`⚠️ Pedido ${orderNumber} não encontrado`);
+            errors.push({
+              orderNumber,
+              error: 'Pedido não encontrado',
+              type: 'not_found'
+            });
+            continue;
+          }
+          
+          // Transformar e processar o pedido
+          const billingData = await this.transformOrderToBilling(order);
+          
+          if (billingData) {
+            const result = await this.storage.saveBillingIfValid(billingData);
+            
+            if (result.success) {
+              if (result.action === 'created') {
+                imported++;
+              } else if (result.action === 'updated') {
+                updated++;
+              }
+              totalProcessed++;
+              console.log(`✅ Pedido ${orderNumber} sincronizado com sucesso`);
+            } else {
+              const nfNumber = billingData.invoiceNumber || 'N/A';
+              console.log(`⚠️ PEDIDO REJEITADO: NF ${nfNumber}, Pedido ${orderNumber}, Etapa "${billingData.invoiceStage}", Motivo: ${result.reason}`);
+              
+              const rejectionInfo = {
+                orderNumber,
+                invoiceNumber: nfNumber,
+                stage: billingData.invoiceStage,
+                reason: result.reason,
+                error: `Validation failed: ${result.reason}`,
+                type: 'validation_rejected'
+              };
+              
+              errors.push(rejectionInfo);
+              rejectedInvoices.push(rejectionInfo);
+              skipped++;
+            }
+          } else {
+            console.log(`⚠️ Não foi possível transformar o pedido ${orderNumber}`);
+            errors.push({
+              orderNumber,
+              error: 'Transformação falhou',
+              type: 'transformation_error'
+            });
+          }
+          
+        } catch (error: any) {
+          console.error(`❌ Erro ao processar pedido ${orderNumber}:`, error);
+          errors.push({
+            orderNumber,
+            error: error.message,
+            type: 'processing_error'
+          });
+        }
+      }
+      
+      console.log(`✅ Sincronização de pedidos específicos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
+      
+      if (rejectedInvoices.length > 0) {
+        console.log(`📋 NOTAS FISCAIS REJEITADAS (${rejectedInvoices.length}):`);
+        rejectedInvoices.forEach(r => {
+          console.log(`   - NF ${r.invoiceNumber}, Pedido ${r.orderNumber}, Etapa "${r.stage}", Motivo: ${r.reason}`);
+        });
+      }
+      
+      return {
+        totalProcessed,
+        imported,
+        updated,
+        skipped,
+        errors,
+        rejectedInvoices
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao sincronizar pedidos específicos:', error);
+      throw error;
+    }
+  }
+
   // Método LEGADO para sincronizar apenas notas fiscais 
   async syncBillingsInRange(startDate: string, endDate: string): Promise<{
     totalProcessed: number;

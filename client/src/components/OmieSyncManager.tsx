@@ -44,6 +44,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
   const [syncProgress, setSyncProgress] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [specificOrders, setSpecificOrders] = useState<string>('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -258,6 +259,41 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     },
   });
 
+  // Mutation para sincronizar pedidos específicos
+  const syncSpecificOrdersMutation = useMutation({
+    mutationFn: async (orderNumbers: string[]): Promise<SyncResult> => {
+      const response = await fetch('/api/omie/sync-specific-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orderNumbers }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      return await response.json() as SyncResult;
+    },
+    onSuccess: (data: SyncResult) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      toast({
+        title: "Sincronização de pedidos específicos concluída",
+        description: `${data.imported} importados, ${data.updated} atualizados, ${data.errors?.length || 0} erros.`,
+      });
+      setSpecificOrders(''); // Limpar campo após sincronização
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro na sincronização de pedidos",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSyncAllClients = () => {
     const sellerId = selectedSeller === 'no-seller' || !selectedSeller ? null : selectedSeller;
     syncAllClientsMutation.mutate(sellerId);
@@ -269,6 +305,24 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
 
   const handleSyncProducts = () => {
     syncProductsMutation.mutate();
+  };
+
+  const handleSyncSpecificOrders = () => {
+    const orderNumbers = specificOrders
+      .split(',')
+      .map(num => num.trim())
+      .filter(num => num.length > 0);
+    
+    if (orderNumbers.length === 0) {
+      toast({
+        title: "Erro",
+        description: "Digite pelo menos um número de pedido",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    syncSpecificOrdersMutation.mutate(orderNumbers);
   };
 
   const formatCurrency = (value: number) => {
@@ -320,6 +374,49 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
         </DialogHeader>
 
         <div className="space-y-6">
+          {/* Sincronização de Pedidos Específicos */}
+          <Card className="bg-yellow-50 border-yellow-200">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                Sincronizar Pedidos Específicos (Fallback)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={specificOrders}
+                  onChange={(e) => setSpecificOrders(e.target.value)}
+                  placeholder="Digite os números dos pedidos separados por vírgula (ex: 28684, 28685, 28830)"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  data-testid="input-specific-orders"
+                />
+                <Button
+                  onClick={handleSyncSpecificOrders}
+                  disabled={syncSpecificOrdersMutation.isPending || !specificOrders.trim()}
+                  className="bg-yellow-600 hover:bg-yellow-700"
+                  data-testid="button-sync-specific-orders"
+                >
+                  {syncSpecificOrdersMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Sincronizando...
+                    </>
+                  ) : (
+                    <>
+                      <Sync className="h-4 w-4 mr-2" />
+                      Sincronizar
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">
+                Use esta opção para sincronizar pedidos que não aparecem na listagem normal do Omie.
+              </p>
+            </CardContent>
+          </Card>
+
           {/* Tabs */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-1 bg-gray-100 p-1 rounded-lg">
             <Button
