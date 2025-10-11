@@ -634,7 +634,7 @@ export class OmieService {
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
   async listOrders(page: number = 1, pageSize: number = 50): Promise<any> {
     try {
-      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros) - 🗓️ FILTRO: A partir de 01/09/2025...`);
+      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros)...`);
       
       const payload = {
         call: 'ListarPedidos',
@@ -642,8 +642,8 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: '01/09/2025', // 🗓️ FILTRO: Apenas pedidos de setembro 2025
-          filtrar_por_data_ate: '30/09/2025' // Final de setembro 2025
+          filtrar_por_data_de: '', // Buscar TODOS os pedidos sem limite de data
+          filtrar_por_data_ate: ''  // Buscar TODOS os pedidos sem limite de data
         }]
       };
 

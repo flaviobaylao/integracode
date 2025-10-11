@@ -2458,7 +2458,7 @@ export class DatabaseStorage implements IStorage {
         billing.invoiceStage = 'CANCELADO';
       }
       
-      // Validação 2: Data da nota fiscal deve ser válida (REMOVIDO filtro de setembro 2025 para incluir todas as históricas)
+      // Validação 2: Data da nota fiscal deve ser válida
       if (!billing.invoiceDate) {
         const reason = 'Data da nota fiscal não informada';
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
@@ -2471,7 +2471,7 @@ export class DatabaseStorage implements IStorage {
       
       const invoiceDate = new Date(billing.invoiceDate);
       
-      // Validação básica de data válida (sem restrição de período para incluir notas canceladas históricas)
+      // Validação básica de data válida (sem restrição de período)
       if (isNaN(invoiceDate.getTime())) {
         const reason = `Data inválida: ${billing.invoiceDate}`;
         console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
