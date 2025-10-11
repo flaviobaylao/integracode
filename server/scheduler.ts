@@ -6,6 +6,92 @@ import { generateDailyRoute } from './routeOptimizationService';
 
 console.log('Inicializando agendador de tarefas...');
 
+// Função para sincronização completa (Clientes + Faturamentos + Débitos Vencidos)
+async function syncComplete(horario: string) {
+  console.log(`🔄 [${horario}] Iniciando sincronização completa automática...`);
+  
+  try {
+    const omieService = getOmieService(storage);
+    if (!omieService) {
+      console.error(`❌ [${horario}] Serviço Omie não configurado para sincronização automática`);
+      return;
+    }
+
+    const results = {
+      clients: null as any,
+      billings: null as any,
+      overdueDebts: null as any,
+      errors: [] as string[]
+    };
+
+    // 1. Sincronizar clientes ativos
+    try {
+      console.log(`📋 [${horario}] Sincronizando clientes ativos...`);
+      const clientResult = await omieService.syncAllClients();
+      results.clients = {
+        totalProcessed: clientResult.totalProcessed || 0,
+        imported: clientResult.imported || 0,
+        updated: clientResult.updated || 0
+      };
+      console.log(`✅ [${horario}] Clientes: ${results.clients.totalProcessed} processados`);
+    } catch (error: any) {
+      const errorMsg = `Erro ao sincronizar clientes: ${error.message}`;
+      results.errors.push(errorMsg);
+      console.error(`❌ [${horario}] ${errorMsg}`);
+    }
+
+    // 2. Sincronizar faturamentos
+    try {
+      console.log(`💰 [${horario}] Sincronizando faturamentos...`);
+      const billingResult = await omieService.syncAllBillings();
+      results.billings = {
+        totalProcessed: billingResult.totalProcessed || 0,
+        imported: billingResult.imported || 0,
+        updated: billingResult.updated || 0
+      };
+      console.log(`✅ [${horario}] Faturamentos: ${results.billings.totalProcessed} processados`);
+    } catch (error: any) {
+      const errorMsg = `Erro ao sincronizar faturamentos: ${error.message}`;
+      results.errors.push(errorMsg);
+      console.error(`❌ [${horario}] ${errorMsg}`);
+    }
+
+    // 3. Sincronizar débitos vencidos
+    try {
+      console.log(`📊 [${horario}] Sincronizando débitos vencidos...`);
+      const debtResult = await omieService.getOverdueDebts();
+      await storage.syncOverdueDebts(debtResult.debts);
+      results.overdueDebts = {
+        totalClients: debtResult.totalClients,
+        totalAmount: debtResult.totalAmount
+      };
+      console.log(`✅ [${horario}] Débitos: ${debtResult.totalClients} clientes, R$ ${debtResult.totalAmount.toFixed(2)}`);
+    } catch (error: any) {
+      const errorMsg = `Erro ao sincronizar débitos vencidos: ${error.message}`;
+      results.errors.push(errorMsg);
+      console.error(`❌ [${horario}] ${errorMsg}`);
+    }
+
+    // Resumo da sincronização
+    console.log(`✨ [${horario}] Sincronização completa concluída:`);
+    if (results.clients) {
+      console.log(`   - Clientes: ${results.clients.totalProcessed} processados (${results.clients.imported} novos, ${results.clients.updated} atualizados)`);
+    }
+    if (results.billings) {
+      console.log(`   - Faturamentos: ${results.billings.totalProcessed} processados (${results.billings.imported} novos, ${results.billings.updated} atualizados)`);
+    }
+    if (results.overdueDebts) {
+      console.log(`   - Débitos: ${results.overdueDebts.totalClients} clientes, Total R$ ${results.overdueDebts.totalAmount.toFixed(2)}`);
+    }
+    if (results.errors.length > 0) {
+      console.log(`   ⚠️ ${results.errors.length} erro(s) encontrado(s)`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ [${horario}] Erro crítico na sincronização completa:`, error);
+  }
+}
+
 // Função para sincronizar débitos vencidos
 async function syncOverdueDebts(horario: string) {
   console.log(`🕐 Iniciando sincronização automática de débitos vencidos às ${horario}...`);
@@ -33,16 +119,14 @@ async function syncOverdueDebts(horario: string) {
   }
 }
 
-// Sincronização automática de débitos vencidos 3x ao dia: 06:00h, 12:00h e 15:00h
-cron.schedule('0 6 * * *', () => syncOverdueDebts('06:00h'), {
-  timezone: "America/Sao_Paulo"
-});
-
-cron.schedule('0 12 * * *', () => syncOverdueDebts('12:00h'), {
-  timezone: "America/Sao_Paulo"
-});
-
-cron.schedule('0 15 * * *', () => syncOverdueDebts('15:00h'), {
+// Sincronização completa automática de hora em hora a partir das 6h
+// Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
+cron.schedule('0 6-23 * * *', () => {
+  const now = new Date();
+  const hour = now.getHours();
+  const horario = `${hour.toString().padStart(2, '0')}:00h`;
+  syncComplete(horario);
+}, {
   timezone: "America/Sao_Paulo"
 });
 
@@ -168,5 +252,5 @@ cron.schedule('0 5 * * *', async () => {
 console.log('✅ Agendador configurado:');
 console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
-console.log('   - Sincronização de débitos vencidos às 06:00h, 12:00h e 15:00h (UTC-3)');
+console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Geração de agenda de visitas às 06:00h (UTC-3)');
