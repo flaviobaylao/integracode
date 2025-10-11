@@ -38,6 +38,18 @@ interface SyncResult {
   errors: string[];
 }
 
+interface InvoiceCompleteness {
+  total: number;
+  synced: number;
+  missing: number;
+  missingInvoices: Array<{
+    orderNumber: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    value: number;
+  }>;
+}
+
 export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProps) {
   const [selectedSeller, setSelectedSeller] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'clients' | 'vendors' | 'products' | 'debts' | 'visits'>('clients');
@@ -91,6 +103,13 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
   const { data: omieStatus } = useQuery({
     queryKey: ['/api/omie/status'],
     enabled: isOpen,
+    retry: false,
+  });
+
+  // Buscar completude das notas fiscais
+  const { data: completeness, isLoading: isCheckingCompleteness, refetch: refetchCompleteness } = useQuery<InvoiceCompleteness>({
+    queryKey: ['/api/omie/verify-invoice-completeness'],
+    enabled: false, // Só busca quando solicitado manualmente
     retry: false,
   });
 
@@ -325,6 +344,56 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     syncSpecificOrdersMutation.mutate(orderNumbers);
   };
 
+  // Mutation para sincronizar NFs faltantes automaticamente
+  const syncMissingInvoicesMutation = useMutation({
+    mutationFn: async (orderNumbers: string[]): Promise<SyncResult> => {
+      const response = await fetch('/api/omie/sync-specific-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orderNumbers }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      return await response.json() as SyncResult;
+    },
+    onSuccess: (data: SyncResult) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      toast({
+        title: "Sincronização de NFs faltantes concluída",
+        description: `${data.imported} importados, ${data.updated} atualizados.`,
+      });
+      // Revalidar completude após sincronizar
+      refetchCompleteness();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro na sincronização",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSyncMissingInvoices = () => {
+    if (!completeness || completeness.missing === 0) {
+      toast({
+        title: "Erro",
+        description: "Nenhuma NF faltando para sincronizar",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const orderNumbers = completeness.missingInvoices.map(inv => inv.orderNumber);
+    syncMissingInvoicesMutation.mutate(orderNumbers);
+  };
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
@@ -374,12 +443,103 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
         </DialogHeader>
 
         <div className="space-y-6">
+          {/* Verificação de Completude das Notas Fiscais */}
+          <Card className="bg-blue-50 border-blue-200">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-blue-600" />
+                Verificação de Completude das Notas Fiscais
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => refetchCompleteness()}
+                    disabled={isCheckingCompleteness}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    data-testid="button-verify-completeness"
+                  >
+                    {isCheckingCompleteness ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Verificando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Verificar Completude
+                      </>
+                    )}
+                  </Button>
+                  
+                  {completeness && completeness.missing > 0 && (
+                    <Button
+                      onClick={handleSyncMissingInvoices}
+                      disabled={syncMissingInvoicesMutation.isPending}
+                      className="bg-green-600 hover:bg-green-700"
+                      data-testid="button-sync-missing"
+                    >
+                      {syncMissingInvoicesMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <Sync className="h-4 w-4 mr-2" />
+                          Sincronizar {completeness.missing} NF{completeness.missing > 1 ? 's' : ''} Faltante{completeness.missing > 1 ? 's' : ''}
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+
+                {completeness && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white p-3 rounded-lg border">
+                      <div className="text-xs text-gray-600">Total no Omie</div>
+                      <div className="text-xl font-bold text-gray-900">{completeness.total}</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg border">
+                      <div className="text-xs text-gray-600">Sincronizadas</div>
+                      <div className="text-xl font-bold text-green-600">{completeness.synced}</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg border">
+                      <div className="text-xs text-gray-600">Faltando</div>
+                      <div className="text-xl font-bold text-red-600">{completeness.missing}</div>
+                    </div>
+                  </div>
+                )}
+
+                {completeness && completeness.missing > 0 && (
+                  <div className="bg-white p-3 rounded-lg border">
+                    <div className="text-xs font-medium text-gray-700 mb-2">NFs Faltantes:</div>
+                    <div className="max-h-32 overflow-y-auto">
+                      <div className="text-xs text-gray-600 space-y-1">
+                        {completeness.missingInvoices.slice(0, 10).map((inv, idx) => (
+                          <div key={idx} className="flex justify-between">
+                            <span>NF {inv.invoiceNumber} (Pedido {inv.orderNumber})</span>
+                            <span className="font-medium">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(inv.value)}</span>
+                          </div>
+                        ))}
+                        {completeness.missingInvoices.length > 10 && (
+                          <div className="text-gray-500 italic">...e mais {completeness.missingInvoices.length - 10} NFs</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Sincronização de Pedidos Específicos */}
           <Card className="bg-yellow-50 border-yellow-200">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                Sincronizar Pedidos Específicos (Fallback)
+                Sincronizar Pedidos Específicos (Fallback Manual)
               </CardTitle>
             </CardHeader>
             <CardContent>
