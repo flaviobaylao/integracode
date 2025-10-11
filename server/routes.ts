@@ -3064,7 +3064,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 1. Sincronizar clientes ativos
       try {
         console.log('📋 Sincronizando clientes ativos...');
-        const clientResult = await omieService.syncActiveClients();
+        const clientResult = await omieService.syncAllClients();
         results.clients = {
           totalProcessed: clientResult.totalProcessed || 0,
           imported: clientResult.imported || 0,
@@ -3077,10 +3077,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results.errors.push(`Clientes: ${error.message}`);
       }
 
-      // 2. Sincronizar faturamentos
+      // 2. Sincronizar pedidos/faturamentos (TODOS os períodos)
       try {
-        console.log('💰 Sincronizando faturamentos...');
-        const billingResult = await omieService.syncAllBillings();
+        console.log('💰 Sincronizando pedidos e faturamentos...');
+        const billingResult = await omieService.syncAllOrders();
         results.billings = {
           totalProcessed: billingResult.totalProcessed || 0,
           imported: billingResult.imported || 0,

@@ -40,18 +40,18 @@ async function syncComplete(horario: string) {
       console.error(`❌ [${horario}] ${errorMsg}`);
     }
 
-    // 2. Sincronizar faturamentos
+    // 2. Sincronizar pedidos/faturamentos (TODOS os períodos)
     try {
-      console.log(`💰 [${horario}] Sincronizando faturamentos...`);
-      const billingResult = await omieService.syncAllBillings();
+      console.log(`💰 [${horario}] Sincronizando pedidos e faturamentos...`);
+      const billingResult = await omieService.syncAllOrders();
       results.billings = {
         totalProcessed: billingResult.totalProcessed || 0,
         imported: billingResult.imported || 0,
         updated: billingResult.updated || 0
       };
-      console.log(`✅ [${horario}] Faturamentos: ${results.billings.totalProcessed} processados`);
+      console.log(`✅ [${horario}] Pedidos/Faturamentos: ${results.billings.totalProcessed} processados`);
     } catch (error: any) {
-      const errorMsg = `Erro ao sincronizar faturamentos: ${error.message}`;
+      const errorMsg = `Erro ao sincronizar pedidos/faturamentos: ${error.message}`;
       results.errors.push(errorMsg);
       console.error(`❌ [${horario}] ${errorMsg}`);
     }
