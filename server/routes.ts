@@ -290,10 +290,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/users/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const userId = req.params.id;
+      const currentUser = req.currentUser;
       const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
 
       // Não permitir excluir a si mesmo
-      if (userId === currentUserId) {
+      if (userId === currentUserId || userId === currentUser?.id) {
         return res.status(400).json({ message: "Você não pode excluir sua própria conta" });
       }
 
