@@ -2121,6 +2121,14 @@ export class DatabaseStorage implements IStorage {
     return billing;
   }
 
+  async getAllBillings(): Promise<Billing[]> {
+    const result = await db
+      .select()
+      .from(billings)
+      .orderBy(desc(billings.invoiceDate));
+    return result;
+  }
+
   async createBilling(billing: InsertBilling): Promise<Billing> {
     const [newBilling] = await db
       .insert(billings)

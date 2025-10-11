@@ -940,6 +940,118 @@ export class OmieService {
     }
   }
 
+  // Método para verificar completude das notas fiscais
+  async verifyInvoiceCompleteness(): Promise<{
+    total: number;
+    synced: number;
+    missing: number;
+    missingInvoices: Array<{
+      orderNumber: string;
+      invoiceNumber: string;
+      invoiceDate: string;
+      value: number;
+    }>;
+  }> {
+    try {
+      console.log(`🔍 Verificando completude das notas fiscais...`);
+      
+      // Buscar todos os pedidos com NF do Omie
+      const omieInvoices: Array<{
+        orderNumber: string;
+        invoiceNumber: string;
+        invoiceDate: string;
+        value: number;
+      }> = [];
+      
+      let page = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        try {
+          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+            pagina: page,
+            registros_por_pagina: 500,
+            apenas_importado_api: 'N',
+            filtrar_apenas_por_data_de: '',
+            filtrar_apenas_por_data_ate: '',
+            ordenar_por: 'DATA',
+            ordem_decrescente: 'S'
+          });
+          
+          const orders = response.pedido_venda_produto || [];
+          
+          if (orders.length === 0) {
+            hasMorePages = false;
+            break;
+          }
+          
+          for (const order of orders) {
+            const stages = order.lista_parcelas?.parcela || [];
+            
+            for (const stage of stages) {
+              const invoiceNumber = stage.numero_documento_fiscal || 
+                                   stage.nDocFiscal || 
+                                   stage.numero_nf || 
+                                   '';
+              
+              // Se tem número de NF válido, adicionar à lista
+              if (invoiceNumber && invoiceNumber.trim() !== '' && invoiceNumber !== '0') {
+                omieInvoices.push({
+                  orderNumber: order.numero_pedido,
+                  invoiceNumber: invoiceNumber.trim(),
+                  invoiceDate: stage.data_vencimento || order.data_previsao || '',
+                  value: parseFloat(stage.valor || '0')
+                });
+              }
+            }
+          }
+          
+          page++;
+          
+          if (page > 1000) {
+            console.log('⚠️ Limite de 1000 páginas atingido');
+            hasMorePages = false;
+          }
+          
+        } catch (error: any) {
+          console.error(`❌ Erro na página ${page}:`, error);
+          hasMorePages = false;
+        }
+      }
+      
+      // Buscar todas as NFs que temos no banco
+      const syncedBillings = await this.storage.getAllBillings();
+      const syncedInvoiceNumbers = new Set(
+        syncedBillings
+          .filter(b => b.invoiceNumber && b.invoiceNumber.trim() !== '')
+          .map(b => b.invoiceNumber!.trim())
+      );
+      
+      // Identificar NFs faltantes
+      const missingInvoices = omieInvoices.filter(
+        invoice => !syncedInvoiceNumbers.has(invoice.invoiceNumber)
+      );
+      
+      // Remover duplicatas das NFs faltantes
+      const uniqueMissingInvoices = Array.from(
+        new Map(missingInvoices.map(inv => [inv.invoiceNumber, inv])).values()
+      );
+      
+      console.log(`✅ Verificação concluída: ${omieInvoices.length} NFs no Omie, ${syncedInvoiceNumbers.size} sincronizadas, ${uniqueMissingInvoices.length} faltando`);
+      
+      return {
+        total: omieInvoices.length,
+        synced: syncedInvoiceNumbers.size,
+        missing: uniqueMissingInvoices.length,
+        missingInvoices: uniqueMissingInvoices
+      };
+      
+    } catch (error) {
+      console.error('❌ Erro ao verificar completude das notas fiscais:', error);
+      throw error;
+    }
+  }
+
   // Método LEGADO para sincronizar apenas notas fiscais 
   async syncBillingsInRange(startDate: string, endDate: string): Promise<{
     totalProcessed: number;

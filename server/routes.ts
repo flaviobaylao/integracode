@@ -4342,6 +4342,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para verificar completude das notas fiscais
+  app.get('/api/omie/verify-invoice-completeness', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+      
+      const result = await omieService.verifyInvoiceCompleteness();
+      res.json(result);
+    } catch (error: any) {
+      console.error('Erro ao verificar completude das notas fiscais:', error);
+      res.status(500).json({ 
+        message: 'Erro interno do servidor',
+        error: error.message 
+      });
+    }
+  });
+
   // Rota LEGADO para sincronizar apenas notas fiscais do Omie
   app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
     try {
