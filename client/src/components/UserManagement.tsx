@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -32,6 +33,8 @@ export default function UserManagement() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [filterRole, setFilterRole] = useState<string>("all");
 
@@ -65,10 +68,21 @@ export default function UserManagement() {
     role: z.enum(['admin', 'vendedor', 'telemarketing']),
   });
 
+  const passwordSchema = z.object({
+    password: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
+  });
+
   const editForm = useForm<{ role: 'admin' | 'vendedor' | 'telemarketing' }>({
     resolver: zodResolver(editRoleSchema),
     defaultValues: {
       role: "vendedor",
+    },
+  });
+
+  const passwordForm = useForm<{ password: string }>({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: {
+      password: "",
     },
   });
 
@@ -154,6 +168,67 @@ export default function UserManagement() {
     },
   });
 
+  const updatePasswordMutation = useMutation({
+    mutationFn: async ({ id, password }: { id: string; password: string }) => {
+      const response = await fetch(`/api/users/${id}/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to update password');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "Senha atualizada",
+        description: "A senha do usuário foi atualizada com sucesso.",
+      });
+      setIsPasswordDialogOpen(false);
+      setSelectedUser(null);
+      passwordForm.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao atualizar senha",
+        description: error.message || "Ocorreu um erro ao atualizar a senha.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/users/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to delete user');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "Usuário excluído",
+        description: "O usuário foi excluído com sucesso.",
+      });
+      setIsDeleteDialogOpen(false);
+      setSelectedUser(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao excluir usuário",
+        description: error.message || "Ocorreu um erro ao excluir o usuário.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const getRoleLabel = (role: string) => {
     const roleLabels = {
       admin: 'Administrador',
@@ -186,9 +261,32 @@ export default function UserManagement() {
     setIsEditDialogOpen(true);
   };
 
+  const handleEditPassword = (user: User) => {
+    setSelectedUser(user);
+    passwordForm.reset();
+    setIsPasswordDialogOpen(true);
+  };
+
+  const handleDeleteUser = (user: User) => {
+    setSelectedUser(user);
+    setIsDeleteDialogOpen(true);
+  };
+
   const onEditSubmit = (data: { role: string }) => {
     if (selectedUser) {
       updateUserRoleMutation.mutate({ id: selectedUser.id, role: data.role });
+    }
+  };
+
+  const onPasswordSubmit = (data: { password: string }) => {
+    if (selectedUser) {
+      updatePasswordMutation.mutate({ id: selectedUser.id, password: data.password });
+    }
+  };
+
+  const confirmDelete = () => {
+    if (selectedUser) {
+      deleteUserMutation.mutate(selectedUser.id);
     }
   };
 
@@ -403,6 +501,80 @@ export default function UserManagement() {
         </DialogContent>
       </Dialog>
 
+      {/* Dialog de Edição de Senha */}
+      <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Senha de {selectedUser?.firstName} {selectedUser?.lastName}</DialogTitle>
+          </DialogHeader>
+          <Form {...passwordForm}>
+            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
+              <FormField
+                control={passwordForm.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nova Senha</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="password"
+                        placeholder="Mínimo 6 caracteres"
+                        data-testid="input-new-password"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsPasswordDialogOpen(false)}
+                  data-testid="button-cancel-password"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  className="bg-honest-orange hover:bg-orange-600"
+                  disabled={updatePasswordMutation.isPending}
+                  data-testid="button-submit-password"
+                >
+                  {updatePasswordMutation.isPending ? "Salvando..." : "Salvar Senha"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Confirmação de Exclusão */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o usuário <strong>{selectedUser?.firstName} {selectedUser?.lastName}</strong>?
+              <br />
+              Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700"
+              data-testid="button-confirm-delete"
+            >
+              {deleteUserMutation.isPending ? "Excluindo..." : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -469,6 +641,15 @@ export default function UserManagement() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => handleEditPassword(user)}
+                        data-testid={`button-edit-password-${user.id}`}
+                      >
+                        <i className="fas fa-key mr-2"></i>
+                        Editar Senha
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() =>
                           updateUserStatusMutation.mutate({
                             id: user.id,
@@ -489,6 +670,15 @@ export default function UserManagement() {
                             Ativar
                           </>
                         )}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeleteUser(user)}
+                        data-testid={`button-delete-${user.id}`}
+                      >
+                        <i className="fas fa-trash mr-2"></i>
+                        Excluir
                       </Button>
                     </div>
                   </TableCell>
