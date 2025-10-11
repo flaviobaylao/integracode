@@ -28,6 +28,7 @@ import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import bcrypt from 'bcrypt';
 
 // Configurar multer para upload de arquivos
 const upload = multer({ 
@@ -264,6 +265,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating user:", error);
       res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.put('/api/users/:id/password', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const userId = req.params.id;
+      const { password } = req.body;
+
+      if (!password || password.length < 6) {
+        return res.status(400).json({ message: "Senha deve ter no mínimo 6 caracteres" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const updatedUser = await storage.updateUserPassword(userId, hashedPassword);
+      
+      res.json({ message: "Senha atualizada com sucesso", user: updatedUser });
+    } catch (error) {
+      console.error("Error updating password:", error);
+      res.status(500).json({ message: "Erro ao atualizar senha" });
+    }
+  });
+
+  app.delete('/api/users/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const userId = req.params.id;
+      const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
+
+      // Não permitir excluir a si mesmo
+      if (userId === currentUserId) {
+        return res.status(400).json({ message: "Você não pode excluir sua própria conta" });
+      }
+
+      await storage.deleteUser(userId);
+      
+      res.json({ message: "Usuário excluído com sucesso" });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ message: "Erro ao excluir usuário" });
     }
   });
 
