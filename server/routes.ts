@@ -22,6 +22,7 @@ import {
   users,
   salesCards,
   blockedOrders,
+  customers,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
@@ -6201,6 +6202,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Erro ao buscar rotas recentes:', error);
       res.status(500).json({ 
         message: 'Erro ao buscar rotas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar todas as visitas realizadas com check-in
+  app.get('/api/visits/all', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Construir condições WHERE
+      const conditions = [isNotNull(salesCards.checkInTime)];
+      
+      // Se for vendedor, filtrar apenas suas próprias visitas
+      if (user.role === 'vendedor') {
+        conditions.push(eq(salesCards.sellerId, user.id));
+      }
+
+      const visits = await db
+        .select({
+          id: salesCards.id,
+          checkInTime: salesCards.checkInTime,
+          checkOutTime: salesCards.checkOutTime,
+          checkInLatitude: salesCards.checkInLatitude,
+          checkInLongitude: salesCards.checkInLongitude,
+          checkOutLatitude: salesCards.checkOutLatitude,
+          checkOutLongitude: salesCards.checkOutLongitude,
+          distanceToCustomer: salesCards.distanceToCustomer,
+          checkInPhotoUrl: salesCards.checkInPhotoUrl,
+          customerLatitude: salesCards.customerLatitude,
+          customerLongitude: salesCards.customerLongitude,
+          customerId: salesCards.customerId,
+          sellerId: salesCards.sellerId,
+          customerName: customers.name,
+          sellerName: sql<string>`${users.firstName} || ' ' || ${users.lastName}`,
+        })
+        .from(salesCards)
+        .innerJoin(customers, eq(customers.id, salesCards.customerId))
+        .innerJoin(users, eq(users.id, salesCards.sellerId))
+        .where(and(...conditions))
+        .orderBy(sql`${salesCards.checkInTime} DESC`);
+      
+      res.json(visits);
+    } catch (error: any) {
+      console.error('Erro ao buscar visitas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar visitas',
         error: error.message 
       });
     }

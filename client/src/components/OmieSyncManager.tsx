@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { RefreshCw as Sync, Users, AlertTriangle, DollarSign, Calendar, Check, X, Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw as Sync, Users, AlertTriangle, DollarSign, Calendar, Check, X, Loader2, RefreshCw, MapPin } from "lucide-react";
 import type { User } from "@shared/schema";
 
 interface OmieSyncManagerProps {
@@ -40,7 +40,7 @@ interface SyncResult {
 
 export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProps) {
   const [selectedSeller, setSelectedSeller] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'clients' | 'vendors' | 'products' | 'debts'>('clients');
+  const [activeTab, setActiveTab] = useState<'clients' | 'vendors' | 'products' | 'debts' | 'visits'>('clients');
   const [syncProgress, setSyncProgress] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
@@ -48,7 +48,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
   const queryClient = useQueryClient();
 
   // Limpar syncResult quando mudar de aba para evitar mostrar resultados incorretos
-  const handleTabChange = (tab: 'clients' | 'vendors' | 'products' | 'debts') => {
+  const handleTabChange = (tab: 'clients' | 'vendors' | 'products' | 'debts' | 'visits') => {
     setActiveTab(tab);
     setSyncResult(null);
   };
@@ -77,6 +77,13 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     enabled: isOpen,
     retry: false,
     staleTime: 1000 * 60 * 30, // 30 minutos - dados considerados "frescos"
+  });
+
+  // Buscar visitas realizadas
+  const { data: visits, isLoading: isLoadingVisits } = useQuery({
+    queryKey: ['/api/visits/all'],
+    enabled: isOpen,
+    retry: false,
   });
 
   // Verificar status da integração Omie
@@ -314,7 +321,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
 
         <div className="space-y-6">
           {/* Tabs */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-1 bg-gray-100 p-1 rounded-lg">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-1 bg-gray-100 p-1 rounded-lg">
             <Button
               variant={activeTab === 'clients' ? 'default' : 'ghost'}
               className={`${activeTab === 'clients' ? 'bg-honest-blue text-white' : ''}`}
@@ -350,6 +357,15 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
             >
               <AlertTriangle className="h-4 w-4 mr-2" />
               Débitos
+            </Button>
+            <Button
+              variant={activeTab === 'visits' ? 'default' : 'ghost'}
+              className={`${activeTab === 'visits' ? 'bg-honest-blue text-white' : ''}`}
+              onClick={() => handleTabChange('visits')}
+              data-testid="tab-visits"
+            >
+              <MapPin className="h-4 w-4 mr-2" />
+              Visitas
             </Button>
           </div>
 
@@ -884,6 +900,139 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                   )}
                   <p className="text-xs text-gray-500 mt-4 text-center">
                     💾 Dados salvos no banco de dados. Persistem até a próxima sincronização.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Tab: Rota de Visitas */}
+          {activeTab === 'visits' && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Histórico de Visitas Realizadas</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingVisits ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-honest-blue" />
+                      <span className="ml-2">Carregando visitas...</span>
+                    </div>
+                  ) : visits && Array.isArray(visits) && visits.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead>Vendedor</TableHead>
+                            <TableHead>Data</TableHead>
+                            <TableHead>Check-in</TableHead>
+                            <TableHead>Check-out</TableHead>
+                            <TableHead>Duração</TableHead>
+                            <TableHead>Distância</TableHead>
+                            <TableHead>Foto</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(visits as any[]).map((visit: any) => {
+                            const checkInTime = visit.checkInTime ? new Date(visit.checkInTime) : null;
+                            const checkOutTime = visit.checkOutTime ? new Date(visit.checkOutTime) : null;
+                            
+                            let duration = 'Em andamento';
+                            if (checkInTime && checkOutTime) {
+                              const diffMs = checkOutTime.getTime() - checkInTime.getTime();
+                              const diffMins = Math.floor(diffMs / 60000);
+                              const hours = Math.floor(diffMins / 60);
+                              const mins = diffMins % 60;
+                              duration = hours > 0 ? `${hours}h ${mins}min` : `${mins}min`;
+                            }
+                            
+                            const distance = visit.distanceToCustomer 
+                              ? `${parseFloat(visit.distanceToCustomer).toFixed(0)}m`
+                              : '-';
+
+                            return (
+                              <TableRow key={visit.id}>
+                                <TableCell>
+                                  <div className="font-medium">{visit.customerName}</div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm">{visit.sellerName}</div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm">
+                                    {checkInTime ? checkInTime.toLocaleDateString('pt-BR') : '-'}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm">
+                                    {checkInTime ? checkInTime.toLocaleTimeString('pt-BR', { 
+                                      hour: '2-digit', 
+                                      minute: '2-digit' 
+                                    }) : '-'}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm">
+                                    {checkOutTime ? checkOutTime.toLocaleTimeString('pt-BR', { 
+                                      hour: '2-digit', 
+                                      minute: '2-digit' 
+                                    }) : '-'}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={checkOutTime ? 'default' : 'secondary'}>
+                                    {duration}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm font-medium">{distance}</div>
+                                </TableCell>
+                                <TableCell>
+                                  {visit.checkInPhotoUrl ? (
+                                    <Dialog>
+                                      <DialogTrigger asChild>
+                                        <Button variant="outline" size="sm">
+                                          Ver Foto
+                                        </Button>
+                                      </DialogTrigger>
+                                      <DialogContent className="max-w-2xl">
+                                        <DialogHeader>
+                                          <DialogTitle>Foto do Check-in</DialogTitle>
+                                        </DialogHeader>
+                                        <div className="mt-4">
+                                          <img 
+                                            src={visit.checkInPhotoUrl} 
+                                            alt="Check-in" 
+                                            className="w-full h-auto rounded-lg"
+                                          />
+                                          <div className="mt-2 text-sm text-gray-600">
+                                            <p><strong>Cliente:</strong> {visit.customerName}</p>
+                                            <p><strong>Data:</strong> {checkInTime?.toLocaleString('pt-BR')}</p>
+                                            <p><strong>Distância:</strong> {distance}</p>
+                                          </div>
+                                        </div>
+                                      </DialogContent>
+                                    </Dialog>
+                                  ) : (
+                                    <span className="text-gray-400 text-sm">Sem foto</span>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <MapPin className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                      <p>Nenhuma visita com check-in registrada.</p>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-4 text-center">
+                    💾 Dados de visitas realizadas pelos vendedores.
                   </p>
                 </CardContent>
               </Card>
