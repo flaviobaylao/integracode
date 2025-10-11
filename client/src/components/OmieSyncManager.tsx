@@ -47,17 +47,36 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Limpar syncResult quando mudar de aba para evitar mostrar resultados incorretos
+  const handleTabChange = (tab: 'clients' | 'vendors' | 'products' | 'debts') => {
+    setActiveTab(tab);
+    setSyncResult(null);
+  };
+
   // Buscar usuários vendedores
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
     retry: false,
   });
 
-  // Buscar débitos em atraso
+  // Buscar clientes do banco
+  const { data: customers } = useQuery({
+    queryKey: ['/api/customers'],
+    enabled: isOpen,
+  });
+
+  // Buscar produtos do banco
+  const { data: products } = useQuery({
+    queryKey: ['/api/products'],
+    enabled: isOpen,
+  });
+
+  // Buscar débitos salvos no banco (dados persistidos)
   const { data: overdueDebts, isLoading: isLoadingDebts, refetch: refetchDebts } = useQuery({
-    queryKey: ['/api/omie/overdue-debts'],
-    enabled: isOpen && activeTab === 'debts',
+    queryKey: ['/api/omie/overdue-debts/cached'],
+    enabled: isOpen,
     retry: false,
+    staleTime: 1000 * 60 * 30, // 30 minutos - dados considerados "frescos"
   });
 
   // Verificar status da integração Omie
@@ -299,7 +318,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
             <Button
               variant={activeTab === 'clients' ? 'default' : 'ghost'}
               className={`${activeTab === 'clients' ? 'bg-honest-blue text-white' : ''}`}
-              onClick={() => setActiveTab('clients')}
+              onClick={() => handleTabChange('clients')}
+              data-testid="tab-clients"
             >
               <Users className="h-4 w-4 mr-2" />
               Clientes
@@ -307,7 +327,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
             <Button
               variant={activeTab === 'vendors' ? 'default' : 'ghost'}
               className={`${activeTab === 'vendors' ? 'bg-honest-blue text-white' : ''}`}
-              onClick={() => setActiveTab('vendors')}
+              onClick={() => handleTabChange('vendors')}
+              data-testid="tab-vendors"
             >
               <Users className="h-4 w-4 mr-2" />
               Vendedores
@@ -315,7 +336,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
             <Button
               variant={activeTab === 'products' ? 'default' : 'ghost'}
               className={`${activeTab === 'products' ? 'bg-honest-blue text-white' : ''}`}
-              onClick={() => setActiveTab('products')}
+              onClick={() => handleTabChange('products')}
+              data-testid="tab-products"
             >
               <DollarSign className="h-4 w-4 mr-2" />
               Produtos
@@ -323,7 +345,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
             <Button
               variant={activeTab === 'debts' ? 'default' : 'ghost'}
               className={`${activeTab === 'debts' ? 'bg-honest-blue text-white' : ''}`}
-              onClick={() => setActiveTab('debts')}
+              onClick={() => handleTabChange('debts')}
+              data-testid="tab-debts"
             >
               <AlertTriangle className="h-4 w-4 mr-2" />
               Débitos
@@ -371,6 +394,7 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                         onClick={handleSyncAllClients}
                         disabled={isSyncing}
                         className="bg-honest-blue hover:bg-honest-blue/90 w-full"
+                        data-testid="button-sync-clients"
                       >
                         {isSyncing ? (
                           <>
@@ -398,10 +422,11 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                     </div>
                   )}
 
-                  {/* Resultado */}
+                  {/* Resultado da última sincronização */}
                   {syncResult && (
                     <Card className="bg-green-50 border-green-200">
                       <CardContent className="pt-4">
+                        <p className="text-sm font-medium mb-3">Resultado da Última Sincronização:</p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                           <div>
                             <p className="text-2xl font-bold text-honest-blue">{syncResult.totalProcessed}</p>
@@ -436,6 +461,38 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                       </CardContent>
                     </Card>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Estatísticas de clientes salvos no banco */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Clientes no Sistema</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <p className="text-3xl font-bold text-honest-blue" data-testid="text-total-customers">
+                        {customers ? (customers as any[]).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Total de Clientes</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <p className="text-3xl font-bold text-green-600" data-testid="text-active-customers">
+                        {customers ? (customers as any[]).filter((c: any) => c.isActive).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Clientes Ativos</p>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-3xl font-bold text-gray-600" data-testid="text-inactive-customers">
+                        {customers ? (customers as any[]).filter((c: any) => !c.isActive).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Clientes Inativos</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-4 text-center">
+                    💾 Dados salvos no banco de dados. Persistem até a próxima sincronização.
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -484,10 +541,11 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                     </div>
                   )}
 
-                  {/* Resultado */}
+                  {/* Resultado da última sincronização */}
                   {syncResult && (
                     <Card className="bg-green-50 border-green-200">
                       <CardContent className="pt-4">
+                        <p className="text-sm font-medium mb-3">Resultado da Última Sincronização:</p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                           <div>
                             <p className="text-2xl font-bold text-honest-blue">{syncResult.totalProcessed}</p>
@@ -522,6 +580,38 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                       </CardContent>
                     </Card>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Estatísticas de vendedores salvos no banco */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Vendedores no Sistema</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <p className="text-3xl font-bold text-honest-blue" data-testid="text-total-vendors">
+                        {users ? (users as any[]).filter((u: any) => u.role === 'vendedor').length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Total de Vendedores</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <p className="text-3xl font-bold text-green-600" data-testid="text-active-vendors">
+                        {users ? (users as any[]).filter((u: any) => u.role === 'vendedor' && u.isActive).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Vendedores Ativos</p>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-3xl font-bold text-gray-600" data-testid="text-inactive-vendors">
+                        {users ? (users as any[]).filter((u: any) => u.role === 'vendedor' && !u.isActive).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Vendedores Inativos</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-4 text-center">
+                    💾 Dados salvos no banco de dados. Persistem até a próxima sincronização.
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -575,10 +665,11 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                     </div>
                   )}
 
-                  {/* Resultado */}
+                  {/* Resultado da última sincronização */}
                   {syncResult && (
                     <Card className="bg-green-50 border-green-200">
                       <CardContent className="pt-4">
+                        <p className="text-sm font-medium mb-3">Resultado da Última Sincronização:</p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                           <div>
                             <p className="text-2xl font-bold text-honest-blue">{syncResult.totalProcessed}</p>
@@ -613,6 +704,38 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                       </CardContent>
                     </Card>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Estatísticas de produtos salvos no banco */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Produtos no Sistema</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <p className="text-3xl font-bold text-honest-blue" data-testid="text-total-products">
+                        {products ? (products as any[]).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Total de Produtos</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <p className="text-3xl font-bold text-green-600" data-testid="text-products-with-omie-code">
+                        {products ? (products as any[]).filter((p: any) => p.omieCodigoProduto).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Com Código Omie</p>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-3xl font-bold text-gray-600" data-testid="text-products-without-omie-code">
+                        {products ? (products as any[]).filter((p: any) => !p.omieCodigoProduto).length : 0}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">Sem Código Omie</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-4 text-center">
+                    💾 Dados salvos no banco de dados. Persistem até a próxima sincronização.
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -759,6 +882,9 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                       <p>Nenhum débito em atraso encontrado no Omie.</p>
                     </div>
                   )}
+                  <p className="text-xs text-gray-500 mt-4 text-center">
+                    💾 Dados salvos no banco de dados. Persistem até a próxima sincronização.
+                  </p>
                 </CardContent>
               </Card>
             </div>
