@@ -1094,8 +1094,9 @@ export class OmieService {
           if (stageResult) {
             invoiceStage = stageResult.stageName;
             
-            // NOVO: Aplicar dados de faturamento das etapas diretamente
-            if (!omieInvoiceId && !invoiceNumber && stageResult.invoiceData) {
+            // NOVO: Aplicar dados de faturamento das etapas diretamente SE não tiver dados válidos
+            const hasValidInvoiceNumber = invoiceNumber && invoiceNumber.trim() !== '';
+            if (!hasValidInvoiceNumber && stageResult.invoiceData) {
               omieInvoiceId = stageResult.invoiceData.omieInvoiceId;
               invoiceNumber = stageResult.invoiceData.invoiceNumber;
               invoiceDate = stageResult.invoiceData.invoiceDate;
