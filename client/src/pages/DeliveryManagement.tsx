@@ -34,8 +34,10 @@ import {
   RotateCcw,
   AlertTriangle,
   Edit3,
-  Eye
+  Eye,
+  Zap
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface DeliveryItem {
   id: string;
@@ -52,6 +54,12 @@ interface DeliveryItem {
   driverName?: string;
   trackingCode?: string;
   saleValue: number;
+  // Novos campos
+  deliveryTimeSlots?: string[];
+  deliverySaturdayTimeSlots?: string[];
+  exclusiveVehicle?: boolean;
+  vehicleTypes?: string[];
+  isUrgent?: boolean;
 }
 
 const deliveryStatusConfig = {
@@ -74,11 +82,15 @@ const failureReasonOptions = [
 export default function DeliveryManagement() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("pending"); // Filtrar apenas "aguardando rota" por padrão
   const [driverFilter, setDriverFilter] = useState("all");
   const [selectedDelivery, setSelectedDelivery] = useState<DeliveryItem | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  
+  // Novos estados para seleção de pedidos
+  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
 
   // Form state for update modal
   const [updateForm, setUpdateForm] = useState({
@@ -130,16 +142,67 @@ export default function DeliveryManagement() {
     },
   });
 
+  // Mutation para marcar entrega como urgente
+  const toggleUrgentMutation = useMutation({
+    mutationFn: async (data: { salesCardId: string; isUrgent: boolean }) => {
+      const response = await fetch(`/api/sales-cards/${data.salesCardId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ isUrgent: data.isUrgent }),
+      });
+      if (!response.ok) throw new Error('Erro ao atualizar urgência');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries/all'] });
+      toast({
+        title: "Urgência atualizada",
+        description: "A marcação de urgência foi atualizada.",
+      });
+    },
+  });
+
+  // Funções de seleção de pedidos
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedOrders(new Set());
+      setSelectAll(false);
+    } else {
+      const allIds = new Set(filteredDeliveries.map(d => d.salesCardId));
+      setSelectedOrders(allIds);
+      setSelectAll(true);
+    }
+  };
+
+  const handleSelectOrder = (salesCardId: string) => {
+    const newSelected = new Set(selectedOrders);
+    if (newSelected.has(salesCardId)) {
+      newSelected.delete(salesCardId);
+    } else {
+      newSelected.add(salesCardId);
+    }
+    setSelectedOrders(newSelected);
+    setSelectAll(newSelected.size === filteredDeliveries.length && filteredDeliveries.length > 0);
+  };
+
+  const handleToggleUrgent = (salesCardId: string, currentUrgent: boolean) => {
+    toggleUrgentMutation.mutate({
+      salesCardId,
+      isUrgent: !currentUrgent
+    });
+  };
+
   // Filtrar entregas
   const filteredDeliveries = useMemo(() => {
     if (!deliveries) return [];
 
     return deliveries.filter(delivery => {
       const matchesSearch = 
-        delivery.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        delivery.customerAddress.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        delivery.salesCardId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (delivery.trackingCode && delivery.trackingCode.toLowerCase().includes(searchTerm.toLowerCase()));
+        (delivery.customerName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (delivery.customerAddress?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (delivery.salesCardId?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (delivery.trackingCode?.toLowerCase() || '').includes(searchTerm.toLowerCase());
 
       const matchesStatus = statusFilter === "all" || delivery.deliveryStatus === statusFilter;
       const matchesDriver = driverFilter === "all" || delivery.deliveryDriverId === driverFilter;
@@ -279,10 +342,26 @@ export default function DeliveryManagement() {
 
       {/* Deliveries List */}
       <Card data-testid="deliveries-list-card">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>
-            Entregas ({filteredDeliveries.length})
+            Entregas Aguardando Rota ({filteredDeliveries.length})
           </CardTitle>
+          {statusFilter === 'pending' && filteredDeliveries.length > 0 && (
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="select-all"
+                checked={selectAll}
+                onCheckedChange={handleSelectAll}
+                data-testid="checkbox-select-all"
+              />
+              <Label htmlFor="select-all" className="cursor-pointer">
+                Selecionar Todos
+              </Label>
+              {selectedOrders.size > 0 && (
+                <Badge variant="secondary">{selectedOrders.size} selecionados</Badge>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {isLoadingDeliveries ? (
@@ -292,74 +371,160 @@ export default function DeliveryManagement() {
               {filteredDeliveries.map((delivery) => {
                 const statusConfig = deliveryStatusConfig[delivery.deliveryStatus as keyof typeof deliveryStatusConfig];
                 const StatusIcon = statusConfig?.icon || Package;
+                const isSelected = selectedOrders.has(delivery.salesCardId);
                 
                 return (
-                  <div key={delivery.id} className="border rounded-lg p-4 hover:bg-gray-50" data-testid={`delivery-item-${delivery.id}`}>
+                  <div key={delivery.id} className={`border rounded-lg p-4 hover:bg-gray-50 ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`} data-testid={`delivery-item-${delivery.id}`}>
                     <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center space-x-3">
-                          <Badge variant={statusConfig?.color as any}>
-                            <StatusIcon className="h-3 w-3 mr-1" />
-                            {statusConfig?.label}
-                          </Badge>
-                          {delivery.trackingCode && (
-                            <Badge variant="outline">
-                              {delivery.trackingCode}
+                      <div className="flex items-start space-x-3 flex-1">
+                        {/* Checkbox de seleção */}
+                        {statusFilter === 'pending' && (
+                          <Checkbox
+                            id={`select-${delivery.salesCardId}`}
+                            checked={isSelected}
+                            onCheckedChange={() => handleSelectOrder(delivery.salesCardId)}
+                            data-testid={`checkbox-select-${delivery.salesCardId}`}
+                            className="mt-1"
+                          />
+                        )}
+                        
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center space-x-3">
+                            <Badge variant={statusConfig?.color as any}>
+                              <StatusIcon className="h-3 w-3 mr-1" />
+                              {statusConfig?.label}
                             </Badge>
+                            {delivery.isUrgent && (
+                              <Badge variant="destructive" className="bg-red-600">
+                                <Zap className="h-3 w-3 mr-1" />
+                                URGENTE
+                              </Badge>
+                            )}
+                            {delivery.trackingCode && (
+                              <Badge variant="outline">
+                                {delivery.trackingCode}
+                              </Badge>
+                            )}
+                          </div>
+                        
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                              <div className="font-medium">{delivery.customerName}</div>
+                              <div className="text-sm text-muted-foreground flex items-center">
+                                <MapPin className="h-3 w-3 mr-1" />
+                                {delivery.customerAddress}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                📞 {delivery.customerPhone}
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <div className="text-sm">
+                                <strong>Card:</strong> {delivery.salesCardId}
+                              </div>
+                              <div className="text-sm">
+                                <strong>Valor:</strong> R$ {delivery.saleValue?.toFixed(2)}
+                              </div>
+                              <div className="text-sm">
+                                <strong>Agendado:</strong> {new Date(delivery.deliveryScheduledDate).toLocaleDateString('pt-BR')}
+                              </div>
+                            </div>
+                            
+                            <div>
+                              {delivery.driverName && (
+                                <div className="text-sm">
+                                  <strong>Motorista:</strong> {delivery.driverName}
+                                </div>
+                              )}
+                              {delivery.deliveryCompletedDate && (
+                                <div className="text-sm">
+                                  <strong>Concluído:</strong> {new Date(delivery.deliveryCompletedDate).toLocaleDateString('pt-BR')}
+                                </div>
+                              )}
+                              {delivery.deliveryFailureReason && (
+                                <div className="text-sm text-red-600">
+                                  <strong>Motivo:</strong> {failureReasonOptions.find(r => r.value === delivery.deliveryFailureReason)?.label}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {delivery.deliveryNotes && (
+                            <div className="text-sm bg-gray-50 p-2 rounded">
+                              <strong>Observações:</strong> {delivery.deliveryNotes}
+                            </div>
+                          )}
+
+                          {/* Novas informações: Horários, Dias e Veículos */}
+                          <div className="border-t pt-2 mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                            {/* Horários de Entrega */}
+                            {delivery.deliveryTimeSlots && delivery.deliveryTimeSlots.length > 0 && (
+                              <div className="text-sm">
+                                <strong className="text-gray-700">Horários (dias de semana):</strong>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {delivery.deliveryTimeSlots.map((slot, idx) => (
+                                    <Badge key={idx} variant="outline" className="text-xs">
+                                      <Clock className="h-3 w-3 mr-1" />
+                                      {slot}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Horários Sábado */}
+                            {delivery.deliverySaturdayTimeSlots && delivery.deliverySaturdayTimeSlots.length > 0 && (
+                              <div className="text-sm">
+                                <strong className="text-gray-700">Horários (sábado):</strong>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {delivery.deliverySaturdayTimeSlots.map((slot, idx) => (
+                                    <Badge key={idx} variant="outline" className="text-xs bg-blue-50">
+                                      <Clock className="h-3 w-3 mr-1" />
+                                      {slot}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Veículos Exclusivos */}
+                            {delivery.exclusiveVehicle && delivery.vehicleTypes && delivery.vehicleTypes.length > 0 && (
+                              <div className="text-sm">
+                                <strong className="text-orange-700">Veículo Exclusivo:</strong>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {delivery.vehicleTypes.map((vehicle, idx) => (
+                                    <Badge key={idx} variant="outline" className="text-xs bg-orange-50 border-orange-300">
+                                      <Truck className="h-3 w-3 mr-1" />
+                                      {vehicle === 'caminhao' ? '🚛 Caminhão' : vehicle === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Checkbox de Urgência */}
+                          {statusFilter === 'pending' && (
+                            <div className="border-t pt-2 mt-2">
+                              <div className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={`urgent-${delivery.salesCardId}`}
+                                  checked={delivery.isUrgent || false}
+                                  onCheckedChange={() => handleToggleUrgent(delivery.salesCardId, delivery.isUrgent || false)}
+                                  data-testid={`checkbox-urgent-${delivery.salesCardId}`}
+                                />
+                                <Label htmlFor={`urgent-${delivery.salesCardId}`} className="cursor-pointer text-sm font-medium flex items-center">
+                                  <Zap className="h-4 w-4 mr-1 text-red-600" />
+                                  Marcar como entrega urgente
+                                </Label>
+                              </div>
+                            </div>
                           )}
                         </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div>
-                            <div className="font-medium">{delivery.customerName}</div>
-                            <div className="text-sm text-muted-foreground flex items-center">
-                              <MapPin className="h-3 w-3 mr-1" />
-                              {delivery.customerAddress}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              📞 {delivery.customerPhone}
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <div className="text-sm">
-                              <strong>Card:</strong> {delivery.salesCardId}
-                            </div>
-                            <div className="text-sm">
-                              <strong>Valor:</strong> R$ {delivery.saleValue?.toFixed(2)}
-                            </div>
-                            <div className="text-sm">
-                              <strong>Agendado:</strong> {new Date(delivery.deliveryScheduledDate).toLocaleDateString('pt-BR')}
-                            </div>
-                          </div>
-                          
-                          <div>
-                            {delivery.driverName && (
-                              <div className="text-sm">
-                                <strong>Motorista:</strong> {delivery.driverName}
-                              </div>
-                            )}
-                            {delivery.deliveryCompletedDate && (
-                              <div className="text-sm">
-                                <strong>Concluído:</strong> {new Date(delivery.deliveryCompletedDate).toLocaleDateString('pt-BR')}
-                              </div>
-                            )}
-                            {delivery.deliveryFailureReason && (
-                              <div className="text-sm text-red-600">
-                                <strong>Motivo:</strong> {failureReasonOptions.find(r => r.value === delivery.deliveryFailureReason)?.label}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {delivery.deliveryNotes && (
-                          <div className="text-sm bg-gray-50 p-2 rounded">
-                            <strong>Observações:</strong> {delivery.deliveryNotes}
-                          </div>
-                        )}
                       </div>
                       
-                      <div className="flex space-x-2 ml-4">
+                      <div className="flex flex-col space-y-2 ml-4">
                         <Button
                           variant="outline"
                           size="sm"
