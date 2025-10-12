@@ -81,10 +81,6 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
-  
-  // Debug temporário
-  console.log('SaleModal - currentUser:', currentUser);
-  console.log('SaleModal - isAdministrative:', isAdministrative);
 
   // Valor mínimo de pedido
   const minimumOrderValue = useMemo(() => {
