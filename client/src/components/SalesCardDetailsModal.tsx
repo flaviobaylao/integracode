@@ -31,7 +31,8 @@ import {
   LogOut,
   Loader2,
   Monitor,
-  Users
+  Users,
+  Truck
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import CheckInModal from "./CheckInModal";
@@ -535,6 +536,26 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <div>
                   <p className="text-sm text-gray-600">Motivo da Não Venda</p>
                   <p className="font-medium text-red-600">{card.noSaleReason}</p>
+                </div>
+              )}
+
+              {/* Veículo Exclusivo */}
+              {(card as any).exclusiveVehicle && (
+                <div className="border-t border-gray-200 pt-4 mt-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Truck className="h-5 w-5 text-orange-600" />
+                    <p className="text-sm font-semibold text-gray-700">Veículo Exclusivo</p>
+                  </div>
+                  <div className="ml-7">
+                    <p className="text-sm text-gray-600 mb-2">Tipos de veículos:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {((card as any).vehicleTypes || []).map((vehicle: string) => (
+                        <Badge key={vehicle} variant="outline" className="bg-orange-50 text-orange-700 border-orange-300">
+                          {vehicle === 'caminhao' ? '🚛 Caminhão' : vehicle === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>
