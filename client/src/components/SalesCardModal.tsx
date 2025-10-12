@@ -39,6 +39,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     boletoDays: 7,
     customerLatitude: '',
     customerLongitude: '',
+    exclusiveVehicle: false,
+    vehicleTypes: [] as string[],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -100,6 +102,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         boletoDays: (editingCard as any).boletoDays || 7,
         customerLatitude: (editingCard as any).customerLatitude || '',
         customerLongitude: (editingCard as any).customerLongitude || '',
+        exclusiveVehicle: (editingCard as any).exclusiveVehicle || false,
+        vehicleTypes: (editingCard as any).vehicleTypes || [],
       });
     } else {
       const now = new Date();
@@ -122,6 +126,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         boletoDays: 7,
         customerLatitude: '',
         customerLongitude: '',
+        exclusiveVehicle: false,
+        vehicleTypes: [],
       });
     }
     setErrors({});
@@ -233,6 +239,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         operationType: formData.operationType,
         customerLatitude: formData.customerLatitude || null,
         customerLongitude: formData.customerLongitude || null,
+        exclusiveVehicle: formData.exclusiveVehicle,
+        vehicleTypes: formData.vehicleTypes,
       };
 
       // Não usar validação Zod aqui - deixar o backend validar
@@ -626,6 +634,83 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Veículo Exclusivo - Somente Admin */}
+              {(currentUser as any)?.role && ['admin', 'coordinator', 'administrative'].includes((currentUser as any).role) && (
+                <div className="mt-6 border-t border-gray-200 pt-6">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <Truck className="h-4 w-4 text-orange-600" />
+                    <Label className="text-sm font-medium">Veículo Exclusivo (Somente Admin)</Label>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2 mb-4">
+                    <Checkbox
+                      id="exclusive-vehicle"
+                      checked={formData.exclusiveVehicle}
+                      onCheckedChange={(checked) => {
+                        setFormData(prev => ({ 
+                          ...prev, 
+                          exclusiveVehicle: checked as boolean,
+                          vehicleTypes: checked ? prev.vehicleTypes : []
+                        }));
+                      }}
+                      data-testid="checkbox-exclusive-vehicle"
+                    />
+                    <Label 
+                      htmlFor="exclusive-vehicle" 
+                      className="text-sm font-normal cursor-pointer"
+                    >
+                      Entrega em veículo exclusivo?
+                    </Label>
+                  </div>
+
+                  {formData.exclusiveVehicle && (
+                    <div className="ml-6">
+                      <Label className="text-sm font-medium mb-3 block">Tipos de Veículos (máximo 2)</Label>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { value: 'caminhao', label: 'Caminhão' },
+                          { value: 'carro', label: 'Carro' },
+                          { value: 'moto', label: 'Moto' }
+                        ].map((vehicle) => (
+                          <div key={vehicle.value} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`vehicle-${vehicle.value}`}
+                              checked={formData.vehicleTypes.includes(vehicle.value)}
+                              onCheckedChange={(checked) => {
+                                setFormData(prev => {
+                                  const newVehicleTypes = checked 
+                                    ? [...prev.vehicleTypes, vehicle.value]
+                                    : prev.vehicleTypes.filter(v => v !== vehicle.value);
+                                  
+                                  // Limitar a 2 veículos
+                                  if (newVehicleTypes.length > 2) {
+                                    toast({
+                                      title: "Limite excedido",
+                                      description: "Selecione no máximo 2 tipos de veículos",
+                                      variant: "destructive",
+                                    });
+                                    return prev;
+                                  }
+                                  
+                                  return { ...prev, vehicleTypes: newVehicleTypes };
+                                });
+                              }}
+                              data-testid={`checkbox-vehicle-${vehicle.value}`}
+                            />
+                            <Label 
+                              htmlFor={`vehicle-${vehicle.value}`} 
+                              className="text-sm font-normal cursor-pointer"
+                            >
+                              {vehicle.label}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
