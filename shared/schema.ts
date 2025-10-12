@@ -255,6 +255,10 @@ export const salesCards = pgTable("sales_cards", {
   checkOutDistanceToCustomer: decimal("check_out_distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-out
   checkInPhotoUrl: text("check_in_photo_url"), // URL da foto tirada no check-in
   
+  // Configurações de entrega com veículo exclusivo (admin-only)
+  exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Entrega em veículo exclusivo
+  vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos: ["caminhao", "carro", "moto"] - max 2
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -748,6 +752,10 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   checkOutLongitude: z.union([z.string(), z.number()]).optional().nullable(),
   distanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
   checkOutDistanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
+  
+  // Validação de configuração de veículo exclusivo
+  exclusiveVehicle: z.boolean().default(false),
+  vehicleTypes: z.array(z.enum(['caminhao', 'carro', 'moto'])).max(2, 'Selecione no máximo 2 tipos de veículos').default([]),
 });
 
 export const insertMessageTemplateSchema = createInsertSchema(messageTemplates).omit({
