@@ -515,6 +515,16 @@ Qualquer dúvida, estou à disposição.`;
       return;
     }
 
+    // Validação de veículo exclusivo
+    if (exclusiveVehicle && vehicleTypes.length > 2) {
+      toast({
+        title: "Erro de Validação",
+        description: "Selecione no máximo 2 tipos de veículos",
+        variant: "destructive"
+      });
+      return;
+    }
+
     saveCardPreferences();
     setShowConfirmation(true);
   };
