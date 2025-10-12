@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -54,6 +54,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const [customerLocation, setCustomerLocation] = useState({ latitude: '', longitude: '' });
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   
+  // Estados do veículo exclusivo
+  const [exclusiveVehicle, setExclusiveVehicle] = useState(false);
+  const [vehicleTypes, setVehicleTypes] = useState<string[]>([]);
+  
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -68,6 +72,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     queryKey: ['/api/system-settings'],
     retry: false,
   });
+
+  // Buscar usuário atual para verificar permissões
+  const { data: currentUser } = useQuery({
+    queryKey: ['/api/auth/user'],
+    retry: false,
+  });
+
+  // Verificar se o usuário é administrativo
+  const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
   // Valor mínimo de pedido
   const minimumOrderValue = useMemo(() => {
@@ -344,6 +357,10 @@ Qualquer dúvida, estou à disposição.`;
       setSelectedSaturdaySlots(card.deliverySaturdayTimeSlots || []);
       setEnableSaturdayDelivery((card.deliverySaturdayTimeSlots || []).length > 0);
       
+      // Carregar configuração de veículo exclusivo
+      setExclusiveVehicle(card.exclusiveVehicle || false);
+      setVehicleTypes(card.vehicleTypes || []);
+      
       // Carregar localização
       if (card.customerLatitude && card.customerLongitude) {
         setCustomerLocation({
@@ -552,6 +569,8 @@ Qualquer dúvida, estou à disposição.`;
       customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
       totalValue: totalSale,
       shouldBlock: shouldBlockOrder,
+      exclusiveVehicle,
+      vehicleTypes,
       // Salvar configurações para reutilização
       saveForReuse: true
     };
@@ -983,6 +1002,71 @@ Qualquer dúvida, estou à disposição.`;
                     {isCapturingLocation ? 'Capturando...' : 'Capturar GPS'}
                   </Button>
                 </div>
+
+                {/* Veículo Exclusivo - Somente Admin */}
+                {isAdministrative && (
+                  <div className="space-y-3 border-t border-gray-200 pt-4">
+                    <div className="flex items-center gap-2">
+                      <Truck className="h-4 w-4 text-orange-600" />
+                      <Label className="text-sm font-medium">Veículo Exclusivo (Admin)</Label>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="exclusive-vehicle-sale"
+                        checked={exclusiveVehicle}
+                        onCheckedChange={(checked) => {
+                          setExclusiveVehicle(checked as boolean);
+                          if (!checked) setVehicleTypes([]);
+                        }}
+                        data-testid="checkbox-exclusive-vehicle-sale"
+                      />
+                      <Label htmlFor="exclusive-vehicle-sale" className="text-sm cursor-pointer">
+                        Entrega em veículo exclusivo?
+                      </Label>
+                    </div>
+
+                    {exclusiveVehicle && (
+                      <div className="ml-6 space-y-2">
+                        <Label className="text-sm font-medium">Tipos de Veículos (máximo 2)</Label>
+                        <div className="grid grid-cols-3 gap-3">
+                          {[
+                            { value: 'caminhao', label: 'Caminhão' },
+                            { value: 'carro', label: 'Carro' },
+                            { value: 'moto', label: 'Moto' }
+                          ].map((vehicle) => (
+                            <div key={vehicle.value} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`vehicle-sale-${vehicle.value}`}
+                                checked={vehicleTypes.includes(vehicle.value)}
+                                onCheckedChange={(checked) => {
+                                  const newVehicleTypes = checked 
+                                    ? [...vehicleTypes, vehicle.value]
+                                    : vehicleTypes.filter(v => v !== vehicle.value);
+                                  
+                                  if (newVehicleTypes.length > 2) {
+                                    toast({
+                                      title: "Limite excedido",
+                                      description: "Selecione no máximo 2 tipos de veículos",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  
+                                  setVehicleTypes(newVehicleTypes);
+                                }}
+                                data-testid={`checkbox-vehicle-sale-${vehicle.value}`}
+                              />
+                              <Label htmlFor={`vehicle-sale-${vehicle.value}`} className="text-sm cursor-pointer">
+                                {vehicle.label}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Dias de Entrega */}
                 <div className="space-y-3">
