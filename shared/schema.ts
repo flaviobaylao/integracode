@@ -258,6 +258,7 @@ export const salesCards = pgTable("sales_cards", {
   // Configurações de entrega com veículo exclusivo (admin-only)
   exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Entrega em veículo exclusivo
   vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos: ["caminhao", "carro", "moto"] - max 2
+  isUrgent: boolean("is_urgent").notNull().default(false), // Marcador de entrega urgente
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
