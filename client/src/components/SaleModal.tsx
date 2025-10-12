@@ -81,6 +81,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
+  
+  // Debug temporário
+  console.log('SaleModal - currentUser:', currentUser);
+  console.log('SaleModal - isAdministrative:', isAdministrative);
 
   // Valor mínimo de pedido
   const minimumOrderValue = useMemo(() => {
@@ -1015,10 +1019,10 @@ Qualquer dúvida, estou à disposição.`;
 
                 {/* Veículo Exclusivo - Somente Admin */}
                 {isAdministrative && (
-                  <div className="space-y-3 border-t border-gray-200 pt-4">
+                  <div className="space-y-3 border-t border-gray-200 pt-4 bg-orange-50 p-3 rounded-lg">
                     <div className="flex items-center gap-2">
                       <Truck className="h-4 w-4 text-orange-600" />
-                      <Label className="text-sm font-medium">Veículo Exclusivo (Admin)</Label>
+                      <Label className="text-sm font-medium text-orange-900">Veículo Exclusivo (Admin)</Label>
                     </div>
                     
                     <div className="flex items-center space-x-2">
