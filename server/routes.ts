@@ -1532,6 +1532,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Toggle urgent delivery status
+  app.patch('/api/sales-cards/:id/urgent', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { isUrgent } = req.body;
+      
+      if (typeof isUrgent !== 'boolean') {
+        return res.status(400).json({ message: "isUrgent must be a boolean value" });
+      }
+      
+      const salesCard = await storage.updateSalesCard(id, { isUrgent });
+      res.json(salesCard);
+    } catch (error) {
+      console.error("Error updating urgent status:", error);
+      res.status(500).json({ message: "Failed to update urgent status" });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
