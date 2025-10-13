@@ -339,6 +339,9 @@ export class OmieService {
               continue;
             }
 
+            // DEBUG: Log do valor do campo inativo
+            console.log(`🔍 DEBUG Vendedor: ${vendor.nome} - inativo: "${vendor.inativo}" (tipo: ${typeof vendor.inativo})`);
+
             // FILTRO: Pular vendedores inativos
             const isInactive = vendor.inativo === 'S' || vendor.inativo === 'true' || vendor.inativo === true;
             if (isInactive) {
