@@ -4,7 +4,8 @@
 
 # User Preferences
 
-Preferred communication style: Simple, everyday language.
+- **Communication Style**: Simple, everyday language.
+- **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
 
 # System Architecture
 
