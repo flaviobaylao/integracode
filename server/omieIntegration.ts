@@ -2266,9 +2266,10 @@ export class OmieService {
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
       // Usar campo 'situacao' como critério correto (se disponível) ou fallback para 'inativo'
-      isActive: omieClient.situacao ? omieClient.situacao === 'ativo' : omieClient.inativo !== 'S',
-      omieStatus: omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo'),
-      situacao: omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo'), // Campo direto do Omie com fallback
+      // IMPORTANTE: Normalizar para lowercase para garantir consistência com o filtro de busca
+      isActive: omieClient.situacao ? omieClient.situacao.toLowerCase() === 'ativo' : omieClient.inativo !== 'S',
+      omieStatus: (omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo')).toLowerCase(),
+      situacao: (omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo')).toLowerCase(), // Campo direto do Omie com fallback
       document: documento || null // Documento original apenas se houver
     };
   }
