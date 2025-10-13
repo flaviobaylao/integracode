@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE } from '@shared/schema';
+import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -1033,8 +1033,8 @@ export class OmieService {
       const syncedBillings = await this.storage.getAllBillings();
       const syncedInvoiceNumbers = new Set(
         syncedBillings
-          .filter(b => b.invoiceNumber && b.invoiceNumber.trim() !== '')
-          .map(b => b.invoiceNumber!.trim())
+          .filter((b: Billing) => b.invoiceNumber && b.invoiceNumber.trim() !== '')
+          .map((b: Billing) => b.invoiceNumber!.trim())
       );
       
       // Identificar NFs faltantes
@@ -2267,9 +2267,15 @@ export class OmieService {
       route: omieClient.bairro || '',
       // Usar campo 'situacao' como critério correto (se disponível) ou fallback para 'inativo'
       // IMPORTANTE: Normalizar para lowercase para garantir consistência com o filtro de busca
-      isActive: omieClient.situacao ? omieClient.situacao.toLowerCase() === 'ativo' : omieClient.inativo !== 'S',
-      omieStatus: (omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo')).toLowerCase(),
-      situacao: (omieClient.situacao || (omieClient.inativo === 'S' ? 'inativo' : 'ativo')).toLowerCase(), // Campo direto do Omie com fallback
+      ...(() => {
+        const rawStatus = omieClient.situacao?.toLowerCase();
+        const finalStatus = rawStatus || (omieClient.inativo === 'S' ? 'inativo' : 'ativo');
+        return {
+          isActive: rawStatus ? rawStatus === 'ativo' : omieClient.inativo !== 'S',
+          omieStatus: finalStatus,
+          situacao: finalStatus
+        };
+      })(),
       document: documento || null // Documento original apenas se houver
     };
   }
