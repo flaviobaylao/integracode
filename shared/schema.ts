@@ -704,8 +704,8 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   // Validação customizada para CPF ou CNPJ obrigatório
   cpf: z.string().nullable().optional(),
   cnpj: z.string().nullable().optional(),
-  // Data de início do fornecimento como opcional
-  serviceStartDate: z.date().nullable().optional(),
+  // Data de início do fornecimento como opcional (aceita string ISO ou Date)
+  serviceStartDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
   // Validação de weekdays: deve ser JSON array com 1 ou 2 dias (opcional)
   weekdays: z.string().refine(
     (val) => {
