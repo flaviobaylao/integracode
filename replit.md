@@ -41,6 +41,7 @@
 - **Date Handling**: ISO UTC format for consistency.
 - **Customer Validation**: Prevents duplicate CPF/CNPJ.
 - **Sales Cards**: Search by customer/CNPJ, conditional payment terms for "Boleto", bulk import from Excel/CSV with Receita Federal API integration.
+- **Customer Excel Import**: Bulk update customer data via Excel import using CPF/CNPJ as key. Supports: GPS coordinates (latitude/longitude with comma decimal separator), visit schedule (ROTA/weekdays), visit frequency (FREQUENCIA/periodicidade: semanal, quinzenal, mensal, bimestral), and service start date (DATA DE INICIO in DD/MM/YYYY format). Automatically converts weekdays to JSON array format and handles multiple date formats including Excel serial dates.
 - **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and orders. Includes product mapping, vendor resolution, and automated hourly synchronization (Clients, Billings, Overdue Debts). OmieSyncManager provides a tab-based interface for managing synchronization. **Sync Filters**: Only ACTIVE records are synchronized - vendors and products with `inativo === 'S'` are automatically skipped during sync. Products are also filtered for blocked status and valid pricing.
 - **Financial Tracking**: Overdue debt monitoring, credit analysis, and comprehensive "Contas a Receber" view with frontend filtering and Excel export.
 - **Blocked Orders Management**: Automatic blocking for orders with Boleto terms > 7 days or overdue debts. Admin/coordinator/administrative roles can release blocked orders.
