@@ -4094,8 +4094,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const omieProduct of pageData.products) {
           result.totalProcessed++;
           
-          // FILTRO: Pular apenas produtos BLOQUEADOS (o campo "inativo" da API não é confiável)
+          // FILTRO: Pular produtos inativos ou bloqueados
+          const isInactive = omieProduct.inativo === 'S' || omieProduct.inativo === 'true' || omieProduct.inativo === true;
           const isBlocked = omieProduct.bloqueado === 'S' || omieProduct.bloqueado === 'true' || omieProduct.bloqueado === true;
+          
+          if (isInactive) {
+            console.log(`⏭️ Pulando produto inativo: ${omieProduct.descricao} (inativo: ${omieProduct.inativo})`);
+            result.skipped++;
+            continue;
+          }
           
           if (isBlocked) {
             console.log(`⏭️ Pulando produto bloqueado: ${omieProduct.descricao} (bloqueado: ${omieProduct.bloqueado})`);

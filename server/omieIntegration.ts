@@ -339,6 +339,13 @@ export class OmieService {
               continue;
             }
 
+            // FILTRO: Pular vendedores inativos
+            const isInactive = vendor.inativo === 'S' || vendor.inativo === 'true' || vendor.inativo === true;
+            if (isInactive) {
+              console.log(`⏭️ Pulando vendedor inativo: ${vendor.nome} (inativo: ${vendor.inativo})`);
+              continue;
+            }
+
             // Parse o nome do vendedor
             const fullName = vendor.nome || '';
             const nameParts = fullName.trim().split(' ');
