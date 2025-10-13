@@ -5792,6 +5792,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Save draft sale
+  app.post('/api/sales-cards/:id/save-draft', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { 
+        items, 
+        totalValue, 
+        paymentMethod, 
+        operationType, 
+        deliveryTimeSlots,
+        deliverySaturdayTimeSlots,
+        customerLatitude,
+        customerLongitude,
+        boletoDays,
+        exclusiveVehicle,
+        vehicleTypes
+      } = req.body;
+      
+      const products = items || req.body.products;
+
+      console.log('Saving draft for card:', id);
+      console.log('Draft data:', { products, totalValue, operationType });
+
+      // Update sales card with draft status
+      const updateData = {
+        status: 'draft',
+        products: products,
+        saleValue: totalValue?.toString() || '0',
+        paymentMethod: paymentMethod || 'a_vista',
+        operationType: operationType || 'venda',
+        boletoDays: boletoDays || 7,
+        deliveryTimeSlots: deliveryTimeSlots || [],
+        deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
+        customerLatitude: customerLatitude,
+        customerLongitude: customerLongitude,
+        exclusiveVehicle: exclusiveVehicle || false,
+        vehicleTypes: vehicleTypes || []
+      };
+
+      const salesCard = await storage.updateSalesCard(id, updateData);
+
+      res.json({
+        success: true,
+        salesCard,
+        message: 'Rascunho salvo com sucesso'
+      });
+
+    } catch (error) {
+      console.error("Error saving draft:", error);
+      res.status(500).json({ message: "Failed to save draft" });
+    }
+  });
+
   // Import products from Omie with correct active filter
   app.post('/api/omie/import-products', isAuthenticated, async (req: any, res) => {
     try {

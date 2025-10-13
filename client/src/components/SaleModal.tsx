@@ -566,6 +566,41 @@ Qualquer dúvida, estou à disposição.`;
     }
   });
 
+  // Mutation para salvar como rascunho
+  const saveDraftMutation = useMutation({
+    mutationFn: async (saleData: any) => {
+      const response = await fetch(`/api/sales-cards/${salesCard?.id}/save-draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(saleData),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${response.status}: ${errorText}`);
+      }
+      
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      toast({
+        title: "Rascunho Salvo!",
+        description: "O pedido foi salvo como rascunho com sucesso!"
+      });
+      onClose();
+      resetForm();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao Salvar Rascunho",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
   // Confirmar venda
   const confirmSale = () => {
     const saleData = {
@@ -585,6 +620,49 @@ Qualquer dúvida, estou à disposição.`;
       saveForReuse: true
     };
 
+    finalizeSaleMutation.mutate(saleData);
+  };
+
+  // Salvar como rascunho
+  const saveDraft = () => {
+    const saleData = {
+      items: saleItems,
+      paymentMethod,
+      operationType,
+      boletoDays,
+      deliveryTimeSlots: selectedWeekdaySlots,
+      deliverySaturdayTimeSlots: selectedSaturdaySlots,
+      customerLatitude: customerLocation.latitude ? parseFloat(customerLocation.latitude) : null,
+      customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
+      totalValue: totalSale,
+      shouldBlock: shouldBlockOrder,
+      exclusiveVehicle,
+      vehicleTypes,
+      status: 'rascunho'
+    };
+
+    saveDraftMutation.mutate(saleData);
+  };
+
+  // Fazer checkout
+  const handleCheckout = () => {
+    const saleData = {
+      items: saleItems,
+      paymentMethod,
+      operationType,
+      boletoDays,
+      deliveryTimeSlots: selectedWeekdaySlots,
+      deliverySaturdayTimeSlots: selectedSaturdaySlots,
+      customerLatitude: customerLocation.latitude ? parseFloat(customerLocation.latitude) : null,
+      customerLongitude: customerLocation.longitude ? parseFloat(customerLocation.longitude) : null,
+      totalValue: totalSale,
+      shouldBlock: shouldBlockOrder,
+      exclusiveVehicle,
+      vehicleTypes,
+      saveForReuse: true
+    };
+
+    // Por enquanto, checkout simplesmente finaliza a venda
     finalizeSaleMutation.mutate(saleData);
   };
 
@@ -678,7 +756,7 @@ Qualquer dúvida, estou à disposição.`;
                           data-testid="button-generate-pdf"
                         >
                           <FileText className="h-4 w-4 mr-2" />
-                          Gerar PDF do Orçamento
+                          Gerar PDF do Pedido
                         </Button>
                         
                         <Button
@@ -688,7 +766,7 @@ Qualquer dúvida, estou à disposição.`;
                           data-testid="button-send-whatsapp"
                         >
                           <MessageCircle className="h-4 w-4 mr-2" />
-                          Enviar por WhatsApp
+                          Enviar PDF para Cliente
                         </Button>
                       </div>
                     </div>
@@ -697,24 +775,68 @@ Qualquer dúvida, estou à disposição.`;
               </div>
             </ScrollArea>
 
-            <div className="flex justify-end gap-4 pt-4 border-t bg-white">
-              <Button variant="outline" onClick={() => setShowConfirmation(false)}>
-                Voltar
-              </Button>
-              <Button 
-                onClick={confirmSale}
-                disabled={finalizeSaleMutation.isPending}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {finalizeSaleMutation.isPending ? (
-                  <>Processando...</>
-                ) : (
-                  <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Confirmar e Finalizar
-                  </>
-                )}
-              </Button>
+            {/* Botões de Ação */}
+            <div className="flex flex-col gap-3 pt-4 border-t bg-white">
+              <div className="grid grid-cols-2 gap-3">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowConfirmation(false)}
+                  data-testid="button-back"
+                >
+                  Voltar
+                </Button>
+                
+                <Button 
+                  variant="outline"
+                  onClick={saveDraft}
+                  disabled={saveDraftMutation.isPending}
+                  className="bg-blue-50 hover:bg-blue-100 border-blue-200"
+                  data-testid="button-save-draft"
+                >
+                  {saveDraftMutation.isPending ? (
+                    <>Salvando...</>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Salvar Pedido
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Button 
+                  onClick={handleCheckout}
+                  disabled={finalizeSaleMutation.isPending}
+                  className="bg-orange-600 hover:bg-orange-700"
+                  data-testid="button-checkout"
+                >
+                  {finalizeSaleMutation.isPending ? (
+                    <>Processando...</>
+                  ) : (
+                    <>
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Fazer Checkout
+                    </>
+                  )}
+                </Button>
+                
+                <Button 
+                  onClick={confirmSale}
+                  disabled={finalizeSaleMutation.isPending}
+                  className="bg-green-600 hover:bg-green-700"
+                  data-testid="button-confirm-sale"
+                >
+                  {finalizeSaleMutation.isPending ? (
+                    <>Processando...</>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4 mr-2" />
+                      Confirmar e Finalizar
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         ) : (
