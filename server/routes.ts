@@ -653,9 +653,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const cpfCnpj = (row['CPF OU CNPJ'] || row['CNPJ/CPF'] || row['cpf_cnpj'] || row['cpfCnpj'] || row['documento'] || '').toString().trim();
           const latitude = row['LATITUDE'] || row['Latitude'] || row['latitude'] || row['lat'];
           const longitude = row['LONGITUDE'] || row['Longitude'] || row['longitude'] || row['lng'];
-          const route = row['ROTA'] || row['Rota'] || row['rota'] || row['route'];
-          const weekdaysRaw = (row['DIAS DA SEMANA'] || row['Dias da Semana'] || row['dias_da_semana'] || row['weekdays'] || row['DIAS'] || row['Dias'] || '').toString().toLowerCase().trim();
-          const periodicidade = (row['PERIODICIDADE'] || row['Periodicidade'] || row['periodicidade'] || row['periodicity'] || '').toString().toLowerCase().trim();
+          const rota = (row['ROTA'] || row['Rota'] || row['rota'] || '').toString().toLowerCase().trim();
+          const weekdaysRaw = (row['DIAS DA SEMANA'] || row['Dias da Semana'] || row['dias_da_semana'] || row['weekdays'] || row['DIAS'] || row['Dias'] || rota || '').toString().toLowerCase().trim();
+          const periodicidade = (row['PERIODICIDADE'] || row['FREQUENCIA'] || row['Periodicidade'] || row['Frequencia'] || row['periodicidade'] || row['frequencia'] || row['periodicity'] || '').toString().toLowerCase().trim();
+          const dataInicio = row['DATA DE INICIO'] || row['DATA DE INÍCIO'] || row['Data de Inicio'] || row['Data de Início'] || row['data_inicio'] || row['dataInicio'] || row['startDate'] || '';
 
           if (!cpfCnpj) {
             results.errors.push(`Linha ${i + 2}: CPF/CNPJ não informado`);
@@ -685,15 +686,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updateData: any = {};
           
           if (latitude !== undefined && latitude !== null && latitude !== '') {
-            updateData.latitude = parseFloat(latitude.toString());
+            // Converter vírgula para ponto decimal
+            const latStr = latitude.toString().replace(',', '.');
+            updateData.latitude = parseFloat(latStr);
           }
           
           if (longitude !== undefined && longitude !== null && longitude !== '') {
-            updateData.longitude = parseFloat(longitude.toString());
-          }
-          
-          if (route !== undefined && route !== null && route !== '') {
-            updateData.route = route.toString();
+            // Converter vírgula para ponto decimal
+            const lngStr = longitude.toString().replace(',', '.');
+            updateData.longitude = parseFloat(lngStr);
           }
           
           if (weekdaysRaw) {
@@ -734,9 +735,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else if (normalizedDays.length > 2) {
               results.errors.push(`Linha ${i + 2}: Máximo de 2 dias da semana permitido. Encontrados ${normalizedDays.length} dias.`);
             } else if (normalizedDays.length > 0) {
-              // Remover duplicatas e ordenar
+              // Remover duplicatas e salvar como JSON array
               const uniqueDays = Array.from(new Set(normalizedDays));
-              updateData.weekdays = uniqueDays.join(',');
+              updateData.weekdays = JSON.stringify(uniqueDays);
             }
           }
           
@@ -754,6 +755,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
               updateData.visitPeriodicity = mappedPeriodicity;
             } else {
               results.errors.push(`Linha ${i + 2}: Periodicidade inválida '${periodicidade}'. Use: semanal, quinzenal, mensal ou bimestral`);
+            }
+          }
+          
+          if (dataInicio) {
+            try {
+              // Parse different date formats (DD/MM/YYYY, YYYY-MM-DD, etc.)
+              let parsedDate: Date | null = null;
+              const dateStr = dataInicio.toString().trim();
+              
+              // Try DD/MM/YYYY format (common in Brazil)
+              if (dateStr.includes('/')) {
+                const [day, month, year] = dateStr.split('/').map(n => parseInt(n));
+                if (day && month && year) {
+                  parsedDate = new Date(year, month - 1, day);
+                }
+              } 
+              // Try YYYY-MM-DD format (ISO)
+              else if (dateStr.includes('-')) {
+                parsedDate = new Date(dateStr);
+              }
+              // Try Excel serial date number
+              else if (!isNaN(Number(dateStr))) {
+                // Excel date: days since 1900-01-01
+                const excelDate = Number(dateStr);
+                const excelEpoch = new Date(1899, 11, 30); // Excel epoch
+                parsedDate = new Date(excelEpoch.getTime() + excelDate * 86400000);
+              }
+              
+              if (parsedDate && !isNaN(parsedDate.getTime())) {
+                updateData.serviceStartDate = parsedDate;
+              } else {
+                results.errors.push(`Linha ${i + 2}: Data de início inválida '${dataInicio}'. Use formato DD/MM/YYYY`);
+              }
+            } catch (error) {
+              results.errors.push(`Linha ${i + 2}: Erro ao processar data de início '${dataInicio}'`);
             }
           }
 
