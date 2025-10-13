@@ -322,7 +322,7 @@ export class OmieService {
           registros_por_pagina: registrosPerPage
         });
 
-        const vendors = response.cadastros || [];
+        const vendors = response.cadastro ?? response.cadastros ?? [];
         
         if (vendors.length === 0) {
           hasMore = false;
