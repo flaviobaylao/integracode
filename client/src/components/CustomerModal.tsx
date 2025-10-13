@@ -52,12 +52,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  
-  // Verificar se usuário pode gerenciar travamento de coordenadas e atendimento virtual
-  const canManageCoordinatesLock = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
-  const canManageVirtualService = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
-  const canManageServiceStartDate = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
-  const canManageRouteAndPeriodicity = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -750,30 +744,28 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         <Navigation className="h-4 w-4 mr-2" />
                         Waze
                       </Button>
-                      {canManageCoordinatesLock && (
-                        <Button
-                          type="button"
-                          variant={coordinatesLocked ? "destructive" : "default"}
-                          size="sm"
-                          onClick={() => {
-                            const newValue = !coordinatesLocked;
-                            form.setValue('coordinatesLocked', newValue);
-                          }}
-                          data-testid="button-toggle-coordinates-lock"
-                        >
-                          {coordinatesLocked ? (
-                            <>
-                              <Unlock className="h-4 w-4 mr-2" />
-                              Destravar
-                            </>
-                          ) : (
-                            <>
-                              <Lock className="h-4 w-4 mr-2" />
-                              Travar
-                            </>
-                          )}
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant={coordinatesLocked ? "destructive" : "default"}
+                        size="sm"
+                        onClick={() => {
+                          const newValue = !coordinatesLocked;
+                          form.setValue('coordinatesLocked', newValue);
+                        }}
+                        data-testid="button-toggle-coordinates-lock"
+                      >
+                        {coordinatesLocked ? (
+                          <>
+                            <Unlock className="h-4 w-4 mr-2" />
+                            Destravar
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="h-4 w-4 mr-2" />
+                            Travar
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
                   
@@ -886,11 +878,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <span>Dias de Visita {periodicity === 'semanal' ? '(máximo 2 dias)' : '(1 dia apenas)'}</span>
                         </FormLabel>
                         <FormDescription className="text-xs">
-                          {canManageRouteAndPeriodicity 
-                            ? periodicity === 'semanal' 
-                              ? "Selecione até 2 dias da semana para visita ao cliente" 
-                              : "Selecione apenas 1 dia da semana para visita ao cliente"
-                            : "Apenas usuários administrativos podem alterar os dias de visita"}
+                          {periodicity === 'semanal' 
+                            ? "Selecione até 2 dias da semana para visita ao cliente" 
+                            : "Selecione apenas 1 dia da semana para visita ao cliente"}
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
@@ -902,7 +892,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                 variant={isSelected ? "default" : "outline"}
                                 size="sm"
                                 onClick={() => handleWeekdayToggle(option.value)}
-                                disabled={!canManageRouteAndPeriodicity}
                                 className={isSelected ? "bg-honest-blue hover:bg-honest-blue/90" : ""}
                                 data-testid={`button-weekday-${option.value}`}
                               >
@@ -931,7 +920,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         <Select 
                           value={field.value} 
                           onValueChange={field.onChange}
-                          disabled={!canManageRouteAndPeriodicity}
                         >
                           <FormControl>
                             <SelectTrigger data-testid="select-visit-periodicity">
@@ -946,9 +934,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           </SelectContent>
                         </Select>
                         <FormDescription className="text-xs">
-                          {canManageRouteAndPeriodicity 
-                            ? "Defina com que frequência o cliente deve ser visitado" 
-                            : "Apenas usuários administrativos podem alterar a periodicidade"}
+                          Defina com que frequência o cliente deve ser visitado
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -956,71 +942,67 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   />
                 </div>
 
-                {/* Data de Início do Fornecimento - apenas para admin/coordinator/administrative */}
-                {canManageServiceStartDate && (
-                  <div className="mt-4">
-                    <FormField
-                      control={form.control}
-                      name="serviceStartDate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center space-x-1">
-                            <Calendar className="h-4 w-4" />
-                            <span>Data de Início do Fornecimento</span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input 
-                              {...field} 
-                              type="date"
-                              value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
-                              onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : null)}
-                              data-testid="input-service-start-date"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Data a partir da qual as visitas serão iniciadas. Apenas administradores podem alterar este campo.
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                )}
+                {/* Data de Início do Fornecimento */}
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="serviceStartDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Calendar className="h-4 w-4" />
+                          <span>Data de Início do Fornecimento</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input 
+                            {...field} 
+                            type="date"
+                            value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
+                            onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : null)}
+                            data-testid="input-service-start-date"
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Data a partir da qual as visitas serão iniciadas
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-                {/* Atendimento Virtual - apenas para admin/coordinator/administrative */}
-                {canManageVirtualService && (
-                  <div className="mt-4">
-                    <FormField
-                      control={form.control}
-                      name="virtualService"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                          <div className="space-y-0.5">
-                            <FormLabel className="text-base flex items-center space-x-2">
-                              <i className="fas fa-laptop text-blue-600"></i>
-                              <span>Atendimento Virtual</span>
-                            </FormLabel>
-                            <FormDescription>
-                              Cliente que receberá atendimento apenas de forma virtual/remota.
-                              Não será incluído no cálculo de metas de atendimento presencial.
-                            </FormDescription>
+                {/* Atendimento Virtual */}
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="virtualService"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base flex items-center space-x-2">
+                            <i className="fas fa-laptop text-blue-600"></i>
+                            <span>Atendimento Virtual</span>
+                          </FormLabel>
+                          <FormDescription>
+                            Cliente que receberá atendimento apenas de forma virtual/remota.
+                            Não será incluído no cálculo de metas de atendimento presencial.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={field.onChange}
+                              className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                              data-testid="checkbox-virtual-service"
+                            />
                           </div>
-                          <FormControl>
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                checked={field.value}
-                                onChange={field.onChange}
-                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
-                                data-testid="checkbox-virtual-service"
-                              />
-                            </div>
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                )}
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </CardContent>
             </Card>
 
