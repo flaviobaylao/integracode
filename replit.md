@@ -28,7 +28,8 @@ Preferred communication style: Simple, everyday language.
 ## Authentication & Authorization
 - **Providers**: Replit OpenID Connect and internal email/password.
 - **Authorization**: Role-based (admin, coordinator, administrative, vendedor, telemarketing).
-- **User Management**: Admin-only interface for creating, managing, and deleting users with role and route assignments. Admin credentials: flavio@bebahonest.com.br, Password: M@riafe1.
+- **User Management**: Admin-only interface for creating, managing, and deleting users with role and route assignments.
+- **Auto-Initialization**: System automatically creates default admin user (flavio@bebahonest.com.br / M@riafe1) on first startup if no admin exists. Manual setup endpoint also available at POST /api/setup-admin.
 
 ## UI/UX Decisions
 - **Branding**: "Sistema Integra" with a sustainability leaf favicon.

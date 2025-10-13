@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword } from "./localAuth";
+import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda } from "./visitScheduleService";
@@ -40,6 +40,32 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+
+  // Endpoint público para inicializar admin padrão (útil para primeira configuração)
+  app.post('/api/setup-admin', async (req, res) => {
+    try {
+      const adminUser = await initializeDefaultAdmin();
+      
+      if (!adminUser) {
+        return res.status(500).json({ 
+          success: false, 
+          message: "Erro ao criar usuário admin" 
+        });
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Sistema inicializado com sucesso",
+        adminEmail: adminUser.email
+      });
+    } catch (error) {
+      console.error("Erro no setup do admin:", error);
+      res.status(500).json({ 
+        success: false, 
+        message: "Erro interno do servidor" 
+      });
+    }
+  });
 
   // Local login route for admin (mantido para compatibilidade)
   app.post('/api/auth/local-login', async (req, res) => {

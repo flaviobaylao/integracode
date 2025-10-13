@@ -9,7 +9,7 @@ const ADMIN_CREDENTIALS = {
   username: 'Flavio',
   password: 'M@riafe1',
   id: 'admin-flavio',
-  email: 'flavio@honestsucos.com.br',
+  email: 'flavio@bebahonest.com.br',
   firstName: 'Flavio',
   lastName: 'Administrador',
   role: 'admin' as const,
@@ -125,4 +125,37 @@ export function createLocalSession(user: User) {
     refresh_token: 'local-admin-refresh',
     expires_at: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60),
   };
+}
+
+// Inicializar admin padrão (usado no setup inicial do sistema)
+export async function initializeDefaultAdmin(): Promise<User | null> {
+  try {
+    // Verificar se já existe algum usuário admin
+    const existingAdmin = await storage.getUserByEmail(ADMIN_CREDENTIALS.email);
+    
+    if (existingAdmin) {
+      console.log('Admin já existe:', existingAdmin.email);
+      return existingAdmin;
+    }
+    
+    // Criar usuário admin
+    const hashedPassword = await hashPassword(ADMIN_CREDENTIALS.password);
+    const adminUser = await storage.upsertUser({
+      id: ADMIN_CREDENTIALS.id,
+      email: ADMIN_CREDENTIALS.email,
+      password: hashedPassword,
+      firstName: ADMIN_CREDENTIALS.firstName,
+      lastName: ADMIN_CREDENTIALS.lastName,
+      role: ADMIN_CREDENTIALS.role,
+      route: ADMIN_CREDENTIALS.route,
+      profileImageUrl: ADMIN_CREDENTIALS.profileImageUrl,
+      isActive: ADMIN_CREDENTIALS.isActive
+    });
+    
+    console.log('✅ Usuário admin criado com sucesso:', adminUser.email);
+    return adminUser;
+  } catch (error) {
+    console.error('❌ Erro ao inicializar admin padrão:', error);
+    return null;
+  }
 }
