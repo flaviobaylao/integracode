@@ -4094,32 +4094,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const omieProduct of pageData.products) {
           result.totalProcessed++;
           
-          // DEBUG: Log do valor dos campos
-          console.log(`🔍 DEBUG Produto: ${omieProduct.descricao} - Código: "${omieProduct.codigo}", inativo: "${omieProduct.inativo}", bloqueado: "${omieProduct.bloqueado}"`);
+          // DEBUG: Log completo do produto
+          console.log(`🔍 DEBUG Produto:`, {
+            descricao: omieProduct.descricao,
+            codigo: omieProduct.codigo,
+            codigo_produto_integracao: omieProduct.codigo_produto_integracao,
+            inativo: omieProduct.inativo,
+            bloqueado: omieProduct.bloqueado
+          });
           
-          // FILTRO: Pular produtos cujo código NÃO começa com "PRD-" (apenas produtos novos/ativos)
+          // FILTRO 1: Pular produtos inativos (sempre aplicado)
+          const isInactive = omieProduct.inativo === 'S' || omieProduct.inativo === 'true' || omieProduct.inativo === true;
+          if (isInactive) {
+            console.log(`⏭️ Pulando produto INATIVO: ${omieProduct.descricao} (código: ${omieProduct.codigo})`);
+            result.skipped++;
+            continue;
+          }
+          
+          // FILTRO 2: Pular produtos bloqueados
+          const isBlocked = omieProduct.bloqueado === 'S' || omieProduct.bloqueado === 'true' || omieProduct.bloqueado === true;
+          if (isBlocked) {
+            console.log(`⏭️ Pulando produto BLOQUEADO: ${omieProduct.descricao} (código: ${omieProduct.bloqueado})`);
+            result.skipped++;
+            continue;
+          }
+          
+          // FILTRO 3: Aceitar apenas produtos com código começando com "PRD-" (produtos novos)
           const productCode = omieProduct.codigo || '';
           if (!productCode.startsWith('PRD-')) {
-            console.log(`⏭️ Pulando produto com código antigo: ${omieProduct.descricao} (código: ${productCode})`);
+            console.log(`⏭️ Pulando produto com código antigo: ${omieProduct.descricao} (código: ${productCode} - esperado: PRD-*)`);
             result.skipped++;
             continue;
           }
           
-          // FILTRO: Pular produtos inativos ou bloqueados
-          const isInactive = omieProduct.inativo === 'S' || omieProduct.inativo === 'true' || omieProduct.inativo === true;
-          const isBlocked = omieProduct.bloqueado === 'S' || omieProduct.bloqueado === 'true' || omieProduct.bloqueado === true;
-          
-          if (isInactive) {
-            console.log(`⏭️ Pulando produto inativo: ${omieProduct.descricao} (inativo: ${omieProduct.inativo})`);
-            result.skipped++;
-            continue;
-          }
-          
-          if (isBlocked) {
-            console.log(`⏭️ Pulando produto bloqueado: ${omieProduct.descricao} (bloqueado: ${omieProduct.bloqueado})`);
-            result.skipped++;
-            continue;
-          }
+          console.log(`✅ Produto ACEITO para importação: ${omieProduct.descricao} (código: ${productCode})`);
 
           // FILTRO: Pular produtos sem preço válido
           if (!omieProduct.valor_unitario || omieProduct.valor_unitario <= 0) {

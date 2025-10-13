@@ -3214,10 +3214,13 @@ export class OmieService {
     currentPage: number;
   }> {
     try {
-      // Buscar TODOS os produtos sem nenhum filtro
+      // Buscar TODOS os produtos (incluindo produtos ativos e inativos)
       const response = await this.makeRequest('/geral/produtos/', 'ListarProdutos', {
         pagina: page,
-        registros_por_pagina: pageSize
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'N', // Incluir todos os produtos (importados via API ou não)
+        exibir_obs: 'N', // Não exibir observações para reduzir o tamanho da resposta
+        filtrar_apenas_omiepdv: 'N' // Incluir produtos não vinculados ao Omie PDV
       });
 
       console.log('Resposta da API Omie produtos:', JSON.stringify(response, null, 2));
