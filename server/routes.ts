@@ -461,6 +461,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
         route: req.body.route || '', // Default vazio para route (campo deprecated)
+        serviceStartDate: req.body.serviceStartDate 
+          ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
+          : undefined,
       };
       
       const data = insertCustomerSchema.parse(cleanedData);
@@ -518,6 +521,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+        serviceStartDate: req.body.serviceStartDate 
+          ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
+          : undefined,
       };
       
       // Get current customer and user info
