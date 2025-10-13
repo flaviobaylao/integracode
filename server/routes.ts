@@ -4094,8 +4094,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const omieProduct of pageData.products) {
           result.totalProcessed++;
           
-          // DEBUG: Log do valor dos campos inativo e bloqueado
-          console.log(`🔍 DEBUG Produto: ${omieProduct.descricao} - inativo: "${omieProduct.inativo}" (tipo: ${typeof omieProduct.inativo}), bloqueado: "${omieProduct.bloqueado}" (tipo: ${typeof omieProduct.bloqueado})`);
+          // DEBUG: Log do valor dos campos
+          console.log(`🔍 DEBUG Produto: ${omieProduct.descricao} - Código: "${omieProduct.codigo}", inativo: "${omieProduct.inativo}", bloqueado: "${omieProduct.bloqueado}"`);
+          
+          // FILTRO: Pular produtos cujo código NÃO começa com "PRD-" (apenas produtos novos/ativos)
+          const productCode = omieProduct.codigo || '';
+          if (!productCode.startsWith('PRD-')) {
+            console.log(`⏭️ Pulando produto com código antigo: ${omieProduct.descricao} (código: ${productCode})`);
+            result.skipped++;
+            continue;
+          }
           
           // FILTRO: Pular produtos inativos ou bloqueados
           const isInactive = omieProduct.inativo === 'S' || omieProduct.inativo === 'true' || omieProduct.inativo === true;
