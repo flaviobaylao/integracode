@@ -133,12 +133,7 @@ export async function initializeDefaultAdmin(): Promise<User | null> {
     // Verificar se já existe algum usuário admin
     const existingAdmin = await storage.getUserByEmail(ADMIN_CREDENTIALS.email);
     
-    if (existingAdmin) {
-      console.log('Admin já existe:', existingAdmin.email);
-      return existingAdmin;
-    }
-    
-    // Criar usuário admin
+    // SEMPRE criar/atualizar o admin com as credenciais corretas (garante role='admin' mesmo se já existir)
     const hashedPassword = await hashPassword(ADMIN_CREDENTIALS.password);
     const adminUser = await storage.upsertUser({
       id: ADMIN_CREDENTIALS.id,
@@ -146,13 +141,18 @@ export async function initializeDefaultAdmin(): Promise<User | null> {
       password: hashedPassword,
       firstName: ADMIN_CREDENTIALS.firstName,
       lastName: ADMIN_CREDENTIALS.lastName,
-      role: ADMIN_CREDENTIALS.role,
+      role: ADMIN_CREDENTIALS.role, // SEMPRE 'admin'
       route: ADMIN_CREDENTIALS.route,
       profileImageUrl: ADMIN_CREDENTIALS.profileImageUrl,
       isActive: ADMIN_CREDENTIALS.isActive
     });
     
-    console.log('✅ Usuário admin criado com sucesso:', adminUser.email);
+    if (existingAdmin) {
+      console.log('✅ Usuário admin atualizado com sucesso:', adminUser.email, '- Role:', adminUser.role);
+    } else {
+      console.log('✅ Usuário admin criado com sucesso:', adminUser.email, '- Role:', adminUser.role);
+    }
+    
     return adminUser;
   } catch (error) {
     console.error('❌ Erro ao inicializar admin padrão:', error);
