@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState } from "react";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
+import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -252,7 +253,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
         <div className="flex items-center space-x-4">
           <img 
-            src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+            src={integraLogo} 
             alt="Honest Sucos - Sistema Integra" 
             className="w-10 h-10"
           />
