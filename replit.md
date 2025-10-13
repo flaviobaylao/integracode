@@ -40,7 +40,7 @@ Preferred communication style: Simple, everyday language.
 - **Date Handling**: ISO UTC format for consistency.
 - **Customer Validation**: Prevents duplicate CPF/CNPJ.
 - **Sales Cards**: Search by customer/CNPJ, conditional payment terms for "Boleto", bulk import from Excel/CSV with Receita Federal API integration.
-- **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and orders. Includes product mapping, vendor resolution, and automated hourly synchronization (Clients, Billings, Overdue Debts). OmieSyncManager provides a tab-based interface for managing synchronization.
+- **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and orders. Includes product mapping, vendor resolution, and automated hourly synchronization (Clients, Billings, Overdue Debts). OmieSyncManager provides a tab-based interface for managing synchronization. **Sync Filters**: Only ACTIVE records are synchronized - vendors and products with `inativo === 'S'` are automatically skipped during sync. Products are also filtered for blocked status and valid pricing.
 - **Financial Tracking**: Overdue debt monitoring, credit analysis, and comprehensive "Contas a Receber" view with frontend filtering and Excel export.
 - **Blocked Orders Management**: Automatic blocking for orders with Boleto terms > 7 days or overdue debts. Admin/coordinator/administrative roles can release blocked orders.
 - **Delivery Integration**: Real-time tracking with App Entregas Honest via webhooks.
