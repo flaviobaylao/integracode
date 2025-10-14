@@ -4806,6 +4806,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar pedidos aguardando rota (para gestão de entregas)
+  app.get("/api/deliveries", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { status = 'aguardando-rota' } = req.query;
+      
+      // Buscar sales cards completados que ainda não têm rota definida
+      const deliveries = await db.select({
+        id: salesCards.id,
+        customerId: salesCards.customerId,
+        customerName: customers.name,
+        customerAddress: customers.address,
+        customerLatitude: customers.latitude,
+        customerLongitude: customers.longitude,
+        averageDeliveryTime: customers.averageDeliveryTime,
+        exclusiveVehicle: salesCards.exclusiveVehicle,
+        vehicleTypes: salesCards.vehicleTypes,
+        isUrgent: salesCards.isUrgent,
+        saleValue: salesCards.saleValue,
+        products: salesCards.products,
+        scheduledDate: salesCards.scheduledDate,
+        completedDate: salesCards.completedDate,
+        paymentMethod: salesCards.paymentMethod,
+        operationType: salesCards.operationType,
+      })
+      .from(salesCards)
+      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .where(
+        and(
+          eq(salesCards.status, 'completed'),
+          // Pedidos que ainda não têm rota de entrega
+          sql`NOT EXISTS (
+            SELECT 1 FROM delivery_route_stops 
+            WHERE delivery_route_stops.sales_card_id = ${salesCards.id}
+          )`
+        )
+      )
+      .orderBy(salesCards.completedDate);
+      
+      res.json(deliveries);
+    } catch (error: any) {
+      console.error("Error fetching deliveries:", error);
+      res.status(500).json({ message: "Failed to fetch deliveries", error: error.message });
+    }
+  });
+
   // Buscar entregas pendentes
   app.get("/api/deliveries/pending", async (req, res) => {
     try {
