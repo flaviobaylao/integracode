@@ -1494,9 +1494,16 @@ export class DatabaseStorage implements IStorage {
 
   async getDeliveryDrivers(): Promise<any[]> {
     const result = await db.execute(sql`
-      SELECT * FROM delivery_drivers 
-      WHERE is_active = true 
-      ORDER BY name
+      SELECT 
+        id,
+        CONCAT(first_name, ' ', last_name) as name,
+        email as phone,
+        'moto' as vehicle_type,
+        '' as license_plate,
+        is_active
+      FROM users 
+      WHERE role = 'motorista' AND is_active = true
+      ORDER BY first_name, last_name
     `);
     return result.rows;
   }
@@ -2558,9 +2565,16 @@ export class DatabaseStorage implements IStorage {
   // Métodos de entregas faltantes
   async getActiveDeliveryDrivers(): Promise<any[]> {
     const result = await db.execute(sql`
-      SELECT * FROM delivery_drivers 
-      WHERE is_active = true 
-      ORDER BY name ASC
+      SELECT 
+        id,
+        CONCAT(first_name, ' ', last_name) as name,
+        email as phone,
+        'moto' as vehicle_type,
+        '' as license_plate,
+        is_active
+      FROM users 
+      WHERE role = 'motorista' AND is_active = true
+      ORDER BY first_name, last_name
     `);
     return result.rows || [];
   }
