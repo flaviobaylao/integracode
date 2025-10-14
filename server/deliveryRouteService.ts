@@ -25,6 +25,8 @@ interface DeliveryOrder {
 
 interface VehicleConfig {
   type: 'caminhao' | 'carro' | 'moto';
+  driverId?: string;
+  driverName?: string;
   startLatitude: number;
   startLongitude: number;
   startAddress: string;
@@ -49,6 +51,8 @@ interface RouteStop {
 
 interface VehicleRoute {
   vehicleType: 'caminhao' | 'carro' | 'moto';
+  driverId?: string;
+  driverName?: string;
   startLatitude: number;
   startLongitude: number;
   startAddress: string;
@@ -356,6 +360,8 @@ async function optimizeVehicleRoutes(
 
     routes.push({
       vehicleType: vehicle.type,
+      driverId: vehicle.driverId,
+      driverName: vehicle.driverName,
       startLatitude: vehicle.startLatitude,
       startLongitude: vehicle.startLongitude,
       startAddress: vehicle.startAddress,
@@ -385,6 +391,7 @@ async function persistRoutePlan(
     const deliveryRoute = await storage.createDeliveryRoute({
       id: nanoid(),
       vehicleType: route.vehicleType,
+      driverId: route.driverId,
       routeDate,
       startLatitude: route.startLatitude.toString(),
       startLongitude: route.startLongitude.toString(),

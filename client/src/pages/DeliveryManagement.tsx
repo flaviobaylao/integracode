@@ -58,12 +58,23 @@ interface DeliveryOrder {
 
 interface VehicleConfig {
   type: 'caminhao' | 'carro' | 'moto';
+  driverId?: string;
+  driverName?: string;
   startLatitude: number;
   startLongitude: number;
   startAddress: string;
   timeWindowStart: string;
   timeWindowEnd: string;
   capacity?: number;
+}
+
+interface DeliveryDriver {
+  id: string;
+  name: string;
+  phone: string;
+  vehicleType: string;
+  licensePlate: string;
+  isActive: boolean;
 }
 
 interface RouteStop {
@@ -78,6 +89,8 @@ interface RouteStop {
 
 interface VehicleRoute {
   vehicleType: string;
+  driverId?: string;
+  driverName?: string;
   startAddress: string;
   stops: RouteStop[];
   totalDistance: number;
@@ -115,6 +128,11 @@ export default function DeliveryManagement() {
   const { data: orders, isLoading: isLoadingOrders } = useQuery<DeliveryOrder[]>({
     queryKey: ['/api/deliveries'],
     refetchInterval: 30000,
+  });
+
+  // Query para buscar motoristas ativos
+  const { data: drivers = [], isLoading: isLoadingDrivers } = useQuery<DeliveryDriver[]>({
+    queryKey: ['/api/delivery-drivers'],
   });
 
   // Mutation para planejar rotas
@@ -507,6 +525,37 @@ export default function DeliveryManagement() {
                         </div>
 
                         <div className="space-y-2">
+                          <Label>Motorista</Label>
+                          <Select
+                            value={vehicle.driverId || ''}
+                            onValueChange={(value: any) => {
+                              const driver = drivers.find(d => d.id === value);
+                              updateVehicle(idx, 'driverId', value);
+                              if (driver) {
+                                updateVehicle(idx, 'driverName', driver.name);
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid={`select-driver-${idx}`}>
+                              <SelectValue placeholder="Selecione o motorista" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {isLoadingDrivers ? (
+                                <SelectItem value="" disabled>Carregando...</SelectItem>
+                              ) : drivers.length === 0 ? (
+                                <SelectItem value="" disabled>Nenhum motorista disponível</SelectItem>
+                              ) : (
+                                drivers.map(driver => (
+                                  <SelectItem key={driver.id} value={driver.id}>
+                                    {driver.name} ({driver.vehicleType}) - {driver.licensePlate}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
                           <Label>Capacidade (opcional)</Label>
                           <Input
                             type="number"
@@ -641,6 +690,11 @@ export default function DeliveryManagement() {
                         <span className="flex items-center">
                           <Truck className="h-5 w-5 mr-2" />
                           Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                          {route.driverName && (
+                            <Badge variant="secondary" className="ml-2">
+                              {route.driverName}
+                            </Badge>
+                          )}
                         </span>
                         <div className="text-sm font-normal text-muted-foreground">
                           {route.stops.length} paradas • {route.totalDistance.toFixed(1)} km • ~{Math.round(route.totalDuration)} min

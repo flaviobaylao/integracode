@@ -4806,6 +4806,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar motoristas ativos
+  app.get("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const drivers = await storage.getActiveDeliveryDrivers();
+      res.json(drivers);
+    } catch (error: any) {
+      console.error("Error fetching delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch delivery drivers", error: error.message });
+    }
+  });
+
   // Buscar pedidos aguardando rota (para gestão de entregas)
   app.get("/api/deliveries", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
