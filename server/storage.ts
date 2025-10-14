@@ -1456,7 +1456,13 @@ export class DatabaseStorage implements IStorage {
 
   async getPendingDeliveries(): Promise<SalesCard[]> {
     const result = await db.execute(sql`
-      SELECT sc.*, c.name as customer_name, c.address as customer_address
+      SELECT 
+        sc.*, 
+        c.name as customer_name, 
+        c.address as customer_address,
+        c.latitude as customer_latitude,
+        c.longitude as customer_longitude,
+        COALESCE(c.average_delivery_time, 10) as average_delivery_time
       FROM sales_cards sc
       JOIN customers c ON sc.customer_id = c.id
       WHERE sc.status = 'completed' 

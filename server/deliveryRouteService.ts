@@ -128,6 +128,29 @@ function preprocessOrders(
   urgentOrders: DeliveryOrder[];
   regularOrders: DeliveryOrder[];
 } {
+  // Filtrar pedidos com coordenadas inválidas
+  const validOrders = orders.filter(order => {
+    const lat = Number(order.customerLatitude);
+    const lon = Number(order.customerLongitude);
+    const hasValidCoords = 
+      order.customerLatitude != null && 
+      order.customerLongitude != null &&
+      !isNaN(lat) &&
+      !isNaN(lon) &&
+      lat !== 0 &&
+      lon !== 0;
+    
+    if (!hasValidCoords) {
+      console.warn(`Pedido ${order.id} ignorado: coordenadas inválidas (lat: ${order.customerLatitude}, lon: ${order.customerLongitude})`);
+    }
+    
+    return hasValidCoords;
+  });
+
+  if (validOrders.length === 0) {
+    throw new Error('Nenhum pedido com coordenadas válidas para otimização');
+  }
+
   const eligibleByVehicle = new Map<number, DeliveryOrder[]>();
   const urgentOrders: DeliveryOrder[] = [];
   const regularOrders: DeliveryOrder[] = [];
@@ -138,7 +161,7 @@ function preprocessOrders(
   });
 
   // Classificar pedidos
-  for (const order of orders) {
+  for (const order of validOrders) {
     // Verificar quais veículos podem atender este pedido
     vehicles.forEach((vehicle, idx) => {
       if (isOrderCompatibleWithVehicle(order, vehicle.type)) {
@@ -305,15 +328,6 @@ async function optimizeVehicleRoutes(
       const order = orders.find((o: DeliveryOrder) => o.id === point.id)!;
       const segment = optimized.segments[i];
 
-      console.log('DEBUG deliveryRouteService - order data:', {
-        id: order.id,
-        customerName: order.customerName,
-        customerLatitude: order.customerLatitude,
-        customerLongitude: order.customerLongitude,
-        customerLatitudeType: typeof order.customerLatitude,
-        customerLongitudeType: typeof order.customerLongitude
-      });
-
       // Tempo de viagem até esta parada (assumir 40 km/h médio)
       const travelTimeMinutes = (segment.distance / 40) * 60;
       const arrivalTime = addMinutes(currentTime, travelTimeMinutes);
@@ -322,23 +336,13 @@ async function optimizeVehicleRoutes(
       const serviceTime = order.averageDeliveryTime;
       const departureTime = addMinutes(arrivalTime, serviceTime);
 
-      const lat = Number(order.customerLatitude);
-      const lon = Number(order.customerLongitude);
-
-      console.log('DEBUG deliveryRouteService - converted coordinates:', {
-        lat,
-        lon,
-        latIsNaN: isNaN(lat),
-        lonIsNaN: isNaN(lon)
-      });
-
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
         customerName: order.customerName,
         customerAddress: order.customerAddress,
-        latitude: lat,
-        longitude: lon,
+        latitude: Number(order.customerLatitude),
+        longitude: Number(order.customerLongitude),
         estimatedArrival: arrivalTime,
         estimatedDeparture: departureTime,
         estimatedServiceTime: serviceTime,
