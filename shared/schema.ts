@@ -112,6 +112,9 @@ export const customers = pgTable("customers", {
   // Data de início do fornecimento - só pode ser alterada por admins
   serviceStartDate: timestamp("service_start_date"),
   
+  // Tempo médio de entrega em minutos (calculado com base em check-ins/check-outs dos entregadores)
+  averageDeliveryTime: integer("average_delivery_time").notNull().default(10),
+  
   // Status no Omie (ativo/inativo)
   omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
@@ -306,6 +309,46 @@ export const deliveryDrivers = pgTable("delivery_drivers", {
   licensePlate: varchar("license_plate"),
   isActive: boolean("is_active").notNull().default(true),
   currentLocation: varchar("current_location"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Delivery routes table - Rotas de entrega planejadas
+export const deliveryRoutes = pgTable("delivery_routes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  routeDate: timestamp("route_date").notNull(),
+  vehicleType: varchar("vehicle_type").notNull(), // caminhao, carro, moto
+  driverId: varchar("driver_id"), // ID do motorista (se já atribuído)
+  startLatitude: decimal("start_latitude", { precision: 10, scale: 8 }).notNull(),
+  startLongitude: decimal("start_longitude", { precision: 11, scale: 8 }).notNull(),
+  totalDistance: decimal("total_distance", { precision: 10, scale: 2 }), // Distância total em km
+  totalDeliveries: integer("total_deliveries").notNull().default(0),
+  estimatedDuration: integer("estimated_duration"), // Duração estimada em minutos
+  estimatedReturnTime: timestamp("estimated_return_time"), // Horário estimado de retorno
+  timeWindowStart: varchar("time_window_start"), // Início da janela de horário (ex: "08:00")
+  timeWindowEnd: varchar("time_window_end"), // Fim da janela de horário (ex: "12:00")
+  status: varchar("status").notNull().default('planned'), // planned, in_progress, completed, cancelled
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Delivery route stops table - Paradas de cada rota
+export const deliveryRouteStops = pgTable("delivery_route_stops", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  routeId: varchar("route_id").notNull(),
+  salesCardId: varchar("sales_card_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  customerName: varchar("customer_name").notNull(),
+  customerAddress: text("customer_address").notNull(),
+  customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }).notNull(),
+  customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }).notNull(),
+  stopOrder: integer("stop_order").notNull(), // Ordem da parada na rota
+  estimatedArrival: timestamp("estimated_arrival"), // Horário estimado de chegada
+  estimatedDuration: integer("estimated_duration").notNull().default(10), // Tempo estimado de permanência em minutos
+  distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // Distância da parada anterior em km
+  isPriority: boolean("is_priority").notNull().default(false),
+  status: varchar("status").notNull().default('pending'), // pending, completed, failed
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -806,6 +849,28 @@ export const insertSyncStateSchema = createInsertSchema(syncStates).omit({
   updatedAt: true,
 });
 
+export const insertDeliveryRouteSchema = createInsertSchema(deliveryRoutes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  routeDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val),
+  estimatedReturnTime: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  startLatitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
+  startLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
+});
+
+export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteStops).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  estimatedArrival: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  completedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  customerLatitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
+  customerLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -863,6 +928,12 @@ export type InsertBilling = z.infer<typeof insertBillingSchema>;
 
 export type SyncState = typeof syncStates.$inferSelect;
 export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
+
+export type DeliveryRoute = typeof deliveryRoutes.$inferSelect;
+export type InsertDeliveryRoute = z.infer<typeof insertDeliveryRouteSchema>;
+
+export type DeliveryRouteStop = typeof deliveryRouteStops.$inferSelect;
+export type InsertDeliveryRouteStop = z.infer<typeof insertDeliveryRouteStopSchema>;
 
 // Exported Reports table - stores automatically generated Excel reports
 export const exportedReports = pgTable("exported_reports", {
