@@ -4851,6 +4851,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Planejar rotas de entrega para múltiplos veículos
+  app.post("/api/delivery-routes/plan", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { orderIds, vehicles, routeDate } = req.body;
+
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ message: "Order IDs are required" });
+      }
+
+      if (!vehicles || !Array.isArray(vehicles) || vehicles.length === 0) {
+        return res.status(400).json({ message: "Vehicle configurations are required" });
+      }
+
+      // Buscar pedidos completos
+      const orders = await db.select({
+        id: salesCards.id,
+        customerId: salesCards.customerId,
+        customerName: customers.name,
+        customerAddress: customers.address,
+        customerLatitude: customers.latitude,
+        customerLongitude: customers.longitude,
+        averageDeliveryTime: customers.averageDeliveryTime,
+        exclusiveVehicle: salesCards.exclusiveVehicle,
+        vehicleTypes: salesCards.vehicleTypes,
+        isUrgent: salesCards.isUrgent,
+        saleValue: salesCards.saleValue,
+        products: salesCards.products,
+        scheduledDate: salesCards.scheduledDate,
+        completedDate: salesCards.completedDate,
+        paymentMethod: salesCards.paymentMethod,
+        operationType: salesCards.operationType,
+      })
+      .from(salesCards)
+      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .where(inArray(salesCards.id, orderIds));
+
+      // Validar que todos os pedidos têm coordenadas
+      const invalidOrders = orders.filter(o => !o.customerLatitude || !o.customerLongitude);
+      if (invalidOrders.length > 0) {
+        return res.status(400).json({ 
+          message: "Some orders don't have customer coordinates",
+          invalidOrders: invalidOrders.map(o => ({ id: o.id, name: o.customerName }))
+        });
+      }
+
+      // Converter para formato do serviço
+      const deliveryOrders = orders.map(o => ({
+        id: o.id,
+        customerId: o.customerId,
+        customerName: o.customerName,
+        customerAddress: o.customerAddress,
+        customerLatitude: parseFloat(o.customerLatitude as string),
+        customerLongitude: parseFloat(o.customerLongitude as string),
+        averageDeliveryTime: o.averageDeliveryTime || 10,
+        exclusiveVehicle: o.exclusiveVehicle || false,
+        vehicleTypes: o.vehicleTypes || [],
+        isUrgent: o.isUrgent || false,
+        saleValue: o.saleValue || 0,
+        products: o.products,
+        scheduledDate: o.scheduledDate,
+        completedDate: o.completedDate,
+        paymentMethod: o.paymentMethod,
+        operationType: o.operationType,
+      }));
+
+      // Planejar rotas
+      const { planDeliveryRoutes } = await import('./deliveryRouteService');
+      const plan = await planDeliveryRoutes(
+        storage,
+        deliveryOrders,
+        vehicles,
+        routeDate ? new Date(routeDate) : new Date()
+      );
+
+      res.json(plan);
+    } catch (error: any) {
+      console.error("Error planning delivery routes:", error);
+      res.status(500).json({ message: "Failed to plan delivery routes", error: error.message });
+    }
+  });
+
+  // Buscar rotas de entrega
+  app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { status, routeDate } = req.query;
+      
+      const filters: any = {};
+      if (status) filters.status = status;
+      if (routeDate) filters.routeDate = new Date(routeDate);
+      
+      const routes = await storage.getDeliveryRoutes(filters);
+      res.json(routes);
+    } catch (error: any) {
+      console.error("Error fetching delivery routes:", error);
+      res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });
+    }
+  });
+
+  // Buscar paradas de uma rota
+  app.get("/api/delivery-routes/:routeId/stops", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const stops = await storage.getDeliveryRouteStops(routeId);
+      res.json(stops);
+    } catch (error: any) {
+      console.error("Error fetching route stops:", error);
+      res.status(500).json({ message: "Failed to fetch route stops", error: error.message });
+    }
+  });
+
   // Buscar entregas pendentes
   app.get("/api/deliveries/pending", async (req, res) => {
     try {
