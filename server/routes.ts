@@ -24,6 +24,7 @@ import {
   blockedOrders,
   customers,
   billings as billingsTable,
+  syncStates,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
@@ -4528,6 +4529,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para forçar re-sync completo das notas fiscais com etapas corretas
+  app.post('/api/omie/force-resync-billings', async (req, res) => {
+    try {
+      console.log('🔄 Iniciando re-sync forçado das notas fiscais...');
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      // Limpar estado da sincronização
+      await db.delete(syncStates).where(eq(syncStates.syncType, 'billings'));
+      console.log('🗑️ Estado de sincronização limpo');
+
+      // Limpar caches
+      (omieService as any).stagesCache.clear();
+      (omieService as any).stageNamesCache.clear();
+      console.log('🧹 Caches limpos');
+
+      // Executar sincronização
+      const result = await omieService.syncBillingsWithOmie();
+      
+      console.log(`✅ Re-sync concluído: ${result.newBillings} notas processadas`);
+      res.json({ 
+        success: true, 
+        message: `Re-sync concluído com sucesso. ${result.newBillings} notas processadas.`,
+        processed: result.newBillings
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao re-sync:', error);
+      res.status(500).json({ message: 'Erro ao executar re-sync', error: error.message });
+    }
+  });
+
   // Endpoint especializado para atualizar apenas as etapas das notas existentes
   app.post('/api/omie/update-invoice-stages', async (req, res) => {
     try {
@@ -4552,14 +4587,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         for (const billing of batch) {
           try {
-            if (!billing.omieOrderId) continue;
+            if (!billing || !billing.omieOrderId) {
+              console.log('⏭️ Billing inválido ou sem omieOrderId, pulando...');
+              continue;
+            }
 
             // Buscar a etapa atualizada do pedido
             const stageData = await (omieService as any).fetchPedidoStage(billing.omieOrderId);
             
             if (stageData && stageData.stageName) {
               // Atualizar apenas se a etapa mudou
-              if (billing.invoiceStage !== stageData.stageName) {
+              const currentStage = billing.invoiceStage || '';
+              if (currentStage !== stageData.stageName) {
                 await db.update(billingsTable)
                   .set({ 
                     invoiceStage: stageData.stageName,
@@ -4567,12 +4606,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   })
                   .where(eq(billingsTable.id, billing.id));
                 
-                console.log(`✅ ${billing.invoiceNumber}: ${billing.invoiceStage} → ${stageData.stageName}`);
+                console.log(`✅ ${billing.invoiceNumber}: ${currentStage} → ${stageData.stageName}`);
                 updated++;
               }
             }
           } catch (error: any) {
-            console.error(`❌ Erro ao atualizar nota ${billing.invoiceNumber}:`, error.message);
+            const billNum = billing?.invoiceNumber || 'DESCONHECIDO';
+            console.error(`❌ Erro ao atualizar nota ${billNum}:`, error.message);
+            console.error('Stack:', error.stack);
             errors++;
           }
         }
