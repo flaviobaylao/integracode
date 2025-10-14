@@ -2524,6 +2524,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate,
         routeDay,
         visitStatus = 'pending',
+        salesCardId,
         page = '1',
         pageSize = '50'
       } = req.query;
@@ -2556,6 +2557,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Filtro por status
       if (visitStatus) {
         filters.push(eq(visitAgenda.visitStatus, visitStatus as string));
+      }
+
+      // Filtro por salesCardId
+      if (salesCardId) {
+        filters.push(eq(visitAgenda.salesCardId, salesCardId as string));
       }
 
       // Buscar visitas com paginação
