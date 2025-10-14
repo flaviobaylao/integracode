@@ -22,7 +22,7 @@ const userFormSchema = z.object({
   password: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
   firstName: z.string().min(1, "Nome é obrigatório"),
   lastName: z.string().min(1, "Sobrenome é obrigatório"),
-  role: z.enum(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']),
+  role: z.enum(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']),
   route: z.string().optional(),
   isActive: z.boolean().default(true),
 });
@@ -65,14 +65,14 @@ export default function UserManagement() {
   });
 
   const editRoleSchema = z.object({
-    role: z.enum(['admin', 'vendedor', 'telemarketing']),
+    role: z.enum(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']),
   });
 
   const passwordSchema = z.object({
     password: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
   });
 
-  const editForm = useForm<{ role: 'admin' | 'vendedor' | 'telemarketing' }>({
+  const editForm = useForm<{ role: 'admin' | 'coordinator' | 'administrative' | 'vendedor' | 'telemarketing' | 'motorista' }>({
     resolver: zodResolver(editRoleSchema),
     defaultValues: {
       role: "vendedor",
@@ -236,6 +236,7 @@ export default function UserManagement() {
       administrative: 'Administrativo',
       vendedor: 'Vendedor',
       telemarketing: 'Telemarketing',
+      motorista: 'Motorista',
     };
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
@@ -247,6 +248,7 @@ export default function UserManagement() {
       administrative: 'secondary',
       vendedor: 'outline',
       telemarketing: 'outline',
+      motorista: 'secondary',
     };
     return variants[role] || 'outline';
   };
@@ -399,6 +401,7 @@ export default function UserManagement() {
                           <SelectItem value="administrative">Administrativo</SelectItem>
                           <SelectItem value="vendedor">Vendedor</SelectItem>
                           <SelectItem value="telemarketing">Telemarketing</SelectItem>
+                          <SelectItem value="motorista">Motorista</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -469,8 +472,11 @@ export default function UserManagement() {
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="coordinator">Coordenador</SelectItem>
+                        <SelectItem value="administrative">Administrativo</SelectItem>
                         <SelectItem value="vendedor">Vendedor</SelectItem>
                         <SelectItem value="telemarketing">Telemarketing</SelectItem>
+                        <SelectItem value="motorista">Motorista</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -592,6 +598,7 @@ export default function UserManagement() {
                   <SelectItem value="administrative">Administrativo</SelectItem>
                   <SelectItem value="vendedor">Vendedor</SelectItem>
                   <SelectItem value="telemarketing">Telemarketing</SelectItem>
+                  <SelectItem value="motorista">Motorista</SelectItem>
                 </SelectContent>
               </Select>
             </div>
