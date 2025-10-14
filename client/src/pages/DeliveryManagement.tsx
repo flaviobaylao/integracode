@@ -530,10 +530,13 @@ export default function DeliveryManagement() {
                             value={vehicle.driverId || ''}
                             onValueChange={(value: any) => {
                               const driver = drivers.find(d => d.id === value);
-                              updateVehicle(idx, 'driverId', value);
-                              if (driver) {
-                                updateVehicle(idx, 'driverName', driver.name);
-                              }
+                              const updated = [...vehicles];
+                              updated[idx] = { 
+                                ...updated[idx], 
+                                driverId: value,
+                                driverName: driver?.name || undefined
+                              };
+                              setVehicles(updated);
                             }}
                             disabled={isLoadingDrivers || drivers.length === 0}
                           >

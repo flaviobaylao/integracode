@@ -1498,9 +1498,9 @@ export class DatabaseStorage implements IStorage {
         id,
         CONCAT(first_name, ' ', last_name) as name,
         email as phone,
-        'moto' as vehicle_type,
-        '' as license_plate,
-        is_active
+        'moto' as "vehicleType",
+        '' as "licensePlate",
+        is_active as "isActive"
       FROM users 
       WHERE role = 'motorista' AND is_active = true
       ORDER BY first_name, last_name
@@ -2569,9 +2569,9 @@ export class DatabaseStorage implements IStorage {
         id,
         CONCAT(first_name, ' ', last_name) as name,
         email as phone,
-        'moto' as vehicle_type,
-        '' as license_plate,
-        is_active
+        'moto' as "vehicleType",
+        '' as "licensePlate",
+        is_active as "isActive"
       FROM users 
       WHERE role = 'motorista' AND is_active = true
       ORDER BY first_name, last_name
