@@ -257,16 +257,17 @@ export default function DeliveryManagement() {
             Planeje rotas de entrega para múltiplos veículos
           </p>
         </div>
-        {selectedOrders.size > 0 && (
-          <Button 
-            onClick={() => setShowVehicleConfig(true)}
-            data-testid="button-configure-routes"
-            size="lg"
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Configurar e Planejar Rotas ({selectedOrders.size})
-          </Button>
-        )}
+        <Button 
+          onClick={() => setShowVehicleConfig(true)}
+          data-testid="button-configure-routes"
+          size="lg"
+          disabled={selectedOrders.size === 0}
+        >
+          <Settings className="h-4 w-4 mr-2" />
+          {selectedOrders.size > 0 
+            ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
+            : 'Configurar e Planejar Rotas'}
+        </Button>
       </div>
 
       {/* Filters */}
