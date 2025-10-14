@@ -12,6 +12,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import honestLogo from '@/assets/honest-logo.png';
 import { 
   Package, 
   Plus, 
@@ -28,9 +31,13 @@ import {
   Clock,
   Target,
   Phone,
-  AlertTriangle
+  AlertTriangle,
+  FileText,
+  MessageCircle,
+  LogOut
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
+import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
 
 interface SaleEditModalProps {
   isOpen: boolean;
@@ -491,6 +498,252 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         longitude: longitude || null
       }
     });
+  };
+
+  // Função para gerar PDF do pedido
+  const generateOrderPDF = () => {
+    if (products.length === 0) {
+      toast({
+        title: "Erro",
+        description: "Adicione produtos antes de gerar o PDF.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const pdf = new jsPDF();
+    
+    // Adicionar logomarca
+    try {
+      pdf.addImage(honestLogo, 'PNG', 150, 10, 40, 40);
+    } catch (error) {
+      console.log('Erro ao carregar logomarca:', error);
+    }
+    
+    // Título
+    pdf.setFontSize(20);
+    pdf.text('PEDIDO DE VENDA', 20, 30);
+    
+    // Informações da empresa
+    pdf.setFontSize(12);
+    pdf.text('Honest Sucos', 20, 50);
+    pdf.text('Sucos Naturais e Saudáveis', 20, 60);
+    
+    // Informações do cliente
+    if (card?.customer) {
+      pdf.text(`Cliente: ${card.customer.fantasyName || card.customer.name}`, 20, 80);
+      if (card.customer.cnpj) pdf.text(`CNPJ: ${card.customer.cnpj}`, 20, 90);
+      if (card.customer.cpf) pdf.text(`CPF: ${card.customer.cpf}`, 20, 90);
+      if (customerPhone) pdf.text(`Telefone: ${customerPhone}`, 20, 100);
+      if (card.customer.address) pdf.text(`Endereço: ${card.customer.address}`, 20, 110);
+    }
+    
+    // Informações do pedido
+    pdf.text(`Número do Pedido: HS-${Date.now()}`, 20, 130);
+    pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
+    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
+    if (paymentMethod === 'boleto') {
+      pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
+    }
+    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    
+    // Tabela de produtos
+    const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
+    const tableRows = products.map(item => [
+      item.name,
+      item.quantity.toString(),
+      `R$ ${item.unitPrice.toFixed(2)}`,
+      `R$ ${item.totalPrice.toFixed(2)}`
+    ]);
+    
+    autoTable(pdf, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 190,
+      styles: {
+        fontSize: 10,
+        cellPadding: 3
+      },
+      headStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255
+      }
+    });
+    
+    // Total da venda
+    const finalY = (pdf as any).lastAutoTable?.finalY || 250;
+    pdf.setFontSize(14);
+    pdf.text(`TOTAL GERAL: R$ ${calculateTotal().toFixed(2)}`, 20, finalY + 20);
+    
+    // Previsão de entrega
+    if (deliveryDate) {
+      pdf.setFontSize(10);
+      pdf.text(`Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR', { 
+        day: '2-digit', 
+        month: 'long', 
+        year: 'numeric' 
+      })}`, 20, finalY + 40);
+    }
+    
+    // Observações
+    pdf.setFontSize(10);
+    pdf.text('Observações:', 20, finalY + 60);
+    pdf.text('- Produtos naturais, sem conservantes.', 20, finalY + 70);
+    if (notes) {
+      const notesLines = pdf.splitTextToSize(notes, 170);
+      pdf.text(notesLines, 20, finalY + 80);
+    }
+    
+    // Salvar PDF
+    const fileName = `pedido-${card?.customer?.name || 'cliente'}-${Date.now()}.pdf`;
+    pdf.save(fileName);
+    
+    toast({
+      title: "PDF Gerado",
+      description: "O pedido foi gerado e baixado com sucesso!",
+    });
+  };
+
+  // Função para enviar PDF via WhatsApp
+  const sendPDFToWhatsApp = () => {
+    if (!card?.customer?.phone && !customerPhone) {
+      toast({
+        title: "Erro",
+        description: "Cliente não possui número de WhatsApp cadastrado.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (products.length === 0) {
+      toast({
+        title: "Erro",
+        description: "Adicione produtos antes de enviar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Gerar PDF primeiro
+    generateOrderPDF();
+    
+    // Preparar mensagem para WhatsApp
+    const phone = customerPhone || card?.customer?.phone || '';
+    const cleanPhone = phone.replace(/\D/g, '');
+    const customerName = card?.customer?.fantasyName || card?.customer?.name || 'Cliente';
+    
+    const message = `Olá ${customerName}! 📄
+
+Segue o pedido da Honest Sucos:
+• Total: R$ ${calculateTotal().toFixed(2)}
+• Produtos: ${products.length} itens
+• Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}
+${paymentMethod === 'boleto' ? `• Prazo: ${boletoDays} dias` : ''}
+${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR')}` : ''}
+
+🌿 Sucos naturais e saudáveis!
+
+O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
+
+    // Abrir WhatsApp
+    const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+    
+    toast({
+      title: "WhatsApp Aberto",
+      description: `Mensagem preparada para ${customerName}. Anexe o PDF manualmente.`,
+    });
+  };
+
+  // Função para fazer check-out na visita
+  const handleCheckOut = async () => {
+    if (!card?.id) return;
+
+    try {
+      // Buscar visita relacionada ao card
+      const visitResponse = await fetch(`/api/visit-agenda?salesCardId=${card.id}`, {
+        credentials: 'include'
+      });
+
+      if (!visitResponse.ok) {
+        throw new Error('Erro ao buscar visita');
+      }
+
+      const visits = await visitResponse.json();
+      
+      if (!visits || visits.length === 0) {
+        toast({
+          title: "Aviso",
+          description: "Nenhuma visita encontrada para este pedido.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const visit = visits[0];
+
+      // Verificar se já foi feito check-in
+      if (!visit.actualCheckIn) {
+        toast({
+          title: "Erro",
+          description: "É necessário fazer check-in antes do check-out.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Verificar se já foi feito check-out
+      if (visit.actualCheckOut) {
+        toast({
+          title: "Aviso",
+          description: "Check-out já foi realizado para esta visita.",
+        });
+        return;
+      }
+
+      // Capturar localização atual
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        });
+      });
+
+      // Fazer check-out
+      const checkOutResponse = await fetch(`/api/visit-agenda/${visit.id}/check-out`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        })
+      });
+
+      if (!checkOutResponse.ok) {
+        const error = await checkOutResponse.json();
+        throw new Error(error.message || 'Erro ao fazer check-out');
+      }
+
+      const result = await checkOutResponse.json();
+
+      toast({
+        title: "Check-out Realizado!",
+        description: result.message || "Check-out realizado com sucesso!",
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['/api/visit-agenda'] });
+      
+    } catch (error: any) {
+      toast({
+        title: "Erro no Check-out",
+        description: error.message || "Não foi possível realizar o check-out.",
+        variant: "destructive"
+      });
+    }
   };
 
   // Função para gerenciar checkboxes de horários
@@ -1032,32 +1285,73 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         </div>
 
         {/* Botões de Ação */}
-        <div className="flex justify-between space-x-3 pt-6 border-t">
-          <div className="flex space-x-2">
-            <Button 
-              variant="outline" 
-              onClick={onClose}
-              disabled={isSubmitting}
-            >
-              Cancelar
-            </Button>
+        <div className="space-y-3 pt-6 border-t">
+          {/* Linha 1: Botões de PDF e Check-out */}
+          <div className="flex justify-between space-x-3">
+            <div className="flex space-x-2">
+              <Button 
+                variant="outline" 
+                onClick={onClose}
+                disabled={isSubmitting}
+                data-testid="button-cancel"
+              >
+                Cancelar
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                onClick={handleNoSale}
+                disabled={isSubmitting}
+                className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
+                data-testid="button-no-sale"
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Venda Não Realizada
+              </Button>
+            </div>
             
-            <Button 
-              variant="outline" 
-              onClick={handleNoSale}
-              disabled={isSubmitting}
-              className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
-            >
-              <XCircle className="h-4 w-4 mr-2" />
-              Venda Não Realizada
-            </Button>
+            <div className="flex space-x-2">
+              <Button 
+                variant="outline" 
+                onClick={generateOrderPDF}
+                disabled={products.length === 0}
+                className="bg-blue-50 hover:bg-blue-100"
+                data-testid="button-generate-pdf"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Gerar PDF
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                onClick={sendPDFToWhatsApp}
+                disabled={products.length === 0}
+                className="bg-green-50 hover:bg-green-100"
+                data-testid="button-send-whatsapp"
+              >
+                <MessageCircle className="h-4 w-4 mr-2" />
+                Enviar WhatsApp
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                onClick={handleCheckOut}
+                className="bg-purple-50 hover:bg-purple-100"
+                data-testid="button-checkout"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Check-out
+              </Button>
+            </div>
           </div>
           
-          <div className="flex space-x-2">
+          {/* Linha 2: Botões de Finalizar */}
+          <div className="flex justify-end space-x-2">
             <Button 
               onClick={handleFinalizeSale}
               disabled={isSubmitting || products.length === 0}
               className="bg-green-500 hover:bg-green-600"
+              data-testid="button-finalize-sale"
             >
               {isSubmitting ? (
                 <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
@@ -1071,6 +1365,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
               onClick={handleSendToFaturamento}
               disabled={isSubmitting || products.length === 0}
               className="bg-orange-500 hover:bg-orange-600"
+              data-testid="button-finalize-billing"
             >
               {isSubmitting ? (
                 <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
