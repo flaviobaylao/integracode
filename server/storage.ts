@@ -15,6 +15,8 @@ import {
   visitAgenda,
   dailyRoutes,
   routeCheckpoints,
+  deliveryRoutes,
+  deliveryRouteStops,
   type User,
   type UpsertUser,
   type Route,
@@ -120,6 +122,16 @@ export interface IStorage {
   getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any>;
   getDeliveryReportComparison(period: string): Promise<any>;
   getDeliveryDriverStats(): Promise<any>;
+  
+  // Delivery routes operations
+  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]>;
+  getDeliveryRoute(id: string): Promise<any | undefined>;
+  createDeliveryRoute(route: any): Promise<any>;
+  updateDeliveryRoute(id: string, route: any): Promise<any>;
+  deleteDeliveryRoute(id: string): Promise<void>;
+  createDeliveryRouteStop(stop: any): Promise<any>;
+  getDeliveryRouteStops(routeId: string): Promise<any[]>;
+  updateDeliveryRouteStop(id: string, stop: any): Promise<any>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -2749,6 +2761,75 @@ export class DatabaseStorage implements IStorage {
       FROM delivery_drivers
     `);
     return result.rows[0] || { total: 0, active: 0, inactive: 0 };
+  }
+
+  // Delivery routes operations
+  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]> {
+    let query = db.select().from(deliveryRoutes);
+    
+    const conditions: any[] = [];
+    if (filters?.status) {
+      conditions.push(eq(deliveryRoutes.status, filters.status));
+    }
+    if (filters?.routeDate) {
+      const startOfDay = new Date(filters.routeDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(filters.routeDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(gte(deliveryRoutes.routeDate, startOfDay));
+      conditions.push(lte(deliveryRoutes.routeDate, endOfDay));
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    
+    return await query.orderBy(desc(deliveryRoutes.routeDate));
+  }
+
+  async getDeliveryRoute(id: string): Promise<any | undefined> {
+    const [route] = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, id));
+    return route;
+  }
+
+  async createDeliveryRoute(route: any): Promise<any> {
+    const [newRoute] = await db.insert(deliveryRoutes).values(route).returning();
+    return newRoute;
+  }
+
+  async updateDeliveryRoute(id: string, route: any): Promise<any> {
+    const [updated] = await db
+      .update(deliveryRoutes)
+      .set({ ...route, updatedAt: new Date() })
+      .where(eq(deliveryRoutes.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteDeliveryRoute(id: string): Promise<void> {
+    await db.delete(deliveryRoutes).where(eq(deliveryRoutes.id, id));
+  }
+
+  async createDeliveryRouteStop(stop: any): Promise<any> {
+    const [newStop] = await db.insert(deliveryRouteStops).values(stop).returning();
+    return newStop;
+  }
+
+  async getDeliveryRouteStops(routeId: string): Promise<any[]> {
+    return await db
+      .select()
+      .from(deliveryRouteStops)
+      .where(eq(deliveryRouteStops.routeId, routeId))
+      .orderBy(deliveryRouteStops.stopOrder);
+  }
+
+  async updateDeliveryRouteStop(id: string, stop: any): Promise<any> {
+    const [updated] = await db
+      .update(deliveryRouteStops)
+      .set({ ...stop, updatedAt: new Date() })
+      .where(eq(deliveryRouteStops.id, id))
+      .returning();
+    return updated;
   }
 
   // Overdue debts operations
