@@ -541,11 +541,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     // Informações do pedido
     pdf.text(`Número do Pedido: HS-${Date.now()}`, 20, 130);
     pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
-    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
+    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod as keyof typeof PAYMENT_METHOD_LABELS]}`, 20, 150);
     if (paymentMethod === 'boleto') {
       pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
     }
-    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType as keyof typeof OPERATION_TYPE_LABELS]}`, 20, 170);
     
     // Tabela de produtos
     const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
@@ -637,7 +637,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 Segue o pedido da Honest Sucos:
 • Total: R$ ${calculateTotal().toFixed(2)}
 • Produtos: ${products.length} itens
-• Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}
+• Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod as keyof typeof PAYMENT_METHOD_LABELS]}
 ${paymentMethod === 'boleto' ? `• Prazo: ${boletoDays} dias` : ''}
 ${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR')}` : ''}
 
