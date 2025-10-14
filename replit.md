@@ -47,7 +47,8 @@
 - **Blocked Orders Management**: Automatic blocking for orders with Boleto terms > 7 days or overdue debts. Admin/coordinator/administrative roles can release blocked orders.
 - **Delivery Integration**: Real-time tracking with App Entregas Honest via webhooks.
 - **Daily Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm for near-optimal routes. Uses OSRM API for real motorcycle route distances. Includes visual mapping (Leaflet), checkpoint registration, and performance metrics dashboards for both sellers and admins. Supports exclusive vehicle delivery configuration on sales cards.
-- **Enhanced Delivery Management**: Delivery Management page with order selection, urgent delivery marking, and clear display of delivery time slots and exclusive vehicle configurations.
+- **Multi-Vehicle Route Planning (VRP)**: Advanced delivery route optimization system with 4-phase algorithm: (1) preprocessing with coordinate validation, (2) greedy vehicle assignment prioritizing urgent orders, (3) per-vehicle route optimization using NN+2-opt+OSRM, (4) persistence to delivery_routes/delivery_route_stops tables. Includes manual order selection, vehicle configuration (type, capacity, start point, time windows), and results display with ETAs and statistics. Validates coordinates and filters invalid orders with warnings.
+- **Enhanced Delivery Management**: Delivery Management page with order selection, urgent delivery marking, vehicle configuration modal, manual order refresh button, and clear display of delivery time slots and exclusive vehicle configurations. Supports multi-vehicle route planning with real-time optimization.
 
 # External Dependencies
 
