@@ -1360,17 +1360,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const row = data[i] as any;
         
         try {
-          // Validar campos obrigatórios
-          if (!row.CNPJ) {
+          // Validar campos obrigatórios (aceitar CNPJ ou CNPJ/CPF como nome de coluna)
+          const cnpjRaw = row.CNPJ || row['CNPJ/CPF'] || row.cnpj || row['cnpj/cpf'];
+          if (!cnpjRaw) {
             results.errors.push({
               row: i + 2, // Excel row (1-indexed + header)
-              error: "CNPJ é obrigatório"
+              error: "CNPJ/CPF é obrigatório"
             });
             continue;
           }
 
           // Limpar CNPJ
-          const cnpj = row.CNPJ.toString().replace(/\D/g, '');
+          const cnpj = cnpjRaw.toString().replace(/\D/g, '');
           
           // Verificar se cliente existe
           let customer = await storage.getCustomerByCnpj(cnpj);
@@ -1395,6 +1396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               cnpj: receitaData.cnpj,
               name: receitaData.nome,
               fantasyName: receitaData.fantasia || receitaData.nome,
+              customerType: 'pessoa_juridica',
               email: receitaData.email || '',
               phone: receitaData.telefone || '',
               address: receitaData.logradouro ? 
@@ -1403,10 +1405,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               state: receitaData.uf || '',
               zipCode: receitaData.cep || '',
               sellerId: user.role === 'vendedor' ? user.id : (row.Vendedor || user.id),
-              weekdays: row['Dias da Semana'] ? JSON.stringify(
-                row['Dias da Semana'].toString().split(',').map((d: string) => d.trim().toLowerCase())
+              weekdays: (row['Dias da Semana'] || row['dias da semana']) ? JSON.stringify(
+                (row['Dias da Semana'] || row['dias da semana']).toString().split(',').map((d: string) => d.trim().toLowerCase())
               ) : JSON.stringify([]),
-              visitPeriodicity: row.Periodicidade?.toLowerCase() || 'semanal'
+              visitPeriodicity: (row.Periodicidade || row.periodicidade)?.toLowerCase() || 'semanal'
             });
             
             results.created++;
@@ -1415,14 +1417,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Atualizar weekdays e periodicidade se fornecidos
             const updateData: any = {};
             
-            if (row['Dias da Semana']) {
+            const weekdaysCol = row['Dias da Semana'] || row['dias da semana'];
+            if (weekdaysCol) {
               updateData.weekdays = JSON.stringify(
-                row['Dias da Semana'].toString().split(',').map((d: string) => d.trim().toLowerCase())
+                weekdaysCol.toString().split(',').map((d: string) => d.trim().toLowerCase())
               );
             }
             
-            if (row.Periodicidade) {
-              updateData.visitPeriodicity = row.Periodicidade.toLowerCase();
+            const periodicityCol = row.Periodicidade || row.periodicidade;
+            if (periodicityCol) {
+              updateData.visitPeriodicity = periodicityCol.toLowerCase();
             }
             
             if (Object.keys(updateData).length > 0) {
@@ -1486,7 +1490,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             scheduledDate,
             routeDay,
             recurrenceType: customer.visitPeriodicity || 'semanal',
-            isRecurring: true
+            isRecurring: true,
+            exclusiveVehicle: false,
+            vehicleTypes: ['moto', 'carro', 'caminhao']
           });
 
         } catch (rowError: any) {

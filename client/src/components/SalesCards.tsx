@@ -766,9 +766,9 @@ export default function SalesCards() {
                 A planilha deve conter as seguintes colunas:
               </p>
               <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
-                <li><strong>CNPJ</strong>: CNPJ do cliente (obrigatório)</li>
-                <li><strong>Dias da Semana</strong>: Dias separados por vírgula (ex: segunda,quarta)</li>
-                <li><strong>Periodicidade</strong>: semanal, quinzenal ou mensal</li>
+                <li><strong>CNPJ/CPF</strong> ou <strong>CNPJ</strong>: CNPJ do cliente (obrigatório)</li>
+                <li><strong>dias da semana</strong> ou <strong>Dias da Semana</strong>: Dias separados por vírgula (ex: SEGUNDA-FEIRA,QUARTA-FEIRA)</li>
+                <li><strong>periodicidade</strong> ou <strong>Periodicidade</strong>: SEMANAL, QUINZENAL ou MENSAL</li>
               </ul>
               <p className="text-xs text-blue-700 mt-2">
                 💡 Se o CNPJ não existir no sistema, o cliente será cadastrado automaticamente via Receita Federal.
