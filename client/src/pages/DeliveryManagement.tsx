@@ -535,22 +535,23 @@ export default function DeliveryManagement() {
                                 updateVehicle(idx, 'driverName', driver.name);
                               }
                             }}
+                            disabled={isLoadingDrivers || drivers.length === 0}
                           >
                             <SelectTrigger data-testid={`select-driver-${idx}`}>
-                              <SelectValue placeholder="Selecione o motorista" />
+                              <SelectValue placeholder={
+                                isLoadingDrivers 
+                                  ? "Carregando..." 
+                                  : drivers.length === 0 
+                                    ? "Nenhum motorista disponível" 
+                                    : "Selecione o motorista"
+                              } />
                             </SelectTrigger>
                             <SelectContent>
-                              {isLoadingDrivers ? (
-                                <SelectItem value="" disabled>Carregando...</SelectItem>
-                              ) : drivers.length === 0 ? (
-                                <SelectItem value="" disabled>Nenhum motorista disponível</SelectItem>
-                              ) : (
-                                drivers.map(driver => (
-                                  <SelectItem key={driver.id} value={driver.id}>
-                                    {driver.name} ({driver.vehicleType}) - {driver.licensePlate}
-                                  </SelectItem>
-                                ))
-                              )}
+                              {drivers.map(driver => (
+                                <SelectItem key={driver.id} value={driver.id}>
+                                  {driver.name} ({driver.vehicleType}) - {driver.licensePlate}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
