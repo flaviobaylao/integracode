@@ -552,7 +552,7 @@ export default function DeliveryManagement() {
                             <SelectContent>
                               {drivers.map(driver => (
                                 <SelectItem key={driver.id} value={driver.id}>
-                                  {driver.name} ({driver.vehicleType}) - {driver.licensePlate}
+                                  {driver.name}
                                 </SelectItem>
                               ))}
                             </SelectContent>
