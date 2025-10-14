@@ -1,161 +1,151 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import { 
+  Truck, 
+  Package, 
+  MapPin,
+  Search,
+  Filter,
+  RotateCcw,
+  Zap,
+  Plus,
+  Trash2,
+  Calendar,
+  Clock,
+  Settings
+} from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { 
-  Truck, 
-  Package, 
-  CheckCircle2, 
-  XCircle, 
-  Clock,
-  MapPin,
-  Search,
-  Filter,
-  RotateCcw,
-  AlertTriangle,
-  Edit3,
-  Eye,
-  Zap
-} from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
 
-interface DeliveryItem {
+interface DeliveryOrder {
   id: string;
+  customerId: string;
+  customerName: string;
+  customerAddress: string;
+  customerLatitude: string;
+  customerLongitude: string;
+  averageDeliveryTime: number;
+  exclusiveVehicle: boolean;
+  vehicleTypes: string[];
+  isUrgent: boolean;
+  saleValue: number;
+  products: any;
+  scheduledDate: string;
+  completedDate: string;
+  paymentMethod: string;
+  operationType: string;
+}
+
+interface VehicleConfig {
+  type: 'caminhao' | 'carro' | 'moto';
+  startLatitude: number;
+  startLongitude: number;
+  startAddress: string;
+  timeWindowStart: string;
+  timeWindowEnd: string;
+  capacity?: number;
+}
+
+interface RouteStop {
   salesCardId: string;
   customerName: string;
   customerAddress: string;
-  customerPhone: string;
-  deliveryStatus: string;
-  deliveryScheduledDate: string;
-  deliveryCompletedDate?: string;
-  deliveryFailureReason?: string;
-  deliveryNotes?: string;
-  deliveryDriverId?: string;
-  driverName?: string;
-  trackingCode?: string;
-  saleValue: number;
-  // Novos campos
-  deliveryTimeSlots?: string[];
-  deliverySaturdayTimeSlots?: string[];
-  exclusiveVehicle?: boolean;
-  vehicleTypes?: string[];
-  isUrgent?: boolean;
+  estimatedArrival: string;
+  estimatedDeparture: string;
+  stopOrder: number;
+  distanceFromPrevious: number;
 }
 
-const deliveryStatusConfig = {
-  pending: { icon: Package, label: "Aguardando", color: "secondary" },
-  in_transit: { icon: Truck, label: "Em trânsito", color: "default" },
-  delivered: { icon: CheckCircle2, label: "Entregue", color: "default" },
-  failed: { icon: XCircle, label: "Falharam", color: "destructive" },
-  returned: { icon: AlertTriangle, label: "Devolvidas", color: "secondary" }
-};
+interface VehicleRoute {
+  vehicleType: string;
+  startAddress: string;
+  stops: RouteStop[];
+  totalDistance: number;
+  totalDuration: number;
+}
 
-const failureReasonOptions = [
-  { value: "customer_absent", label: "Cliente ausente" },
-  { value: "address_incorrect", label: "Endereço incorreto" },
-  { value: "customer_refused", label: "Cliente recusou" },
-  { value: "payment_issue", label: "Problema de pagamento" },
-  { value: "product_damaged", label: "Produto danificado" },
-  { value: "other", label: "Outros motivos" }
-];
+interface RoutePlan {
+  routes: VehicleRoute[];
+  unassignedOrders: DeliveryOrder[];
+  stats: {
+    totalOrders: number;
+    assignedOrders: number;
+    unassignedOrders: number;
+    totalDistance: number;
+    totalVehicles: number;
+  };
+}
 
 export default function DeliveryManagement() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("pending"); // Filtrar apenas "aguardando rota" por padrão
-  const [driverFilter, setDriverFilter] = useState("all");
-  const [selectedDelivery, setSelectedDelivery] = useState<DeliveryItem | null>(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  
-  // Novos estados para seleção de pedidos
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
+  
+  // Estados para configuração de veículos
+  const [showVehicleConfig, setShowVehicleConfig] = useState(false);
+  const [vehicles, setVehicles] = useState<VehicleConfig[]>([]);
+  const [routeDate, setRouteDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Estados para resultados da roteirização
+  const [showResults, setShowResults] = useState(false);
+  const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
 
-  // Form state for update modal
-  const [updateForm, setUpdateForm] = useState({
-    status: "",
-    driverId: "",
-    notes: "",
-    failureReason: "",
-    completedDate: ""
+  // Query para buscar pedidos aguardando rota
+  const { data: orders, isLoading: isLoadingOrders } = useQuery<DeliveryOrder[]>({
+    queryKey: ['/api/deliveries'],
+    refetchInterval: 30000,
   });
 
-  // Query para buscar todas as entregas
-  const { data: deliveries, isLoading: isLoadingDeliveries } = useQuery<DeliveryItem[]>({
-    queryKey: ['/api/deliveries/all'],
-    refetchInterval: 30000, // Atualiza a cada 30 segundos
-  });
-
-  // Query para buscar motoristas ativos
-  const { data: drivers, isLoading: isLoadingDrivers } = useQuery<any[]>({
-    queryKey: ['/api/delivery-drivers/active'],
-  });
-
-  // Mutation para atualizar status de entrega
-  const updateDeliveryMutation = useMutation({
-    mutationFn: async (data: { salesCardId: string; updateData: any }) => {
-      const response = await fetch(`/api/deliveries/${data.salesCardId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(data.updateData),
-      });
-      if (!response.ok) throw new Error('Erro ao atualizar entrega');
-      return response.json();
+  // Mutation para planejar rotas
+  const planRoutesMutation = useMutation({
+    mutationFn: async (data: { orderIds: string[]; vehicles: VehicleConfig[]; routeDate: string }) => {
+      return await apiRequest('POST', '/api/delivery-routes/plan', data);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/deliveries/all'] });
-      setShowUpdateModal(false);
-      setSelectedDelivery(null);
+    onSuccess: (data) => {
+      setRoutePlan(data);
+      setShowVehicleConfig(false);
+      setShowResults(true);
       toast({
-        title: "Entrega atualizada",
-        description: "O status da entrega foi atualizado com sucesso.",
+        title: "Rotas planejadas com sucesso!",
+        description: `${data.stats.assignedOrders} pedidos atribuídos em ${data.routes.length} rotas`,
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Erro",
-        description: error.message || "Erro ao atualizar entrega",
+        title: "Erro ao planejar rotas",
+        description: error.message || "Erro desconhecido",
         variant: "destructive",
       });
     },
   });
 
-  // Mutation para marcar entrega como urgente
+  // Mutation para marcar como urgente
   const toggleUrgentMutation = useMutation({
-    mutationFn: async (data: { salesCardId: string; isUrgent: boolean }) => {
-      const response = await fetch(`/api/sales-cards/${data.salesCardId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ isUrgent: data.isUrgent }),
-      });
-      if (!response.ok) throw new Error('Erro ao atualizar urgência');
-      return response.json();
+    mutationFn: async (data: { id: string; isUrgent: boolean }) => {
+      return await apiRequest('PUT', `/api/sales-cards/${data.id}`, { isUrgent: data.isUrgent });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/deliveries/all'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       toast({
         title: "Urgência atualizada",
         description: "A marcação de urgência foi atualizada.",
@@ -163,90 +153,97 @@ export default function DeliveryManagement() {
     },
   });
 
-  // Funções de seleção de pedidos
+  // Funções de seleção
   const handleSelectAll = () => {
     if (selectAll) {
       setSelectedOrders(new Set());
       setSelectAll(false);
     } else {
-      const allIds = new Set(filteredDeliveries.map(d => d.salesCardId));
+      const allIds = new Set(filteredOrders.map(o => o.id));
       setSelectedOrders(allIds);
       setSelectAll(true);
     }
   };
 
-  const handleSelectOrder = (salesCardId: string) => {
+  const handleSelectOrder = (orderId: string) => {
     const newSelected = new Set(selectedOrders);
-    if (newSelected.has(salesCardId)) {
-      newSelected.delete(salesCardId);
+    if (newSelected.has(orderId)) {
+      newSelected.delete(orderId);
     } else {
-      newSelected.add(salesCardId);
+      newSelected.add(orderId);
     }
     setSelectedOrders(newSelected);
-    setSelectAll(newSelected.size === filteredDeliveries.length && filteredDeliveries.length > 0);
+    setSelectAll(newSelected.size === filteredOrders.length && filteredOrders.length > 0);
   };
 
-  const handleToggleUrgent = (salesCardId: string, currentUrgent: boolean) => {
+  const handleToggleUrgent = (orderId: string, currentUrgent: boolean) => {
     toggleUrgentMutation.mutate({
-      salesCardId,
+      id: orderId,
       isUrgent: !currentUrgent
     });
   };
 
-  // Filtrar entregas
-  const filteredDeliveries = useMemo(() => {
-    if (!deliveries) return [];
+  // Filtrar pedidos
+  const filteredOrders = useMemo(() => {
+    if (!orders) return [];
 
-    return deliveries.filter(delivery => {
+    return orders.filter(order => {
       const matchesSearch = 
-        (delivery.customerName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-        (delivery.customerAddress?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-        (delivery.salesCardId?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-        (delivery.trackingCode?.toLowerCase() || '').includes(searchTerm.toLowerCase());
+        (order.customerName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (order.customerAddress?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (order.id?.toLowerCase() || '').includes(searchTerm.toLowerCase());
 
-      const matchesStatus = statusFilter === "all" || delivery.deliveryStatus === statusFilter;
-      const matchesDriver = driverFilter === "all" || delivery.deliveryDriverId === driverFilter;
-
-      return matchesSearch && matchesStatus && matchesDriver;
+      return matchesSearch;
     });
-  }, [deliveries, searchTerm, statusFilter, driverFilter]);
+  }, [orders, searchTerm]);
 
-  const handleUpdateDelivery = () => {
-    if (!selectedDelivery) return;
+  // Funções de veículos
+  const addVehicle = () => {
+    setVehicles([...vehicles, {
+      type: 'moto',
+      startLatitude: -23.55052,
+      startLongitude: -46.633308,
+      startAddress: 'São Paulo - Depósito Principal',
+      timeWindowStart: '08:00',
+      timeWindowEnd: '18:00',
+      capacity: undefined
+    }]);
+  };
 
-    const updateData: any = {
-      status: updateForm.status,
-      deliveryNotes: updateForm.notes,
-      driverId: updateForm.driverId || undefined,
-    };
+  const removeVehicle = (index: number) => {
+    setVehicles(vehicles.filter((_, i) => i !== index));
+  };
 
-    if (updateForm.status === 'delivered') {
-      updateData.deliveryCompletedDate = new Date().toISOString();
-    } else if (updateForm.status === 'failed') {
-      updateData.deliveryFailureReason = updateForm.failureReason;
+  const updateVehicle = (index: number, field: keyof VehicleConfig, value: any) => {
+    const updated = [...vehicles];
+    updated[index] = { ...updated[index], [field]: value };
+    setVehicles(updated);
+  };
+
+  const handlePlanRoutes = () => {
+    if (selectedOrders.size === 0) {
+      toast({
+        title: "Nenhum pedido selecionado",
+        description: "Selecione ao menos um pedido para planejar rotas",
+        variant: "destructive",
+      });
+      return;
     }
 
-    updateDeliveryMutation.mutate({
-      salesCardId: selectedDelivery.salesCardId,
-      updateData
-    });
-  };
+    if (vehicles.length === 0) {
+      toast({
+        title: "Nenhum veículo configurado",
+        description: "Configure ao menos um veículo",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  const openUpdateModal = (delivery: DeliveryItem) => {
-    setSelectedDelivery(delivery);
-    setUpdateForm({
-      status: delivery.deliveryStatus,
-      driverId: delivery.deliveryDriverId || "",
-      notes: delivery.deliveryNotes || "",
-      failureReason: delivery.deliveryFailureReason || "",
-      completedDate: delivery.deliveryCompletedDate || ""
+    planRoutesMutation.mutate({
+      orderIds: Array.from(selectedOrders),
+      vehicles,
+      routeDate
     });
-    setShowUpdateModal(true);
-  };
-
-  const openDetailsModal = (delivery: DeliveryItem) => {
-    setSelectedDelivery(delivery);
-    setShowDetailsModal(true);
   };
 
   return (
@@ -256,9 +253,19 @@ export default function DeliveryManagement() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight" data-testid="page-title">Gestão de Entregas</h1>
           <p className="text-muted-foreground">
-            Gerencie e acompanhe todas as entregas
+            Planeje rotas de entrega para múltiplos veículos
           </p>
         </div>
+        {selectedOrders.size > 0 && (
+          <Button 
+            onClick={() => setShowVehicleConfig(true)}
+            data-testid="button-configure-routes"
+            size="lg"
+          >
+            <Settings className="h-4 w-4 mr-2" />
+            Configurar e Planejar Rotas ({selectedOrders.size})
+          </Button>
+        )}
       </div>
 
       {/* Filters */}
@@ -266,18 +273,18 @@ export default function DeliveryManagement() {
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <Filter className="h-5 w-5" />
-            <span>Filtros</span>
+            <span>Filtros e Seleção</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="search">Buscar</Label>
               <div className="relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="search"
-                  placeholder="Cliente, endereço, card ID..."
+                  placeholder="Cliente, endereço, ID..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-8"
@@ -287,260 +294,128 @@ export default function DeliveryManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="status-filter">Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger data-testid="select-status">
-                  <SelectValue placeholder="Todos os status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os status</SelectItem>
-                  {Object.entries(deliveryStatusConfig).map(([value, config]) => (
-                    <SelectItem key={value} value={value}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="driver-filter">Motorista</Label>
-              <Select value={driverFilter} onValueChange={setDriverFilter}>
-                <SelectTrigger data-testid="select-driver">
-                  <SelectValue placeholder="Todos os motoristas" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os motoristas</SelectItem>
-                  {drivers?.map((driver: any) => (
-                    <SelectItem key={driver.id} value={driver.id}>
-                      {driver.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="route-date">Data da Rota</Label>
+              <Input
+                id="route-date"
+                type="date"
+                value={routeDate}
+                onChange={(e) => setRouteDate(e.target.value)}
+                data-testid="input-route-date"
+              />
             </div>
 
             <div className="space-y-2">
               <Label>&nbsp;</Label>
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setSearchTerm("");
-                  setStatusFilter("all");
-                  setDriverFilter("all");
-                }}
-                className="w-full"
-                data-testid="button-clear-filters"
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Limpar Filtros
-              </Button>
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setSearchTerm("");
+                  }}
+                  className="flex-1"
+                  data-testid="button-clear-filters"
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Limpar
+                </Button>
+                <div className="flex items-center space-x-2 border rounded-md px-3">
+                  <Checkbox
+                    id="select-all"
+                    checked={selectAll}
+                    onCheckedChange={handleSelectAll}
+                    data-testid="checkbox-select-all"
+                  />
+                  <Label htmlFor="select-all" className="cursor-pointer text-sm">
+                    Selecionar Todos
+                  </Label>
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Deliveries List */}
-      <Card data-testid="deliveries-list-card">
-        <CardHeader className="flex flex-row items-center justify-between">
+      {/* Orders List */}
+      <Card data-testid="orders-list-card">
+        <CardHeader>
           <CardTitle>
-            Entregas Aguardando Rota ({filteredDeliveries.length})
+            Pedidos Aguardando Rota ({filteredOrders.length})
+            {selectedOrders.size > 0 && (
+              <Badge variant="secondary" className="ml-2">{selectedOrders.size} selecionados</Badge>
+            )}
           </CardTitle>
-          {statusFilter === 'pending' && filteredDeliveries.length > 0 && (
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="select-all"
-                checked={selectAll}
-                onCheckedChange={handleSelectAll}
-                data-testid="checkbox-select-all"
-              />
-              <Label htmlFor="select-all" className="cursor-pointer">
-                Selecionar Todos
-              </Label>
-              {selectedOrders.size > 0 && (
-                <Badge variant="secondary">{selectedOrders.size} selecionados</Badge>
-              )}
-            </div>
-          )}
         </CardHeader>
         <CardContent>
-          {isLoadingDeliveries ? (
-            <div className="text-center py-8">Carregando entregas...</div>
-          ) : filteredDeliveries.length > 0 ? (
-            <div className="space-y-4">
-              {filteredDeliveries.map((delivery) => {
-                const statusConfig = deliveryStatusConfig[delivery.deliveryStatus as keyof typeof deliveryStatusConfig];
-                const StatusIcon = statusConfig?.icon || Package;
-                const isSelected = selectedOrders.has(delivery.salesCardId);
+          {isLoadingOrders ? (
+            <div className="text-center py-8">Carregando pedidos...</div>
+          ) : filteredOrders.length > 0 ? (
+            <div className="space-y-3">
+              {filteredOrders.map((order) => {
+                const isSelected = selectedOrders.has(order.id);
                 
                 return (
-                  <div key={delivery.id} className={`border rounded-lg p-4 hover:bg-gray-50 ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`} data-testid={`delivery-item-${delivery.id}`}>
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-3 flex-1">
-                        {/* Checkbox de seleção */}
-                        {statusFilter === 'pending' && (
-                          <Checkbox
-                            id={`select-${delivery.salesCardId}`}
-                            checked={isSelected}
-                            onCheckedChange={() => handleSelectOrder(delivery.salesCardId)}
-                            data-testid={`checkbox-select-${delivery.salesCardId}`}
-                            className="mt-1"
-                          />
-                        )}
-                        
-                        <div className="flex-1 space-y-2">
-                          <div className="flex items-center space-x-3">
-                            <Badge variant={statusConfig?.color as any}>
-                              <StatusIcon className="h-3 w-3 mr-1" />
-                              {statusConfig?.label}
-                            </Badge>
-                            {delivery.isUrgent && (
+                  <div 
+                    key={order.id} 
+                    className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`}
+                    data-testid={`order-item-${order.id}`}
+                  >
+                    <div className="flex items-start space-x-3">
+                      <Checkbox
+                        id={`select-${order.id}`}
+                        checked={isSelected}
+                        onCheckedChange={() => handleSelectOrder(order.id)}
+                        data-testid={`checkbox-select-${order.id}`}
+                        className="mt-1"
+                      />
+                      
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-medium">{order.customerName}</span>
+                            {order.isUrgent && (
                               <Badge variant="destructive" className="bg-red-600">
                                 <Zap className="h-3 w-3 mr-1" />
                                 URGENTE
                               </Badge>
                             )}
-                            {delivery.trackingCode && (
-                              <Badge variant="outline">
-                                {delivery.trackingCode}
-                              </Badge>
-                            )}
                           </div>
+                          <span className="text-sm text-gray-600">
+                            R$ {order.saleValue.toFixed(2)}
+                          </span>
+                        </div>
                         
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                              <div className="font-medium">{delivery.customerName}</div>
-                              <div className="text-sm text-muted-foreground flex items-center">
-                                <MapPin className="h-3 w-3 mr-1" />
-                                {delivery.customerAddress}
-                              </div>
-                              <div className="text-sm text-muted-foreground">
-                                📞 {delivery.customerPhone}
-                              </div>
-                            </div>
-                            
-                            <div>
-                              <div className="text-sm">
-                                <strong>Card:</strong> {delivery.salesCardId}
-                              </div>
-                              <div className="text-sm">
-                                <strong>Valor:</strong> R$ {delivery.saleValue?.toFixed(2)}
-                              </div>
-                              <div className="text-sm">
-                                <strong>Agendado:</strong> {new Date(delivery.deliveryScheduledDate).toLocaleDateString('pt-BR')}
-                              </div>
-                            </div>
-                            
-                            <div>
-                              {delivery.driverName && (
-                                <div className="text-sm">
-                                  <strong>Motorista:</strong> {delivery.driverName}
-                                </div>
-                              )}
-                              {delivery.deliveryCompletedDate && (
-                                <div className="text-sm">
-                                  <strong>Concluído:</strong> {new Date(delivery.deliveryCompletedDate).toLocaleDateString('pt-BR')}
-                                </div>
-                              )}
-                              {delivery.deliveryFailureReason && (
-                                <div className="text-sm text-red-600">
-                                  <strong>Motivo:</strong> {failureReasonOptions.find(r => r.value === delivery.deliveryFailureReason)?.label}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                        <div className="text-sm text-muted-foreground flex items-center">
+                          <MapPin className="h-3 w-3 mr-1" />
+                          {order.customerAddress}
+                        </div>
 
-                          {delivery.deliveryNotes && (
-                            <div className="text-sm bg-gray-50 p-2 rounded">
-                              <strong>Observações:</strong> {delivery.deliveryNotes}
-                            </div>
-                          )}
-
-                          {/* Novas informações: Horários, Dias e Veículos */}
-                          <div className="border-t pt-2 mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-                            {/* Horários de Entrega */}
-                            {delivery.deliveryTimeSlots && delivery.deliveryTimeSlots.length > 0 && (
-                              <div className="text-sm">
-                                <strong className="text-gray-700">Horários (dias de semana):</strong>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {delivery.deliveryTimeSlots.map((slot, idx) => (
-                                    <Badge key={idx} variant="outline" className="text-xs">
-                                      <Clock className="h-3 w-3 mr-1" />
-                                      {slot}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Horários Sábado */}
-                            {delivery.deliverySaturdayTimeSlots && delivery.deliverySaturdayTimeSlots.length > 0 && (
-                              <div className="text-sm">
-                                <strong className="text-gray-700">Horários (sábado):</strong>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {delivery.deliverySaturdayTimeSlots.map((slot, idx) => (
-                                    <Badge key={idx} variant="outline" className="text-xs bg-blue-50">
-                                      <Clock className="h-3 w-3 mr-1" />
-                                      {slot}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Veículos Exclusivos */}
-                            {delivery.exclusiveVehicle && delivery.vehicleTypes && delivery.vehicleTypes.length > 0 && (
-                              <div className="text-sm">
-                                <strong className="text-orange-700">Veículo Exclusivo:</strong>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {delivery.vehicleTypes.map((vehicle, idx) => (
-                                    <Badge key={idx} variant="outline" className="text-xs bg-orange-50 border-orange-300">
-                                      <Truck className="h-3 w-3 mr-1" />
-                                      {vehicle === 'caminhao' ? '🚛 Caminhão' : vehicle === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Checkbox de Urgência */}
-                          {statusFilter === 'pending' && (
-                            <div className="border-t pt-2 mt-2">
-                              <div className="flex items-center space-x-2">
-                                <Checkbox
-                                  id={`urgent-${delivery.salesCardId}`}
-                                  checked={delivery.isUrgent || false}
-                                  onCheckedChange={() => handleToggleUrgent(delivery.salesCardId, delivery.isUrgent || false)}
-                                  data-testid={`checkbox-urgent-${delivery.salesCardId}`}
-                                />
-                                <Label htmlFor={`urgent-${delivery.salesCardId}`} className="cursor-pointer text-sm font-medium flex items-center">
-                                  <Zap className="h-4 w-4 mr-1 text-red-600" />
-                                  Marcar como entrega urgente
-                                </Label>
-                              </div>
-                            </div>
+                        <div className="flex items-center space-x-4 text-xs text-gray-600">
+                          <span className="flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            ~{order.averageDeliveryTime} min
+                          </span>
+                          {order.exclusiveVehicle && order.vehicleTypes.length > 0 && (
+                            <span className="flex items-center text-orange-600">
+                              <Truck className="h-3 w-3 mr-1" />
+                              Veículo: {order.vehicleTypes.map(v => 
+                                v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : '🏍️'
+                              ).join(' ')}
+                            </span>
                           )}
                         </div>
-                      </div>
-                      
-                      <div className="flex flex-col space-y-2 ml-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openDetailsModal(delivery)}
-                          data-testid={`button-view-${delivery.id}`}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openUpdateModal(delivery)}
-                          data-testid={`button-update-${delivery.id}`}
-                        >
-                          <Edit3 className="h-4 w-4" />
-                        </Button>
+
+                        <div className="flex items-center space-x-2 pt-1">
+                          <Checkbox
+                            id={`urgent-${order.id}`}
+                            checked={order.isUrgent || false}
+                            onCheckedChange={() => handleToggleUrgent(order.id, order.isUrgent || false)}
+                            data-testid={`checkbox-urgent-${order.id}`}
+                          />
+                          <Label htmlFor={`urgent-${order.id}`} className="cursor-pointer text-xs font-medium flex items-center text-gray-600">
+                            <Zap className="h-3 w-3 mr-1" />
+                            Marcar como urgente
+                          </Label>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -549,139 +424,273 @@ export default function DeliveryManagement() {
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
-              Nenhuma entrega encontrada
+              <Package className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+              <p>Nenhum pedido aguardando rota</p>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Update Modal */}
-      <Dialog open={showUpdateModal} onOpenChange={setShowUpdateModal}>
-        <DialogContent className="max-w-md" data-testid="update-modal">
+      {/* Vehicle Configuration Modal */}
+      <Dialog open={showVehicleConfig} onOpenChange={setShowVehicleConfig}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto" data-testid="dialog-vehicle-config">
           <DialogHeader>
-            <DialogTitle>Atualizar Entrega</DialogTitle>
+            <DialogTitle>Configurar Veículos de Entrega</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="update-status">Status</Label>
-              <Select value={updateForm.status} onValueChange={(value) => setUpdateForm({...updateForm, status: value})}>
-                <SelectTrigger data-testid="update-status-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(deliveryStatusConfig).map(([value, config]) => (
-                    <SelectItem key={value} value={value}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-muted-foreground">
+                Configure os veículos disponíveis para as entregas
+              </p>
+              <Button onClick={addVehicle} size="sm" data-testid="button-add-vehicle">
+                <Plus className="h-4 w-4 mr-1" />
+                Adicionar Veículo
+              </Button>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="update-driver">Motorista</Label>
-              <Select value={updateForm.driverId} onValueChange={(value) => setUpdateForm({...updateForm, driverId: value})}>
-                <SelectTrigger data-testid="update-driver-select">
-                  <SelectValue placeholder="Selecionar motorista" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Nenhum motorista</SelectItem>
-                  {drivers?.map((driver: any) => (
-                    <SelectItem key={driver.id} value={driver.id}>
-                      {driver.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {vehicles.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
+                <Truck className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                <p>Nenhum veículo configurado</p>
+                <p className="text-xs">Clique em "Adicionar Veículo" para começar</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {vehicles.map((vehicle, idx) => (
+                  <Card key={idx} data-testid={`vehicle-config-${idx}`}>
+                    <CardContent className="pt-6">
+                      <div className="flex justify-between items-start mb-4">
+                        <h4 className="font-medium">Veículo {idx + 1}</h4>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeVehicle(idx)}
+                          data-testid={`button-remove-vehicle-${idx}`}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Tipo de Veículo</Label>
+                          <Select
+                            value={vehicle.type}
+                            onValueChange={(value: any) => updateVehicle(idx, 'type', value)}
+                          >
+                            <SelectTrigger data-testid={`select-vehicle-type-${idx}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="caminhao">🚛 Caminhão</SelectItem>
+                              <SelectItem value="carro">🚗 Carro</SelectItem>
+                              <SelectItem value="moto">🏍️ Moto</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-            {updateForm.status === 'failed' && (
-              <div className="space-y-2">
-                <Label htmlFor="failure-reason">Motivo da Falha</Label>
-                <Select value={updateForm.failureReason} onValueChange={(value) => setUpdateForm({...updateForm, failureReason: value})}>
-                  <SelectTrigger data-testid="failure-reason-select">
-                    <SelectValue placeholder="Selecionar motivo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {failureReasonOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                        <div className="space-y-2">
+                          <Label>Capacidade (opcional)</Label>
+                          <Input
+                            type="number"
+                            placeholder="Nº de entregas"
+                            value={vehicle.capacity || ''}
+                            onChange={(e) => updateVehicle(idx, 'capacity', e.target.value ? parseInt(e.target.value) : undefined)}
+                            data-testid={`input-capacity-${idx}`}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Horário Início</Label>
+                          <Input
+                            type="time"
+                            value={vehicle.timeWindowStart}
+                            onChange={(e) => updateVehicle(idx, 'timeWindowStart', e.target.value)}
+                            data-testid={`input-time-start-${idx}`}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Horário Fim</Label>
+                          <Input
+                            type="time"
+                            value={vehicle.timeWindowEnd}
+                            onChange={(e) => updateVehicle(idx, 'timeWindowEnd', e.target.value)}
+                            data-testid={`input-time-end-${idx}`}
+                          />
+                        </div>
+
+                        <div className="col-span-2 space-y-2">
+                          <Label>Endereço de Partida</Label>
+                          <Input
+                            value={vehicle.startAddress}
+                            onChange={(e) => updateVehicle(idx, 'startAddress', e.target.value)}
+                            placeholder="Ex: São Paulo - Depósito Principal"
+                            data-testid={`input-start-address-${idx}`}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Latitude</Label>
+                          <Input
+                            type="number"
+                            step="0.000001"
+                            value={vehicle.startLatitude}
+                            onChange={(e) => updateVehicle(idx, 'startLatitude', parseFloat(e.target.value))}
+                            data-testid={`input-lat-${idx}`}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Longitude</Label>
+                          <Input
+                            type="number"
+                            step="0.000001"
+                            value={vehicle.startLongitude}
+                            onChange={(e) => updateVehicle(idx, 'startLongitude', parseFloat(e.target.value))}
+                            data-testid={`input-lon-${idx}`}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="update-notes">Observações</Label>
-              <Textarea
-                id="update-notes"
-                placeholder="Observações sobre a entrega..."
-                value={updateForm.notes}
-                onChange={(e) => setUpdateForm({...updateForm, notes: e.target.value})}
-                data-testid="update-notes-textarea"
-              />
-            </div>
-
-            <div className="flex justify-end space-x-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowUpdateModal(false)}
-                data-testid="button-cancel-update"
+            <div className="flex justify-end space-x-2 pt-4 border-t">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowVehicleConfig(false)}
+                data-testid="button-cancel-config"
               >
                 Cancelar
               </Button>
-              <Button
-                onClick={handleUpdateDelivery}
-                disabled={updateDeliveryMutation.isPending}
-                data-testid="button-save-update"
+              <Button 
+                onClick={handlePlanRoutes}
+                disabled={vehicles.length === 0 || planRoutesMutation.isPending}
+                data-testid="button-plan-routes"
               >
-                {updateDeliveryMutation.isPending ? "Salvando..." : "Salvar"}
+                {planRoutesMutation.isPending ? 'Planejando...' : 'Planejar Rotas'}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Details Modal */}
-      <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
-        <DialogContent className="max-w-2xl" data-testid="details-modal">
+      {/* Results Modal */}
+      <Dialog open={showResults} onOpenChange={setShowResults}>
+        <DialogContent className="max-w-6xl max-h-[80vh] overflow-y-auto" data-testid="dialog-route-results">
           <DialogHeader>
-            <DialogTitle>Detalhes da Entrega</DialogTitle>
+            <DialogTitle>Resultado do Planejamento de Rotas</DialogTitle>
           </DialogHeader>
-          {selectedDelivery && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="font-medium mb-2">Informações do Cliente</h3>
-                  <div className="space-y-1 text-sm">
-                    <div><strong>Nome:</strong> {selectedDelivery.customerName}</div>
-                    <div><strong>Telefone:</strong> {selectedDelivery.customerPhone}</div>
-                    <div><strong>Endereço:</strong> {selectedDelivery.customerAddress}</div>
-                  </div>
-                </div>
-                <div>
-                  <h3 className="font-medium mb-2">Informações da Entrega</h3>
-                  <div className="space-y-1 text-sm">
-                    <div><strong>Card ID:</strong> {selectedDelivery.salesCardId}</div>
-                    <div><strong>Valor:</strong> R$ {selectedDelivery.saleValue?.toFixed(2)}</div>
-                    <div><strong>Status:</strong> {deliveryStatusConfig[selectedDelivery.deliveryStatus as keyof typeof deliveryStatusConfig]?.label}</div>
-                    {selectedDelivery.trackingCode && (
-                      <div><strong>Rastreamento:</strong> {selectedDelivery.trackingCode}</div>
-                    )}
-                  </div>
-                </div>
+          {routePlan && (
+            <div className="space-y-6">
+              {/* Stats */}
+              <div className="grid grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{routePlan.stats.totalOrders}</div>
+                    <div className="text-sm text-muted-foreground">Total de Pedidos</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold text-green-600">{routePlan.stats.assignedOrders}</div>
+                    <div className="text-sm text-muted-foreground">Atribuídos</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold text-red-600">{routePlan.stats.unassignedOrders}</div>
+                    <div className="text-sm text-muted-foreground">Não Atribuídos</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{routePlan.stats.totalDistance.toFixed(1)} km</div>
+                    <div className="text-sm text-muted-foreground">Distância Total</div>
+                  </CardContent>
+                </Card>
               </div>
-              
-              {selectedDelivery.deliveryNotes && (
+
+              {/* Routes */}
+              <div className="space-y-4">
+                <h3 className="font-semibold">Rotas Planejadas ({routePlan.routes.length})</h3>
+                {routePlan.routes.map((route, idx) => (
+                  <Card key={idx} data-testid={`route-result-${idx}`}>
+                    <CardHeader>
+                      <CardTitle className="flex items-center justify-between">
+                        <span className="flex items-center">
+                          <Truck className="h-5 w-5 mr-2" />
+                          Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                        </span>
+                        <div className="text-sm font-normal text-muted-foreground">
+                          {route.stops.length} paradas • {route.totalDistance.toFixed(1)} km • ~{Math.round(route.totalDuration)} min
+                        </div>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-sm text-muted-foreground mb-3">
+                        <MapPin className="h-4 w-4 inline mr-1" />
+                        Partida: {route.startAddress}
+                      </div>
+                      <div className="space-y-2">
+                        {route.stops.map((stop, stopIdx) => (
+                          <div key={stopIdx} className="flex items-start space-x-3 py-2 border-l-2 border-blue-200 pl-4">
+                            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center">
+                              {stop.stopOrder}
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-medium">{stop.customerName}</div>
+                              <div className="text-sm text-muted-foreground">{stop.customerAddress}</div>
+                              <div className="text-xs text-gray-600 mt-1">
+                                <Clock className="h-3 w-3 inline mr-1" />
+                                ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                {stopIdx > 0 && ` • +${stop.distanceFromPrevious.toFixed(1)} km`}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Unassigned Orders */}
+              {routePlan.unassignedOrders.length > 0 && (
                 <div>
-                  <h3 className="font-medium mb-2">Observações</h3>
-                  <div className="bg-gray-50 p-3 rounded text-sm">
-                    {selectedDelivery.deliveryNotes}
-                  </div>
+                  <h3 className="font-semibold text-red-600 mb-2">Pedidos Não Atribuídos ({routePlan.unassignedOrders.length})</h3>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="space-y-2">
+                        {routePlan.unassignedOrders.map((order) => (
+                          <div key={order.id} className="text-sm border-l-2 border-red-300 pl-3 py-1">
+                            {order.customerName} - {order.customerAddress}
+                            {order.exclusiveVehicle && (
+                              <Badge variant="outline" className="ml-2 text-xs">
+                                Requer: {order.vehicleTypes.join(', ')}
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
               )}
+
+              <div className="flex justify-end">
+                <Button onClick={() => {
+                  setShowResults(false);
+                  setSelectedOrders(new Set());
+                  setSelectAll(false);
+                  queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                }} data-testid="button-close-results">
+                  Fechar
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
