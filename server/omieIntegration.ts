@@ -557,7 +557,15 @@ export class OmieService {
       const stageCode = this.stagesCache.get(pedidoId);
       // Garantir que os nomes das etapas estão carregados
       await this.fetchStageNames();
-      return this.stageNamesCache.get(stageCode) || stageCode;
+      const stageName = this.stageNamesCache.get(stageCode) || stageCode;
+      
+      // Buscar dados de faturamento do cache também
+      const invoiceData = this.stagesCache.get(`invoice_${pedidoId}`) || null;
+      
+      return {
+        stageName,
+        invoiceData
+      };
     }
 
     try {

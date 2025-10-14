@@ -4529,6 +4529,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint de teste para verificar etapa de um pedido específico
+  app.get('/api/omie/test-stage/:orderId', async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      const orderId = parseInt(req.params.orderId);
+      console.log(`\n🔍 === TESTE DE ETAPA PARA PEDIDO ${orderId} ===`);
+      
+      const stageData = await (omieService as any).fetchPedidoStage(orderId);
+      
+      console.log(`📊 Resultado:`, stageData);
+      
+      res.json({ 
+        orderId,
+        stageData,
+        stageName: stageData?.stageName || 'Não encontrado',
+        stageCode: stageData?.stageCode || 'Não encontrado'
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao testar etapa:', error);
+      res.status(500).json({ message: 'Erro ao testar etapa', error: error.message });
+    }
+  });
+
   // Endpoint para forçar re-sync completo das notas fiscais com etapas corretas
   app.post('/api/omie/force-resync-billings', async (req, res) => {
     try {
@@ -4548,7 +4576,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('🧹 Caches limpos');
 
       // Executar sincronização
-      const result = await omieService.syncBillingsWithOmie();
+      const result = await (omieService as any).syncBillings();
       
       console.log(`✅ Re-sync concluído: ${result.newBillings} notas processadas`);
       res.json({ 
