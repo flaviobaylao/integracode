@@ -25,7 +25,8 @@ import {
   Trash2,
   Calendar,
   Clock,
-  Settings
+  Settings,
+  RefreshCw
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -318,17 +319,32 @@ export default function DeliveryManagement() {
                   <RotateCcw className="h-4 w-4 mr-2" />
                   Limpar
                 </Button>
-                <div className="flex items-center space-x-2 border rounded-md px-3">
-                  <Checkbox
-                    id="select-all"
-                    checked={selectAll}
-                    onCheckedChange={handleSelectAll}
-                    data-testid="checkbox-select-all"
-                  />
-                  <Label htmlFor="select-all" className="cursor-pointer text-sm">
-                    Selecionar Todos
-                  </Label>
-                </div>
+                <Button 
+                  variant="default" 
+                  onClick={() => {
+                    queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                    toast({
+                      title: "Pedidos atualizados",
+                      description: "A lista de pedidos foi recarregada",
+                    });
+                  }}
+                  className="flex-1"
+                  data-testid="button-refresh-orders"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Recarregar Pedidos
+                </Button>
+              </div>
+              <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
+                <Checkbox
+                  id="select-all"
+                  checked={selectAll}
+                  onCheckedChange={handleSelectAll}
+                  data-testid="checkbox-select-all"
+                />
+                <Label htmlFor="select-all" className="cursor-pointer text-sm">
+                  Selecionar Todos
+                </Label>
               </div>
             </div>
           </div>
