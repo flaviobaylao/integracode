@@ -23,6 +23,7 @@ import {
   salesCards,
   blockedOrders,
   customers,
+  billings as billingsTable,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
@@ -4524,6 +4525,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Erro ao limpar cache de etapas:", error);
       res.status(500).json({ error: "Erro interno do servidor" });
+    }
+  });
+
+  // Endpoint especializado para atualizar apenas as etapas das notas existentes
+  app.post('/api/omie/update-invoice-stages', async (req, res) => {
+    try {
+      console.log('🔄 Iniciando atualização de etapas das notas fiscais...');
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Serviço Omie não configurado' });
+      }
+
+      // Buscar todas as notas fiscais que têm omie_order_id (pedido relacionado)
+      const billings = await storage.getAllBillingsWithOrderId();
+      console.log(`📊 Total de notas fiscais com pedido: ${billings.length}`);
+
+      let updated = 0;
+      let errors = 0;
+      const batchSize = 50;
+
+      // Processar em lotes
+      for (let i = 0; i < billings.length; i += batchSize) {
+        const batch = billings.slice(i, i + batchSize);
+        console.log(`\n📦 Processando lote ${Math.floor(i / batchSize) + 1} de ${Math.ceil(billings.length / batchSize)} (${batch.length} notas)...`);
+
+        for (const billing of batch) {
+          try {
+            if (!billing.omieOrderId) continue;
+
+            // Buscar a etapa atualizada do pedido
+            const stageData = await (omieService as any).fetchPedidoStage(billing.omieOrderId);
+            
+            if (stageData && stageData.stageName) {
+              // Atualizar apenas se a etapa mudou
+              if (billing.invoiceStage !== stageData.stageName) {
+                await db.update(billingsTable)
+                  .set({ 
+                    invoiceStage: stageData.stageName,
+                    updatedAt: new Date()
+                  })
+                  .where(eq(billingsTable.id, billing.id));
+                
+                console.log(`✅ ${billing.invoiceNumber}: ${billing.invoiceStage} → ${stageData.stageName}`);
+                updated++;
+              }
+            }
+          } catch (error: any) {
+            console.error(`❌ Erro ao atualizar nota ${billing.invoiceNumber}:`, error.message);
+            errors++;
+          }
+        }
+
+        // Pequena pausa entre lotes para não sobrecarregar a API
+        if (i + batchSize < billings.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      const result = {
+        total: billings.length,
+        updated,
+        unchanged: billings.length - updated - errors,
+        errors,
+        message: `Atualização concluída. ${updated} notas atualizadas de ${billings.length} processadas.`
+      };
+
+      console.log('\n✅ Atualização de etapas concluída:', result);
+      res.json(result);
+    } catch (error: any) {
+      console.error('❌ Erro na atualização de etapas:', error);
+      res.status(500).json({ error: error.message });
     }
   });
 

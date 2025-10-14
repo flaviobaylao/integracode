@@ -577,16 +577,17 @@ export class OmieService {
         return null;
       }
       
-      // Ordenar etapas por data e hora (mais recente primeiro)
+      // Ordenar etapas pelo código (etapa mais avançada = maior código)
+      // Isso é importante porque pedidos podem voltar para etapas anteriores
       const etapasOrdenadas = etapas.sort((a: any, b: any) => {
-        const dateTimeA = new Date(`${a.dDtEtapa} ${a.cHrEtapa}`);
-        const dateTimeB = new Date(`${b.dDtEtapa} ${b.cHrEtapa}`);
-        return dateTimeB.getTime() - dateTimeA.getTime(); // Mais recente primeiro
+        const codeA = parseInt(a.cEtapa) || 0;
+        const codeB = parseInt(b.cEtapa) || 0;
+        return codeB - codeA; // Maior código primeiro (etapa mais avançada)
       });
       
       const ultimaEtapaCode = etapasOrdenadas[0].cEtapa;
-      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora...`);
-      console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${etapasOrdenadas[0].dDtEtapa} ${etapasOrdenadas[0].cHrEtapa}`);
+      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por código de etapa...`);
+      console.log(`📍 Etapa mais avançada: ${ultimaEtapaCode} (código numérico mais alto)`);
       
       // NOVO: Buscar dados de faturamento das etapas
       let stageInvoiceData = null;

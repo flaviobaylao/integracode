@@ -217,6 +217,9 @@ export interface IStorage {
   saveExportedReport(reportType: string, fileName: string, fileData: string, metadata?: any, createdBy?: string): Promise<any>;
   getLatestExportedReport(reportType: string): Promise<any | undefined>;
   deleteOldReports(reportType: string): Promise<void>;
+  
+  // Billing stage operations
+  getAllBillingsWithOrderId(): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2925,6 +2928,14 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(exportedReports)
       .where(eq(exportedReports.reportType, reportType));
+  }
+
+  async getAllBillingsWithOrderId(): Promise<any[]> {
+    return await db
+      .select()
+      .from(billings)
+      .where(isNotNull(billings.omieOrderId))
+      .orderBy(desc(billings.invoiceDate));
   }
 
   // Route optimization operations
