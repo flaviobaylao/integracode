@@ -380,7 +380,7 @@ export default function DeliveryManagement() {
                             )}
                           </div>
                           <span className="text-sm text-gray-600">
-                            R$ {order.saleValue.toFixed(2)}
+                            R$ {(Number(order.saleValue) || 0).toFixed(2)}
                           </span>
                         </div>
                         

@@ -305,6 +305,15 @@ async function optimizeVehicleRoutes(
       const order = orders.find((o: DeliveryOrder) => o.id === point.id)!;
       const segment = optimized.segments[i];
 
+      console.log('DEBUG deliveryRouteService - order data:', {
+        id: order.id,
+        customerName: order.customerName,
+        customerLatitude: order.customerLatitude,
+        customerLongitude: order.customerLongitude,
+        customerLatitudeType: typeof order.customerLatitude,
+        customerLongitudeType: typeof order.customerLongitude
+      });
+
       // Tempo de viagem até esta parada (assumir 40 km/h médio)
       const travelTimeMinutes = (segment.distance / 40) * 60;
       const arrivalTime = addMinutes(currentTime, travelTimeMinutes);
@@ -313,13 +322,23 @@ async function optimizeVehicleRoutes(
       const serviceTime = order.averageDeliveryTime;
       const departureTime = addMinutes(arrivalTime, serviceTime);
 
+      const lat = Number(order.customerLatitude);
+      const lon = Number(order.customerLongitude);
+
+      console.log('DEBUG deliveryRouteService - converted coordinates:', {
+        lat,
+        lon,
+        latIsNaN: isNaN(lat),
+        lonIsNaN: isNaN(lon)
+      });
+
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
         customerName: order.customerName,
         customerAddress: order.customerAddress,
-        latitude: order.customerLatitude,
-        longitude: order.customerLongitude,
+        latitude: lat,
+        longitude: lon,
         estimatedArrival: arrivalTime,
         estimatedDeparture: departureTime,
         estimatedServiceTime: serviceTime,
