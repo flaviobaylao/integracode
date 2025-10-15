@@ -653,7 +653,7 @@ export class OmieService {
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
   async listOrders(page: number = 1, pageSize: number = 50): Promise<any> {
     try {
-      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros)...`);
+      console.log(`🔍 Listando pedidos a partir de 01/01/2025 - Página ${page} (${pageSize} registros)...`);
       
       const payload = {
         call: 'ListarPedidos',
@@ -661,12 +661,12 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: '', // Buscar TODOS os pedidos sem limite de data
-          filtrar_por_data_ate: ''  // Buscar TODOS os pedidos sem limite de data
+          filtrar_por_data_de: '01/01/2025', // Buscar pedidos a partir de 01/01/2025
+          filtrar_por_data_ate: ''  // Sem limite superior
         }]
       };
 
-      console.log(`📤 Enviando payload ListarPedidos (parâmetros seguros):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
+      console.log(`📤 Enviando payload ListarPedidos (a partir de 01/01/2025):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
@@ -1080,7 +1080,7 @@ export class OmieService {
     errors: any[];
   }> {
     try {
-      console.log(`🔄 Sincronizando TODAS as notas fiscais do Omie (sem filtro de data)...`);
+      console.log(`🔄 Sincronizando notas fiscais do Omie a partir de 01/01/2025...`);
       console.log(`🔐 Chaves configuradas: app_key=${this.appKey ? 'SIM' : 'NÃO'}, app_secret=${this.appSecret ? 'SIM' : 'NÃO'}`);
       
       let totalProcessed = 0;
@@ -1100,8 +1100,8 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '', // SEM FILTRO - busca todas as notas
-            filtrar_por_data_ate: '', // SEM FILTRO - busca todas as notas
+            filtrar_por_data_de: '01/01/2025', // Buscar notas a partir de 01/01/2025
+            filtrar_por_data_ate: '', // Sem limite superior
             ordenar_por: 'DATA',
             ordem_decrescente: 'S'
           });
