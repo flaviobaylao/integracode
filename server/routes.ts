@@ -2265,6 +2265,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint temporário para listar etapas de faturamento e contar notas (SEM AUTH PARA TESTE)
+  app.get('/etapas-omie-test', async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const fs = await import('fs/promises');
+      let output = '\n\n═══════════════════════════════════════════════════════════════\n';
+      output += '🔍 INICIANDO CONSULTA DE ETAPAS DE FATURAMENTO\n';
+      output += '═══════════════════════════════════════════════════════════════\n\n';
+      
+      // Chamar o método ListarEtapasFaturamento da API Omie
+      const response = await (omieService as any).makeRequest(
+        '/produtos/etapafat/',
+        'ListarEtapasFaturamento',
+        {}
+      );
+
+      output += '📊 Resposta da API:\n' + JSON.stringify(response, null, 2) + '\n\n';
+
+      // Processar as etapas
+      const etapas = response.lista_etapas || [];
+      
+      output += `📋 Total de etapas encontradas: ${etapas.length}\n\n`;
+      
+      // Para cada etapa, buscar quantas notas fiscais existem
+      const etapasComContagem = await Promise.all(
+        etapas.map(async (etapa: any) => {
+          const codigoEtapa = etapa.cCodigo;
+          const nomeEtapa = etapa.cDescricao;
+          
+          output += `🔎 Consultando etapa ${codigoEtapa} - ${nomeEtapa}...\n`;
+          
+          try {
+            // Buscar pedidos nesta etapa
+            const pedidosResponse = await (omieService as any).makeRequest(
+              '/produtos/pedido/',
+              'ListarPedidos',
+              {
+                nPagina: 1,
+                nRegPorPagina: 1, // Só queremos a contagem
+                filtrarPorEtapa: codigoEtapa
+              }
+            );
+
+            const total = pedidosResponse.nTotRegistros || 0;
+            
+            output += `✅ Etapa ${codigoEtapa}: ${total} pedidos/notas\n`;
+            
+            return {
+              codigo: codigoEtapa,
+              nome: nomeEtapa,
+              totalNotas: total
+            };
+          } catch (error) {
+            output += `❌ Erro ao contar notas da etapa ${codigoEtapa}: ${error instanceof Error ? error.message : 'Erro desconhecido'}\n`;
+            return {
+              codigo: codigoEtapa,
+              nome: nomeEtapa,
+              totalNotas: 0,
+              erro: error instanceof Error ? error.message : 'Erro desconhecido'
+            };
+          }
+        })
+      );
+
+      output += '\n\n═══════════════════════════════════════════════════════════════\n';
+      output += '📊 RESUMO FINAL:\n';
+      output += '═══════════════════════════════════════════════════════════════\n\n';
+      
+      etapasComContagem.forEach(etapa => {
+        output += `  ${etapa.codigo} - ${etapa.nome.padEnd(25, ' ')}: ${String(etapa.totalNotas).padStart(6, ' ')} notas\n`;
+      });
+      
+      output += '\n═══════════════════════════════════════════════════════════════\n\n';
+
+      // Salvar em arquivo
+      await fs.writeFile('/tmp/etapas-resultado.txt', output);
+      console.log(output);
+
+      res.json({
+        success: true,
+        totalEtapas: etapas.length,
+        etapas: etapasComContagem,
+        arquivo: '/tmp/etapas-resultado.txt'
+      });
+
+    } catch (error) {
+      console.error('❌ Erro ao listar etapas de faturamento:', error);
+      res.status(500).json({ 
+        message: 'Erro ao listar etapas de faturamento', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   // Get orders by step/stage
   app.get('/api/omie/orders/:step', authenticateUser, async (req: any, res) => {
     try {
