@@ -32,6 +32,8 @@ import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import bcrypt from 'bcrypt';
+import path from 'path';
+import fs from 'fs';
 
 // Configurar multer para upload de arquivos
 const upload = multer({ 
