@@ -1634,12 +1634,16 @@ export class OmieService {
         sellerName,
         sellerId,
         billingType: this.determineBillingType(cfop),
-        invoiceStatus: this.mapSefazStatus(
-          invoice.infNFe?.cStat ||          // Status SEFAZ numérico (preferencial)
-          invoice.protNFe?.infProt?.cStat || // Status de protocolo
-          invoice.ide?.cStat ||             // Status na identificação
-          'emitida'                         // Fallback para emitida/100
-        ),
+        invoiceStatus: (() => {
+          // Buscar status SEFAZ, filtrar valores vazios
+          const statusCandidates = [
+            invoice.infNFe?.cStat,
+            invoice.protNFe?.infProt?.cStat,
+            invoice.ide?.cStat
+          ];
+          const validStatus = statusCandidates.find(s => s && s.toString().trim() !== '');
+          return this.mapSefazStatus(validStatus || '100'); // Fallback para 100 (Autorizado)
+        })(),
         invoiceStage: typeof invoiceStage === 'string' ? invoiceStage.substring(0, 100) : '', // Truncar para 100 caracteres com verificação de tipo
         
         // Produtos da nota
@@ -2894,7 +2898,12 @@ export class OmieService {
                 dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
                 omieCustomerCode: clientCode?.toString() || '',
                 customerDocument: customerDocument || '',
-                invoiceStatus: this.mapSefazStatus(invoice.ide?.cStat || ''),
+                invoiceStatus: (() => {
+                  // Buscar status SEFAZ, filtrar valores vazios
+                  const statusValue = invoice.ide?.cStat;
+                  const validStatus = statusValue && statusValue.toString().trim() !== '' ? statusValue : '100';
+                  return this.mapSefazStatus(validStatus); // Fallback para 100 (Autorizado)
+                })(),
                 products
               };
               
