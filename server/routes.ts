@@ -7113,6 +7113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             etapa_descricao: pedidoStage?.dEtapa || '',
             etapa_data: pedidoStage?.dDtEtapa || '',
             etapa_hora: pedidoStage?.cHrEtapa || '',
+            nota_cancelada: pedidoStage?.cancelled ? 'SIM' : 'NÃO',
             
             // === FRETE ===
             modalidade_frete: invoice.compl?.cModFrete || '',
