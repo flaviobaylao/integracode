@@ -2719,10 +2719,10 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxRecordsPerSync = 10000; // Processar até 10.000 notas por vez (sem limite prático)
+      const maxRecordsPerSync = 25000; // Processar até 25.000 notas por vez (~23.945 notas de 2025)
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados válidos
+      const maxPagesWithoutData = 100; // Parar se 100 páginas consecutivas sem dados válidos de 2025
       
       while (hasMorePages) {
         try {
@@ -2732,10 +2732,10 @@ export class OmieService {
             pagina: page,
             registros_por_pagina: 50,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '', // SEM FILTRO - busca TODAS as notas históric as
-            filtrar_por_data_ate: '', // SEM FILTRO - busca TODAS as notas históricas  
+            filtrar_por_data_de: '', // API ignora este filtro, usar filtro no código
+            filtrar_por_data_ate: '', // API ignora este filtro, usar filtro no código
             ordenar_por: 'DATA',
-            ordem_decrescente: 'S'
+            ordem_decrescente: 'S' // DECRESCENTE - das mais recentes para as mais antigas (2025 → 2024...)
           });
           
           const invoices = response.nfCadastro || [];
