@@ -40,18 +40,18 @@ async function syncComplete(horario: string) {
       console.error(`❌ [${horario}] ${errorMsg}`);
     }
 
-    // 2. Sincronizar pedidos/faturamentos (TODOS os períodos)
+    // 2. Sincronizar notas fiscais de 2025 (filtro por data de emissão)
     try {
-      console.log(`💰 [${horario}] Sincronizando pedidos e faturamentos...`);
-      const billingResult = await omieService.syncAllOrders();
+      console.log(`💰 [${horario}] Sincronizando notas fiscais de 2025...`);
+      const billingResult = await (omieService as any).syncBillings();
       results.billings = {
-        totalProcessed: billingResult.totalProcessed || 0,
-        imported: billingResult.imported || 0,
-        updated: billingResult.updated || 0
+        totalProcessed: billingResult.newBillings || 0,
+        imported: billingResult.newBillings || 0,
+        updated: 0
       };
-      console.log(`✅ [${horario}] Pedidos/Faturamentos: ${results.billings.totalProcessed} processados`);
+      console.log(`✅ [${horario}] Notas fiscais: ${results.billings.totalProcessed} processadas`);
     } catch (error: any) {
-      const errorMsg = `Erro ao sincronizar pedidos/faturamentos: ${error.message}`;
+      const errorMsg = `Erro ao sincronizar notas fiscais: ${error.message}`;
       results.errors.push(errorMsg);
       console.error(`❌ [${horario}] ${errorMsg}`);
     }

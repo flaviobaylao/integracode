@@ -1411,7 +1411,6 @@ export class OmieService {
       };
       
       console.log(`🔧 DEBUG BILLING STATUS: invoiceStatus="${billingData.invoiceStatus}", mapeado de "emitida"`);
-      console.log(`✅ APROVADO - NF ${invoiceNumber} de ${invoiceDate?.toLocaleDateString()} (≥ 01/01/2025)`);
       
       return billingData;
       
@@ -2809,8 +2808,14 @@ export class OmieService {
                 continue;
               }
               
-              // Processar todas as notas filtradas por data
+              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/01/2025
+              const dataLimite = new Date(2025, 0, 1); // 01/01/2025
+              if (invoiceDateObj < dataLimite) {
+                console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/01/2025)`);
+                continue; // Rejeitar notas antes de 2025
+              }
               
+              console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/01/2025)`);
               pageHasValidData = true;
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
