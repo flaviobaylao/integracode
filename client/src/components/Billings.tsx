@@ -441,6 +441,7 @@ export default function Billings() {
                 <SelectContent>
                   <SelectItem value="">Todas as etapas</SelectItem>
                   <SelectItem value="CANCELADO">CANCELADO</SelectItem>
+                  <SelectItem value="Pedido de Venda">Pedido de Venda</SelectItem>
                   <SelectItem value="Faturado">Faturado</SelectItem>
                   <SelectItem value="Em Rota">Em Rota</SelectItem>
                   <SelectItem value="Entregue">Entregue</SelectItem>

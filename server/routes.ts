@@ -2462,7 +2462,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ==================== ROTAS DE FATURAMENTO ====================
   
-  // Listar faturamentos com filtros avançados
+  // ROTA COMENTADA: Duplicada com linha 4672 - usar a rota mais simples abaixo
+  // Listar faturamentos com filtros avançados (DESABILITADA - conflito com rota na linha 4672)
+  /*
   app.get('/api/billings', authenticateUser, async (req, res) => {
     try {
       const {
@@ -2497,6 +2499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   });
+  */
   
   // Geração manual de agenda de visitas (apenas admin/coordinator)
   app.post('/api/visit-agenda/generate', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
