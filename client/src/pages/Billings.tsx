@@ -182,8 +182,16 @@ export default function Billings() {
   // Calcular estatísticas client-side dos dados FILTRADOS
   const stats = billingsData ? {
     totalInvoices: billingsData.total,
-    totalValue: filteredBillings.reduce((sum, b) => sum + (b.totalValue || 0), 0),
-    averageValue: billingsData.total > 0 ? filteredBillings.reduce((sum, b) => sum + (b.totalValue || 0), 0) / billingsData.total : 0,
+    totalValue: filteredBillings.reduce((sum, b) => {
+      const value = Number(b.totalValue);
+      return sum + (isNaN(value) ? 0 : value);
+    }, 0),
+    averageValue: billingsData.total > 0 
+      ? filteredBillings.reduce((sum, b) => {
+          const value = Number(b.totalValue);
+          return sum + (isNaN(value) ? 0 : value);
+        }, 0) / billingsData.total 
+      : 0,
     period: filters.startDate && filters.endDate 
       ? `${new Date(filters.startDate).toLocaleDateString('pt-BR')} - ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`
       : 'Todos os períodos'
