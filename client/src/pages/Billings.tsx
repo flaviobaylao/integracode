@@ -273,12 +273,50 @@ export default function Billings() {
     }
   });
 
+  // Mutation para sincronização de faturamentos do Omie (NOVO)
+  const syncOmieBillingsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/omie/sync-billings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+      }
+      
+      return response.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: 'Faturamentos sincronizados com sucesso',
+        description: `${result.total} faturamentos encontrados. ${result.inserted} inseridos, ${result.updated} atualizados.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao sincronizar faturamentos',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
   const handleSync = () => {
     syncMutation.mutate();
   };
 
   const handleSyncOrders = () => {
     syncOrdersMutation.mutate();
+  };
+
+  const handleSyncOmieBillings = () => {
+    syncOmieBillingsMutation.mutate();
   };
 
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
@@ -380,9 +418,23 @@ export default function Billings() {
         
         <div className="flex gap-2">
           <Button 
+            onClick={handleSyncOmieBillings} 
+            disabled={syncOmieBillingsMutation.isPending}
+            data-testid="button-sync-omie"
+          >
+            {syncOmieBillingsMutation.isPending ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RotateCw className="w-4 h-4 mr-2" />
+            )}
+            Sincronizar Omie
+          </Button>
+          
+          <Button 
             onClick={handleSync} 
             disabled={syncMutation.isPending}
             data-testid="button-sync"
+            variant="outline"
           >
             {syncMutation.isPending ? (
               <RefreshCw className="w-4 h-4 mr-2 animate-spin" />

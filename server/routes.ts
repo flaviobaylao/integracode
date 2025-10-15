@@ -7363,7 +7363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie para banco de dados
-  app.post('/api/omie/sync-billings', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/omie/sync-billings', authenticateUser, async (req: Request, res: Response) => {
     try {
       console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
 
