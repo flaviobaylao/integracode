@@ -4672,21 +4672,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota LEGADO para sincronizar apenas notas fiscais do Omie
-  app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
-    try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ message: 'Serviço Omie não configurado' });
-      }
-
-      const result = await omieService.syncBillings();
-      res.json(result);
-    } catch (error) {
-      console.error('Erro na sincronização de faturamentos:', error);
-      res.status(500).json({ message: 'Erro interno do servidor' });
-    }
-  });
 
   // Endpoint temporário para limpar cache de etapas e forçar nova sincronização
   app.post("/api/omie/clear-stage-cache", authenticateUser, async (req, res) => {
@@ -7363,11 +7348,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie para banco de dados
-  app.post('/api/omie/sync-billings', authenticateUser, async (req: Request, res: Response) => {
+  app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
       console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
 
-      const omieService = OmieIntegrationService.getInstance();
+      const omieService = getOmieService();
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
@@ -7397,35 +7382,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         for (const invoice of invoices) {
           const invoiceDate = invoice.ide?.dEmi;
-          if (!invoiceDate) continue;
+          if (!invoiceDate) {
+            console.log(`⚠️ Nota sem data - pulando`);
+            continue;
+          }
 
           const [dia, mes, ano] = invoiceDate.split('/');
           const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
           
           // Filtrar últimos 45 dias
           if (invoiceDateObj < fortyFiveDaysAgo) {
+            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 45 dias (${invoiceDate}) - parando`);
             hasMorePages = false;
             break;
           }
 
-          // Buscar etapa do pedido para verificar cancelamento
-          const pedidoId = invoice.compl?.nIdPedido;
-          let pedidoStage = null;
-          let isCancelled = false;
+          // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
+          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
           
-          if (pedidoId) {
-            try {
-              pedidoStage = await omieService.fetchPedidoStage(pedidoId);
-              isCancelled = pedidoStage?.cancelled || false;
-            } catch (error) {
-              console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
-            }
+          if (notaCancelada) {
+            console.log(`❌ Nota ${invoice.ide?.nNF} CANCELADA - pulando`);
+            continue;
           }
 
-          // FILTRO: Pular notas canceladas
-          if (isCancelled) {
-            console.log(`❌ Nota ${invoice.ide?.nNF} cancelada - pulando`);
-            continue;
+          // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
+          const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
+          let stageName = '';
+          
+          if (nfStageCode) {
+            // Mapear código de etapa para nome
+            const stageMap: Record<string, string> = {
+              '10': 'Pedido de Venda',
+              '20': 'Em Rota',
+              '50': 'Faturado',
+              '60': 'Faturado',
+              '70': 'Entregue',
+              '80': 'Aguardando Rota'
+            };
+            stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
+            console.log(`📋 Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (código: ${nfStageCode})`);
+          } else {
+            console.log(`⚠️ Nota ${invoice.ide?.nNF} - SEM ETAPA encontrada (nfProdServStatus?.cEtapa: ${invoice.nfProdServStatus?.cEtapa}, cabecalho?.etapa: ${invoice.cabecalho?.etapa})`);
           }
 
           // Buscar nome do vendedor pelo código
@@ -7443,6 +7440,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Adicionar à lista de faturamentos
+          const pedidoId = invoice.compl?.nIdPedido;
+          
           allBillings.push({
             omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
             invoiceNumber: invoice.ide?.nNF || '',
@@ -7451,9 +7450,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             invoiceDate: invoiceDateObj,
             vendorCode: vendorCode,
             sellerName: vendorName,
-            stageName: pedidoStage?.stageName || '',
+            stageName: stageName,
             cfop: invoice.det?.[0]?.prod?.CFOP || '',
-            isCancelled: false, // Já filtrado
+            isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
             omieOrderId: pedidoId?.toString() || '',
             orderNumber: invoice.compl?.nPed || invoice.ide?.nNF || '',
             orderDate: invoiceDateObj,
@@ -7477,23 +7476,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const billing of allBillings) {
         try {
           // Verificar se já existe
-          const existing = await storage.db.select()
-            .from(billings)
-            .where(eq(billings.invoiceNumber, billing.invoiceNumber))
+          const existing = await db.select()
+            .from(billingsTable)
+            .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber))
             .limit(1);
 
           if (existing.length > 0) {
             // Atualizar
-            await storage.db.update(billings)
+            await db.update(billingsTable)
               .set({
                 ...billing,
                 updatedAt: new Date()
               })
-              .where(eq(billings.invoiceNumber, billing.invoiceNumber));
+              .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
             updatedCount++;
           } else {
             // Inserir
-            await storage.db.insert(billings).values(billing);
+            await db.insert(billingsTable).values(billing);
             insertedCount++;
           }
         } catch (error) {
@@ -7517,6 +7516,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Erro ao sincronizar faturamentos:', error);
       res.status(500).json({ 
         message: 'Erro ao sincronizar faturamentos',
+        error: error.message 
+      });
+    }
+  });
+
+  // Debug: Buscar notas específicas do Omie
+  app.post('/api/omie/debug-invoices', authenticateUser, async (req: any, res) => {
+    try {
+      const { invoiceNumbers } = req.body;
+      
+      if (!invoiceNumbers || !Array.isArray(invoiceNumbers)) {
+        return res.status(400).json({ message: 'invoiceNumbers array é obrigatório' });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      const results = [];
+
+      for (const invoiceNumber of invoiceNumbers) {
+        console.log(`\n🔍 Buscando nota fiscal ${invoiceNumber}...`);
+        
+        // Buscar a nota fiscal
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: 1,
+          registros_por_pagina: 1,
+          filtrar_por_numero: invoiceNumber
+        });
+
+        const invoice = response.nfCadastro?.[0];
+        
+        if (!invoice) {
+          results.push({
+            invoiceNumber,
+            found: false,
+            message: 'Nota fiscal não encontrada'
+          });
+          continue;
+        }
+
+        // Buscar pedido associado
+        const pedidoId = invoice.compl?.nIdPedido;
+        let pedidoStage = null;
+        
+        if (pedidoId) {
+          try {
+            pedidoStage = await omieService.fetchPedidoStage(pedidoId);
+          } catch (error) {
+            console.log(`⚠️ Erro ao buscar pedido ${pedidoId}:`, error);
+          }
+        }
+
+        results.push({
+          invoiceNumber,
+          found: true,
+          invoiceData: {
+            nIdNF: invoice.compl?.nIdNF,
+            nNF: invoice.ide?.nNF,
+            dEmi: invoice.ide?.dEmi,
+            cliente: invoice.nfDestInt?.cRazao,
+            valor: invoice.total?.ICMSTot?.vNF,
+            cfop: invoice.det?.[0]?.prod?.CFOP,
+            nIdPedido: pedidoId
+          },
+          pedidoData: pedidoStage ? {
+            pedidoId: pedidoId,
+            stageName: pedidoStage.stageName,
+            stageCode: pedidoStage.stageCode,
+            cancelled: pedidoStage.cancelled,
+            rawStages: pedidoStage.rawStages
+          } : null
+        });
+      }
+
+      res.json({ results });
+
+    } catch (error: any) {
+      console.error('Erro ao buscar notas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar notas',
         error: error.message 
       });
     }
