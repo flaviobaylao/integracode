@@ -666,10 +666,35 @@ export class OmieService {
         }]
       };
 
+      console.log(`📤 ✅ FILTRO DE DATA ATIVO: 01/01/2025`);
       console.log(`📤 Enviando payload ListarPedidos (a partir de 01/01/2025):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
+      
+      // Filtrar manualmente pedidos criados a partir de 01/01/2025
+      // O filtro da API filtra por data de ALTERAÇÃO, não de INCLUSÃO
+      if (response.pedido_venda_produto && response.pedido_venda_produto.length > 0) {
+        const pedidosAntes = response.pedido_venda_produto.length;
+        
+        response.pedido_venda_produto = response.pedido_venda_produto.filter((pedido: any) => {
+          const dataInclusao = pedido.infoCadastro?.dInc;
+          if (!dataInclusao) return true; // Se não tem data, mantém
+          
+          // Converte DD/MM/YYYY para Date
+          const [dia, mes, ano] = dataInclusao.split('/');
+          const dataPedido = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+          const dataLimite = new Date(2025, 0, 1); // 01/01/2025
+          
+          return dataPedido >= dataLimite;
+        });
+        
+        const pedidosDepois = response.pedido_venda_produto.length;
+        const pedidosRemovidos = pedidosAntes - pedidosDepois;
+        
+        console.log(`🔍 Filtro manual aplicado: ${pedidosRemovidos} pedidos anteriores a 01/01/2025 foram removidos`);
+        console.log(`📊 Pedidos válidos (≥ 01/01/2025): ${pedidosDepois} de ${pedidosAntes}`);
+      }
       
       return response;
     } catch (error) {
