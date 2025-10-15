@@ -23,6 +23,7 @@ interface Billing {
   paymentMethod: string;
   dueDate?: string;
   invoiceStatus: string;
+  invoiceStage?: string; // Etapa da nota fiscal (Faturado, Aguardando Rota, Em Rota, Entregue)
   products?: Array<{
     code: string;
     description: string;
@@ -160,6 +161,18 @@ export default function Billings() {
         const sellerName = (billing.sellerName || '').toLowerCase();
         const searchTerm = filters.sellerName.toLowerCase();
         if (!sellerName.includes(searchTerm)) return false;
+      }
+      
+      // Filtro por etapa da nota fiscal
+      if (filters.invoiceStage) {
+        // Se o filtro for CANCELADO, verificar pelo status da nota
+        if (filters.invoiceStage === 'CANCELADO') {
+          const cancelledStatuses = ['101', '135', '155'];
+          if (!cancelledStatuses.includes(billing.invoiceStatus)) return false;
+        } else {
+          // Para outras etapas, comparar diretamente com invoiceStage
+          if (billing.invoiceStage !== filters.invoiceStage) return false;
+        }
       }
       
       return true;
