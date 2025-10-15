@@ -421,9 +421,12 @@ export const billings = pgTable("billings", {
   // Dados adicionais do Omie
   omieCustomerCode: varchar("omie_customer_code"), // Código do cliente no Omie
   sellerId: varchar("seller_id"), // ID do vendedor
+  vendorCode: varchar("vendor_code"), // Código do vendedor no Omie (titulo_vendedor_id)
   billingType: billingTypeEnum("billing_type").notNull(), // Tipo de faturamento
   invoiceStatus: varchar("invoice_status"), // Status da nota fiscal no Omie
   invoiceStage: varchar("invoice_stage"), // Etapa do pedido/nota fiscal (cEtapa do Omie)
+  stageName: varchar("stage_name"), // Nome da etapa (etapa_descricao)
+  isCancelled: boolean("is_cancelled").notNull().default(false), // Se a nota foi cancelada
   
   // Produtos da nota fiscal
   products: jsonb("products").$type<Array<{
