@@ -6970,6 +6970,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Exportar notas fiscais do Omie para Excel (para análise) - TEMPORÁRIO SEM AUTH
+  app.post('/api/omie/export-invoices-excel-temp', async (req: any, res) => {
+    try {
+
+      console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL...\n');
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      const allInvoices: any[] = [];
+      let page = 1;
+      let hasMorePages = true;
+
+      // Buscar todas as notas desde 01/10/2025
+      while (hasMorePages && page <= 50) { // Limite de 50 páginas para segurança
+        console.log(`📄 Buscando página ${page}...`);
+        
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        const invoices = response.nfCadastro || [];
+        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+
+        for (const invoice of invoices) {
+          // Verificar data de emissão
+          const invoiceDate = invoice.ide?.dEmi;
+          if (!invoiceDate) continue;
+
+          const [dia, mes, ano] = invoiceDate.split('/');
+          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
+          
+          // Filtrar desde 01/10/2025
+          if (invoiceDateObj < new Date('2025-10-01')) {
+            hasMorePages = false;
+            break;
+          }
+
+          // Coletar TODOS os dados da nota
+          allInvoices.push({
+            // Identificação
+            numero_nf: invoice.ide?.nNF || '',
+            data_emissao: invoiceDate,
+            status: invoice.nfProdServStatus?.cStat || '',
+            
+            // Cliente
+            cliente_codigo: invoice.dest?.codigo_cliente_omie || '',
+            cliente_nome: invoice.dest?.razao_social || '',
+            cliente_cpf_cnpj: invoice.dest?.cnpj_cpf || '',
+            
+            // Valores
+            valor_total: invoice.total?.vNF || 0,
+            valor_produtos: invoice.total?.vProd || 0,
+            valor_desconto: invoice.total?.vDesc || 0,
+            
+            // Pedido relacionado
+            pedido_id: invoice.compl?.nIdPedido || '',
+            pedido_numero: invoice.compl?.nPed || '',
+            
+            // Faturamento
+            chave_nfe: invoice.nfProdServStatus?.cChaveNFe || '',
+            
+            // Dados completos em JSON para análise
+            dados_completos: JSON.stringify(invoice)
+          });
+        }
+
+        if (invoices.length < 50) {
+          hasMorePages = false;
+        }
+        
+        page++;
+      }
+
+      console.log(`\n✅ Total de notas coletadas: ${allInvoices.length}\n`);
+
+      // Criar Excel
+      const ws = XLSX.utils.json_to_sheet(allInvoices);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Notas Fiscais');
+
+      // Gerar arquivo
+      const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      const filename = `notas-fiscais-omie-${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      // Enviar arquivo
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.send(excelBuffer);
+
+    } catch (error: any) {
+      console.error('Erro ao exportar notas fiscais:', error);
+      res.status(500).json({ 
+        message: 'Erro ao exportar notas fiscais',
+        error: error.message 
+      });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;

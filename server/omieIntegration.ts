@@ -585,17 +585,25 @@ export class OmieService {
         return null;
       }
       
-      // Ordenar etapas pelo código (etapa mais avançada = maior código)
-      // Isso é importante porque pedidos podem voltar para etapas anteriores
+      // Ordenar etapas pela DATA/HORA do evento (mais recente = etapa atual)
+      // IMPORTANTE: Não usar código numérico porque etapa 80 (Aguardando Rota) fica registrada
+      // no histórico mesmo depois que o pedido avança para 70 (Entregue)
       const etapasOrdenadas = etapas.sort((a: any, b: any) => {
-        const codeA = parseInt(a.cEtapa) || 0;
-        const codeB = parseInt(b.cEtapa) || 0;
-        return codeB - codeA; // Maior código primeiro (etapa mais avançada)
+        // Converter data brasileira DD/MM/YYYY para timestamp
+        const [diaA, mesA, anoA] = (a.dDtEtapa || '01/01/2000').split('/');
+        const [diaB, mesB, anoB] = (b.dDtEtapa || '01/01/2000').split('/');
+        
+        const dataA = new Date(`${anoA}-${mesA}-${diaA}T${a.cHrEtapa || '00:00:00'}`);
+        const dataB = new Date(`${anoB}-${mesB}-${diaB}T${b.cHrEtapa || '00:00:00'}`);
+        
+        return dataB.getTime() - dataA.getTime(); // Mais recente primeiro
       });
       
       const ultimaEtapaCode = etapasOrdenadas[0].cEtapa;
-      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por código de etapa...`);
-      console.log(`📍 Etapa mais avançada: ${ultimaEtapaCode} (código numérico mais alto)`);
+      const ultimaEtapaData = etapasOrdenadas[0].dDtEtapa;
+      const ultimaEtapaHora = etapasOrdenadas[0].cHrEtapa;
+      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora do evento...`);
+      console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${ultimaEtapaData} às ${ultimaEtapaHora}`);
       
       // NOVO: Buscar dados de faturamento das etapas
       let stageInvoiceData = null;
