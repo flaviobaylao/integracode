@@ -6988,6 +6988,195 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Download do arquivo Excel EXPANDIDO de notas fiscais
+  app.get('/api/omie/download-invoices-excel-expanded', async (req: any, res) => {
+    try {
+      const filePath = path.join(process.cwd(), 'attached_assets', 'notas-fiscais-omie-outubro-2025-expandido.xlsx');
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ message: 'Arquivo não encontrado' });
+      }
+
+      res.download(filePath, 'notas-fiscais-omie-outubro-2025-expandido.xlsx');
+    } catch (error: any) {
+      console.error('Erro ao fazer download do arquivo:', error);
+      res.status(500).json({ message: 'Erro ao fazer download', error: error.message });
+    }
+  });
+
+  // Exportar notas fiscais do Omie para Excel EXPANDIDO (para análise) - TEMPORÁRIO SEM AUTH
+  app.post('/api/omie/export-invoices-excel-expanded', async (req: any, res) => {
+    try {
+      console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL (EXPANDIDO)...\n');
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      const allInvoices: any[] = [];
+      let page = 1;
+      let hasMorePages = true;
+
+      // Buscar todas as notas desde 01/10/2025
+      while (hasMorePages && page <= 50) {
+        console.log(`📄 Buscando página ${page}...`);
+        
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        const invoices = response.nfCadastro || [];
+        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+
+        for (const invoice of invoices) {
+          const invoiceDate = invoice.ide?.dEmi;
+          if (!invoiceDate) continue;
+
+          const [dia, mes, ano] = invoiceDate.split('/');
+          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
+          
+          if (invoiceDateObj < new Date('2025-10-01')) {
+            hasMorePages = false;
+            break;
+          }
+
+          // Expandir TODOS os campos em colunas separadas
+          allInvoices.push({
+            // === IDENTIFICAÇÃO ===
+            numero_nf: invoice.ide?.nNF || '',
+            serie_nf: invoice.ide?.serie || '',
+            modelo_nf: invoice.ide?.mod || '',
+            data_emissao: invoiceDate,
+            data_saida: invoice.ide?.dSaiEnt || '',
+            hora_emissao: invoice.ide?.hEmi || '',
+            hora_saida: invoice.ide?.hSaiEnt || '',
+            tipo_nf: invoice.ide?.tpNF || '',
+            finalidade_nfe: invoice.ide?.finNFe || '',
+            
+            // === STATUS ===
+            status_codigo: invoice.nfProdServStatus?.cStat || '',
+            status_descricao: invoice.nfProdServStatus?.xMotivo || '',
+            chave_nfe: invoice.nfProdServStatus?.cChaveNFe || '',
+            protocolo: invoice.nfProdServStatus?.nProt || '',
+            
+            // === CLIENTE (DEST) ===
+            cliente_codigo_omie: invoice.dest?.codigo_cliente_omie || '',
+            cliente_razao_social: invoice.dest?.razao_social || '',
+            cliente_cpf_cnpj: invoice.dest?.cnpj_cpf || '',
+            cliente_inscricao_estadual: invoice.dest?.inscricao_estadual || '',
+            cliente_endereco: invoice.dest?.endereco || '',
+            cliente_numero: invoice.dest?.numero_endereco || '',
+            cliente_complemento: invoice.dest?.complemento || '',
+            cliente_bairro: invoice.dest?.bairro || '',
+            cliente_cidade: invoice.dest?.cidade || '',
+            cliente_estado: invoice.dest?.estado || '',
+            cliente_cep: invoice.dest?.cep || '',
+            
+            // === VALORES TOTAIS ===
+            valor_total_nf: invoice.total?.ICMSTot?.vNF || 0,
+            valor_produtos: invoice.total?.ICMSTot?.vProd || 0,
+            valor_desconto: invoice.total?.ICMSTot?.vDesc || 0,
+            valor_frete: invoice.total?.ICMSTot?.vFrete || 0,
+            valor_seguro: invoice.total?.ICMSTot?.vSeg || 0,
+            valor_outras_despesas: invoice.total?.ICMSTot?.vOutro || 0,
+            valor_icms: invoice.total?.ICMSTot?.vICMS || 0,
+            valor_icms_st: invoice.total?.ICMSTot?.vST || 0,
+            valor_ipi: invoice.total?.ICMSTot?.vIPI || 0,
+            valor_pis: invoice.total?.ICMSTot?.vPIS || 0,
+            valor_cofins: invoice.total?.ICMSTot?.vCOFINS || 0,
+            
+            // === PEDIDO RELACIONADO ===
+            pedido_id_omie: invoice.compl?.nIdPedido || '',
+            pedido_numero: invoice.compl?.nPed || '',
+            pedido_categoria: invoice.compl?.cCodCateg || '',
+            
+            // === FRETE ===
+            modalidade_frete: invoice.compl?.cModFrete || '',
+            transportadora_id: invoice.compl?.nIdTransp || '',
+            
+            // === TÍTULOS/FINANCEIRO ===
+            titulo_id: invoice.titulos?.[0]?.nCodTitulo || '',
+            titulo_numero: invoice.titulos?.[0]?.cNumTitulo || '',
+            titulo_documento: invoice.titulos?.[0]?.cDoc || '',
+            titulo_valor: invoice.titulos?.[0]?.nValorTitulo || 0,
+            titulo_data_vencimento: invoice.titulos?.[0]?.dDtVenc || '',
+            titulo_data_previsao: invoice.titulos?.[0]?.dDtPrevisao || '',
+            titulo_categoria: invoice.titulos?.[0]?.cCodCateg || '',
+            titulo_vendedor_id: invoice.titulos?.[0]?.nCodVendedor || '',
+            titulo_projeto_id: invoice.titulos?.[0]?.nCodProjeto || '',
+            
+            // === INFORMAÇÕES ADICIONAIS ===
+            info_data_inclusao: invoice.info?.dInc || '',
+            info_hora_inclusao: invoice.info?.hInc || '',
+            info_usuario_inclusao: invoice.info?.uInc || '',
+            info_data_alteracao: invoice.info?.dAlt || '',
+            info_hora_alteracao: invoice.info?.hAlt || '',
+            info_usuario_alteracao: invoice.info?.uAlt || '',
+            
+            // === PRODUTOS (primeiro item apenas) ===
+            produto_codigo: invoice.det?.[0]?.prod?.cProd || '',
+            produto_descricao: invoice.det?.[0]?.prod?.xProd || '',
+            produto_ncm: invoice.det?.[0]?.prod?.NCM || '',
+            produto_cfop: invoice.det?.[0]?.prod?.CFOP || '',
+            produto_unidade: invoice.det?.[0]?.prod?.uCom || '',
+            produto_quantidade: invoice.det?.[0]?.prod?.qCom || 0,
+            produto_valor_unitario: invoice.det?.[0]?.prod?.vUnCom || 0,
+            produto_valor_total: invoice.det?.[0]?.prod?.vProd || 0,
+            
+            // === EMISSOR ===
+            emissor_codigo: invoice.nfEmitInt?.nCodEmp || '',
+            
+            // === DESTINATÁRIO INTERNO ===
+            dest_codigo_interno: invoice.nfDestInt?.nCodCli || '',
+            dest_razao_interna: invoice.nfDestInt?.cRazao || '',
+            dest_cnpj_interno: invoice.nfDestInt?.cnpj_cpf || ''
+          });
+        }
+
+        if (invoices.length < 50) {
+          hasMorePages = false;
+        }
+        
+        page++;
+      }
+
+      console.log(`\n✅ Total de notas coletadas: ${allInvoices.length}\n`);
+
+      // Criar Excel
+      const ws = XLSX.utils.json_to_sheet(allInvoices);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Notas Fiscais');
+
+      // Ajustar largura das colunas
+      const colWidths = Object.keys(allInvoices[0] || {}).map(() => ({ wch: 20 }));
+      ws['!cols'] = colWidths;
+
+      // Gerar arquivo
+      const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      
+      // Salvar na pasta attached_assets
+      const outputPath = path.join(process.cwd(), 'attached_assets', 'notas-fiscais-omie-outubro-2025-expandido.xlsx');
+      fs.writeFileSync(outputPath, excelBuffer);
+      
+      console.log(`✅ Arquivo salvo em: ${outputPath}`);
+
+      // Enviar arquivo
+      res.download(outputPath, 'notas-fiscais-omie-outubro-2025-expandido.xlsx');
+
+    } catch (error: any) {
+      console.error('Erro ao exportar notas fiscais:', error);
+      res.status(500).json({ 
+        message: 'Erro ao exportar notas fiscais',
+        error: error.message 
+      });
+    }
+  });
+
   // Exportar notas fiscais do Omie para Excel (para análise) - TEMPORÁRIO SEM AUTH
   app.post('/api/omie/export-invoices-excel-temp', async (req: any, res) => {
     try {
