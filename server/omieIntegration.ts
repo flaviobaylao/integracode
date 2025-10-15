@@ -1347,6 +1347,10 @@ export class OmieService {
               invoiceDate = stageResult.invoiceData.invoiceDate;
               console.log(`📋 ✅ APLICANDO dados de faturamento das etapas DIRETO: NF=${invoiceNumber}, Data=${invoiceDate?.toLocaleDateString()}`);
             }
+          } else {
+            // BUGFIX: Quando fetchPedidoStage retorna null (lista de etapas vazia), usar etapa do cabeçalho
+            console.log(`⚠️ fetchPedidoStage retornou null, usando etapa do cabeçalho como fallback: ${etapa}`);
+            invoiceStage = etapa || '';
           }
         } catch (error) {
           console.log(`⚠️ Erro ao buscar etapa do pedido ${omieOrderId}:`, error);
