@@ -4676,7 +4676,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
       const billings = await storage.getBillings(sellerId);
-      res.json(billings);
+      
+      // Retornar no formato esperado pelo frontend
+      res.json({
+        billings: billings,
+        total: billings.length,
+        page: 1,
+        pageSize: billings.length
+      });
     } catch (error) {
       console.error('Erro ao buscar faturamentos:', error);
       res.status(500).json({ message: 'Erro interno do servidor' });
