@@ -653,7 +653,7 @@ export class OmieService {
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
   async listOrders(page: number = 1, pageSize: number = 50): Promise<any> {
     try {
-      console.log(`🔍 Listando pedidos a partir de 01/01/2025 - Página ${page} (${pageSize} registros)...`);
+      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros)...`);
       
       const payload = {
         call: 'ListarPedidos',
@@ -661,40 +661,16 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: '01/01/2025', // Buscar pedidos a partir de 01/01/2025
-          filtrar_por_data_ate: ''  // Sem limite superior
+          filtrar_por_data_de: '', // SEM FILTRO - buscar TODOS os pedidos históricos
+          filtrar_por_data_ate: ''  // SEM FILTRO - buscar TODOS os pedidos históricos
         }]
       };
 
-      console.log(`📤 ✅ FILTRO DE DATA ATIVO: 01/01/2025`);
-      console.log(`📤 Enviando payload ListarPedidos (a partir de 01/01/2025):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
+      console.log(`📤 ✅ SEM FILTRO DE DATA - Buscando TODOS os pedidos históricos`);
+      console.log(`📤 Enviando payload ListarPedidos (sem filtro):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
-      
-      // Filtrar manualmente pedidos criados a partir de 01/01/2025
-      // O filtro da API filtra por data de ALTERAÇÃO, não de INCLUSÃO
-      if (response.pedido_venda_produto && response.pedido_venda_produto.length > 0) {
-        const pedidosAntes = response.pedido_venda_produto.length;
-        
-        response.pedido_venda_produto = response.pedido_venda_produto.filter((pedido: any) => {
-          const dataInclusao = pedido.infoCadastro?.dInc;
-          if (!dataInclusao) return true; // Se não tem data, mantém
-          
-          // Converte DD/MM/YYYY para Date
-          const [dia, mes, ano] = dataInclusao.split('/');
-          const dataPedido = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
-          const dataLimite = new Date(2025, 0, 1); // 01/01/2025
-          
-          return dataPedido >= dataLimite;
-        });
-        
-        const pedidosDepois = response.pedido_venda_produto.length;
-        const pedidosRemovidos = pedidosAntes - pedidosDepois;
-        
-        console.log(`🔍 Filtro manual aplicado: ${pedidosRemovidos} pedidos anteriores a 01/01/2025 foram removidos`);
-        console.log(`📊 Pedidos válidos (≥ 01/01/2025): ${pedidosDepois} de ${pedidosAntes}`);
-      }
       
       return response;
     } catch (error) {
@@ -1403,6 +1379,15 @@ export class OmieService {
       
       console.log(`✅ Pedido validado: ID=${omieOrderId}, Número=${orderNumber}, Cliente=${customerFantasyName}`);
       
+      // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/01/2025
+      if (invoiceDate && invoiceNumber) {
+        const dataLimite = new Date(2025, 0, 1); // 01/01/2025
+        if (invoiceDate < dataLimite) {
+          console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDate.toLocaleDateString()} (antes de 01/01/2025)`);
+          return null; // Rejeitar notas antes de 2025
+        }
+      }
+      
       const billingData = {
         omieOrderId,
         orderNumber,
@@ -1426,6 +1411,7 @@ export class OmieService {
       };
       
       console.log(`🔧 DEBUG BILLING STATUS: invoiceStatus="${billingData.invoiceStatus}", mapeado de "emitida"`);
+      console.log(`✅ APROVADO - NF ${invoiceNumber} de ${invoiceDate?.toLocaleDateString()} (≥ 01/01/2025)`);
       
       return billingData;
       
