@@ -6970,6 +6970,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Download do arquivo Excel de notas fiscais exportado
+  app.get('/api/omie/download-invoices-excel', async (req: any, res) => {
+    try {
+      const filePath = path.join(process.cwd(), 'attached_assets', 'notas-fiscais-omie-outubro-2025.xlsx');
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ message: 'Arquivo não encontrado' });
+      }
+
+      res.download(filePath, 'notas-fiscais-omie-outubro-2025.xlsx');
+    } catch (error: any) {
+      console.error('Erro ao fazer download do arquivo:', error);
+      res.status(500).json({ message: 'Erro ao fazer download', error: error.message });
+    }
+  });
+
   // Exportar notas fiscais do Omie para Excel (para análise) - TEMPORÁRIO SEM AUTH
   app.post('/api/omie/export-invoices-excel-temp', async (req: any, res) => {
     try {
