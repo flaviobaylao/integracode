@@ -2808,14 +2808,14 @@ export class OmieService {
                 continue;
               }
               
-              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/01/2025
-              const dataLimite = new Date(2025, 0, 1); // 01/01/2025
+              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/09/2025
+              const dataLimite = new Date(2025, 8, 1); // 01/09/2025 (mês 8 = setembro)
               if (invoiceDateObj < dataLimite) {
-                console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/01/2025)`);
-                continue; // Rejeitar notas antes de 2025
+                console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/09/2025)`);
+                continue; // Rejeitar notas antes de setembro/2025
               }
               
-              console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/01/2025)`);
+              console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/09/2025)`);
               pageHasValidData = true;
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
