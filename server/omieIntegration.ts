@@ -549,12 +549,15 @@ export class OmieService {
   }
 
   // Método para buscar etapa de um pedido específico com nome E dados de faturamento
-  async fetchPedidoStage(pedidoId: string): Promise<{stageName: string, invoiceData: any} | null> {
+  async fetchPedidoStage(pedidoId: string): Promise<{cEtapa: string, dEtapa: string, dDtEtapa: string, cHrEtapa: string, stageName: string, invoiceData: any} | null> {
     if (!pedidoId) return null;
     
     // Verificar cache primeiro
     if (this.stagesCache.has(pedidoId)) {
       const stageCode = this.stagesCache.get(pedidoId);
+      const stageDate = this.stagesCache.get(`date_${pedidoId}`) || '';
+      const stageTime = this.stagesCache.get(`time_${pedidoId}`) || '';
+      
       // Garantir que os nomes das etapas estão carregados
       await this.fetchStageNames();
       const stageName = this.stageNamesCache.get(stageCode) || stageCode;
@@ -563,6 +566,10 @@ export class OmieService {
       const invoiceData = this.stagesCache.get(`invoice_${pedidoId}`) || null;
       
       return {
+        cEtapa: stageCode,
+        dEtapa: stageName,
+        dDtEtapa: stageDate,
+        cHrEtapa: stageTime,
         stageName,
         invoiceData
       };
@@ -629,8 +636,10 @@ export class OmieService {
         console.log(`✅ SALVANDO dados de faturamento no cache: invoice_${pedidoId}`, stageInvoiceData);
       }
       
-      // Armazenar código no cache
+      // Armazenar código, data e hora no cache
       this.stagesCache.set(pedidoId, ultimaEtapaCode);
+      this.stagesCache.set(`date_${pedidoId}`, ultimaEtapaData);
+      this.stagesCache.set(`time_${pedidoId}`, ultimaEtapaHora);
       
       // Garantir que os nomes das etapas estão carregados
       await this.fetchStageNames();
@@ -646,6 +655,10 @@ export class OmieService {
       }
       
       return {
+        cEtapa: ultimaEtapaCode,
+        dEtapa: stageName,
+        dDtEtapa: ultimaEtapaData,
+        cHrEtapa: ultimaEtapaHora,
         stageName: stageName,
         invoiceData: stageInvoiceData
       };
