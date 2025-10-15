@@ -7045,6 +7045,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
 
+          // Buscar etapa do pedido se houver pedido relacionado
+          let pedidoStage = null;
+          const pedidoId = invoice.compl?.nIdPedido;
+          
+          if (pedidoId) {
+            try {
+              console.log(`🔍 Buscando etapa do pedido ${pedidoId}...`);
+              pedidoStage = await omieService.fetchPedidoStage(pedidoId);
+            } catch (error) {
+              console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
+            }
+          }
+
           // Expandir TODOS os campos em colunas separadas
           allInvoices.push({
             // === IDENTIFICAÇÃO ===
@@ -7094,6 +7107,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             pedido_id_omie: invoice.compl?.nIdPedido || '',
             pedido_numero: invoice.compl?.nPed || '',
             pedido_categoria: invoice.compl?.cCodCateg || '',
+            
+            // === ETAPA DO PEDIDO ===
+            etapa_codigo: pedidoStage?.cEtapa || '',
+            etapa_descricao: pedidoStage?.dEtapa || '',
+            etapa_data: pedidoStage?.dDtEtapa || '',
+            etapa_hora: pedidoStage?.cHrEtapa || '',
             
             // === FRETE ===
             modalidade_frete: invoice.compl?.cModFrete || '',
