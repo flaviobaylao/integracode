@@ -548,8 +548,8 @@ export class OmieService {
     }
   }
 
-  // Método para buscar etapa de um pedido específico com nome E dados de faturamento
-  async fetchPedidoStage(pedidoId: string): Promise<{cEtapa: string, dEtapa: string, dDtEtapa: string, cHrEtapa: string, stageName: string, invoiceData: any} | null> {
+  // Método para buscar etapa de um pedido específico com nome E dados de faturamento E cancelamento
+  async fetchPedidoStage(pedidoId: string): Promise<{cEtapa: string, dEtapa: string, dDtEtapa: string, cHrEtapa: string, stageName: string, invoiceData: any, cancelled: boolean} | null> {
     if (!pedidoId) return null;
     
     // Verificar cache primeiro
@@ -557,6 +557,7 @@ export class OmieService {
       const stageCode = this.stagesCache.get(pedidoId);
       const stageDate = this.stagesCache.get(`date_${pedidoId}`) || '';
       const stageTime = this.stagesCache.get(`time_${pedidoId}`) || '';
+      const cancelled = this.stagesCache.get(`cancelled_${pedidoId}`) || false;
       
       // Garantir que os nomes das etapas estão carregados
       await this.fetchStageNames();
@@ -571,7 +572,8 @@ export class OmieService {
         dDtEtapa: stageDate,
         cHrEtapa: stageTime,
         stageName,
-        invoiceData
+        invoiceData,
+        cancelled
       };
     }
 
@@ -609,8 +611,12 @@ export class OmieService {
       const ultimaEtapaCode = etapasOrdenadas[0].cEtapa;
       const ultimaEtapaData = etapasOrdenadas[0].dDtEtapa;
       const ultimaEtapaHora = etapasOrdenadas[0].cHrEtapa;
+      const cancelamentoInfo = etapasOrdenadas[0].cancelamento || { cCancelado: 'N' };
+      const notaCancelada = cancelamentoInfo.cCancelado === 'S';
+      
       console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora do evento...`);
       console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${ultimaEtapaData} às ${ultimaEtapaHora}`);
+      console.log(`🚫 Cancelamento: ${notaCancelada ? 'SIM' : 'NÃO'} (cCancelado=${cancelamentoInfo.cCancelado})`);
       
       // NOVO: Buscar dados de faturamento das etapas
       let stageInvoiceData = null;
@@ -636,10 +642,11 @@ export class OmieService {
         console.log(`✅ SALVANDO dados de faturamento no cache: invoice_${pedidoId}`, stageInvoiceData);
       }
       
-      // Armazenar código, data e hora no cache
+      // Armazenar código, data, hora e cancelamento no cache
       this.stagesCache.set(pedidoId, ultimaEtapaCode);
       this.stagesCache.set(`date_${pedidoId}`, ultimaEtapaData);
       this.stagesCache.set(`time_${pedidoId}`, ultimaEtapaHora);
+      this.stagesCache.set(`cancelled_${pedidoId}`, notaCancelada);
       
       // Garantir que os nomes das etapas estão carregados
       await this.fetchStageNames();
@@ -660,7 +667,8 @@ export class OmieService {
         dDtEtapa: ultimaEtapaData,
         cHrEtapa: ultimaEtapaHora,
         stageName: stageName,
-        invoiceData: stageInvoiceData
+        invoiceData: stageInvoiceData,
+        cancelled: notaCancelada
       };
       
     } catch (error) {
