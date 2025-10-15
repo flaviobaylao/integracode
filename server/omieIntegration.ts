@@ -2905,6 +2905,22 @@ export class OmieService {
                 }
               }
               
+              // Extrair etapa do pedido relacionado
+              let invoiceStage = '';
+              const pedidoId = invoice.compl?.nIdPedido?.toString();
+              
+              if (pedidoId) {
+                try {
+                  const stageData = await this.fetchPedidoStage(parseInt(pedidoId));
+                  if (stageData && stageData.stageName) {
+                    invoiceStage = stageData.stageName;
+                    console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
+                  }
+                } catch (error) {
+                  console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
+                }
+              }
+              
               const billingData = {
                 omieInvoiceId,
                 invoiceNumber,
@@ -2924,6 +2940,7 @@ export class OmieService {
                   const validStatus = statusValue && statusValue.toString().trim() !== '' ? statusValue : '100';
                   return this.mapSefazStatus(validStatus); // Fallback para 100 (Autorizado)
                 })(),
+                invoiceStage: invoiceStage || '',
                 products
               };
               
