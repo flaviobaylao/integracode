@@ -36,6 +36,7 @@ interface Billing {
   sellerId: string;
   billingType: string;
   invoiceStatus: string;
+  invoiceStage?: string;
   products: Array<{
     code: string;
     description: string;
@@ -95,34 +96,98 @@ export default function Billings() {
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  // Query para buscar faturamentos
-  const { data: billingsData, isLoading: isLoadingBillings, refetch } = useQuery({
-    queryKey: ['/api/billings', filters],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value !== undefined && value !== '') {
-          params.append(key, value.toString());
-        }
-      });
-      return fetch(`/api/billings?${params.toString()}`).then(res => res.json());
-    }
+  // Query para buscar faturamentos (sem filtros - tudo client-side)
+  const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
+    queryKey: ['/api/billings'],
+    queryFn: () => fetch(`/api/billings`).then(res => res.json())
   });
 
-  // Query para estatísticas
-  const { data: stats } = useQuery({
-    queryKey: ['/api/billings/stats', filters],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      // Adicionar todos os filtros exceto page e pageSize
-      Object.entries(filters).forEach(([key, value]) => {
-        if (key !== 'page' && key !== 'pageSize' && value !== undefined && value !== '') {
-          params.append(key, value.toString());
-        }
+  // Implementar filtros, ordenação, paginação e stats client-side
+  const { billingsData, filteredBillings } = billingsArray ? (() => {
+    // 1. Aplicar filtros
+    let filtered = billingsArray.filter(billing => {
+      // Invoice Number filter
+      if (filters.invoiceNumber && !billing.invoiceNumber.toLowerCase().includes(filters.invoiceNumber.toLowerCase())) {
+        return false;
+      }
+      
+      // Customer Document filter
+      if (filters.customerDocument && !billing.customerDocument.includes(filters.customerDocument)) {
+        return false;
+      }
+      
+      // Date range filter
+      if (filters.startDate) {
+        const billingDate = new Date(billing.invoiceDate);
+        const startDate = new Date(filters.startDate);
+        if (billingDate < startDate) return false;
+      }
+      if (filters.endDate) {
+        const billingDate = new Date(billing.invoiceDate);
+        const endDate = new Date(filters.endDate);
+        if (billingDate > endDate) return false;
+      }
+      
+      // CFOP filter
+      if (filters.cfop && getCfopDisplayName(billing.cfop) !== filters.cfop) {
+        return false;
+      }
+      
+      // Invoice Stage filter
+      if (filters.invoiceStage && billing.invoiceStage !== filters.invoiceStage) {
+        return false;
+      }
+      
+      // Seller filter
+      if (filters.sellerId && billing.sellerId !== filters.sellerId) {
+        return false;
+      }
+      
+      return true;
+    });
+    
+    // 2. Aplicar ordenação (ANTES da paginação!)
+    if (sortField) {
+      filtered.sort((a, b) => {
+        const aValue = a[sortField];
+        const bValue = b[sortField];
+        
+        // Handle undefined values
+        if (aValue === undefined && bValue === undefined) return 0;
+        if (aValue === undefined) return sortDirection === 'asc' ? 1 : -1;
+        if (bValue === undefined) return sortDirection === 'asc' ? -1 : 1;
+        
+        if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
       });
-      return fetch(`/api/billings/stats?${params.toString()}`).then(res => res.json());
     }
-  });
+    
+    // 3. Aplicar paginação (DEPOIS da ordenação!)
+    const start = (filters.page - 1) * filters.pageSize;
+    const end = start + filters.pageSize;
+    const paginatedBillings = filtered.slice(start, end);
+    
+    return {
+      billingsData: {
+        billings: paginatedBillings,
+        total: filtered.length,
+        page: filters.page,
+        pageSize: filters.pageSize
+      },
+      filteredBillings: filtered
+    };
+  })() : { billingsData: null, filteredBillings: [] };
+
+  // Calcular estatísticas client-side dos dados FILTRADOS
+  const stats = billingsData ? {
+    totalInvoices: billingsData.total,
+    totalValue: filteredBillings.reduce((sum, b) => sum + (b.totalValue || 0), 0),
+    averageValue: billingsData.total > 0 ? filteredBillings.reduce((sum, b) => sum + (b.totalValue || 0), 0) / billingsData.total : 0,
+    period: filters.startDate && filters.endDate 
+      ? `${new Date(filters.startDate).toLocaleDateString('pt-BR')} - ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`
+      : 'Todos os períodos'
+  } : null;
 
   // Query para buscar vendedores
   const { data: sellers } = useQuery({
@@ -212,7 +277,8 @@ export default function Billings() {
     setFilters(prev => ({
       ...prev,
       [key]: value,
-      page: 1 // Reset para primeira página ao filtrar
+      // Only reset to page 1 when changing filters, not when changing page/pageSize
+      ...(key !== 'page' && key !== 'pageSize' ? { page: 1 } : {})
     }));
   };
 
@@ -231,16 +297,6 @@ export default function Billings() {
       setSortDirection('asc');
     }
   };
-
-  // Ordenar dados localmente
-  const sortedBillings = billingsData?.billings ? [...billingsData.billings].sort((a, b) => {
-    const aValue = a[sortField];
-    const bValue = b[sortField];
-    
-    if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-    return 0;
-  }) : [];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -530,14 +586,14 @@ export default function Billings() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedBillings.length === 0 ? (
+                  {(billingsData?.billings.length || 0) === 0 ? (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                         Nenhum faturamento encontrado
                       </TableCell>
                     </TableRow>
                   ) : (
-                    sortedBillings.map((billing) => (
+                    billingsData?.billings.map((billing) => (
                       <TableRow key={billing.id} data-testid={`row-billing-${billing.id}`}>
                         <TableCell className="font-mono text-sm" data-testid={`cell-order-${billing.id}`}>
                           {billing.orderNumber || '-'}
