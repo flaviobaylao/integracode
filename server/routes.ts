@@ -6972,6 +6972,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Teste de cancelamento de nota
+  app.get('/api/omie/test-cancellation/:invoiceNumber', async (req: any, res) => {
+    try {
+      const { invoiceNumber } = req.params;
+      const omieService = getOmieService();
+      
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      // Buscar nota fiscal em múltiplas páginas
+      let invoice = null;
+      let page = 1;
+      
+      while (!invoice && page <= 20) {
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        invoice = response.nfCadastro?.find((nf: any) => nf.ide?.nNF === invoiceNumber);
+        
+        if (!invoice && response.nfCadastro?.length < 50) {
+          break; // Última página
+        }
+        
+        page++;
+      }
+      
+      if (!invoice) {
+        return res.status(404).json({ message: `Nota fiscal ${invoiceNumber} não encontrada após buscar ${page} páginas` });
+      }
+
+      const pedidoId = invoice.compl?.nIdPedido;
+      let pedidoStage = null;
+
+      if (pedidoId) {
+        pedidoStage = await omieService.fetchPedidoStage(pedidoId);
+      }
+
+      res.json({
+        invoice: {
+          numero: invoice.ide?.nNF,
+          data: invoice.ide?.dEmi,
+          cliente: invoice.dest?.razao_social,
+          pedidoId: pedidoId
+        },
+        stage: pedidoStage,
+        cancelled: pedidoStage?.cancelled || false
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao testar cancelamento:', error);
+      res.status(500).json({ message: 'Erro ao testar cancelamento', error: error.message });
+    }
+  });
+
   // Download do arquivo Excel de notas fiscais exportado
   app.get('/api/omie/download-invoices-excel', async (req: any, res) => {
     try {
