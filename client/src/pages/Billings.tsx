@@ -317,6 +317,39 @@ export default function Billings() {
     return new Date(dateString).toLocaleDateString('pt-BR');
   };
 
+  const handleExport = async () => {
+    try {
+      const response = await fetch('/api/billings/export', {
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Erro ao exportar dados');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dados-omie-${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast({
+        title: 'Exportação concluída',
+        description: 'Os dados foram exportados com sucesso!',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro na exportação',
+        description: 'Não foi possível exportar os dados',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const SortableHeader = ({ field, children }: { field: keyof Billing; children: React.ReactNode }) => (
     <TableHead 
       className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -361,6 +394,16 @@ export default function Billings() {
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            onClick={handleExport} 
+            data-testid="button-export"
+            title="Exportar todos os dados do Omie para Excel"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Exportar Excel
           </Button>
         </div>
       </div>

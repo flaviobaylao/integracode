@@ -3599,6 +3599,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   });
+
+  // Exportar todos os dados do Omie em Excel (DEVE VIR ANTES DO /:id)
+  app.get('/api/billings/export', authenticateUser, async (req: any, res) => {
+    try {
+      const XLSX = await import('xlsx');
+      
+      // Buscar todos os billings sem filtro
+      const allBillings = await db.select().from(billingsTable).orderBy(billingsTable.orderDate);
+      
+      // Formatar dados para Excel
+      const excelData = allBillings.map(b => ({
+        'Número Pedido': b.orderNumber,
+        'ID Pedido Omie': b.omieOrderId,
+        'Número NF': b.invoiceNumber || '',
+        'ID NF Omie': b.omieInvoiceId || '',
+        'Cliente': b.customerFantasyName,
+        'CPF/CNPJ': b.customerDocument || '',
+        'Código Cliente Omie': b.omieCustomerCode || '',
+        'CFOP': b.cfop || '',
+        'Data Pedido': b.orderDate ? new Date(b.orderDate).toLocaleDateString('pt-BR') : '',
+        'Data Faturamento': b.invoiceDate ? new Date(b.invoiceDate).toLocaleDateString('pt-BR') : '',
+        'Data Vencimento': b.dueDate ? new Date(b.dueDate).toLocaleDateString('pt-BR') : '',
+        'Valor Total': b.totalValue ? parseFloat(b.totalValue.toString()) : 0,
+        'Forma Pagamento': b.paymentMethod || '',
+        'Vendedor': b.sellerName || '',
+        'ID Vendedor': b.sellerId || '',
+        'Tipo Faturamento': b.billingType,
+        'Status NF': b.invoiceStatus || '',
+        'Etapa': b.invoiceStage || '',
+        'Produtos': b.products ? JSON.stringify(b.products) : '',
+        'Criado Em': b.createdAt ? new Date(b.createdAt).toLocaleString('pt-BR') : '',
+        'Atualizado Em': b.updatedAt ? new Date(b.updatedAt).toLocaleString('pt-BR') : ''
+      }));
+      
+      // Criar workbook e worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(excelData);
+      
+      // Ajustar largura das colunas
+      const colWidths = [
+        { wch: 15 }, // Número Pedido
+        { wch: 20 }, // ID Pedido Omie
+        { wch: 15 }, // Número NF
+        { wch: 20 }, // ID NF Omie
+        { wch: 35 }, // Cliente
+        { wch: 20 }, // CPF/CNPJ
+        { wch: 20 }, // Código Cliente Omie
+        { wch: 10 }, // CFOP
+        { wch: 15 }, // Data Pedido
+        { wch: 15 }, // Data Faturamento
+        { wch: 15 }, // Data Vencimento
+        { wch: 15 }, // Valor Total
+        { wch: 20 }, // Forma Pagamento
+        { wch: 25 }, // Vendedor
+        { wch: 15 }, // ID Vendedor
+        { wch: 20 }, // Tipo Faturamento
+        { wch: 15 }, // Status NF
+        { wch: 20 }, // Etapa
+        { wch: 50 }, // Produtos
+        { wch: 20 }, // Criado Em
+        { wch: 20 }  // Atualizado Em
+      ];
+      ws['!cols'] = colWidths;
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Dados Omie');
+      
+      // Gerar buffer do Excel
+      const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      
+      // Enviar arquivo
+      const timestamp = new Date().toISOString().split('T')[0];
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=dados-omie-${timestamp}.xlsx`);
+      res.send(excelBuffer);
+      
+    } catch (error) {
+      console.error('Erro ao exportar dados do Omie:', error);
+      res.status(500).json({ message: 'Erro ao exportar dados' });
+    }
+  });
   
   // Buscar faturamento específico
   app.get('/api/billings/:id', authenticateUser, async (req, res) => {
