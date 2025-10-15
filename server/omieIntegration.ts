@@ -502,6 +502,43 @@ export class OmieService {
     }
   }
 
+  // Método para buscar dados de um vendedor específico
+  async fetchVendorData(vendorCode: string): Promise<{codigo: string, nome: string} | null> {
+    if (!vendorCode) return null;
+    
+    // Verificar cache primeiro (usar o mesmo cache de vendedores)
+    const cacheKey = `vendor_${vendorCode}`;
+    if (this.vendorsCache && this.vendorsCache.has(cacheKey)) {
+      return this.vendorsCache.get(cacheKey);
+    }
+
+    try {
+      console.log(`🔍 Buscando dados do vendedor: ${vendorCode}`);
+      
+      const response = await this.makeRequest('/geral/vendedores/', 'ConsultarVendedor', {
+        codigo: parseInt(vendorCode)
+      });
+      
+      const vendorData = {
+        codigo: response.codigo?.toString() || vendorCode,
+        nome: response.nome || ''
+      };
+      
+      // Inicializar cache se não existir
+      if (!this.vendorsCache) {
+        this.vendorsCache = new Map<string, any>();
+      }
+      
+      // Armazenar no cache
+      this.vendorsCache.set(cacheKey, vendorData);
+      return vendorData;
+      
+    } catch (error) {
+      console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
+      return null;
+    }
+  }
+
   // Método para buscar configurações das etapas e seus nomes
   async fetchStageNames(): Promise<void> {
     if (this.stageNamesCache.size > 0) return; // Já carregado

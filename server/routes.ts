@@ -7362,6 +7362,166 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sincronizar faturamentos do Omie para banco de dados
+  app.post('/api/omie/sync-billings', requireAuth, async (req: Request, res: Response) => {
+    try {
+      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
+
+      const omieService = OmieIntegrationService.getInstance();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      // Calcular data de 45 dias atrás
+      const fortyFiveDaysAgo = new Date();
+      fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
+
+      const allBillings: any[] = [];
+      let page = 1;
+      let hasMorePages = true;
+
+      // Buscar notas fiscais dos últimos 45 dias
+      while (hasMorePages && page <= 50) {
+        console.log(`📄 Buscando página ${page}...`);
+        
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        const invoices = response.nfCadastro || [];
+        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+
+        for (const invoice of invoices) {
+          const invoiceDate = invoice.ide?.dEmi;
+          if (!invoiceDate) continue;
+
+          const [dia, mes, ano] = invoiceDate.split('/');
+          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
+          
+          // Filtrar últimos 45 dias
+          if (invoiceDateObj < fortyFiveDaysAgo) {
+            hasMorePages = false;
+            break;
+          }
+
+          // Buscar etapa do pedido para verificar cancelamento
+          const pedidoId = invoice.compl?.nIdPedido;
+          let pedidoStage = null;
+          let isCancelled = false;
+          
+          if (pedidoId) {
+            try {
+              pedidoStage = await omieService.fetchPedidoStage(pedidoId);
+              isCancelled = pedidoStage?.cancelled || false;
+            } catch (error) {
+              console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error);
+            }
+          }
+
+          // FILTRO: Pular notas canceladas
+          if (isCancelled) {
+            console.log(`❌ Nota ${invoice.ide?.nNF} cancelada - pulando`);
+            continue;
+          }
+
+          // Buscar nome do vendedor pelo código
+          const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
+          let vendorName = '';
+          
+          if (vendorCode) {
+            try {
+              const vendorData = await omieService.fetchVendorData(vendorCode);
+              vendorName = vendorData?.nome || vendorCode;
+            } catch (error) {
+              console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
+              vendorName = vendorCode; // Usar código se não encontrar nome
+            }
+          }
+
+          // Adicionar à lista de faturamentos
+          allBillings.push({
+            omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
+            invoiceNumber: invoice.ide?.nNF || '',
+            customerFantasyName: invoice.nfDestInt?.cRazao || '',
+            totalValue: invoice.total?.ICMSTot?.vNF || 0,
+            invoiceDate: invoiceDateObj,
+            vendorCode: vendorCode,
+            sellerName: vendorName,
+            stageName: pedidoStage?.stageName || '',
+            cfop: invoice.det?.[0]?.prod?.CFOP || '',
+            isCancelled: false, // Já filtrado
+            omieOrderId: pedidoId?.toString() || '',
+            orderNumber: invoice.compl?.nPed || invoice.ide?.nNF || '',
+            orderDate: invoiceDateObj,
+            billingType: 'venda' as const
+          });
+        }
+
+        if (invoices.length < 50) {
+          hasMorePages = false;
+        }
+        
+        page++;
+      }
+
+      console.log(`\n✅ Total de faturamentos coletados: ${allBillings.length}\n`);
+
+      // Salvar no banco de dados
+      let insertedCount = 0;
+      let updatedCount = 0;
+
+      for (const billing of allBillings) {
+        try {
+          // Verificar se já existe
+          const existing = await storage.db.select()
+            .from(billings)
+            .where(eq(billings.invoiceNumber, billing.invoiceNumber))
+            .limit(1);
+
+          if (existing.length > 0) {
+            // Atualizar
+            await storage.db.update(billings)
+              .set({
+                ...billing,
+                updatedAt: new Date()
+              })
+              .where(eq(billings.invoiceNumber, billing.invoiceNumber));
+            updatedCount++;
+          } else {
+            // Inserir
+            await storage.db.insert(billings).values(billing);
+            insertedCount++;
+          }
+        } catch (error) {
+          console.error(`Erro ao processar faturamento ${billing.invoiceNumber}:`, error);
+        }
+      }
+
+      console.log(`\n✅ Sincronização concluída!`);
+      console.log(`📥 Inseridos: ${insertedCount}`);
+      console.log(`🔄 Atualizados: ${updatedCount}\n`);
+
+      res.json({ 
+        success: true,
+        message: 'Faturamentos sincronizados com sucesso',
+        inserted: insertedCount,
+        updated: updatedCount,
+        total: allBillings.length
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao sincronizar faturamentos:', error);
+      res.status(500).json({ 
+        message: 'Erro ao sincronizar faturamentos',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
