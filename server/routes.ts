@@ -2161,15 +2161,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             try {
               // Converter cliente do Omie para formato do sistema
               const converted = omieService.convertClientToSystemFormat(omieClient);
+              
+              // Verificar se cliente já existe ANTES de definir sellerId
+              let existingCustomer = await storage.getCustomer(converted.id);
+              
+              // Prioridade: Omie > Existente > Default (NUNCA sobrescrever vendedor existente)
+              const finalSellerId = converted.sellerId || existingCustomer?.sellerId || defaultSellerId || '';
+              
               const systemClient = {
                 ...converted,
-                // Usar sellerId do Omie se disponível, senão usar defaultSellerId
-                sellerId: converted.sellerId || defaultSellerId || '',
+                sellerId: finalSellerId,
                 weekdays: "segunda,terça,quarta,quinta,sexta"
               };
-
-              // Verificar se cliente já existe
-              let existingCustomer = await storage.getCustomer(systemClient.id);
               
               if (existingCustomer) {
                 // Atualizar cliente existente
@@ -2189,7 +2192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   city: systemClient.city,
                   state: systemClient.state,
                   zipCode: systemClient.zipCode,
-                  sellerId: systemClient.sellerId || existingCustomer.sellerId, // Atualizar vendedor do Omie
+                  sellerId: converted.sellerId || existingCustomer.sellerId, // NUNCA sobrescrever com default
                   isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao

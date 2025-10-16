@@ -2308,7 +2308,8 @@ export class OmieService {
             bloqueado: client.bloqueado,
             inativo: client.inativo,
             situacao: client.situacao, // Adicionar campo situacao
-            limite_credito: client.limite_credito
+            limite_credito: client.limite_credito,
+            recomendacoes: client.recomendacoes // IMPORTANTE: incluir recomendações do Omie para extrair vendedor
           };
         }),
         totalPages: response.total_de_paginas || 1,
