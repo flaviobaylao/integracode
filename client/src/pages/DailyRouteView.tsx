@@ -88,9 +88,12 @@ export default function DailyRouteView() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
+      // Formatar data apenas (YYYY-MM-DD) sem hora
+      const dateStr = format(today, 'yyyy-MM-dd');
+      
       const response = await apiRequest('POST', '/api/daily-routes/generate', {
         sellerId: selectedSellerId,
-        date: today.toISOString()
+        date: dateStr
       });
       
       return response;
@@ -108,9 +111,9 @@ export default function DailyRouteView() {
         });
       }
       
-      // Invalidar cache para recarregar dados
+      // Invalidar cache específico e geral para recarregar dados
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
-      refetch();
     },
     onError: (error: any) => {
       toast({
