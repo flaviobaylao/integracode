@@ -87,10 +87,14 @@ export default function DailyRouteView() {
     queryKey: ['/api/daily-routes', selectedSellerId, selectedDate],
     queryFn: async () => {
       if (!selectedSellerId || !selectedDate) return null;
-      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/date/${selectedDate}`);
+      // Adicionar timestamp para quebrar cache do navegador
+      const cacheBuster = Date.now();
+      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/date/${selectedDate}?t=${cacheBuster}`);
       return response;
     },
-    enabled: !!selectedSellerId && !!selectedDate
+    enabled: !!selectedSellerId && !!selectedDate,
+    staleTime: 0, // Sempre considerar dados como stale para forçar refetch
+    cacheTime: 0, // Não cachear no React Query
   });
 
   const route: DailyRoute | null = routeData?.route || null;
@@ -188,9 +192,10 @@ export default function DailyRouteView() {
     : user;
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
-  const formatDistance = (meters: number) => {
-    if (meters < 1000) return `${Math.round(meters)}m`;
-    return `${(meters / 1000).toFixed(1)}km`;
+  const formatDistance = (km: number) => {
+    // Os valores já vêm em quilômetros do backend
+    if (km < 0.1) return `${Math.round(km * 1000)}m`; // Menos de 100m mostra em metros
+    return `${km.toFixed(1)}km`;
   };
 
   const getVisitStatus = (visit: any) => {
