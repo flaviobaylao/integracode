@@ -7,9 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
-  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -45,6 +47,7 @@ export default function DailyRouteView() {
   // Estado para vendedor selecionado (admin pode escolher)
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -79,15 +82,15 @@ export default function DailyRouteView() {
     enabled: !!selectedSellerId && isAdmin
   });
 
-  // Buscar rota do dia do vendedor selecionado
+  // Buscar rota do vendedor selecionado para a data escolhida
   const { data: routeData, isLoading, refetch } = useQuery({
-    queryKey: ['/api/daily-routes', selectedSellerId, 'today'],
+    queryKey: ['/api/daily-routes', selectedSellerId, selectedDate],
     queryFn: async () => {
-      if (!selectedSellerId) return null;
-      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/today`);
+      if (!selectedSellerId || !selectedDate) return null;
+      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/date/${selectedDate}`);
       return response;
     },
-    enabled: !!selectedSellerId
+    enabled: !!selectedSellerId && !!selectedDate
   });
 
   const route: DailyRoute | null = routeData?.route || null;
@@ -102,7 +105,7 @@ export default function DailyRouteView() {
         title: "Visita validada!",
         description: "A visita foi validada e incluída no cálculo de distância.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
     }
   });
 
@@ -116,22 +119,16 @@ export default function DailyRouteView() {
         title: "Visita cancelada",
         description: "A visita foi cancelada e removida do cálculo de distância.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
     }
   });
 
   // Mutation para gerar rota manualmente
   const generateRouteMutation = useMutation({
     mutationFn: async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      // Formatar data apenas (YYYY-MM-DD) sem hora
-      const dateStr = format(today, 'yyyy-MM-dd');
-      
       const response = await apiRequest('POST', '/api/daily-routes/generate', {
         sellerId: selectedSellerId,
-        date: dateStr
+        date: selectedDate
       });
       
       return response;
@@ -140,7 +137,7 @@ export default function DailyRouteView() {
       if (data.alreadyExists) {
         toast({
           title: "Rota já existe",
-          description: "A rota para hoje já foi gerada anteriormente.",
+          description: "A rota para esta data já foi gerada anteriormente.",
         });
       } else {
         toast({
@@ -150,7 +147,7 @@ export default function DailyRouteView() {
       }
       
       // Invalidar cache específico e geral para recarregar dados
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
     },
     onError: (error: any) => {
@@ -272,25 +269,36 @@ export default function DailyRouteView() {
         </div>
 
         {isAdmin && sellers.length > 0 && (
-          <div className="mb-6">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
-              Selecionar Vendedor
-            </label>
-            <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
-              <SelectTrigger className="w-full md:w-96" data-testid="select-seller">
-                <SelectValue placeholder="Selecione um vendedor" />
-              </SelectTrigger>
-              <SelectContent>
-                {sellers.map((seller: any) => (
-                  <SelectItem key={seller.id} value={seller.id}>
-                    <div className="flex items-center">
-                      <Users className="h-4 w-4 mr-2" />
-                      {seller.firstName} {seller.lastName || ''} ({seller.email})
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="select-seller">Selecionar Vendedor</Label>
+              <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+                <SelectTrigger className="w-full" data-testid="select-seller">
+                  <SelectValue placeholder="Selecione um vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sellers.map((seller: any) => (
+                    <SelectItem key={seller.id} value={seller.id}>
+                      <div className="flex items-center">
+                        <Users className="h-4 w-4 mr-2" />
+                        {seller.firstName} {seller.lastName || ''} ({seller.email})
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="select-date">Data</Label>
+              <Input
+                id="select-date"
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-full"
+                data-testid="input-date"
+              />
+            </div>
           </div>
         )}
 
@@ -354,27 +362,38 @@ export default function DailyRouteView() {
         </div>
       </div>
 
-      {/* Seletor de vendedor para admin */}
+      {/* Seletores de vendedor e data para admin */}
       {isAdmin && sellers.length > 0 && (
-        <div className="mb-6">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
-            Selecionar Vendedor
-          </label>
-          <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
-            <SelectTrigger className="w-full md:w-96" data-testid="select-seller">
-              <SelectValue placeholder="Selecione um vendedor" />
-            </SelectTrigger>
-            <SelectContent>
-              {sellers.map((seller: any) => (
-                <SelectItem key={seller.id} value={seller.id}>
-                  <div className="flex items-center">
-                    <Users className="h-4 w-4 mr-2" />
-                    {seller.firstName} {seller.lastName || ''} ({seller.email})
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="select-seller-main">Selecionar Vendedor</Label>
+            <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+              <SelectTrigger className="w-full" data-testid="select-seller">
+                <SelectValue placeholder="Selecione um vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                {sellers.map((seller: any) => (
+                  <SelectItem key={seller.id} value={seller.id}>
+                    <div className="flex items-center">
+                      <Users className="h-4 w-4 mr-2" />
+                      {seller.firstName} {seller.lastName || ''} ({seller.email})
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="select-date-main">Data</Label>
+            <Input
+              id="select-date-main"
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="w-full"
+              data-testid="input-date"
+            />
+          </div>
         </div>
       )}
 
