@@ -28,8 +28,16 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
+  // Validar coordenadas antes de renderizar
+  const hasValidCoordinates = 
+    homeLocation && 
+    typeof homeLocation.latitude === 'number' && 
+    typeof homeLocation.longitude === 'number' &&
+    !isNaN(homeLocation.latitude) && 
+    !isNaN(homeLocation.longitude);
+
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    if (!mapContainerRef.current || mapRef.current || !hasValidCoordinates) return;
 
     // Inicializar mapa
     const map = L.map(mapContainerRef.current).setView(
@@ -188,7 +196,19 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
         `);
     });
 
-  }, [homeLocation, visits, optimizedOrder, checkpoints]);
+  }, [homeLocation, visits, optimizedOrder, checkpoints, hasValidCoordinates]);
+
+  if (!hasValidCoordinates) {
+    return (
+      <div className="w-full h-[500px] rounded-lg border border-gray-200 dark:border-gray-700 flex items-center justify-center bg-gray-50 dark:bg-gray-800">
+        <div className="text-center">
+          <MapPin className="h-12 w-12 mx-auto text-gray-400 mb-2" />
+          <p className="text-gray-600 dark:text-gray-400">Coordenadas inválidas</p>
+          <p className="text-sm text-gray-500 dark:text-gray-500">Configure as coordenadas de casa para visualizar o mapa</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
