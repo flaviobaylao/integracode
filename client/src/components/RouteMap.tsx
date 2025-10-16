@@ -175,6 +175,9 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       const lat = parseFloat(checkpoint.latitude);
       const lon = parseFloat(checkpoint.longitude);
 
+      // Validar coordenadas antes de adicionar marcador
+      if (isNaN(lat) || isNaN(lon)) return;
+
       const checkpointIconHtml = renderToStaticMarkup(
         <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center"
              style={{ width: '12px', height: '12px' }}>

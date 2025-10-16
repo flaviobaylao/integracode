@@ -6898,16 +6898,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       routeDate.setHours(0, 0, 0, 0);
       
       // Buscar sales cards do vendedor para aquela data
-      const cards = await db.select({
-        cardId: salesCards.id,
-        customerId: customers.id,
-        customerName: customers.name,
-        cpfCnpj: customers.cpfCnpj,
-        address: customers.address,
-        latitude: customers.latitude,
-        longitude: customers.longitude,
-        virtualService: customers.virtualService
-      })
+      const cards = await db.select()
         .from(salesCards)
         .innerJoin(customers, eq(salesCards.customerId, customers.id))
         .where(
@@ -6919,12 +6910,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       
       // Filtrar apenas os que não têm coordenadas e não são virtuais
-      const missingCoordinates = cards.filter(card => 
-        !card.virtualService && 
-        (!card.latitude || !card.longitude || 
-         card.latitude === '0' || card.longitude === '0' ||
-         card.latitude === null || card.longitude === null)
-      );
+      const missingCoordinates = cards
+        .filter(row => {
+          const customer = row.customers;
+          return !customer.virtualService && 
+            (!customer.latitude || !customer.longitude || 
+             customer.latitude === '0' || customer.longitude === '0');
+        })
+        .map(row => ({
+          cardId: row.sales_cards.id,
+          customerId: row.customers.id,
+          customerName: row.customers.name,
+          cpfCnpj: row.customers.cpfCnpj,
+          address: row.customers.address,
+          latitude: row.customers.latitude,
+          longitude: row.customers.longitude
+        }));
 
       res.json({
         date: date,
