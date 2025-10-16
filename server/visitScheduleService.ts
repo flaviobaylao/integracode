@@ -231,3 +231,214 @@ export async function generateVisitAgenda(): Promise<{ processed: number; genera
     throw error;
   }
 }
+
+// Função para garantir cobertura de 2 meses de agenda futura (usando sales_cards)
+export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promise<{
+  processed: number;
+  generated: number;
+  skipped: number;
+  errors: number;
+}> {
+  console.log(`📅 [FUTURE-AGENDA] Verificando cobertura de ${monthsAhead} meses futuros...`);
+  
+  const startTime = Date.now();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  // Data limite: hoje + monthsAhead meses
+  const targetDate = new Date(today);
+  targetDate.setMonth(targetDate.getMonth() + monthsAhead);
+  
+  const stats = {
+    processed: 0,
+    generated: 0,
+    skipped: 0,
+    errors: 0
+  };
+  
+  try {
+    const { salesCards } = await import('../shared/schema');
+    const { storage } = await import('./storage');
+    const { sql } = await import('drizzle-orm');
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    
+    // Buscar todos os clientes ativos com periodicidade configurada
+    const activeCustomers = await db.select({
+      id: customers.id,
+      name: customers.name,
+      visitPeriodicity: customers.visitPeriodicity,
+      weekdays: customers.weekdays
+    })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.isActive, true),
+        isNotNull(customers.visitPeriodicity),
+        isNotNull(customers.weekdays)
+      )
+    );
+    
+    console.log(`📊 [FUTURE-AGENDA] Encontrados ${activeCustomers.length} clientes ativos com periodicidade`);
+    
+    for (const customer of activeCustomers) {
+      try {
+        stats.processed++;
+        
+        // Validar weekdays
+        const parsedWeekdays = typeof customer.weekdays === 'string' 
+          ? JSON.parse(customer.weekdays) 
+          : customer.weekdays;
+        
+        if (!parsedWeekdays || parsedWeekdays.length === 0) {
+          stats.skipped++;
+          continue;
+        }
+        
+        // Buscar último card pendente do cliente
+        const lastCards = await db.select()
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, customer.id),
+              eq(salesCards.status, 'pending')
+            )
+          )
+          .orderBy(sql`${salesCards.scheduledDate} DESC`)
+          .limit(1);
+        
+        if (lastCards.length === 0) {
+          stats.skipped++;
+          continue;
+        }
+        
+        const lastCard = lastCards[0];
+        let currentCardId = lastCard.id;
+        let currentDate = new Date(lastCard.scheduledDate);
+        let cardsGenerated = 0;
+        
+        // Seguir a cadeia de next_card_id até o último
+        while (lastCard.nextCardId) {
+          const nextCards = await db.select()
+            .from(salesCards)
+            .where(eq(salesCards.id, lastCard.nextCardId))
+            .limit(1);
+          
+          if (nextCards.length === 0) break;
+          
+          const nextCard = nextCards[0];
+          currentCardId = nextCard.id;
+          currentDate = new Date(nextCard.scheduledDate);
+          
+          if (nextCard.nextCardId) {
+            Object.assign(lastCard, { nextCardId: nextCard.nextCardId });
+          } else {
+            break;
+          }
+        }
+        
+        // Gerar cards até cobrir targetDate
+        while (currentDate < targetDate) {
+          try {
+            // Calcular próxima data
+            const result = calculateNextVisitDate({
+              weekdays: parsedWeekdays as any[],
+              periodicity: customer.visitPeriodicity as any,
+              lastCompletedDate: currentDate
+            });
+            
+            const nextDate = result.nextDate;
+            
+            // Se próxima data ultrapassa targetDate, parar
+            if (nextDate > targetDate) break;
+            
+            // Gerar próximo card usando storage
+            const newCard = await storage.generateNextSalesCard(currentCardId);
+            
+            if (!newCard) {
+              console.log(`⚠️ [FUTURE-AGENDA] Cliente ${customer.name}: generateNextSalesCard retornou NULL`);
+              break;
+            }
+            
+            currentCardId = newCard.id;
+            currentDate = new Date(newCard.scheduledDate);
+            cardsGenerated++;
+            stats.generated++;
+            
+          } catch (error) {
+            console.error(`❌ [FUTURE-AGENDA] Erro ao gerar card para ${customer.name}:`, error);
+            stats.errors++;
+            break;
+          }
+        }
+        
+        if (cardsGenerated > 0) {
+          console.log(`✅ [FUTURE-AGENDA] ${customer.name}: ${cardsGenerated} cards gerados`);
+        }
+        
+      } catch (error) {
+        console.error(`❌ [FUTURE-AGENDA] Erro ao processar ${customer.name}:`, error);
+        stats.errors++;
+      }
+    }
+    
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    console.log(`✨ [FUTURE-AGENDA] Verificação concluída em ${duration}s:`);
+    console.log(`   - Clientes processados: ${stats.processed}`);
+    console.log(`   - Cards gerados: ${stats.generated}`);
+    console.log(`   - Clientes pulados: ${stats.skipped}`);
+    console.log(`   - Erros: ${stats.errors}`);
+    
+    // Registrar histórico no systemSettings
+    try {
+      const { systemSettings } = await import('../shared/schema');
+      const historyKey = 'future_agenda_history';
+      
+      const existingSettings = await db.select()
+        .from(systemSettings)
+        .where(eq(systemSettings.key, historyKey))
+        .limit(1);
+      
+      const newEntry = {
+        timestamp: new Date().toISOString(),
+        monthsAhead,
+        processed: stats.processed,
+        generated: stats.generated,
+        skipped: stats.skipped,
+        errors: stats.errors,
+        durationSeconds: parseFloat(duration)
+      };
+      
+      if (existingSettings.length > 0) {
+        const history = JSON.parse(existingSettings[0].value || '[]');
+        history.unshift(newEntry);
+        
+        // Manter apenas últimas 30 execuções
+        const trimmedHistory = history.slice(0, 30);
+        
+        await db.update(systemSettings)
+          .set({ 
+            value: JSON.stringify(trimmedHistory),
+            updatedAt: new Date()
+          })
+          .where(eq(systemSettings.key, historyKey));
+      } else {
+        await db.insert(systemSettings).values({
+          key: historyKey,
+          value: JSON.stringify([newEntry]),
+          description: 'Histórico de execuções automáticas de geração de agenda futura',
+          updatedBy: 'system',
+          updatedAt: new Date()
+        });
+      }
+    } catch (historyError) {
+      console.error('⚠️ [FUTURE-AGENDA] Erro ao salvar histórico:', historyError);
+    }
+    
+    return stats;
+    
+  } catch (error) {
+    console.error('❌ [FUTURE-AGENDA] Erro crítico:', error);
+    throw error;
+  }
+}
