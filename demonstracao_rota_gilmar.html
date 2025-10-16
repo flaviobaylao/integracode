@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demonstração - Execução da Rota do Gilmar (17/10/2025)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+            font-size: 1.2em;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+            text-align: center;
+        }
+        .stat-card .label {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        .stat-card .value {
+            color: #333;
+            font-size: 2em;
+            font-weight: bold;
+        }
+        .stat-card.success .value {
+            color: #10b981;
+        }
+        .stat-card.warning .value {
+            color: #f59e0b;
+        }
+        .stat-card.danger .value {
+            color: #ef4444;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .panel {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+        }
+        .panel h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .route-item {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .route-item .number {
+            background: #667eea;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .route-item.off-route {
+            border-left-color: #ef4444;
+            background: #fee2e2;
+        }
+        .route-item.off-route .number {
+            background: #ef4444;
+        }
+        .route-item .details {
+            flex: 1;
+        }
+        .route-item .client-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .route-item .time {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge.off-route {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .badge.pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .timeline {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+            margin-top: 30px;
+        }
+        .timeline h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .timeline-item {
+            position: relative;
+            padding-left: 50px;
+            padding-bottom: 30px;
+            border-left: 3px solid #e5e7eb;
+        }
+        .timeline-item:last-child {
+            border-left-color: transparent;
+        }
+        .timeline-item .dot {
+            position: absolute;
+            left: -12px;
+            top: 5px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #667eea;
+            border: 4px solid white;
+            box-shadow: 0 0 0 3px #667eea;
+        }
+        .timeline-item.off-route .dot {
+            background: #ef4444;
+            box-shadow: 0 0 0 3px #ef4444;
+        }
+        .timeline-item .content {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .timeline-item.off-route .content {
+            background: #fee2e2;
+        }
+        .timeline-item .content .time-badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .timeline-item.off-route .content .time-badge {
+            background: #ef4444;
+        }
+        .timeline-item .content .client {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+        .timeline-item .content .distance {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .alert {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .alert strong {
+            color: #92400e;
+        }
+        .alert p {
+            color: #78350f;
+            margin-top: 5px;
+        }
+        @media (max-width: 768px) {
+            .comparison {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📍 Execução da Rota - Vendedor Gilmar</h1>
+            <p>Quinta-feira, 17 de Outubro de 2025</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card success">
+                <div class="label">Visitas Programadas</div>
+                <div class="value">6</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="label">Visitas Extras (Off-Route)</div>
+                <div class="value">2</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Total de Visitas</div>
+                <div class="value">8</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Distância Planejada</div>
+                <div class="value">45.3 km</div>
+            </div>
+            <div class="stat-card danger">
+                <div class="label">Distância Real</div>
+                <div class="value">56.7 km</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Diferença</div>
+                <div class="value">+11.4 km</div>
+            </div>
+        </div>
+
+        <div class="comparison">
+            <div class="panel">
+                <h2>🗺️ Ordem Planejada pelo Sistema</h2>
+                <div class="route-item">
+                    <div class="number">1</div>
+                    <div class="details">
+                        <div class="client-name">WELLINGTON ARAUJO</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">2</div>
+                    <div class="details">
+                        <div class="client-name">MAIRIS MARTINS DA CRUZ</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">3</div>
+                    <div class="details">
+                        <div class="client-name">DIEGO MARTIN HERRERA</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">4</div>
+                    <div class="details">
+                        <div class="client-name">LUCAS MACHADO</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">5</div>
+                    <div class="details">
+                        <div class="client-name">CELMA DE ALENCAR</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">6</div>
+                    <div class="details">
+                        <div class="client-name">MARIA APARECIDA CASTOR</div>
+                        <div class="time">Otimizado pela rota</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>✅ Ordem Real Executada</h2>
+                <div class="route-item">
+                    <div class="number">1</div>
+                    <div class="details">
+                        <div class="client-name">DIEGO MARTIN HERRERA</div>
+                        <div class="time">09:15 - 09:45 (3º planejado)</div>
+                    </div>
+                </div>
+                <div class="route-item off-route">
+                    <div class="number">2</div>
+                    <div class="details">
+                        <div class="client-name">ADIEL ALVES DA SILVA</div>
+                        <div class="time">10:00 - 10:30</div>
+                        <span class="badge off-route">Fora da Rota</span>
+                        <span class="badge pending">Pendente Validação</span>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">3</div>
+                    <div class="details">
+                        <div class="client-name">WELLINGTON ARAUJO</div>
+                        <div class="time">10:45 - 11:15 (1º planejado)</div>
+                    </div>
+                </div>
+                <div class="route-item off-route">
+                    <div class="number">4</div>
+                    <div class="details">
+                        <div class="client-name">AILTON PEREIRA DOS SANTOS</div>
+                        <div class="time">11:30 - 12:00</div>
+                        <span class="badge off-route">Fora da Rota</span>
+                        <span class="badge pending">Pendente Validação</span>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">5</div>
+                    <div class="details">
+                        <div class="client-name">LUCAS MACHADO</div>
+                        <div class="time">13:30 - 14:00 (4º planejado)</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">6</div>
+                    <div class="details">
+                        <div class="client-name">MARIA APARECIDA CASTOR</div>
+                        <div class="time">14:15 - 14:45 (6º planejado)</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">7</div>
+                    <div class="details">
+                        <div class="client-name">MAIRIS MARTINS DA CRUZ</div>
+                        <div class="time">15:00 - 15:30 (2º planejado)</div>
+                    </div>
+                </div>
+                <div class="route-item">
+                    <div class="number">8</div>
+                    <div class="details">
+                        <div class="client-name">CELMA DE ALENCAR</div>
+                        <div class="time">15:45 - 16:15 (5º planejado)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="timeline">
+            <h2>⏱️ Linha do Tempo da Execução</h2>
+            
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">09:15</span>
+                    <div class="client">1º Check-in: DIEGO MARTIN HERRERA</div>
+                    <div class="distance">📍 Distância de casa: 3.2 km</div>
+                    <p style="margin-top: 8px; color: #666;">Cliente pediu entrega urgente, visitado primeiro</p>
+                </div>
+            </div>
+
+            <div class="timeline-item off-route">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">10:00</span>
+                    <div class="client">2º Check-in: ADIEL ALVES DA SILVA ⚠️</div>
+                    <div class="distance">📍 Distância anterior: 5.8 km</div>
+                    <span class="badge off-route">FORA DA ROTA - PENDENTE</span>
+                    <p style="margin-top: 8px; color: #991b1b; font-weight: 600;">
+                        Cliente NÃO estava programado. Aguardando validação do admin.
+                    </p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">10:45</span>
+                    <div class="client">3º Check-in: WELLINGTON ARAUJO</div>
+                    <div class="distance">📍 Distância anterior: 9.1 km</div>
+                </div>
+            </div>
+
+            <div class="timeline-item off-route">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">11:30</span>
+                    <div class="client">4º Check-in: AILTON PEREIRA DOS SANTOS ⚠️</div>
+                    <div class="distance">📍 Distância anterior: 10.8 km</div>
+                    <span class="badge off-route">FORA DA ROTA - PENDENTE</span>
+                    <p style="margin-top: 8px; color: #991b1b; font-weight: 600;">
+                        Cliente NÃO estava programado. Aguardando validação do admin.
+                    </p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">13:30</span>
+                    <div class="client">5º Check-in: LUCAS MACHADO</div>
+                    <div class="distance">📍 Distância anterior: 5.3 km</div>
+                    <p style="margin-top: 8px; color: #666;">Após intervalo de almoço</p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">14:15</span>
+                    <div class="client">6º Check-in: MARIA APARECIDA CASTOR</div>
+                    <div class="distance">📍 Distância anterior: 4.7 km</div>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">15:00</span>
+                    <div class="client">7º Check-in: MAIRIS MARTINS DA CRUZ</div>
+                    <div class="distance">📍 Distância anterior: 8.9 km</div>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="dot"></div>
+                <div class="content">
+                    <span class="time-badge">15:45</span>
+                    <div class="client">8º Check-in: CELMA DE ALENCAR (Última visita)</div>
+                    <div class="distance">📍 Distância anterior: 3.9 km</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="alert">
+            <strong>⚠️ Ação Necessária do Administrador:</strong>
+            <p>
+                Existem 2 visitas off-route pendentes de validação. O administrador deve acessar 
+                a página "Rotas dos Vendedores", selecionar a data 17/10/2025 e:
+            </p>
+            <ul style="margin-top: 10px; margin-left: 20px;">
+                <li><strong>VALIDAR:</strong> Se a visita foi legítima → Será incluída no cálculo de distância</li>
+                <li><strong>CANCELAR:</strong> Se a visita foi indevida → Será excluída do cálculo de distância</li>
+            </ul>
+        </div>
+
+        <div class="alert" style="background: #dbeafe; border-left-color: #3b82f6; margin-top: 20px;">
+            <strong style="color: #1e40af;">💡 Como o Sistema Integra Demonstra Isso:</strong>
+            <p style="color: #1e3a8a; margin-top: 10px;">
+                ✅ <strong>Visitas NA ROTA:</strong> Exibidas em ordem de execução com fundo branco/cinza<br>
+                🔴 <strong>Visitas FORA DA ROTA (pending):</strong> Fundo VERMELHO com badge "FORA DA ROTA - PENDENTE"<br>
+                🟠 <strong>Visitas VALIDADAS:</strong> Fundo LARANJA com badge "VALIDADA"<br>
+                ⚪ <strong>Visitas CANCELADAS:</strong> Fundo CINZA com texto riscado e badge "CANCELADA"<br>
+                📊 <strong>Métricas:</strong> Distância total, ordem planejada vs executada, tempo por visita
+            </p>
+        </div>
+    </div>
+</body>
+</html>
