@@ -92,6 +92,34 @@ export default function DailyRouteView() {
 
   const route: DailyRoute | null = routeData?.route || null;
 
+  // Mutation para validar visita off-route
+  const validateVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/validate`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita validada!",
+        description: "A visita foi validada e incluída no cálculo de distância.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
+    }
+  });
+
+  // Mutation para cancelar visita off-route
+  const cancelVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/cancel`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita cancelada",
+        description: "A visita foi cancelada e removida do cálculo de distância.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'today'] });
+    }
+  });
+
   // Mutation para gerar rota manualmente
   const generateRouteMutation = useMutation({
     mutationFn: async () => {
@@ -572,29 +600,106 @@ export default function DailyRouteView() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {route.checkpoints.map((cp: any, index: number) => (
-                <div key={cp.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                  <div className="flex items-center">
-                    <div className="w-6 h-6 rounded-full bg-honest-blue text-white flex items-center justify-center text-xs font-bold mr-3">
-                      {index + 1}
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {cp.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {format(new Date(cp.timestamp), "HH:mm:ss", { locale: ptBR })}
-                      </p>
+              {route.checkpoints.map((cp: any, index: number) => {
+                const isOffRoute = cp.isOffRoute || false;
+                const validationStatus = cp.validationStatus || 'validated';
+                const isCancelled = validationStatus === 'cancelled';
+                const isPending = validationStatus === 'pending';
+                
+                return (
+                  <div 
+                    key={cp.id} 
+                    className={`p-3 rounded-lg border-2 ${
+                      isCancelled 
+                        ? 'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 opacity-60' 
+                        : isOffRoute && isPending
+                        ? 'bg-red-50 dark:bg-red-950 border-red-500'
+                        : isOffRoute
+                        ? 'bg-orange-50 dark:bg-orange-950 border-orange-500'
+                        : 'bg-gray-50 dark:bg-gray-800 border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center flex-1">
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${
+                          isCancelled 
+                            ? 'bg-gray-400 text-white' 
+                            : isOffRoute 
+                            ? 'bg-red-600 text-white' 
+                            : 'bg-honest-blue text-white'
+                        }`}>
+                          {index + 1}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className={`font-medium ${
+                              isCancelled 
+                                ? 'text-gray-500 dark:text-gray-600 line-through' 
+                                : 'text-gray-900 dark:text-white'
+                            }`}>
+                              {cp.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}
+                            </p>
+                            {isOffRoute && (
+                              <Badge 
+                                variant={isPending ? "destructive" : "secondary"}
+                                className="text-xs"
+                              >
+                                {isPending ? 'FORA DA ROTA - PENDENTE' : isCancelled ? 'CANCELADA' : 'VALIDADA'}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {format(new Date(cp.checkpointTime || cp.timestamp), "HH:mm:ss", { locale: ptBR })}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className={`text-sm font-medium ${
+                            isCancelled 
+                              ? 'text-gray-500 dark:text-gray-600 line-through' 
+                              : 'text-gray-900 dark:text-white'
+                          }`}>
+                            {formatDistance(parseFloat(cp.distanceFromPrevious || '0'))}
+                          </p>
+                          <p className="text-xs text-gray-600 dark:text-gray-400">
+                            {isCancelled ? 'não contada' : 'do anterior'}
+                          </p>
+                        </div>
+                        
+                        {/* Botões de Validar/Cancelar (apenas admin e visitas off-route) */}
+                        {isAdmin && isOffRoute && isPending && (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-green-600 border-green-600 hover:bg-green-50"
+                              onClick={() => validateVisitMutation.mutate(cp.id)}
+                              disabled={validateVisitMutation.isPending}
+                              data-testid={`button-validate-${cp.id}`}
+                            >
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Validar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 border-red-600 hover:bg-red-50"
+                              onClick={() => cancelVisitMutation.mutate(cp.id)}
+                              disabled={cancelVisitMutation.isPending}
+                              data-testid={`button-cancel-${cp.id}`}
+                            >
+                              <AlertTriangle className="h-4 w-4 mr-1" />
+                              Cancelar
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">
-                      {formatDistance(parseFloat(cp.distanceFromPrevious || '0'))}
-                    </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">do anterior</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

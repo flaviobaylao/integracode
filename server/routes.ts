@@ -6806,6 +6806,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Validar visita fora da rota (admin apenas)
+  app.post('/api/daily-routes/checkpoints/:checkpointId/validate', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { checkpointId } = req.params;
+      
+      // Apenas admin, coordinator e administrative podem validar
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem validar visitas.' });
+      }
+
+      const { validateOffRouteVisit, calculateActualRouteDistance } = await import('./actualRouteService');
+      
+      await validateOffRouteVisit(storage, checkpointId, user.id);
+      
+      // Buscar checkpoint para retornar dados atualizados da rota
+      const checkpoints = await storage.getRouteCheckpoints('');
+      const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+      
+      if (checkpoint) {
+        const routeStats = await calculateActualRouteDistance(storage, checkpoint.dailyRouteId);
+        res.json({
+          success: true,
+          message: 'Visita validada com sucesso',
+          routeStats
+        });
+      } else {
+        res.json({ success: true, message: 'Visita validada com sucesso' });
+      }
+    } catch (error: any) {
+      console.error('Erro ao validar visita:', error);
+      res.status(500).json({ 
+        message: 'Erro ao validar visita',
+        error: error.message 
+      });
+    }
+  });
+
+  // Cancelar visita fora da rota (admin apenas)
+  app.post('/api/daily-routes/checkpoints/:checkpointId/cancel', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { checkpointId } = req.params;
+      
+      // Apenas admin, coordinator e administrative podem cancelar
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem cancelar visitas.' });
+      }
+
+      const { cancelOffRouteVisit, calculateActualRouteDistance } = await import('./actualRouteService');
+      
+      await cancelOffRouteVisit(storage, checkpointId, user.id);
+      
+      // Buscar checkpoint para retornar dados atualizados da rota
+      const checkpoints = await storage.getRouteCheckpoints('');
+      const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+      
+      if (checkpoint) {
+        const routeStats = await calculateActualRouteDistance(storage, checkpoint.dailyRouteId);
+        res.json({
+          success: true,
+          message: 'Visita cancelada com sucesso',
+          routeStats
+        });
+      } else {
+        res.json({ success: true, message: 'Visita cancelada com sucesso' });
+      }
+    } catch (error: any) {
+      console.error('Erro ao cancelar visita:', error);
+      res.status(500).json({ 
+        message: 'Erro ao cancelar visita',
+        error: error.message 
+      });
+    }
+  });
+
+  // Buscar distância real percorrida (baseado em checkpoints)
+  app.get('/api/daily-routes/:routeId/actual-distance', authenticateUser, async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      
+      const { calculateActualRouteDistance } = await import('./actualRouteService');
+      const result = await calculateActualRouteDistance(storage, routeId);
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error('Erro ao calcular distância real:', error);
+      res.status(500).json({ 
+        message: 'Erro ao calcular distância real',
+        error: error.message 
+      });
+    }
+  });
+
   // ========== ROUTE METRICS ENDPOINTS ==========
   
   // Buscar métricas diárias de um vendedor

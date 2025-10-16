@@ -3069,6 +3069,19 @@ export class DatabaseStorage implements IStorage {
     return checkpoint;
   }
 
+  async updateRouteCheckpoint(id: string, data: Partial<{
+    validationStatus: string;
+    validatedBy: string;
+    validatedAt: Date;
+  }>): Promise<any> {
+    const [checkpoint] = await db
+      .update(routeCheckpoints)
+      .set(data)
+      .where(eq(routeCheckpoints.id, id))
+      .returning();
+    return checkpoint;
+  }
+
   // Gerar agenda futura de visitas para os próximos meses
   async generateFutureVisitAgenda(monthsAhead: number = 3): Promise<{
     processed: number;
