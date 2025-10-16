@@ -6883,6 +6883,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar clientes sem coordenadas para uma data específica
+  app.get('/api/daily-routes/:sellerId/date/:date/missing-coordinates', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date } = req.params;
+      
+      // Vendedor só pode ver seus próprios clientes
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const routeDate = new Date(date);
+      routeDate.setHours(0, 0, 0, 0);
+      
+      // Buscar sales cards do vendedor para aquela data
+      const cards = await db.select({
+        cardId: salesCards.id,
+        customerId: customers.id,
+        customerName: customers.name,
+        cpfCnpj: customers.cpfCnpj,
+        address: customers.address,
+        latitude: customers.latitude,
+        longitude: customers.longitude,
+        virtualService: customers.virtualService
+      })
+        .from(salesCards)
+        .innerJoin(customers, eq(salesCards.customerId, customers.id))
+        .where(
+          and(
+            eq(salesCards.assignedSellerId, sellerId),
+            eq(salesCards.scheduledDate, routeDate.toISOString().split('T')[0]),
+            eq(salesCards.status, 'open')
+          )
+        );
+      
+      // Filtrar apenas os que não têm coordenadas e não são virtuais
+      const missingCoordinates = cards.filter(card => 
+        !card.virtualService && 
+        (!card.latitude || !card.longitude || 
+         card.latitude === '0' || card.longitude === '0' ||
+         card.latitude === null || card.longitude === null)
+      );
+
+      res.json({
+        date: date,
+        sellerId: sellerId,
+        total: missingCoordinates.length,
+        customers: missingCoordinates
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar clientes sem coordenadas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar clientes sem coordenadas',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar rota específica com detalhes
   app.get('/api/daily-routes/:id', authenticateUser, async (req: any, res) => {
     try {
