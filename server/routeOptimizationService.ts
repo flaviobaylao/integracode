@@ -431,16 +431,30 @@ export async function generateDailyRoute(
 /**
  * Registra um checkpoint (check-in ou check-out) e calcula distância percorrida
  * Usa distância real de moto (OSRM) quando possível
+ * Detecta automaticamente visitas fora da rota planejada
  */
 export async function registerCheckpoint(
   storage: DatabaseStorage,
   dailyRouteId: string,
   visitId: string,
+  customerId: string,
   sellerId: string,
   checkpointType: 'check_in' | 'check_out',
   latitude: number,
   longitude: number
-): Promise<{ distanceFromPrevious: number; totalDistanceSoFar: number; completedVisits: number }> {
+): Promise<{ distanceFromPrevious: number; totalDistanceSoFar: number; completedVisits: number; isOffRoute: boolean }> {
+  // Buscar a rota para verificar se é visita off-route
+  const route = await storage.getDailyRoute(dailyRouteId);
+  
+  // Verificar se o visitId está na rota planejada (optimizedOrder)
+  const isOffRoute = route && route.optimizedOrder 
+    ? !route.optimizedOrder.includes(visitId)
+    : false;
+  
+  if (isOffRoute) {
+    console.log(`⚠️  VISITA FORA DA ROTA detectada: Cliente ${customerId}, Visita ${visitId}`);
+  }
+  
   // Buscar último checkpoint
   const lastCheckpoint = await storage.getLastCheckpoint(dailyRouteId);
   
@@ -463,7 +477,6 @@ export async function registerCheckpoint(
     }
   } else {
     // Primeiro checkpoint - calcular distância da casa do vendedor
-    const route = await storage.getDailyRoute(dailyRouteId);
     if (route) {
       previousLat = parseFloat(route.startLatitude as any);
       previousLon = parseFloat(route.startLongitude as any);
@@ -484,15 +497,18 @@ export async function registerCheckpoint(
   const checkpoints = await storage.getRouteCheckpoints(dailyRouteId);
   const sequenceNumber = checkpoints.length + 1;
 
-  // Salvar checkpoint
+  // Salvar checkpoint (incluindo informação se é off-route)
   await storage.createRouteCheckpoint({
     dailyRouteId,
     visitId,
+    customerId,
     sellerId,
     checkpointType,
     checkpointLatitude: latitude.toString(),
     checkpointLongitude: longitude.toString(),
     checkpointTime: new Date(),
+    isOffRoute,
+    validationStatus: isOffRoute ? 'pending' : 'validated', // Off-route precisa validação, rotas normais são auto-validadas
     distanceFromPrevious: distanceFromPrevious.toString(),
     previousLatitude: previousLat?.toString() || null,
     previousLongitude: previousLon?.toString() || null,
@@ -500,7 +516,6 @@ export async function registerCheckpoint(
   });
 
   // Atualizar distância total percorrida na rota
-  const route = await storage.getDailyRoute(dailyRouteId);
   if (route) {
     const currentTotal = parseFloat(route.totalActualDistance || '0');
     const newTotal = currentTotal + distanceFromPrevious;
@@ -518,13 +533,15 @@ export async function registerCheckpoint(
     return {
       distanceFromPrevious: Math.round(distanceFromPrevious * 100) / 100,
       totalDistanceSoFar: Math.round(newTotal * 100) / 100,
-      completedVisits
+      completedVisits,
+      isOffRoute
     };
   }
 
   return {
     distanceFromPrevious: Math.round(distanceFromPrevious * 100) / 100,
     totalDistanceSoFar: 0,
-    completedVisits: 0
+    completedVisits: 0,
+    isOffRoute
   };
 }
