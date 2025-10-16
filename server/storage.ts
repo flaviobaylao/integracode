@@ -822,7 +822,9 @@ export class DatabaseStorage implements IStorage {
         deliveryTimeSlots: parentCard.deliveryTimeSlots,
         deliverySaturdayTimeSlots: parentCard.deliverySaturdayTimeSlots,
         customerLatitude: parentCard.customerLatitude,
-        customerLongitude: parentCard.customerLongitude
+        customerLongitude: parentCard.customerLongitude,
+        exclusiveVehicle: parentCard.exclusiveVehicle || false,
+        vehicleTypes: parentCard.vehicleTypes || []
       };
 
       const [newCard] = await db.insert(salesCards).values(nextCardData as any).returning();
@@ -3051,6 +3053,138 @@ export class DatabaseStorage implements IStorage {
       .values(data)
       .returning();
     return checkpoint;
+  }
+
+  // Recalcular datas de visita para todos os cards baseado no cronograma do cliente
+  async recalculateAllVisitDates(): Promise<{
+    processed: number;
+    updated: number;
+    errors: number;
+    details: any[];
+  }> {
+    const results = {
+      processed: 0,
+      updated: 0,
+      errors: 0,
+      details: [] as any[]
+    };
+
+    try {
+      // Buscar todos os cards pendentes
+      const allCards = await db
+        .select()
+        .from(salesCards)
+        .where(eq(salesCards.status, 'pending'))
+        .orderBy(salesCards.attendanceStartDate);
+
+      console.log(`📋 Encontrados ${allCards.length} cards pendentes para recalcular`);
+
+      for (const card of allCards) {
+        results.processed++;
+
+        try {
+          // Buscar dados do cliente
+          const [customer] = await db
+            .select()
+            .from(customers)
+            .where(eq(customers.id, card.customerId));
+
+          if (!customer) {
+            results.errors++;
+            results.details.push({
+              cardId: card.id,
+              error: 'Cliente não encontrado'
+            });
+            continue;
+          }
+
+          let newScheduledDate: Date;
+          let calculationMethod: string;
+
+          // Verificar se cliente tem cronograma avançado configurado
+          if (customer.weekdays && customer.visitPeriodicity) {
+            const { calculateNextVisitDate } = await import('@shared/visitSchedule');
+            
+            let parsedWeekdays: string[] = [];
+            try {
+              parsedWeekdays = typeof customer.weekdays === 'string' 
+                ? JSON.parse(customer.weekdays) 
+                : customer.weekdays;
+            } catch (e) {
+              parsedWeekdays = [];
+            }
+
+            if (parsedWeekdays.length > 0) {
+              // Usar attendanceStartDate como referência para primeira visita
+              const result = calculateNextVisitDate({
+                weekdays: parsedWeekdays as any[],
+                periodicity: customer.visitPeriodicity as any,
+                referenceDate: card.attendanceStartDate || card.createdAt || undefined
+              });
+              newScheduledDate = result.nextDate;
+              calculationMethod = 'advanced_schedule';
+            } else {
+              // Fallback para lógica antiga
+              newScheduledDate = this.calculateNextRecurrenceDate(
+                card.routeDay,
+                card.recurrenceType,
+                card.attendanceStartDate || card.createdAt || undefined
+              );
+              calculationMethod = 'legacy_schedule';
+            }
+          } else {
+            // Usar lógica antiga
+            newScheduledDate = this.calculateNextRecurrenceDate(
+              card.routeDay,
+              card.recurrenceType,
+              card.attendanceStartDate || card.createdAt || undefined
+            );
+            calculationMethod = 'legacy_schedule';
+          }
+
+          // Derivar routeDay da nova data
+          const dayOfWeek = newScheduledDate.getDay();
+          const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+          const derivedRouteDay = weekdayNames[dayOfWeek];
+
+          // Atualizar card apenas se a data mudou
+          if (card.scheduledDate.getTime() !== newScheduledDate.getTime()) {
+            await db
+              .update(salesCards)
+              .set({
+                scheduledDate: newScheduledDate,
+                routeDay: derivedRouteDay,
+                updatedAt: new Date()
+              })
+              .where(eq(salesCards.id, card.id));
+
+            results.updated++;
+            results.details.push({
+              cardId: card.id,
+              customerId: customer.id,
+              customerName: customer.name,
+              oldDate: card.scheduledDate,
+              newDate: newScheduledDate,
+              method: calculationMethod
+            });
+          }
+
+        } catch (error: any) {
+          results.errors++;
+          results.details.push({
+            cardId: card.id,
+            error: error.message
+          });
+        }
+      }
+
+      console.log(`✅ Recálculo concluído: ${results.updated} atualizados, ${results.errors} erros`);
+      return results;
+
+    } catch (error) {
+      console.error('❌ Erro ao recalcular datas de visita:', error);
+      throw error;
+    }
   }
 }
 
