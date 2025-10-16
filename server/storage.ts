@@ -170,6 +170,7 @@ export interface IStorage {
   getBillings(sellerId?: string): Promise<Billing[]>;
   getBilling(id: string): Promise<Billing | undefined>;
   getBillingByOmieId(omieInvoiceId: string): Promise<Billing | undefined>;
+  getBillingByInvoiceNumber(invoiceNumber: string): Promise<Billing | undefined>;
   createBilling(billing: InsertBilling): Promise<Billing>;
   updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing>;
   deleteBilling(id: string): Promise<void>;
@@ -2172,6 +2173,14 @@ export class DatabaseStorage implements IStorage {
     return billing;
   }
 
+  async getBillingByInvoiceNumber(invoiceNumber: string): Promise<Billing | undefined> {
+    const [billing] = await db
+      .select()
+      .from(billings)
+      .where(eq(billings.invoiceNumber, invoiceNumber));
+    return billing;
+  }
+
   async getAllBillings(): Promise<Billing[]> {
     const result = await db
       .select()
@@ -2556,7 +2565,13 @@ export class DatabaseStorage implements IStorage {
       console.log(`✅ VÁLIDO - ${billing.invoiceNumber}: Status ${invoiceStatus}, Data ${invoiceDate.toISOString().split('T')[0]}`);
       
       // Verificar se já existe para determinar se é criação ou atualização
-      const existing = await this.getBillingByOmieId(billing.omieInvoiceId);
+      // PRIORIDADE: Buscar primeiro por invoice_number (mais confiável e tem índice único)
+      let existing = await this.getBillingByInvoiceNumber(billing.invoiceNumber!);
+      
+      // Fallback: Se não encontrou por invoice_number, buscar por omieInvoiceId
+      if (!existing && billing.omieInvoiceId) {
+        existing = await this.getBillingByOmieId(billing.omieInvoiceId);
+      }
       
       let savedBilling: Billing;
       let action: 'created' | 'updated';
