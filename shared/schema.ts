@@ -572,7 +572,8 @@ export const dailyRoutes = pgTable("daily_routes", {
 export const routeCheckpoints = pgTable("route_checkpoints", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dailyRouteId: varchar("daily_route_id").notNull(),
-  visitId: varchar("visit_id").notNull(), // Referência à visitAgenda
+  visitId: varchar("visit_id").notNull(), // Referência ao sales_card
+  customerId: varchar("customer_id").notNull(), // Referência ao cliente visitado
   sellerId: varchar("seller_id").notNull(),
   
   // Dados do checkpoint
@@ -580,6 +581,12 @@ export const routeCheckpoints = pgTable("route_checkpoints", {
   checkpointLatitude: decimal("checkpoint_latitude", { precision: 10, scale: 8 }).notNull(),
   checkpointLongitude: decimal("checkpoint_longitude", { precision: 11, scale: 8 }).notNull(),
   checkpointTime: timestamp("checkpoint_time").notNull(),
+  
+  // Controle de visitas extras (fora da rota planejada)
+  isOffRoute: boolean("is_off_route").default(false).notNull(), // true se não estava na rota original
+  validationStatus: varchar("validation_status").default("pending"), // pending, validated, cancelled
+  validatedBy: varchar("validated_by"), // ID do admin que validou/cancelou
+  validatedAt: timestamp("validated_at"),
   
   // Distância desde o ponto anterior
   distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // km
@@ -595,6 +602,7 @@ export const routeCheckpoints = pgTable("route_checkpoints", {
 }, (table) => [
   index("idx_route_checkpoints_route").on(table.dailyRouteId),
   index("idx_route_checkpoints_visit").on(table.visitId),
+  index("idx_route_checkpoints_customer").on(table.customerId),
 ]);
 
 // Sales Goals table - para definição de metas mensais por vendedor
