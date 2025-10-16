@@ -732,6 +732,7 @@ export class DatabaseStorage implements IStorage {
         .where(eq(salesCards.id, parentCardId));
 
       if (!parentCard) {
+        console.error(`❌ generateNextSalesCard: Card pai ${parentCardId} não encontrado`);
         throw new Error('Card pai não encontrado');
       }
 
@@ -743,6 +744,7 @@ export class DatabaseStorage implements IStorage {
           .where(eq(salesCards.id, parentCard.nextCardId));
         
         if (existingNextCard) {
+          console.log(`♻️ generateNextSalesCard: Retornando card existente ${existingNextCard.id} para cliente ${parentCard.customerId}`);
           return existingNextCard;
         }
       }
@@ -824,10 +826,19 @@ export class DatabaseStorage implements IStorage {
         customerLatitude: parentCard.customerLatitude,
         customerLongitude: parentCard.customerLongitude,
         exclusiveVehicle: parentCard.exclusiveVehicle || false,
-        vehicleTypes: parentCard.vehicleTypes || []
+        vehicleTypes: (parentCard.vehicleTypes || []) as any
       };
 
+      console.log(`📝 Tentando criar card para cliente ${parentCard.customerId}, data: ${nextDate.toISOString().split('T')[0]}`);
+      
       const [newCard] = await db.insert(salesCards).values(nextCardData as any).returning();
+
+      if (!newCard) {
+        console.error(`❌ Card não foi criado para cliente ${parentCard.customerId}`);
+        return null;
+      }
+
+      console.log(`✅ Card criado: ${newCard.id} para cliente ${parentCard.customerId}, data: ${newCard.scheduledDate}`);
 
       // Atualizar card pai com referência ao próximo
       await db
@@ -835,9 +846,11 @@ export class DatabaseStorage implements IStorage {
         .set({ nextCardId: newCard.id })
         .where(eq(salesCards.id, parentCardId));
 
+      console.log(`🔗 Card pai ${parentCardId} atualizado com next_card_id: ${newCard.id}`);
+
       return newCard;
     } catch (error) {
-      console.error('Erro ao gerar próximo card:', error);
+      console.error(`❌ ERRO ao gerar próximo card para ${parentCardId}:`, error);
       return null;
     }
   }
@@ -3053,6 +3066,138 @@ export class DatabaseStorage implements IStorage {
       .values(data)
       .returning();
     return checkpoint;
+  }
+
+  // Gerar agenda futura de visitas para os próximos meses
+  async generateFutureVisitAgenda(monthsAhead: number = 3): Promise<{
+    processed: number;
+    generated: number;
+    errors: number;
+    details: any[];
+  }> {
+    const results = {
+      processed: 0,
+      generated: 0,
+      errors: 0,
+      details: [] as any[]
+    };
+
+    try {
+      // Buscar todos os clientes com periodicidade configurada
+      const clientsWithPeriodicity = await db
+        .select()
+        .from(customers)
+        .where(and(
+          isNotNull(customers.visitPeriodicity),
+          isNotNull(customers.weekdays)
+        ));
+
+      console.log(`📋 Encontrados ${clientsWithPeriodicity.length} clientes com periodicidade configurada`);
+
+      const futureDate = new Date();
+      futureDate.setMonth(futureDate.getMonth() + monthsAhead);
+
+      for (const customer of clientsWithPeriodicity) {
+        results.processed++;
+
+        try {
+          // Buscar último card pendente deste cliente
+          const [lastCard] = await db
+            .select()
+            .from(salesCards)
+            .where(and(
+              eq(salesCards.customerId, customer.id),
+              eq(salesCards.status, 'pending')
+            ))
+            .orderBy(desc(salesCards.scheduledDate))
+            .limit(1);
+
+          if (!lastCard) {
+            results.details.push({
+              customerId: customer.id,
+              customerName: customer.name,
+              warning: 'Nenhum card pendente encontrado'
+            });
+            continue;
+          }
+
+          // Gerar cards futuros até a data limite
+          let cardsGenerated = 0;
+          const maxCards = 50; // Limite de segurança
+
+          while (cardsGenerated < maxCards) {
+            // Buscar SEMPRE o último card pendente do cliente
+            const [latestCard] = await db
+              .select()
+              .from(salesCards)
+              .where(and(
+                eq(salesCards.customerId, customer.id),
+                eq(salesCards.status, 'pending')
+              ))
+              .orderBy(desc(salesCards.scheduledDate))
+              .limit(1);
+
+            if (!latestCard) {
+              console.log(`❌ Cliente ${customer.id} sem card pendente`);
+              break;
+            }
+            
+            // Verificar se já atingiu a data futura
+            if (new Date(latestCard.scheduledDate) >= futureDate) {
+              console.log(`✅ Cliente ${customer.id} já tem cards até ${latestCard.scheduledDate.toISOString().split('T')[0]}`);
+              break;
+            }
+
+            // Gerar próximo card
+            console.log(`🔄 Gerando próximo card para ${customer.id} (último: ${latestCard.scheduledDate.toISOString().split('T')[0]})`);
+            const nextCard = await this.generateNextSalesCard(latestCard.id);
+            
+            if (!nextCard) {
+              console.log(`❌ generateNextSalesCard retornou NULL para cliente ${customer.id} (${customer.name}), card ${latestCard.id}`);
+              results.details.push({
+                customerId: customer.id,
+                customerName: customer.name,
+                error: 'generateNextSalesCard retornou NULL'
+              });
+              results.errors++;
+              break;
+            }
+            
+            // Verificar se realmente gerou um card novo (não retornou o mesmo)
+            if (nextCard.id === latestCard.id) {
+              console.log(`⚠️ generateNextSalesCard retornou o mesmo card para ${customer.id}`);
+              break;
+            }
+
+            console.log(`✅ Card gerado para ${customer.id}: ${nextCard.scheduledDate.toISOString().split('T')[0]}`);
+            cardsGenerated++;
+            results.generated++;
+          }
+
+          results.details.push({
+            customerId: customer.id,
+            customerName: customer.name,
+            periodicity: customer.visitPeriodicity,
+            cardsGenerated
+          });
+
+        } catch (error: any) {
+          results.errors++;
+          results.details.push({
+            customerId: customer.id,
+            customerName: customer.name,
+            error: error.message
+          });
+        }
+      }
+
+      console.log(`✅ Geração de agenda futura concluída: ${results.generated} cards criados`);
+      return results;
+
+    } catch (error) {
+      console.error('❌ Erro ao gerar agenda futura:', error);
+      throw error;
+    }
   }
 
   // Recalcular datas de visita para todos os cards baseado no cronograma do cliente

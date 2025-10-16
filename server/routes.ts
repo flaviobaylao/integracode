@@ -7347,6 +7347,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Gerar agenda futura de visitas
+  app.post('/api/admin/generate-future-agenda', authenticateUser, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      // Apenas admin pode executar esta operação
+      if (user?.role !== 'admin') {
+        return res.status(403).json({ message: "Apenas administradores podem gerar agenda futura" });
+      }
+
+      const { monthsAhead = 3 } = req.body;
+
+      console.log(`📅 Iniciando geração de agenda futura para ${monthsAhead} meses...`);
+      const results = await storage.generateFutureVisitAgenda(monthsAhead);
+      
+      res.json({
+        success: true,
+        ...results
+      });
+    } catch (error) {
+      console.error('Erro ao gerar agenda futura:', error);
+      res.status(500).json({ message: "Erro ao gerar agenda futura" });
+    }
+  });
+
   // Recalcular datas de visita para todos os cards
   app.post('/api/admin/recalculate-visit-dates', authenticateUser, async (req: any, res) => {
     try {
