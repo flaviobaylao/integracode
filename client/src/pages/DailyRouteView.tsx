@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -81,6 +81,45 @@ export default function DailyRouteView() {
   });
 
   const route: DailyRoute | null = routeData?.route || null;
+
+  // Mutation para gerar rota manualmente
+  const generateRouteMutation = useMutation({
+    mutationFn: async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const response = await apiRequest('POST', '/api/daily-routes/generate', {
+        sellerId: selectedSellerId,
+        date: today.toISOString()
+      });
+      
+      return response;
+    },
+    onSuccess: (data) => {
+      if (data.alreadyExists) {
+        toast({
+          title: "Rota já existe",
+          description: "A rota para hoje já foi gerada anteriormente.",
+        });
+      } else {
+        toast({
+          title: "Rota gerada com sucesso!",
+          description: `Rota criada com ${data.totalVisits || 0} visitas.`,
+        });
+      }
+      
+      // Invalidar cache para recarregar dados
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao gerar rota",
+        description: error.message || "Não foi possível gerar a rota.",
+      });
+    }
+  });
 
   // Verificar se vendedor tem coordenadas configuradas
   // Para admin, usa os dados completos ou busca na lista de vendedores
@@ -170,6 +209,25 @@ export default function DailyRouteView() {
               Visualize e acompanhe {isAdmin ? 'as rotas dos vendedores' : 'sua rota otimizada'}
             </p>
           </div>
+          {hasHomeCoordinates && (
+            <Button
+              onClick={() => generateRouteMutation.mutate()}
+              disabled={generateRouteMutation.isPending || !selectedSellerId}
+              data-testid="button-generate-route"
+            >
+              {generateRouteMutation.isPending ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Gerando...
+                </>
+              ) : (
+                <>
+                  <Navigation className="mr-2 h-4 w-4" />
+                  Gerar Rota
+                </>
+              )}
+            </Button>
+          )}
         </div>
 
         {isAdmin && sellers.length > 0 && (
@@ -224,14 +282,35 @@ export default function DailyRouteView() {
             {isAdmin && currentSeller && ` - ${currentSeller.firstName} ${currentSeller.lastName || ''}`}
           </p>
         </div>
-        <Button
-          onClick={() => refetch()}
-          variant="outline"
-          size="sm"
-          data-testid="button-refresh-route"
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => generateRouteMutation.mutate()}
+            disabled={generateRouteMutation.isPending || !selectedSellerId}
+            variant="default"
+            size="sm"
+            data-testid="button-regenerate-route"
+          >
+            {generateRouteMutation.isPending ? (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                Atualizando...
+              </>
+            ) : (
+              <>
+                <Navigation className="mr-2 h-4 w-4" />
+                Atualizar Rota
+              </>
+            )}
+          </Button>
+          <Button
+            onClick={() => refetch()}
+            variant="outline"
+            size="sm"
+            data-testid="button-refresh-route"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Seletor de vendedor para admin */}
