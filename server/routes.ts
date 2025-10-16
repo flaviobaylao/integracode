@@ -6733,6 +6733,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
 
+      // Headers para evitar cache e garantir dados atualizados
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
       res.json({
         route: {
           ...route,
@@ -6856,6 +6861,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
+
+      // Headers para evitar cache e garantir dados atualizados
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
 
       res.json({
         route: {
