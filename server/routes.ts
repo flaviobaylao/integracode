@@ -5147,38 +5147,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { status = 'aguardando-rota' } = req.query;
       
-      // Buscar sales cards completados que ainda não têm rota definida
+      // Buscar notas fiscais (billings) com etapa "Aguardando Rota"
       const deliveries = await db.select({
-        id: salesCards.id,
-        customerId: salesCards.customerId,
+        id: billingsTable.id,
+        invoiceNumber: billingsTable.invoiceNumber,
+        omieOrderId: billingsTable.omieOrderId,
+        orderNumber: billingsTable.orderNumber,
+        customerId: customers.id,
         customerName: customers.name,
         customerAddress: customers.address,
         customerLatitude: customers.latitude,
         customerLongitude: customers.longitude,
         averageDeliveryTime: customers.averageDeliveryTime,
-        exclusiveVehicle: salesCards.exclusiveVehicle,
-        vehicleTypes: salesCards.vehicleTypes,
-        isUrgent: salesCards.isUrgent,
-        saleValue: salesCards.saleValue,
-        products: salesCards.products,
-        scheduledDate: salesCards.scheduledDate,
-        completedDate: salesCards.completedDate,
-        paymentMethod: salesCards.paymentMethod,
-        operationType: salesCards.operationType,
+        exclusiveVehicle: sql<boolean>`false`, // Billings não têm esse campo
+        vehicleTypes: sql<string[]>`ARRAY[]::text[]`, // Billings não têm esse campo
+        isUrgent: sql<boolean>`false`, // Por padrão não urgente
+        saleValue: billingsTable.totalValue,
+        products: billingsTable.products,
+        scheduledDate: billingsTable.invoiceDate,
+        completedDate: billingsTable.invoiceDate,
+        paymentMethod: billingsTable.paymentMethod,
+        operationType: billingsTable.billingType,
       })
-      .from(salesCards)
-      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .from(billingsTable)
+      .leftJoin(customers, 
+        sql`(
+          ${customers.id} = CONCAT('omie-client-', ${billingsTable.omieCustomerCode})
+          OR ${customers.cpf} = ${billingsTable.customerDocument}
+          OR ${customers.cnpj} = ${billingsTable.customerDocument}
+        )`
+      )
       .where(
         and(
-          eq(salesCards.status, 'completed'),
-          // Pedidos que ainda não têm rota de entrega
+          eq(billingsTable.invoiceStage, 'Aguardando Rota'),
+          // Apenas notas com dados de invoice
+          sql`${billingsTable.invoiceNumber} IS NOT NULL`,
+          sql`${billingsTable.invoiceDate} IS NOT NULL`,
+          // Notas que ainda não têm rota de entrega (usando invoice_number para buscar)
           sql`NOT EXISTS (
-            SELECT 1 FROM delivery_route_stops 
-            WHERE delivery_route_stops.sales_card_id = ${salesCards.id}
+            SELECT 1 FROM delivery_route_stops drs
+            JOIN billings b ON b.id = drs.sales_card_id
+            WHERE b.invoice_number = ${billingsTable.invoiceNumber}
           )`
         )
       )
-      .orderBy(salesCards.completedDate);
+      .orderBy(billingsTable.invoiceDate);
       
       res.json(deliveries);
     } catch (error: any) {
