@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,7 +44,7 @@ export default function DailyRouteView() {
   
   // Estado para vendedor selecionado (admin pode escolher)
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
-  const [selectedSellerId, setSelectedSellerId] = useState<string>(user?.id || '');
+  const [selectedSellerId, setSelectedSellerId] = useState<string>('');
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -57,6 +57,16 @@ export default function DailyRouteView() {
   });
 
   const sellers = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
+
+  // Inicializar sellerId quando os vendedores forem carregados ou quando user mudar
+  useEffect(() => {
+    if (isAdmin && sellers.length > 0 && !selectedSellerId) {
+      setSelectedSellerId(sellers[0].id);
+    } else if (!isAdmin && user?.id && !selectedSellerId) {
+      // Se for vendedor, usar seu próprio ID
+      setSelectedSellerId(user.id);
+    }
+  }, [isAdmin, sellers, user?.id, selectedSellerId]);
 
   // Buscar dados do vendedor selecionado
   const { data: sellerData, isLoading: isLoadingSeller } = useQuery({
