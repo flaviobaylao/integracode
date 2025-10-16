@@ -49,8 +49,8 @@ async function checkOrderStages() {
           '20': 'Em Rota',
           '50': 'Faturado',
           '60': 'Faturado',
-          '70': 'Aguardando Rota',
-          '80': 'Entregue',
+          '70': 'Entregue',
+          '80': 'Aguardando Rota',
           '90': 'Cancelado'
         };
         
@@ -92,8 +92,8 @@ async function checkOrderStages() {
           '20': 'Em Rota',
           '50': 'Faturado',
           '60': 'Faturado',
-          '70': 'Aguardando Rota',
-          '80': 'Entregue',
+          '70': 'Entregue',
+          '80': 'Aguardando Rota',
           '90': 'Cancelado'
         };
         
