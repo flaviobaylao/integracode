@@ -616,6 +616,11 @@ export class DatabaseStorage implements IStorage {
       processedSalesCard.routeDay = weekdayNames[dayOfWeek];
     }
     
+    // Sempre definir attendanceStartDate como data atual de criação
+    if (!processedSalesCard.attendanceStartDate) {
+      processedSalesCard.attendanceStartDate = new Date();
+    }
+    
     const [newSalesCard] = await db.insert(salesCards).values(processedSalesCard as any).returning();
     return newSalesCard;
   }
@@ -803,6 +808,7 @@ export class DatabaseStorage implements IStorage {
         sellerId: parentCard.sellerId,
         status: 'pending',
         scheduledDate: nextDate,
+        attendanceStartDate: new Date(), // Data de início de atendimento = data de criação
         routeDay: derivedRouteDay, // Usar dia derivado do scheduledDate
         recurrenceType: customer.visitPeriodicity || parentCard.recurrenceType,
         isRecurring: parentCard.isRecurring,
@@ -1558,6 +1564,7 @@ export class DatabaseStorage implements IStorage {
       customerId: nextCard.customerId,
       sellerId: nextCard.sellerId,
       scheduledDate: nextCard.scheduledDate,
+      attendanceStartDate: new Date(), // Data de início de atendimento = data de criação
       status: nextCard.status,
       products: nextCard.products,
       routeDay: nextCard.routeDay,
