@@ -189,6 +189,7 @@ export const salesCards = pgTable("sales_cards", {
   sellerId: varchar("seller_id").notNull(),
   status: varchar("status").notNull().default('pending'), // pending, completed, invoiced, telemarketing, cancelled, transferred
   scheduledDate: timestamp("scheduled_date").notNull(),
+  attendanceStartDate: timestamp("attendance_start_date"), // Data de início de atendimento (prioriza checkInTime > scheduledDate > serviceStartDate)
   completedDate: timestamp("completed_date"),
   saleValue: decimal("sale_value", { precision: 10, scale: 2 }),
   noSaleReason: text("no_sale_reason"),
