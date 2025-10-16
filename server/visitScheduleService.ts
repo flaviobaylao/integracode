@@ -394,6 +394,8 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
       const { systemSettings } = await import('../shared/schema');
       const historyKey = 'future_agenda_history';
       
+      console.log('💾 [FUTURE-AGENDA] Salvando histórico de execução...');
+      
       const existingSettings = await db.select()
         .from(systemSettings)
         .where(eq(systemSettings.key, historyKey))
@@ -410,6 +412,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
       };
       
       if (existingSettings.length > 0) {
+        console.log('📝 [FUTURE-AGENDA] Atualizando histórico existente...');
         const history = JSON.parse(existingSettings[0].value || '[]');
         history.unshift(newEntry);
         
@@ -422,17 +425,23 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
             updatedAt: new Date()
           })
           .where(eq(systemSettings.key, historyKey));
+        
+        console.log('✅ [FUTURE-AGENDA] Histórico atualizado com sucesso');
       } else {
+        console.log('📝 [FUTURE-AGENDA] Criando novo registro de histórico...');
         await db.insert(systemSettings).values({
           key: historyKey,
           value: JSON.stringify([newEntry]),
           description: 'Histórico de execuções automáticas de geração de agenda futura',
-          updatedBy: 'system',
-          updatedAt: new Date()
+          updatedBy: 'system'
         });
+        
+        console.log('✅ [FUTURE-AGENDA] Histórico criado com sucesso');
       }
-    } catch (historyError) {
-      console.error('⚠️ [FUTURE-AGENDA] Erro ao salvar histórico:', historyError);
+    } catch (historyError: any) {
+      console.error('⚠️ [FUTURE-AGENDA] Erro ao salvar histórico:');
+      console.error('   Mensagem:', historyError.message);
+      console.error('   Stack:', historyError.stack);
     }
     
     return stats;
