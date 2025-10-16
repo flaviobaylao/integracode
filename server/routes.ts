@@ -2051,9 +2051,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Converter para formato do sistema
+          const converted = omieService.convertClientToSystemFormat(omieClient);
           const systemClient = {
-            ...omieService.convertClientToSystemFormat(omieClient),
-            sellerId: sellerId || '', // Deixar vazio se não houver vendedor atribuído
+            ...converted,
+            // Usar sellerId do Omie se disponível, senão usar sellerId da planilha
+            sellerId: converted.sellerId || sellerId || '',
             weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão
           };
 
@@ -2158,9 +2160,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             try {
               // Converter cliente do Omie para formato do sistema
+              const converted = omieService.convertClientToSystemFormat(omieClient);
               const systemClient = {
-                ...omieService.convertClientToSystemFormat(omieClient),
-                sellerId: defaultSellerId || '',
+                ...converted,
+                // Usar sellerId do Omie se disponível, senão usar defaultSellerId
+                sellerId: converted.sellerId || defaultSellerId || '',
                 weekdays: "segunda,terça,quarta,quinta,sexta"
               };
 
@@ -2185,6 +2189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   city: systemClient.city,
                   state: systemClient.state,
                   zipCode: systemClient.zipCode,
+                  sellerId: systemClient.sellerId || existingCustomer.sellerId, // Atualizar vendedor do Omie
                   isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao

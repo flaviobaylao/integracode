@@ -805,9 +805,10 @@ export class DatabaseStorage implements IStorage {
       const derivedRouteDay = weekdayNames[dayOfWeek];
       
       // Criar novo card copiando dados da venda anterior
+      // IMPORTANTE: Usar seller_id do CLIENTE, não do card pai (para corrigir vendedores incorretos)
       const nextCardData: InsertSalesCard = {
         customerId: parentCard.customerId,
-        sellerId: parentCard.sellerId,
+        sellerId: customer.sellerId || parentCard.sellerId, // Priorizar seller_id do cliente
         status: 'pending',
         scheduledDate: nextDate,
         attendanceStartDate: new Date(), // Data de início de atendimento = data de criação

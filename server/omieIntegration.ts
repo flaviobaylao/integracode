@@ -2338,6 +2338,13 @@ export class OmieService {
       cnpj = docLimpo;
     }
     
+    // Extrair seller_id das recomendações do Omie
+    let sellerId = null;
+    if (omieClient.recomendacoes?.codigo_vendedor) {
+      sellerId = `omie-vendor-${omieClient.recomendacoes.codigo_vendedor}`;
+      console.log(`✅ Vendedor extraído do cliente ${omieClient.codigo_cliente_omie}: ${sellerId}`);
+    }
+    
     return {
       id: `omie-client-${omieClient.codigo_cliente_omie}`, // ID único baseado no código do Omie
       name: omieClient.razao_social || omieClient.nome_fantasia || 'Cliente sem nome',
@@ -2358,6 +2365,7 @@ export class OmieService {
       state: omieClient.estado || '',
       zipCode: omieClient.cep || '',
       route: omieClient.bairro || '',
+      sellerId, // Incluir seller_id do vendedor do Omie
       // Usar campo 'situacao' como critério correto (se disponível) ou fallback para 'inativo'
       // IMPORTANTE: Normalizar para lowercase para garantir consistência com o filtro de busca
       ...(() => {
