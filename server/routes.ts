@@ -6759,6 +6759,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar rota de uma data específica para um vendedor
+  app.get('/api/daily-routes/:sellerId/date/:date', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date } = req.params;
+      
+      // Vendedor só pode ver sua própria rota
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const routeDate = new Date(date);
+      routeDate.setHours(0, 0, 0, 0);
+      
+      const route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      
+      if (!route) {
+        return res.json({
+          message: 'Nenhuma rota encontrada para esta data. Gere uma rota primeiro.',
+          route: null
+        });
+      }
+
+      // Buscar detalhes das visitas na ordem otimizada (usando sales_cards + customers)
+      const visits = await Promise.all(
+        (route.optimizedOrder || []).map(async (cardId: string) => {
+          const [card] = await db.select({
+            id: salesCards.id,
+            customerId: salesCards.customerId,
+            customerName: customers.name,
+            customerLatitude: customers.latitude,
+            customerLongitude: customers.longitude,
+            customerAddress: customers.address,
+            scheduledDate: salesCards.scheduledDate,
+            isVirtual: customers.virtualService
+          })
+            .from(salesCards)
+            .leftJoin(customers, eq(salesCards.customerId, customers.id))
+            .where(eq(salesCards.id, cardId))
+            .limit(1);
+          return card;
+        })
+      );
+
+      // Calcular distâncias estimadas entre pontos
+      const { calculateDistance } = await import('./routeOptimizationService');
+      const segments = [];
+      
+      if (visits.length > 0) {
+        let prevLat = parseFloat(route.startLatitude);
+        let prevLon = parseFloat(route.startLongitude);
+        
+        for (let i = 0; i < visits.length; i++) {
+          const visit = visits[i];
+          if (visit && visit.customerLatitude && visit.customerLongitude) {
+            const distance = calculateDistance(
+              prevLat, 
+              prevLon,
+              parseFloat(visit.customerLatitude as any),
+              parseFloat(visit.customerLongitude as any)
+            );
+            
+            segments.push({
+              visitId: visit.id,
+              from: i === 0 ? 'Casa' : visits[i-1]?.customerName,
+              to: visit.customerName,
+              distance: distance
+            });
+            
+            prevLat = parseFloat(visit.customerLatitude as any);
+            prevLon = parseFloat(visit.customerLongitude as any);
+          }
+        }
+        
+        // Distância de retorno para casa
+        if (visits.length > 0) {
+          const lastVisit = visits[visits.length - 1];
+          if (lastVisit?.customerLatitude && lastVisit?.customerLongitude) {
+            const returnDistance = calculateDistance(
+              parseFloat(lastVisit.customerLatitude as any),
+              parseFloat(lastVisit.customerLongitude as any),
+              parseFloat(route.startLatitude),
+              parseFloat(route.startLongitude)
+            );
+            
+            segments.push({
+              visitId: 'return',
+              from: lastVisit.customerName,
+              to: 'Casa',
+              distance: returnDistance
+            });
+          }
+        }
+      }
+
+      // Buscar checkpoints da rota
+      const checkpoints = await storage.getRouteCheckpoints(route.id);
+
+      res.json({
+        route: {
+          ...route,
+          visits: visits.filter(Boolean),
+          checkpoints,
+          segments,
+          progress: {
+            totalVisits: route.totalVisits || 0,
+            completedVisits: route.completedVisits || 0,
+            totalEstimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
+            totalActualDistance: parseFloat(route.totalActualDistance || '0'),
+            percentComplete: route.totalVisits > 0 
+              ? Math.round((route.completedVisits / route.totalVisits) * 100) 
+              : 0
+          }
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar rota por data:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar rota específica com detalhes
   app.get('/api/daily-routes/:id', authenticateUser, async (req: any, res) => {
     try {
