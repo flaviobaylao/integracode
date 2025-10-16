@@ -1399,12 +1399,20 @@ export class OmieService {
       
       // Etapa do pedido E dados de faturamento das etapas
       let invoiceStage = '';
+      let isCancelled = false;
       
       if (omieOrderId) {
         try {
           const stageResult = await this.fetchPedidoStage(omieOrderId);
           if (stageResult) {
             invoiceStage = stageResult.stageName;
+            isCancelled = stageResult.cancelled;
+            
+            // Verificar se está cancelado
+            if (isCancelled) {
+              console.log(`🚫 Pedido ${omieOrderId} / NF ${invoiceNumber} está CANCELADO - pulando sincronização`);
+              return null; // Pular notas canceladas
+            }
             
             // NOVO: Aplicar dados de faturamento das etapas diretamente SE não tiver dados válidos
             const hasValidInvoiceNumber = invoiceNumber && invoiceNumber.trim() !== '';
