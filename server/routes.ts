@@ -6658,14 +6658,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada
+      // Buscar detalhes das visitas na ordem otimizada (usando sales_cards + customers)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (visitId: string) => {
-          const [visit] = await db.select()
-            .from(visitAgenda)
-            .where(eq(visitAgenda.id, visitId))
+        (route.optimizedOrder || []).map(async (cardId: string) => {
+          const [card] = await db.select({
+            id: salesCards.id,
+            customerId: salesCards.customerId,
+            customerName: customers.name,
+            customerLatitude: customers.latitude,
+            customerLongitude: customers.longitude,
+            customerAddress: customers.address,
+            scheduledDate: salesCards.scheduledDate,
+            isVirtual: customers.virtualService
+          })
+            .from(salesCards)
+            .leftJoin(customers, eq(salesCards.customerId, customers.id))
+            .where(eq(salesCards.id, cardId))
             .limit(1);
-          return visit;
+          return card;
         })
       );
 
