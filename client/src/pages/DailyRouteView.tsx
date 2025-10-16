@@ -719,72 +719,69 @@ export default function DailyRouteView() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {route.checkpoints.map((cp: any, index: number) => {
-                const isOffRoute = cp.isOffRoute || false;
-                const validationStatus = cp.validationStatus || 'validated';
-                const isCancelled = validationStatus === 'cancelled';
-                const isPending = validationStatus === 'pending';
-                
-                return (
-                  <div 
-                    key={cp.id} 
-                    className={`p-3 rounded-lg border-2 ${
-                      isCancelled 
-                        ? 'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 opacity-60' 
-                        : isOffRoute && isPending
-                        ? 'bg-red-50 dark:bg-red-950 border-red-500'
-                        : isOffRoute
-                        ? 'bg-orange-50 dark:bg-orange-950 border-orange-500'
-                        : 'bg-gray-50 dark:bg-gray-800 border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center flex-1">
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${
-                          isCancelled 
-                            ? 'bg-gray-400 text-white' 
-                            : isOffRoute 
-                            ? 'bg-red-600 text-white' 
-                            : 'bg-honest-blue text-white'
-                        }`}>
-                          {index + 1}
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className={`font-medium ${
+              {(() => {
+                // Agrupar checkpoints em pares (check-in + check-out)
+                const pairs: any[] = [];
+                for (let i = 0; i < route.checkpoints.length; i += 2) {
+                  const checkIn = route.checkpoints[i];
+                  const checkOut = route.checkpoints[i + 1];
+                  if (checkIn && checkOut) {
+                    pairs.push({ checkIn, checkOut });
+                  } else if (checkIn) {
+                    // Se houver check-in sem check-out, adicionar sozinho
+                    pairs.push({ checkIn, checkOut: null });
+                  }
+                }
+
+                return pairs.map((pair, pairIndex) => {
+                  const { checkIn, checkOut } = pair;
+                  const isOffRoute = checkIn.isOffRoute || false;
+                  const validationStatus = checkIn.validationStatus || 'validated';
+                  const isCancelled = validationStatus === 'cancelled';
+                  const isPending = validationStatus === 'pending';
+                  
+                  return (
+                    <div 
+                      key={checkIn.id} 
+                      className={`p-4 rounded-lg border-2 ${
+                        isCancelled 
+                          ? 'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 opacity-60' 
+                          : isOffRoute && isPending
+                          ? 'bg-red-50 dark:bg-red-950 border-red-500'
+                          : isOffRoute
+                          ? 'bg-orange-50 dark:bg-orange-950 border-orange-500'
+                          : 'bg-gray-50 dark:bg-gray-800 border-transparent'
+                      }`}
+                    >
+                      {/* Header com nome do cliente e badges */}
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                            isCancelled 
+                              ? 'bg-gray-400 text-white' 
+                              : isOffRoute 
+                              ? 'bg-red-600 text-white' 
+                              : 'bg-honest-blue text-white'
+                          }`}>
+                            {pairIndex + 1}
+                          </div>
+                          <div>
+                            <p className={`font-semibold text-base ${
                               isCancelled 
                                 ? 'text-gray-500 dark:text-gray-600 line-through' 
                                 : 'text-gray-900 dark:text-white'
                             }`}>
-                              {cp.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}
+                              {checkIn.customerName || 'Cliente'}
                             </p>
                             {isOffRoute && (
                               <Badge 
                                 variant={isPending ? "destructive" : "secondary"}
-                                className="text-xs"
+                                className="text-xs mt-1"
                               >
                                 {isPending ? 'FORA DA ROTA - PENDENTE' : isCancelled ? 'CANCELADA' : 'VALIDADA'}
                               </Badge>
                             )}
                           </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            {format(new Date(cp.checkpointTime || cp.timestamp), "HH:mm:ss", { locale: ptBR })}
-                          </p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className={`text-sm font-medium ${
-                            isCancelled 
-                              ? 'text-gray-500 dark:text-gray-600 line-through' 
-                              : 'text-gray-900 dark:text-white'
-                          }`}>
-                            {formatDistance(parseFloat(cp.distanceFromPrevious || '0'))}
-                          </p>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {isCancelled ? 'não contada' : 'do anterior'}
-                          </p>
                         </div>
                         
                         {/* Botões de Validar/Cancelar (apenas admin e visitas off-route) */}
@@ -794,9 +791,9 @@ export default function DailyRouteView() {
                               size="sm"
                               variant="outline"
                               className="text-green-600 border-green-600 hover:bg-green-50"
-                              onClick={() => validateVisitMutation.mutate(cp.id)}
+                              onClick={() => validateVisitMutation.mutate(checkIn.id)}
                               disabled={validateVisitMutation.isPending}
-                              data-testid={`button-validate-${cp.id}`}
+                              data-testid={`button-validate-${checkIn.id}`}
                             >
                               <CheckCircle className="h-4 w-4 mr-1" />
                               Validar
@@ -805,9 +802,9 @@ export default function DailyRouteView() {
                               size="sm"
                               variant="outline"
                               className="text-red-600 border-red-600 hover:bg-red-50"
-                              onClick={() => cancelVisitMutation.mutate(cp.id)}
+                              onClick={() => cancelVisitMutation.mutate(checkIn.id)}
                               disabled={cancelVisitMutation.isPending}
-                              data-testid={`button-cancel-${cp.id}`}
+                              data-testid={`button-cancel-${checkIn.id}`}
                             >
                               <AlertTriangle className="h-4 w-4 mr-1" />
                               Cancelar
@@ -815,10 +812,62 @@ export default function DailyRouteView() {
                           </div>
                         )}
                       </div>
+
+                      {/* Check-in e Check-out lado a lado */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Check-in */}
+                        <div className="bg-white dark:bg-gray-900 p-3 rounded-md border border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center gap-2 mb-2">
+                            <MapPin className="h-4 w-4 text-green-600" />
+                            <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                              Check-in
+                            </p>
+                          </div>
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                            <Clock className="h-3 w-3 inline mr-1" />
+                            {format(new Date(checkIn.checkpointTime || checkIn.timestamp), "HH:mm:ss", { locale: ptBR })}
+                          </p>
+                          <p className={`text-sm font-medium ${
+                            isCancelled 
+                              ? 'text-gray-500 dark:text-gray-600 line-through' 
+                              : 'text-honest-blue'
+                          }`}>
+                            <Navigation className="h-3 w-3 inline mr-1" />
+                            {formatDistance(parseFloat(checkIn.distanceFromPrevious || '0'))}
+                            <span className="text-xs text-gray-500 ml-1">
+                              {isCancelled ? '(não contada)' : 'do anterior'}
+                            </span>
+                          </p>
+                        </div>
+
+                        {/* Check-out */}
+                        {checkOut && (
+                          <div className="bg-white dark:bg-gray-900 p-3 rounded-md border border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center gap-2 mb-2">
+                              <MapPin className="h-4 w-4 text-red-600" />
+                              <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                                Check-out
+                              </p>
+                            </div>
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                              <Clock className="h-3 w-3 inline mr-1" />
+                              {format(new Date(checkOut.checkpointTime || checkOut.timestamp), "HH:mm:ss", { locale: ptBR })}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Tempo no local: {(() => {
+                                const diff = new Date(checkOut.checkpointTime || checkOut.timestamp).getTime() - 
+                                            new Date(checkIn.checkpointTime || checkIn.timestamp).getTime();
+                                const minutes = Math.floor(diff / 60000);
+                                return `${minutes} min`;
+                              })()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           </CardContent>
         </Card>

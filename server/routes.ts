@@ -6894,8 +6894,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      const routeDate = new Date(date);
-      routeDate.setHours(0, 0, 0, 0);
+      // A data já vem em formato YYYY-MM-DD, usar diretamente
+      const dateString = date;
       
       // Buscar sales cards do vendedor para aquela data
       const cards = await db.select()
@@ -6904,7 +6904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             eq(salesCards.assignedSellerId, sellerId),
-            eq(salesCards.scheduledDate, routeDate.toISOString().split('T')[0]),
+            eq(salesCards.scheduledDate, dateString),
             eq(salesCards.status, 'open')
           )
         );
