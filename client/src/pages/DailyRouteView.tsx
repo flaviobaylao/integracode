@@ -95,6 +95,28 @@ export default function DailyRouteView() {
 
   const route: DailyRoute | null = routeData?.route || null;
 
+  // Buscar clientes sem coordenadas para a data selecionada
+  const { data: missingCoordsData } = useQuery({
+    queryKey: ['/api/daily-routes', selectedSellerId, selectedDate, 'missing-coordinates'],
+    queryFn: async () => {
+      if (!selectedSellerId || !selectedDate) return null;
+      
+      const response = await fetch(`/api/daily-routes/${selectedSellerId}/date/${selectedDate}/missing-coordinates`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Falha ao buscar clientes sem coordenadas');
+      }
+      
+      return response.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate
+  });
+
+  const missingCoordinates = missingCoordsData?.customers || [];
+  const hasMissingCoordinates = missingCoordinates.length > 0;
+
   // Mutation para validar visita off-route
   const validateVisitMutation = useMutation({
     mutationFn: async (checkpointId: string) => {
@@ -302,10 +324,49 @@ export default function DailyRouteView() {
           </div>
         )}
 
+        {hasMissingCoordinates && (
+          <Alert className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-700">
+            <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+            <AlertDescription className="text-yellow-800 dark:text-yellow-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <strong>{missingCoordinates.length} cliente(s)</strong> sem coordenadas GPS para esta data.
+                  <p className="text-sm mt-1">Adicione as coordenadas e clique em "Gerar Rota" para incluí-los na rota.</p>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2">
+                {missingCoordinates.map((customer: any) => (
+                  <div key={customer.customerId} className="bg-white dark:bg-gray-800 p-3 rounded-md border border-yellow-200 dark:border-yellow-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{customer.customerName}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">{customer.cpfCnpj}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">{customer.address}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          // Redirecionar para a página de edição do cliente
+                          window.location.href = `/customers/${customer.customerId}`;
+                        }}
+                        data-testid={`button-edit-coords-${customer.customerId}`}
+                      >
+                        <MapPin className="h-4 w-4 mr-1" />
+                        Adicionar Coordenadas
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Card>
           <CardContent className="py-12 text-center">
             <Route className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Nenhuma rota disponível para hoje</h3>
+            <h3 className="text-lg font-semibold mb-2">Nenhuma rota disponível para esta data</h3>
             <p className="text-gray-600 dark:text-gray-400 mb-2">
               As rotas são geradas automaticamente pelo sistema todos os dias às 05:00h.
             </p>
@@ -395,6 +456,45 @@ export default function DailyRouteView() {
             />
           </div>
         </div>
+      )}
+
+      {hasMissingCoordinates && (
+        <Alert className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-700">
+          <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+          <AlertDescription className="text-yellow-800 dark:text-yellow-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <strong>{missingCoordinates.length} cliente(s)</strong> sem coordenadas GPS para esta data.
+                <p className="text-sm mt-1">Adicione as coordenadas e clique em "Gerar Rota" para incluí-los na rota.</p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {missingCoordinates.map((customer: any) => (
+                <div key={customer.customerId} className="bg-white dark:bg-gray-800 p-3 rounded-md border border-yellow-200 dark:border-yellow-800">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{customer.customerName}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{customer.cpfCnpj}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{customer.address}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        // Redirecionar para a página de edição do cliente
+                        window.location.href = `/customers/${customer.customerId}`;
+                      }}
+                      data-testid={`button-edit-coords-${customer.customerId}`}
+                    >
+                      <MapPin className="h-4 w-4 mr-1" />
+                      Adicionar Coordenadas
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Estatísticas da Rota */}
