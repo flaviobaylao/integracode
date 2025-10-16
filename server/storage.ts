@@ -3054,11 +3054,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRouteCheckpoints(dailyRouteId: string): Promise<any[]> {
-    return await db
-      .select()
+    const results = await db
+      .select({
+        id: routeCheckpoints.id,
+        dailyRouteId: routeCheckpoints.dailyRouteId,
+        visitId: routeCheckpoints.visitId,
+        customerId: routeCheckpoints.customerId,
+        sellerId: routeCheckpoints.sellerId,
+        checkpointType: routeCheckpoints.checkpointType,
+        checkpointLatitude: routeCheckpoints.checkpointLatitude,
+        checkpointLongitude: routeCheckpoints.checkpointLongitude,
+        checkpointTime: routeCheckpoints.checkpointTime,
+        timestamp: routeCheckpoints.timestamp,
+        isOffRoute: routeCheckpoints.isOffRoute,
+        validationStatus: routeCheckpoints.validationStatus,
+        validatedBy: routeCheckpoints.validatedBy,
+        validatedAt: routeCheckpoints.validatedAt,
+        sequenceNumber: routeCheckpoints.sequenceNumber,
+        distanceFromPrevious: routeCheckpoints.distanceFromPrevious,
+        previousLatitude: routeCheckpoints.previousLatitude,
+        previousLongitude: routeCheckpoints.previousLongitude,
+        customerName: customers.name,
+      })
       .from(routeCheckpoints)
+      .leftJoin(customers, eq(routeCheckpoints.customerId, customers.id))
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
+    
+    return results;
   }
 
   async createRouteCheckpoint(data: any): Promise<any> {
