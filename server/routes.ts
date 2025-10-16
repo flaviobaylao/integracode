@@ -5153,15 +5153,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invoiceNumber: billingsTable.invoiceNumber,
         omieOrderId: billingsTable.omieOrderId,
         orderNumber: billingsTable.orderNumber,
-        customerId: customers.id,
-        customerName: customers.name,
-        customerAddress: customers.address,
-        customerLatitude: customers.latitude,
-        customerLongitude: customers.longitude,
-        averageDeliveryTime: customers.averageDeliveryTime,
-        exclusiveVehicle: sql<boolean>`false`, // Billings não têm esse campo
-        vehicleTypes: sql<string[]>`ARRAY[]::text[]`, // Billings não têm esse campo
-        isUrgent: sql<boolean>`false`, // Por padrão não urgente
+        // Customer data with fallback to billing data
+        customerId: sql<string>`COALESCE(${customers.id}, 'billing-' || ${billingsTable.id})`,
+        customerName: sql<string>`COALESCE(${customers.name}, ${billingsTable.customerFantasyName})`,
+        customerAddress: sql<string>`COALESCE(${customers.address}, '')`,
+        customerLatitude: sql<number>`COALESCE(${customers.latitude}, 0)`,
+        customerLongitude: sql<number>`COALESCE(${customers.longitude}, 0)`,
+        averageDeliveryTime: sql<number>`COALESCE(${customers.averageDeliveryTime}, 30)`,
+        exclusiveVehicle: sql<boolean>`false`,
+        vehicleTypes: sql<string[]>`ARRAY[]::text[]`,
+        isUrgent: sql<boolean>`false`,
         saleValue: billingsTable.totalValue,
         products: billingsTable.products,
         scheduledDate: billingsTable.invoiceDate,
@@ -5173,8 +5174,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .leftJoin(customers, 
         sql`(
           ${customers.id} = CONCAT('omie-client-', ${billingsTable.omieCustomerCode})
-          OR ${customers.cpf} = ${billingsTable.customerDocument}
-          OR ${customers.cnpj} = ${billingsTable.customerDocument}
+          OR REGEXP_REPLACE(${customers.cpf}, '[^0-9]', '', 'g') = REGEXP_REPLACE(${billingsTable.customerDocument}, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(${customers.cnpj}, '[^0-9]', '', 'g') = REGEXP_REPLACE(${billingsTable.customerDocument}, '[^0-9]', '', 'g')
         )`
       )
       .where(
@@ -6927,7 +6928,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             eq(salesCards.assignedSellerId, sellerId),
-            eq(salesCards.scheduledDate, dateString),
+            sql`DATE(${salesCards.scheduledDate}) = ${dateString}`,
             eq(salesCards.status, 'open')
           )
         );
@@ -6944,7 +6945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           cardId: row.sales_cards.id,
           customerId: row.customers.id,
           customerName: row.customers.name,
-          cpfCnpj: row.customers.cpfCnpj,
+          cpfCnpj: row.customers.cpf || row.customers.cnpj || '',
           address: row.customers.address,
           latitude: row.customers.latitude,
           longitude: row.customers.longitude
