@@ -3069,6 +3069,15 @@ export class DatabaseStorage implements IStorage {
     return checkpoint;
   }
 
+  async getRouteCheckpointById(checkpointId: string): Promise<any | undefined> {
+    const [checkpoint] = await db
+      .select()
+      .from(routeCheckpoints)
+      .where(eq(routeCheckpoints.id, checkpointId))
+      .limit(1);
+    return checkpoint;
+  }
+
   async updateRouteCheckpoint(id: string, data: Partial<{
     validationStatus: string;
     validatedBy: string;

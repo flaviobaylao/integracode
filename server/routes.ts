@@ -6822,8 +6822,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await validateOffRouteVisit(storage, checkpointId, user.id);
       
       // Buscar checkpoint para retornar dados atualizados da rota
-      const checkpoints = await storage.getRouteCheckpoints('');
-      const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+      const checkpoint = await storage.getRouteCheckpointById(checkpointId);
       
       if (checkpoint) {
         const routeStats = await calculateActualRouteDistance(storage, checkpoint.dailyRouteId);
@@ -6860,8 +6859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await cancelOffRouteVisit(storage, checkpointId, user.id);
       
       // Buscar checkpoint para retornar dados atualizados da rota
-      const checkpoints = await storage.getRouteCheckpoints('');
-      const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+      const checkpoint = await storage.getRouteCheckpointById(checkpointId);
       
       if (checkpoint) {
         const routeStats = await calculateActualRouteDistance(storage, checkpoint.dailyRouteId);

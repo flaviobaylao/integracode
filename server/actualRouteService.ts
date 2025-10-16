@@ -149,8 +149,7 @@ export async function validateOffRouteVisit(
   checkpointId: string,
   adminId: string
 ): Promise<void> {
-  const checkpoints = await storage.getRouteCheckpoints(''); // Buscar todos primeiro
-  const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+  const checkpoint = await storage.getRouteCheckpointById(checkpointId);
   
   if (!checkpoint) {
     throw new Error('Checkpoint não encontrado');
@@ -178,8 +177,7 @@ export async function cancelOffRouteVisit(
   checkpointId: string,
   adminId: string
 ): Promise<void> {
-  const checkpoints = await storage.getRouteCheckpoints(''); // Buscar todos primeiro
-  const checkpoint = checkpoints.find(cp => cp.id === checkpointId);
+  const checkpoint = await storage.getRouteCheckpointById(checkpointId);
   
   if (!checkpoint) {
     throw new Error('Checkpoint não encontrado');
