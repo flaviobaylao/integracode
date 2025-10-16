@@ -327,18 +327,35 @@ export async function generateDailyRoute(
     throw new Error('Vendedor não possui coordenadas de residência cadastradas');
   }
 
-  // Buscar visitas pendentes do dia
+  // Buscar sales cards pendentes do dia (usando sales_cards como fonte de verdade)
   const startOfDay = new Date(routeDate);
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(routeDate);
   endOfDay.setHours(23, 59, 59, 999);
 
-  const visits = await storage.getVisitAgenda({
-    sellerId,
-    startDate: startOfDay.toISOString(),
-    endDate: endOfDay.toISOString(),
-    visitStatus: 'pending'
-  });
+  // Buscar sales cards pendentes do vendedor para a data
+  const salesCards = await storage.getSalesCardsByDate(startOfDay, sellerId);
+
+  // Filtrar apenas cards pendentes
+  const pendingCards = salesCards.filter((c: any) => c.status === 'pending');
+
+  // Converter para formato de visitas com dados do cliente
+  const visits: any[] = [];
+  for (const card of pendingCards) {
+    const customer = await storage.getCustomer(card.customerId);
+    if (customer) {
+      visits.push({
+        id: card.id,
+        customerId: customer.id,
+        customerName: customer.name,
+        customerLatitude: customer.latitude,
+        customerLongitude: customer.longitude,
+        customerAddress: customer.address,
+        isVirtual: customer.virtualService || false,
+        scheduledDate: card.scheduledDate
+      });
+    }
+  }
 
   // Filtrar apenas visitas presenciais com coordenadas válidas
   const validVisits = visits.filter(v => 
