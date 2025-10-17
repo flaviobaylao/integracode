@@ -998,3 +998,21 @@ export const OPERATION_TYPE_LABELS = {
   'troca': 'Troca',
   'amostra': 'Amostra'
 } as const;
+
+// Sync Status enum
+export const syncStatusEnum = pgEnum('sync_status_enum', ['success', 'error', 'in_progress']);
+
+// Sync Status table - tracks last synchronization timestamps for all sync operations
+export const syncStatus = pgTable("sync_status", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  syncType: varchar("sync_type").notNull().unique(), // 'omie_clients', 'omie_products', 'omie_billings', 'omie_vendors', 'omie_overdue_debts'
+  lastSyncAt: timestamp("last_sync_at").notNull(),
+  status: syncStatusEnum("status").notNull().default('success'),
+  message: text("message"),
+  recordsProcessed: integer("records_processed"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSyncStatusSchema = createInsertSchema(syncStatus).omit({ id: true, updatedAt: true });
+export type SyncStatus = typeof syncStatus.$inferSelect;
+export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
