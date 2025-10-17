@@ -9,21 +9,21 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/attached_assets/generated_images/Sistema_Integra_PWA_icon_fdb61d8e.png",
+      "src": "/attached_assets/Ativo 4_1756301811992.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png",
+      "src": "/attached_assets/folha icone_1755571388146.JPG",
       "sizes": "192x192",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "any"
     }
   ],
   "screenshots": [
     {
-      "src": "/attached_assets/generated_images/Sistema_Integra_PWA_icon_fdb61d8e.png",
+      "src": "/attached_assets/Ativo 4_1756301811992.png",
       "sizes": "512x512",
       "type": "image/png"
     }

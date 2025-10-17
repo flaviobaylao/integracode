@@ -35,12 +35,12 @@ https://workspace.flaviobaylao.repl.co
 
 ## 🎨 Sobre o Ícone
 
-O ícone foi criado especialmente para o Sistema Integra:
-- 🍃 **Folha verde** simbolizando sustentabilidade
-- ♻️ **Setas circulares** representando integração e continuidade
-- ✨ **Design moderno e profissional** otimizado para dispositivos móveis
+O ícone oficial do Sistema Integra - Honest Sucos:
+- 🍃 **Folha verde** simbolizando sustentabilidade e natureza
+- ✨ **Design da marca Honest Sucos** 
+- 📱 **Otimizado para dispositivos móveis**
 
-![Ícone do Sistema Integra](attached_assets/generated_images/Sistema_Integra_PWA_icon_fdb61d8e.png)
+![Ícone do Sistema Integra](attached_assets/Ativo%204_1756301811992.png)
 
 ---
 
