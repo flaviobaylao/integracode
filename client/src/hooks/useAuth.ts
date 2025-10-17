@@ -16,15 +16,50 @@ interface User {
 }
 
 export function useAuth() {
-  const { data: user, isLoading, error, isError } = useQuery<User>({
+  const { data: user, isLoading, error, isError } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
-    retry: 1,
-    retryDelay: 1000,
-    staleTime: 1000 * 60 * 5, // 5 minutos
-    gcTime: 1000 * 60 * 10, // 10 minutos (antigamente cacheTime)
+    queryFn: async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+      
+      try {
+        const res = await fetch("/api/auth/user", {
+          credentials: "include",
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        
+        // Se não autenticado, retorna null (não é erro, é estado válido)
+        if (res.status === 401) {
+          return null;
+        }
+        
+        if (!res.ok) {
+          throw new Error(`${res.status}: ${res.statusText}`);
+        }
+        
+        return await res.json();
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        
+        // Se for timeout ou erro de rede, lança erro para permitir retry
+        if (err.name === 'AbortError') {
+          console.warn('Auth check timeout, will retry...');
+          throw new Error('Auth check timeout - please check your connection');
+        }
+        
+        throw err;
+      }
+    },
+    retry: 2, // Permite 2 retries para recuperar de erros temporários
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 3000), // Backoff exponencial
+    staleTime: 1000 * 30, // 30 segundos - permite revalidação mais frequente
+    gcTime: 1000 * 60 * 5, // 5 minutos
     refetchOnWindowFocus: false,
     refetchOnMount: true,
-    networkMode: 'online',
+    refetchOnReconnect: true, // Revalida quando a conexão volta
+    networkMode: 'online', // Só tenta quando online
   });
 
   return {
