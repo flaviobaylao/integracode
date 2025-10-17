@@ -805,14 +805,29 @@ export default function SalesCards() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
-              <h4 className="font-semibold text-sm text-blue-900">Formato da Planilha</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-sm text-blue-900">Formato da Planilha</h4>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    window.open('/api/sales-cards/template', '_blank');
+                  }}
+                  className="text-xs"
+                  data-testid="button-download-template"
+                >
+                  <FileSpreadsheet className="w-3 h-3 mr-1" />
+                  Baixar Modelo
+                </Button>
+              </div>
               <p className="text-sm text-blue-800">
                 A planilha deve conter as seguintes colunas:
               </p>
               <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
-                <li><strong>CNPJ/CPF</strong> ou <strong>CNPJ</strong>: CNPJ do cliente (obrigatório)</li>
-                <li><strong>dias da semana</strong> ou <strong>Dias da Semana</strong>: Dias separados por vírgula (ex: SEGUNDA-FEIRA,QUARTA-FEIRA)</li>
-                <li><strong>periodicidade</strong> ou <strong>Periodicidade</strong>: SEMANAL, QUINZENAL ou MENSAL</li>
+                <li><strong>ROTA</strong>: Dia da semana (SEGUNDA-FEIRA, TERÇA-FEIRA, etc.)</li>
+                <li><strong>CNPJ/CPF</strong>: CNPJ do cliente (obrigatório)</li>
+                <li><strong>Cliente (Nome Fantasia)</strong>: Nome do cliente</li>
+                <li><strong>FREQUENCIA</strong>: SEMANAL, QUINZENAL ou MENSAL</li>
               </ul>
               <p className="text-xs text-blue-700 mt-2">
                 💡 Se o CNPJ não existir no sistema, o cliente será cadastrado automaticamente via Receita Federal.
