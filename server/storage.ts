@@ -17,6 +17,7 @@ import {
   routeCheckpoints,
   deliveryRoutes,
   deliveryRouteStops,
+  syncStatus,
   type User,
   type UpsertUser,
   type Route,
@@ -40,6 +41,8 @@ import {
   type Billing,
   type InsertBilling,
   type ExportedReport,
+  type SyncStatus,
+  type InsertSyncStatus,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -221,6 +224,16 @@ export interface IStorage {
   
   // Billing stage operations
   getAllBillingsWithOrderId(): Promise<any[]>;
+
+  // Sync status operations
+  getSyncStatus(syncType: string): Promise<SyncStatus | undefined>;
+  getAllSyncStatus(): Promise<SyncStatus[]>;
+  upsertSyncStatus(syncStatus: InsertSyncStatus): Promise<SyncStatus>;
+  updateSyncStatus(syncType: string, data: { 
+    status: 'success' | 'error' | 'in_progress'; 
+    message?: string; 
+    recordsProcessed?: number;
+  }): Promise<SyncStatus>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3444,6 +3457,57 @@ export class DatabaseStorage implements IStorage {
       console.error('❌ Erro ao recalcular datas de visita:', error);
       throw error;
     }
+  }
+
+  // Sync status operations
+  async getSyncStatus(syncType: string): Promise<SyncStatus | undefined> {
+    const [status] = await db
+      .select()
+      .from(syncStatus)
+      .where(eq(syncStatus.syncType, syncType))
+      .limit(1);
+    return status;
+  }
+
+  async getAllSyncStatus(): Promise<SyncStatus[]> {
+    return await db
+      .select()
+      .from(syncStatus)
+      .orderBy(desc(syncStatus.lastSyncAt));
+  }
+
+  async upsertSyncStatus(data: InsertSyncStatus): Promise<SyncStatus> {
+    const [status] = await db
+      .insert(syncStatus)
+      .values(data)
+      .onConflictDoUpdate({
+        target: syncStatus.syncType,
+        set: {
+          ...data,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return status;
+  }
+
+  async updateSyncStatus(syncType: string, data: { 
+    status: 'success' | 'error' | 'in_progress'; 
+    message?: string; 
+    recordsProcessed?: number;
+  }): Promise<SyncStatus> {
+    const [status] = await db
+      .update(syncStatus)
+      .set({
+        status: data.status,
+        message: data.message,
+        recordsProcessed: data.recordsProcessed,
+        lastSyncAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(syncStatus.syncType, syncType))
+      .returning();
+    return status;
   }
 }
 
