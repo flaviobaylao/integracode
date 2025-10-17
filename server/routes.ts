@@ -8036,6 +8036,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sync status endpoints
+  app.get('/api/sync-status', authenticateUser, async (req, res) => {
+    try {
+      const allStatus = await storage.getAllSyncStatus();
+      res.json(allStatus);
+    } catch (error: any) {
+      console.error('Erro ao buscar status de sincronização:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar status de sincronização',
+        error: error.message 
+      });
+    }
+  });
+
+  app.get('/api/sync-status/:syncType', authenticateUser, async (req, res) => {
+    try {
+      const { syncType } = req.params;
+      const status = await storage.getSyncStatus(syncType);
+      
+      if (!status) {
+        return res.status(404).json({ 
+          message: 'Status de sincronização não encontrado' 
+        });
+      }
+      
+      res.json(status);
+    } catch (error: any) {
+      console.error('Erro ao buscar status de sincronização:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar status de sincronização',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
