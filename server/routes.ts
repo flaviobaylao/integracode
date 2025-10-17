@@ -1569,6 +1569,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         // Atualização normal sem mudança de status final
         salesCard = await storage.updateSalesCard(id, data);
+        
+        // Replicar configurações alteradas para todos os cards futuros do mesmo cliente
+        const updatedCount = await storage.updateFutureCardsConfig(id, data);
+        if (updatedCount > 0) {
+          console.log(`✅ Configurações replicadas para ${updatedCount} cards futuros`);
+        }
       }
       
       res.json(salesCard);

@@ -635,6 +635,74 @@ export class DatabaseStorage implements IStorage {
     return updatedSalesCard;
   }
 
+  // Atualizar configurações de todos os cards futuros do mesmo cliente
+  async updateFutureCardsConfig(currentCardId: string, configUpdates: Partial<InsertSalesCard>): Promise<number> {
+    try {
+      // 1. Buscar o card atual para pegar o customerId
+      const currentCard = await this.getSalesCard(currentCardId);
+      if (!currentCard) {
+        console.log('Card não encontrado:', currentCardId);
+        return 0;
+      }
+
+      // 2. Extrair apenas os campos de configuração que devem ser replicados
+      const replicableFields: Partial<InsertSalesCard> = {};
+      
+      const configFieldsToReplicate = [
+        'routeDay',
+        'recurrenceType', 
+        'paymentMethod',
+        'deliveryWeekdays',
+        'deliveryTimeSlots',
+        'deliverySaturdayTimeSlots',
+        'boletoDays',
+        'exclusiveVehicle',
+        'vehicleTypes',
+        'customerLatitude',
+        'customerLongitude'
+      ];
+
+      for (const field of configFieldsToReplicate) {
+        if (configUpdates[field as keyof InsertSalesCard] !== undefined) {
+          (replicableFields as any)[field] = configUpdates[field as keyof InsertSalesCard];
+        }
+      }
+
+      // 3. Se não há campos de configuração para replicar, retornar 0
+      if (Object.keys(replicableFields).length === 0) {
+        console.log('Nenhum campo de configuração para replicar');
+        return 0;
+      }
+
+      console.log('📋 Replicando configurações para cards futuros do cliente:', currentCard.customerId);
+      console.log('Campos a replicar:', Object.keys(replicableFields));
+
+      // 4. Atualizar todos os cards futuros (pending) do mesmo cliente
+      const result = await db
+        .update(salesCards)
+        .set({ 
+          ...replicableFields as any, 
+          updatedAt: new Date() 
+        })
+        .where(
+          and(
+            eq(salesCards.customerId, currentCard.customerId),
+            eq(salesCards.status, 'pending'),
+            sql`${salesCards.scheduledDate} > ${currentCard.scheduledDate}` // apenas cards com data futura
+          )
+        )
+        .returning({ id: salesCards.id });
+
+      const updatedCount = result.length;
+      console.log(`✅ ${updatedCount} cards futuros atualizados com as novas configurações`);
+      
+      return updatedCount;
+    } catch (error) {
+      console.error('Erro ao atualizar cards futuros:', error);
+      return 0;
+    }
+  }
+
   // Função helper transacional: fecha card atual e cria próximo automaticamente
   async closeCardAndScheduleNext(
     cardId: string, 
