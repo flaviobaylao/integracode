@@ -41,6 +41,27 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
+// Helper function to save sync status after successful synchronization
+async function saveSyncStatus(
+  syncType: string, 
+  status: 'success' | 'error', 
+  recordsProcessed: number, 
+  message?: string
+) {
+  try {
+    await storage.upsertSyncStatus({
+      syncType,
+      lastSyncAt: new Date(),
+      status,
+      message,
+      recordsProcessed
+    });
+    console.log(`✅ Sync status saved: ${syncType} - ${status} - ${recordsProcessed} records`);
+  } catch (error) {
+    console.error(`❌ Error saving sync status for ${syncType}:`, error);
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -2305,6 +2326,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 Atualizados: ${result.updated}`);
       console.log(`❌ Erros: ${result.errors.length}`);
 
+      // Save sync status
+      await saveSyncStatus(
+        'omie_clients', 
+        result.errors.length > 0 ? 'error' : 'success',
+        result.totalProcessed,
+        `${result.imported} importados, ${result.updated} atualizados, ${result.errors.length} erros`
+      );
+
       res.json({
         ...result,
         message: `Sincronização concluída: ${result.totalProcessed} clientes processados`
@@ -3596,6 +3625,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await omieService.syncBillingsInRange(startDate, endDate);
       
       console.log('✅ Sincronização de faturamentos concluída:', result);
+      
+      // Save sync status
+      await saveSyncStatus(
+        'omie_billings',
+        'success',
+        result.total || 0,
+        `${result.inserted || 0} inseridos, ${result.updated || 0} atualizados`
+      );
+      
       res.json(result);
       
     } catch (error: any) {
@@ -4359,6 +4397,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('🔄 Iniciando sincronização de vendedores via endpoint...');
       const result = await omieService.syncVendors();
       
+      // Save sync status
+      await saveSyncStatus(
+        'omie_vendors',
+        'success',
+        (result.imported || 0) + (result.updated || 0),
+        `${result.imported} importados, ${result.updated} atualizados`
+      );
+      
       res.json({
         success: true,
         message: `Sincronização concluída: ${result.imported} importados, ${result.updated} atualizados`,
@@ -4503,6 +4549,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`   🔄 Atualizados: ${result.updated}`);
       console.log(`   ⏭️ Pulados (bloqueados/sem preço): ${result.skipped}`);
       console.log(`   ❌ Erros: ${result.errors.length}`);
+
+      // Save sync status
+      await saveSyncStatus(
+        'omie_products',
+        result.errors.length > 0 ? 'error' : 'success',
+        result.imported + result.updated,
+        `${result.imported} importados, ${result.updated} atualizados, ${result.skipped} pulados, ${result.errors.length} erros`
+      );
 
       res.json(result);
 
