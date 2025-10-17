@@ -1527,7 +1527,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Ler routeDay da planilha (prioridade absoluta)
           let routeDay: string;
-          const routeDayCol = row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'] || row['Dia'] || row['dia'];
+          const routeDayCol = row['ROTA'] || row['Rota'] || row['rota'] || row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'] || row['Dia'] || row['dia'];
           
           if (routeDayCol) {
             // Normalizar dia da semana da planilha
