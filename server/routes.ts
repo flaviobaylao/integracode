@@ -1477,32 +1477,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue;
           }
 
-          // Calcular próxima data de visita
-          let scheduledDate = new Date();
-          
-          if (customer.weekdays && customer.visitPeriodicity) {
-            const { calculateNextVisitDate } = await import('@shared/visitSchedule');
-            
-            let parsedWeekdays: string[] = [];
-            try {
-              parsedWeekdays = typeof customer.weekdays === 'string' 
-                ? JSON.parse(customer.weekdays) 
-                : customer.weekdays;
-            } catch (e) {
-              parsedWeekdays = [];
-            }
-
-            if (parsedWeekdays.length > 0) {
-              const result = calculateNextVisitDate({
-                weekdays: parsedWeekdays as any[],
-                periodicity: customer.visitPeriodicity as any,
-                lastCompletedDate: new Date()
-              });
-              scheduledDate = result.nextDate;
-            }
-          }
-
-          // Ler routeDay da planilha (prioridade) ou derivar do scheduledDate
+          // Ler routeDay da planilha (prioridade absoluta)
           let routeDay: string;
           const routeDayCol = row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'] || row['Dia'] || row['dia'];
           
@@ -1531,12 +1506,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando calculado: "${routeDay}" para cliente ${customer.fantasyName}`);
             }
           } else {
-            // Fallback: derivar do scheduledDate
-            const dayOfWeek = scheduledDate.getDay();
-            const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-            routeDay = weekdayNames[dayOfWeek];
-            console.log(`⚠️ Dia da rota não encontrado na planilha, usando calculado: "${routeDay}" para cliente ${customer.fantasyName}`);
+            // Fallback: usar próxima segunda-feira
+            routeDay = 'segunda';
+            console.log(`⚠️ Dia da rota não encontrado na planilha, usando fallback: "${routeDay}" para cliente ${customer.fantasyName}`);
           }
+
+          // Calcular scheduledDate baseado no routeDay da planilha
+          // Mapear routeDay para número do dia da semana (0=domingo, 1=segunda, etc.)
+          const routeDayToNumber: Record<string, number> = {
+            'domingo': 0,
+            'segunda': 1,
+            'terca': 2,
+            'quarta': 3,
+            'quinta': 4,
+            'sexta': 5,
+            'sabado': 6
+          };
+          
+          const targetDayNumber = routeDayToNumber[routeDay];
+          let scheduledDate = new Date();
+          
+          // Validar que o routeDay foi mapeado corretamente
+          if (targetDayNumber === undefined) {
+            console.error(`⚠️ ERRO: routeDay "${routeDay}" não foi mapeado para número válido. Usando próxima segunda-feira.`);
+            // Fallback para segunda-feira
+            const currentDayNumber = scheduledDate.getDay();
+            let daysUntilMonday = 1 - currentDayNumber;
+            if (daysUntilMonday <= 0) {
+              daysUntilMonday += 7;
+            }
+            scheduledDate.setDate(scheduledDate.getDate() + daysUntilMonday);
+          } else {
+            // Calcular próxima ocorrência do routeDay
+            const currentDayNumber = scheduledDate.getDay();
+            let daysUntilTarget = targetDayNumber - currentDayNumber;
+            
+            // Se o dia já passou esta semana, ir para próxima semana
+            // Se é hoje (daysUntilTarget = 0), manter para hoje mesmo
+            if (daysUntilTarget < 0) {
+              daysUntilTarget += 7;
+            }
+            
+            scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
+          }
+          
+          scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
+          console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
           // Ler periodicidade/recurrenceType da planilha (prioridade) ou do cliente
           let recurrenceType: string;
