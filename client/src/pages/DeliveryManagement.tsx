@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -471,12 +472,12 @@ export default function DeliveryManagement() {
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto" data-testid="dialog-vehicle-config">
           <DialogHeader>
             <DialogTitle>Configurar Veículos de Entrega</DialogTitle>
+            <DialogDescription>
+              Configure os veículos disponíveis para as entregas
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <p className="text-sm text-muted-foreground">
-                Configure os veículos disponíveis para as entregas
-              </p>
               <Button onClick={addVehicle} size="sm" data-testid="button-add-vehicle">
                 <Plus className="h-4 w-4 mr-1" />
                 Adicionar Veículo
@@ -653,6 +654,9 @@ export default function DeliveryManagement() {
         <DialogContent className="max-w-6xl max-h-[80vh] overflow-y-auto" data-testid="dialog-route-results">
           <DialogHeader>
             <DialogTitle>Resultado do Planejamento de Rotas</DialogTitle>
+            <DialogDescription>
+              Visualize as rotas planejadas para cada veículo
+            </DialogDescription>
           </DialogHeader>
           {routePlan && (
             <div className="space-y-6">
