@@ -688,7 +688,8 @@ export class DatabaseStorage implements IStorage {
           and(
             eq(salesCards.customerId, currentCard.customerId),
             eq(salesCards.status, 'pending'),
-            sql`${salesCards.scheduledDate} > ${currentCard.scheduledDate}` // apenas cards com data futura
+            gt(salesCards.scheduledDate, currentCard.scheduledDate), // apenas cards com data futura
+            ne(salesCards.id, currentCardId) // excluir o próprio card
           )
         )
         .returning({ id: salesCards.id });
