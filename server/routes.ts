@@ -1667,6 +1667,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Download planilha modelo para importação de sales cards
+  app.get('/api/sales-cards/template', (req, res) => {
+    try {
+      const filePath = path.join(process.cwd(), 'attached_assets', 'modelo_importacao_sales_cards.xlsx');
+      res.download(filePath, 'modelo_importacao_sales_cards.xlsx', (err) => {
+        if (err) {
+          console.error('Erro ao fazer download da planilha modelo:', err);
+          res.status(500).json({ message: 'Erro ao baixar planilha modelo' });
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao servir planilha modelo:', error);
+      res.status(500).json({ message: 'Erro ao processar requisição' });
+    }
+  });
+
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
