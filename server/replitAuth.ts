@@ -9,8 +9,14 @@ import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
 if (!process.env.REPLIT_DOMAINS) {
+  console.error('❌ ERRO CRÍTICO: REPLIT_DOMAINS não configurada!');
+  console.error('📝 Configure REPLIT_DOMAINS nos Secrets do Replit com seus domínios separados por vírgula');
+  console.error('   Exemplo: meu-app.repl.co,meu-app.replit.app');
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
 }
+
+console.log('✅ REPLIT_DOMAINS configurada:', process.env.REPLIT_DOMAINS);
+console.log('🌐 Domínios aceitos:', process.env.REPLIT_DOMAINS.split(',').map(d => d.trim()));
 
 const getOidcConfig = memoize(
   async () => {
@@ -23,6 +29,21 @@ const getOidcConfig = memoize(
 );
 
 export function getSession() {
+  if (!process.env.SESSION_SECRET) {
+    console.error('❌ ERRO CRÍTICO: SESSION_SECRET não configurada!');
+    console.error('📝 Configure SESSION_SECRET nos Secrets do Replit');
+    throw new Error("SESSION_SECRET must be provided");
+  }
+  
+  if (!process.env.DATABASE_URL) {
+    console.error('❌ ERRO CRÍTICO: DATABASE_URL não configurada!');
+    console.error('📝 Provisione um banco de dados PostgreSQL na aba Database');
+    throw new Error("DATABASE_URL must be provided");
+  }
+
+  console.log('✅ SESSION_SECRET configurada');
+  console.log('✅ DATABASE_URL configurada');
+
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
@@ -86,25 +107,46 @@ export async function setupAuth(app: Express) {
     verified(null, user);
   };
 
+  console.log('🔐 Configurando estratégias de autenticação Replit...');
   for (const domain of process.env
     .REPLIT_DOMAINS!.split(",")) {
+    const trimmedDomain = domain.trim();
+    console.log(`   ✓ Estratégia configurada para: ${trimmedDomain}`);
     const strategy = new Strategy(
       {
-        name: `replitauth:${domain}`,
+        name: `replitauth:${trimmedDomain}`,
         config,
         scope: "openid email profile offline_access",
-        callbackURL: `https://${domain}/api/callback`,
+        callbackURL: `https://${trimmedDomain}/api/callback`,
       },
       verify,
     );
     passport.use(strategy);
   }
+  console.log('✅ Autenticação Replit configurada com sucesso!');
 
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   app.get("/api/login", (req, res, next) => {
-    passport.authenticate(`replitauth:${req.hostname}`, {
+    console.log(`🔑 Tentativa de login no domínio: ${req.hostname}`);
+    const strategyName = `replitauth:${req.hostname}`;
+    
+    // Verificar se a estratégia existe
+    const hasStrategy = (passport as any)._strategies[strategyName];
+    if (!hasStrategy) {
+      console.error(`❌ ERRO: Estratégia não encontrada para domínio "${req.hostname}"`);
+      console.error(`   Domínios configurados: ${process.env.REPLIT_DOMAINS}`);
+      console.error(`   Estratégia procurada: ${strategyName}`);
+      return res.status(500).send(`
+        <h1>Erro de Configuração</h1>
+        <p>O domínio <strong>${req.hostname}</strong> não está configurado para autenticação.</p>
+        <p>Domínios aceitos: <code>${process.env.REPLIT_DOMAINS}</code></p>
+        <p>Por favor, adicione este domínio à variável REPLIT_DOMAINS nos Secrets do Replit.</p>
+      `);
+    }
+    
+    passport.authenticate(strategyName, {
       prompt: "login consent",
       scope: ["openid", "email", "profile", "offline_access"],
     })(req, res, next);
