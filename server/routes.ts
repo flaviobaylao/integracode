@@ -1481,10 +1481,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
 
-          // Derivar routeDay do scheduledDate
-          const dayOfWeek = scheduledDate.getDay();
-          const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-          const routeDay = weekdayNames[dayOfWeek];
+          // Ler routeDay da planilha (prioridade) ou derivar do scheduledDate
+          let routeDay: string;
+          const routeDayCol = row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'] || row['Dia'] || row['dia'];
+          
+          if (routeDayCol) {
+            // Normalizar dia da semana da planilha
+            const dayStr = routeDayCol.toString().toLowerCase().trim();
+            const dayMap: Record<string, string> = {
+              'segunda': 'segunda', 'segunda-feira': 'segunda', 'segunda feira': 'segunda', 'seg': 'segunda',
+              'terça': 'terca', 'terca': 'terca', 'terça-feira': 'terca', 'terca-feira': 'terca', 'terça feira': 'terca', 'terca feira': 'terca', 'ter': 'terca',
+              'quarta': 'quarta', 'quarta-feira': 'quarta', 'quarta feira': 'quarta', 'qua': 'quarta',
+              'quinta': 'quinta', 'quinta-feira': 'quinta', 'quinta feira': 'quinta', 'qui': 'quinta',
+              'sexta': 'sexta', 'sexta-feira': 'sexta', 'sexta feira': 'sexta', 'sex': 'sexta',
+              'sábado': 'sabado', 'sabado': 'sabado', 'sábado': 'sabado', 'sab': 'sabado',
+              'domingo': 'domingo', 'dom': 'domingo'
+            };
+            
+            const normalizedDay = dayMap[dayStr];
+            if (normalizedDay) {
+              routeDay = normalizedDay;
+              console.log(`✅ Dia da rota lido da planilha: "${routeDayCol}" → "${routeDay}" para cliente ${customer.fantasyName}`);
+            } else {
+              // Valor não reconhecido, usar fallback
+              const dayOfWeek = scheduledDate.getDay();
+              const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+              routeDay = weekdayNames[dayOfWeek];
+              console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando calculado: "${routeDay}" para cliente ${customer.fantasyName}`);
+            }
+          } else {
+            // Fallback: derivar do scheduledDate
+            const dayOfWeek = scheduledDate.getDay();
+            const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+            routeDay = weekdayNames[dayOfWeek];
+            console.log(`⚠️ Dia da rota não encontrado na planilha, usando calculado: "${routeDay}" para cliente ${customer.fantasyName}`);
+          }
+
+          // Ler periodicidade/recurrenceType da planilha (prioridade) ou do cliente
+          let recurrenceType: string;
+          const periodicityCol = row.Periodicidade || row.periodicidade || row.PERIODICIDADE || row.Recorrencia || row.recorrencia;
+          
+          if (periodicityCol) {
+            // Normalizar periodicidade da planilha
+            const periodStr = periodicityCol.toString().toLowerCase().trim();
+            const periodMap: Record<string, string> = {
+              'semanal': 'semanal', 'semanalmente': 'semanal', '7 dias': 'semanal', '1 semana': 'semanal',
+              'quinzenal': 'quinzenal', 'quinzenalmente': 'quinzenal', '15 dias': 'quinzenal', '2 semanas': 'quinzenal',
+              'mensal': 'mensal', 'mensalmente': 'mensal', '30 dias': 'mensal', '1 mês': 'mensal', '1 mes': 'mensal',
+              'bimestral': 'bimestral', 'bimestralmente': 'bimestral', '60 dias': 'bimestral', '2 meses': 'bimestral', '2 meses': 'bimestral'
+            };
+            
+            const normalizedPeriod = periodMap[periodStr];
+            if (normalizedPeriod) {
+              recurrenceType = normalizedPeriod;
+              console.log(`✅ Periodicidade lida da planilha: "${periodicityCol}" → "${recurrenceType}" para cliente ${customer.fantasyName}`);
+            } else {
+              // Valor não reconhecido, usar fallback
+              recurrenceType = customer.visitPeriodicity || 'semanal';
+              console.log(`⚠️ Periodicidade "${periodicityCol}" não reconhecida na planilha, usando do cliente: "${recurrenceType}" para cliente ${customer.fantasyName}`);
+            }
+          } else {
+            // Fallback: usar periodicidade do cliente
+            recurrenceType = customer.visitPeriodicity || 'semanal';
+            console.log(`⚠️ Periodicidade não encontrada na planilha, usando do cliente: "${recurrenceType}" para cliente ${customer.fantasyName}`);
+          }
 
           // Criar card de venda
           await storage.createSalesCard({
@@ -1493,7 +1553,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             status: 'pending',
             scheduledDate,
             routeDay,
-            recurrenceType: customer.visitPeriodicity || 'semanal',
+            recurrenceType,
             isRecurring: true,
             exclusiveVehicle: false,
             vehicleTypes: ['moto', 'carro', 'caminhao']
