@@ -1,148 +1,226 @@
 # Guia de Publicação (Deployment) - Sistema Integra
 
-## ⚠️ Problema Comum: Tela em Branco Após Publicação
+## ⚠️ Problema: Tela em Branco Após Publicação
 
-Se após publicar o app a tela ficar em branco, siga este guia para corrigir.
+Se após publicar o app a tela ficar em branco, siga este guia passo a passo.
 
-## 🔧 Configuração de Variáveis de Ambiente
+## 🔍 PRIMEIRO PASSO: Verificar Status do Sistema
 
-### 1. REPLIT_DOMAINS (MAIS IMPORTANTE!)
+Acesse este endpoint para ver o diagnóstico completo:
 
-Esta variável define quais domínios podem usar a autenticação Replit. Após publicar, você terá **dois domínios**:
+```
+https://SEU-DOMINIO.replit.app/api/health
+```
 
-- **Desenvolvimento**: `nome-do-repl-usuario.repl.co`
-- **Produção**: `nome-do-repl-usuario.replit.app`
+Substitua `SEU-DOMINIO` pelo seu domínio real. Você verá informações como:
+
+```json
+{
+  "status": "ok",
+  "hostname": "seu-app.replit.app",
+  "checks": {
+    "database": true,
+    "session": true,
+    "replitDomains": true,
+    "omieConfig": true
+  },
+  "config": {
+    "replitDomains": ["seu-app.replit.app"],
+    "hasSessionSecret": true,
+    "hasDatabaseUrl": true,
+    "hasOmieKey": true,
+    "hasOmieSecret": true
+  }
+}
+```
+
+**Se algum check estiver `false`, esse é o problema!**
+
+## 🔧 Variáveis de Ambiente Obrigatórias
+
+### ✅ 1. SESSION_SECRET (MAIS IMPORTANTE!)
+
+Esta variável **DEVE** ser configurada manualmente para produção.
 
 **Como configurar:**
 
-1. Vá para a aba **Secrets** (ícone de cadeado) no Replit
-2. Encontre ou crie a variável `REPLIT_DOMAINS`
-3. Configure com **AMBOS** os domínios separados por vírgula:
-
-```
-nome-do-repl-usuario.repl.co,nome-do-repl-usuario.replit.app
-```
-
-**Exemplo real:**
-```
-sistema-integra-bebahonest.repl.co,sistema-integra-bebahonest.replit.app
-```
-
-### 2. DATABASE_URL
-
-Esta variável já deve estar configurada automaticamente pelo Replit quando você provisiona o banco PostgreSQL.
-
-**Verificar:**
-1. Vá na aba **Secrets**
-2. Confirme que existe `DATABASE_URL`
-3. O valor deve começar com `postgresql://`
-
-Se não existir, você precisa provisionar um banco de dados PostgreSQL através da aba **Database** do Replit.
-
-### 3. SESSION_SECRET
-
-Esta variável é usada para assinar cookies de sessão.
-
-**Configurar:**
-1. Vá na aba **Secrets**
-2. Crie/edite `SESSION_SECRET`
-3. Use uma string aleatória longa (mínimo 32 caracteres)
+1. Vá para a aba **Secrets** no Replit (ícone de cadeado)
+2. Clique em **+ New Secret**
+3. Configure:
+   - **Key**: `SESSION_SECRET`
+   - **Value**: Uma string aleatória longa (mínimo 32 caracteres)
 
 **Gerar um secret seguro:**
 ```bash
-# No terminal do Replit, rode:
+# Cole isso no terminal do Replit:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### 4. Variáveis da API Omie
+Copie o resultado e cole como valor do `SESSION_SECRET`.
 
-Se você usa integração com Omie ERP, configure:
+### ✅ 2. DATABASE_URL
+
+Esta variável é configurada automaticamente quando você provisiona um banco PostgreSQL.
+
+**Verificar:**
+1. Vá na aba **Database** no Replit
+2. Confirme que há um banco PostgreSQL provisionado
+3. Na aba **Secrets**, deve aparecer `DATABASE_URL` automaticamente
+
+**Se não tiver:**
+- Clique em **Create Database** na aba Database
+- Escolha **PostgreSQL**
+
+### ⚠️ 3. REPLIT_DOMAINS
+
+**IMPORTANTE: Você NÃO precisa configurar isso manualmente!**
+
+O Replit fornece essa variável automaticamente em produção com:
+- Domínio de desenvolvimento: `seu-app-usuario.repl.co`
+- Domínio publicado: `seu-app-usuario.replit.app`
+
+Se você configurou manualmente, pode **remover** essa secret.
+
+### 🔧 4. Variáveis da API Omie (Opcionais)
+
+Se você usa integração com Omie ERP:
 
 - `OMIE_APP_KEY`: Chave da aplicação Omie
 - `OMIE_APP_SECRET`: Secret da aplicação Omie
 
-### 5. Outras Variáveis (Opcionais)
+Estas devem ser configuradas manualmente na aba Secrets.
 
-Dependendo das funcionalidades:
-- `WHATSAPP_TOKEN`: Token da API WhatsApp Business
-- `ISSUER_URL`: URL do provedor OIDC (padrão: `https://replit.com/oidc`)
-
-## ✅ Checklist de Publicação
+## 📋 Checklist de Publicação
 
 Antes de publicar, verifique:
 
 - [ ] Banco de dados PostgreSQL provisionado
-- [ ] `REPLIT_DOMAINS` inclui domínio `.replit.app`
-- [ ] `DATABASE_URL` configurada (automática)
-- [ ] `SESSION_SECRET` configurada (string aleatória longa)
-- [ ] Todas as secrets da API Omie configuradas
-- [ ] Código commitado e sem erros
+- [ ] `SESSION_SECRET` configurada manualmente (string aleatória)
+- [ ] `DATABASE_URL` aparece automaticamente nos Secrets
+- [ ] **NÃO** configure `REPLIT_DOMAINS` manualmente (é automática)
+- [ ] Todas as secrets da API Omie configuradas (se usar)
+- [ ] Código sem erros no console
 
 ## 🚀 Como Publicar
 
-1. Clique no botão **Publish** no topo direito do Replit
-2. Configure as opções de deployment:
-   - **Domain**: Escolha um subdomínio personalizado ou use o padrão
-   - **Database**: Selecione o banco de produção
-3. Clique em **Publish Project**
+1. Clique no botão **Deploy** no topo do Replit
+2. Configure as opções:
+   - **Deployment Type**: Escolha **Autoscale** ou **Reserved VM**
+   - **NÃO use Static Deployment** (o app precisa de backend)
+3. Clique em **Deploy**
+4. Aguarde o deploy completar
 
 ## 🐛 Diagnóstico de Problemas
 
-### Tela em Branco
+### Método 1: Endpoint de Health Check
 
-1. **Abra o Console do Navegador** (F12 → Console)
-   - Procure por erros em vermelho
-   - Erros de autenticação geralmente aparecem aqui
+Acesse: `https://seu-dominio.replit.app/api/health`
 
-2. **Verifique os Logs do Servidor**
-   - No Replit, abra a aba **Logs**
-   - Procure por mensagens de erro ao iniciar
+Isso mostrará exatamente qual variável está faltando.
 
-3. **Teste o Endpoint de Autenticação**
-   - Acesse: `https://seu-dominio.replit.app/api/auth/user`
-   - Se retornar 401, a autenticação está funcionando (você só não está logado)
-   - Se retornar 500 ou erro, há problema no servidor
+### Método 2: Logs do Servidor
 
-### Erros Comuns
+1. No Replit, vá para **Deployments**
+2. Clique no deployment ativo
+3. Abra a aba **Logs**
+4. Procure por mensagens como:
+   - `❌ ERRO CRÍTICO: SESSION_SECRET não configurada!`
+   - `❌ ERRO CRÍTICO: DATABASE_URL não configurada!`
 
-**Erro**: "Environment variable REPLIT_DOMAINS not provided"
-- **Solução**: Configure `REPLIT_DOMAINS` nos Secrets
+### Método 3: Console do Navegador
 
-**Erro**: "DATABASE_URL must be set"
-- **Solução**: Provisione um banco PostgreSQL
+1. Abra o app publicado
+2. Pressione **F12** para abrir Developer Tools
+3. Vá na aba **Console**
+4. Procure por erros em vermelho
 
-**Erro**: "Unauthorized" ao tentar logar
-- **Solução**: Verifique se `REPLIT_DOMAINS` inclui o domínio atual
+## 🔥 Erros Comuns e Soluções
 
-**Erro**: "Session secret not provided"
-- **Solução**: Configure `SESSION_SECRET` nos Secrets
+### Erro: "SESSION_SECRET must be provided"
 
-## 📞 Suporte
+**Solução:**
+1. Vá em Secrets
+2. Crie `SESSION_SECRET` com valor aleatório longo
+3. Redeploy o app
 
-Se após seguir este guia o problema persistir:
+### Erro: "DATABASE_URL must be provided"
 
-1. Verifique se o app funciona em desenvolvimento (`.repl.co`)
-2. Compare as variáveis de ambiente entre dev e produção
-3. Consulte os logs do servidor para mensagens específicas
-4. Entre em contato com suporte técnico com capturas de tela dos erros
+**Solução:**
+1. Vá na aba Database
+2. Provisione um banco PostgreSQL
+3. Aguarde alguns minutos
+4. Redeploy o app
+
+### Erro: "REPLIT_DOMAINS not provided in production"
+
+**Solução:**
+- Este erro NÃO deveria acontecer em produção
+- O Replit fornece essa variável automaticamente
+- Se acontecer, contacte o suporte do Replit
+
+### Tela em branco sem erros nos logs
+
+**Possíveis causas:**
+
+1. **JavaScript não carregando**: Verifique se há erros 404 no Console do navegador
+2. **Tipo de deployment errado**: Use Autoscale ou Reserved VM, não Static
+3. **Porta incorreta**: O app deve servir na porta 5000 (já configurado)
+
+**Soluções:**
+1. Limpe o cache do navegador (Ctrl + Shift + Delete)
+2. Tente em modo anônimo/privado
+3. Verifique se escolheu Autoscale/Reserved VM ao publicar
 
 ## 🔄 Atualizar App Publicado
 
 Após fazer alterações no código:
 
-1. Commite as mudanças
-2. A publicação será **automaticamente atualizada**
-3. Aguarde alguns segundos para o deploy completar
-4. Recarregue a página do app publicado
+1. As mudanças são deployadas **automaticamente**
+2. Não precisa republicar manualmente
+3. Aguarde 1-2 minutos para o deploy completar
+4. Recarregue a página do app
 
-## ⚡ Dica: Testar Antes de Publicar
+## ⚡ Teste Antes de Publicar
 
-Antes de publicar, teste localmente:
+Teste no ambiente de desenvolvimento primeiro:
 
 ```bash
-# Simule o ambiente de produção
-export NODE_ENV=production
+# No terminal do Replit
 npm run dev
 ```
 
-Acesse pelo domínio `.repl.co` e verifique se tudo funciona corretamente.
+Acesse pelo domínio `.repl.co` e verifique se:
+- Login funciona
+- Dashboard carrega
+- Não há erros no console
+
+Se funcionar em desenvolvimento mas não em produção:
+- O problema é com variáveis de ambiente
+- Use o endpoint `/api/health` para diagnosticar
+
+## 📞 Checklist Final
+
+Se a tela continuar em branco:
+
+1. ✅ Acesse `/api/health` e verifique todos os checks
+2. ✅ Confirme que `SESSION_SECRET` está nos Secrets
+3. ✅ Confirme que banco PostgreSQL está provisionado
+4. ✅ Verifique os Logs do deployment por erros
+5. ✅ Verifique o Console do navegador (F12)
+6. ✅ Confirme que usou Autoscale/Reserved VM (não Static)
+
+Se todos os checks passarem e ainda tiver tela branca:
+- Copie a URL do `/api/health`
+- Copie os logs do servidor
+- Copie os erros do Console do navegador
+- Entre em contato com suporte
+
+## 🎯 Resumo em 3 Passos
+
+**Para resolver tela em branco:**
+
+1. **Configure SESSION_SECRET** nos Secrets (valor aleatório longo)
+2. **Provisione PostgreSQL** na aba Database
+3. **Use Autoscale ou Reserved VM** ao publicar (não Static)
+
+Isso resolve 99% dos casos!

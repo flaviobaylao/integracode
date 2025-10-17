@@ -8,15 +8,25 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
+// REPLIT_DOMAINS é fornecida automaticamente pelo Replit em produção
+// Em desenvolvimento local, pode não estar presente
 if (!process.env.REPLIT_DOMAINS) {
-  console.error('❌ ERRO CRÍTICO: REPLIT_DOMAINS não configurada!');
-  console.error('📝 Configure REPLIT_DOMAINS nos Secrets do Replit com seus domínios separados por vírgula');
-  console.error('   Exemplo: meu-app.repl.co,meu-app.replit.app');
-  throw new Error("Environment variable REPLIT_DOMAINS not provided");
+  console.warn('⚠️ AVISO: REPLIT_DOMAINS não configurada');
+  console.warn('   Isso é normal em desenvolvimento local');
+  console.warn('   Em produção, o Replit fornece essa variável automaticamente');
+  
+  // Em desenvolvimento, usar o domínio atual ou um padrão
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔧 Modo desenvolvimento: autenticação pode não funcionar corretamente');
+  } else {
+    console.error('❌ ERRO: REPLIT_DOMAINS não encontrada em produção!');
+    console.error('   Isso não deveria acontecer. O Replit fornece essa variável automaticamente.');
+    throw new Error("REPLIT_DOMAINS not provided in production");
+  }
+} else {
+  console.log('✅ REPLIT_DOMAINS configurada:', process.env.REPLIT_DOMAINS);
+  console.log('🌐 Domínios aceitos:', process.env.REPLIT_DOMAINS.split(',').map(d => d.trim()));
 }
-
-console.log('✅ REPLIT_DOMAINS configurada:', process.env.REPLIT_DOMAINS);
-console.log('🌐 Domínios aceitos:', process.env.REPLIT_DOMAINS.split(',').map(d => d.trim()));
 
 const getOidcConfig = memoize(
   async () => {

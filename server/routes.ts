@@ -66,6 +66,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // Health check endpoint para diagnóstico
+  app.get('/api/health', async (req, res) => {
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      hostname: req.hostname,
+      checks: {
+        database: false,
+        session: false,
+        replitDomains: false,
+        omieConfig: false,
+      },
+      config: {
+        replitDomains: process.env.REPLIT_DOMAINS ? 
+          process.env.REPLIT_DOMAINS.split(',').map(d => d.trim()) : 
+          ['não configurado'],
+        hasSessionSecret: !!process.env.SESSION_SECRET,
+        hasDatabaseUrl: !!process.env.DATABASE_URL,
+        hasOmieKey: !!process.env.OMIE_APP_KEY,
+        hasOmieSecret: !!process.env.OMIE_APP_SECRET,
+      }
+    };
+
+    // Verificar database
+    try {
+      await db.execute(sql`SELECT 1`);
+      health.checks.database = true;
+    } catch (error) {
+      health.status = 'degraded';
+      console.error('Health check - Database error:', error);
+    }
+
+    // Verificar session secret
+    health.checks.session = !!process.env.SESSION_SECRET;
+    if (!health.checks.session) {
+      health.status = 'degraded';
+    }
+
+    // Verificar REPLIT_DOMAINS
+    health.checks.replitDomains = !!process.env.REPLIT_DOMAINS;
+
+    // Verificar Omie
+    health.checks.omieConfig = isOmieConfigured();
+
+    res.json(health);
+  });
+
   // Endpoint público para inicializar admin padrão (útil para primeira configuração)
   app.post('/api/setup-admin', async (req, res) => {
     try {
