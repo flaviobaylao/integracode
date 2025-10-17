@@ -18,6 +18,7 @@ export default function Login() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
   
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>();
 
@@ -72,11 +73,19 @@ export default function Login() {
       <Card className="w-full max-w-md mx-4">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <img 
-              src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
-              alt="Sistema Integra" 
-              className="w-20 h-20"
-            />
+            {!imageError ? (
+              <img 
+                src="/attached_assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png" 
+                alt="Sistema Integra" 
+                className="w-20 h-20"
+                onError={() => setImageError(true)}
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-20 h-20 flex items-center justify-center bg-green-100 rounded-full">
+                <Leaf className="w-10 h-10 text-green-600" />
+              </div>
+            )}
           </div>
           <CardTitle className="text-2xl font-bold text-green-700 dark:text-green-400">
             Sistema Integra

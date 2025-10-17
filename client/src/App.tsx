@@ -30,12 +30,24 @@ import OverdueDebtsPage from "@/pages/OverdueDebts";
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
 
+  // Se estiver carregando, mostra um loading spinner para evitar tela branca
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-orange-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando Sistema Integra...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
       <Route path="/admin-login" component={AdminLogin} />
-      {isLoading || !isAuthenticated ? (
+      {!isAuthenticated ? (
         <Route path="/" component={Landing} />
       ) : (
         <>

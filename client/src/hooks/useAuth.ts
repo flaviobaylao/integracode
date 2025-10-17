@@ -16,14 +16,22 @@ interface User {
 }
 
 export function useAuth() {
-  const { data: user, isLoading } = useQuery<User>({
+  const { data: user, isLoading, error, isError } = useQuery<User>({
     queryKey: ["/api/auth/user"],
-    retry: false,
+    retry: 1,
+    retryDelay: 1000,
+    staleTime: 1000 * 60 * 5, // 5 minutos
+    gcTime: 1000 * 60 * 10, // 10 minutos (antigamente cacheTime)
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    networkMode: 'online',
   });
 
   return {
     user,
     isLoading,
-    isAuthenticated: !!user,
+    isError,
+    error,
+    isAuthenticated: !!user && !isError,
   };
 }
