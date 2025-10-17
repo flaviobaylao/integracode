@@ -93,6 +93,7 @@ export interface IStorage {
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
   deleteSalesCard(id: string): Promise<void>;
+  deleteAllSalesCards(): Promise<number>;
   getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
   duplicateSalesCard(id: string, newDate: Date): Promise<SalesCard>;
@@ -1047,6 +1048,11 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSalesCard(id: string): Promise<void> {
     await db.delete(salesCards).where(eq(salesCards.id, id));
+  }
+
+  async deleteAllSalesCards(): Promise<number> {
+    const result = await db.delete(salesCards);
+    return result.rowCount || 0;
   }
 
   async getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]> {

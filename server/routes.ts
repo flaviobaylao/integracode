@@ -1697,6 +1697,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete all sales cards (admin only)
+  app.delete('/api/sales-cards', authenticateUser, requireRole(['admin', 'administrative']), async (req: any, res) => {
+    try {
+      const deletedCount = await storage.deleteAllSalesCards();
+      res.json({ 
+        message: "All sales cards deleted successfully", 
+        deletedCount 
+      });
+    } catch (error) {
+      console.error("Error deleting all sales cards:", error);
+      res.status(500).json({ message: "Failed to delete all sales cards" });
+    }
+  });
+
   // Toggle urgent delivery status
   app.patch('/api/sales-cards/:id/urgent', authenticateUser, async (req: any, res) => {
     try {

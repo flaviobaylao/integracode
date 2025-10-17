@@ -5,12 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
-import { Monitor, MapPin, Upload, FileSpreadsheet } from "lucide-react";
+import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2 } from "lucide-react";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
@@ -39,8 +50,10 @@ export default function SalesCards() {
   const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<SalesCardWithRelations | null>(null);
   const [showBulkImportDialog, setShowBulkImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Construir query string para filtros
   const buildQueryString = () => {
@@ -173,6 +186,27 @@ export default function SalesCards() {
     onError: (error: any) => {
       toast({
         title: "Erro na Importação",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteAllCardsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('DELETE', '/api/sales-cards');
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      setShowDeleteAllDialog(false);
+      toast({
+        title: "Sucesso",
+        description: `${data.deletedCount} cards foram eliminados com sucesso!`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro",
         description: error.message,
         variant: "destructive",
       });
@@ -339,6 +373,16 @@ export default function SalesCards() {
             <Upload className="w-4 h-4 mr-2" />
             Importar Planilha
           </Button>
+          {user && (user.role === 'admin' || user.role === 'administrative') && (
+            <Button
+              variant="destructive"
+              onClick={() => setShowDeleteAllDialog(true)}
+              data-testid="button-delete-all-cards"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Eliminar Todos os Cards
+            </Button>
+          )}
           <Button
             className="bg-honest-blue hover:bg-blue-700"
             onClick={() => setShowModal(true)}
@@ -827,6 +871,38 @@ export default function SalesCards() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete All Cards Confirmation Dialog */}
+      <AlertDialog open={showDeleteAllDialog} onOpenChange={setShowDeleteAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Tem certeza que deseja eliminar todos os cards?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação não pode ser desfeita. Todos os cards de vendas serão permanentemente eliminados do sistema.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-all">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteAllCardsMutation.mutate()}
+              disabled={deleteAllCardsMutation.isPending}
+              className="bg-red-600 hover:bg-red-700"
+              data-testid="button-confirm-delete-all"
+            >
+              {deleteAllCardsMutation.isPending ? (
+                <>
+                  <i className="fas fa-spinner fa-spin mr-2"></i>
+                  Eliminando...
+                </>
+              ) : (
+                'Eliminar Todos'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
