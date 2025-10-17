@@ -17,6 +17,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { apiRequest } from '@/lib/queryClient';
+import { SyncButton } from '@/components/SyncButton';
 
 interface Billing {
   id: string;
@@ -417,32 +418,23 @@ export default function Billings() {
         </div>
         
         <div className="flex gap-2">
-          <Button 
-            onClick={handleSyncOmieBillings} 
-            disabled={syncOmieBillingsMutation.isPending}
+          <SyncButton
+            syncType="omie_billings"
+            onSync={handleSyncOmieBillings}
+            isLoading={syncOmieBillingsMutation.isPending}
+            label="Sincronizar Omie"
+            variant="default"
             data-testid="button-sync-omie"
-          >
-            {syncOmieBillingsMutation.isPending ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <RotateCw className="w-4 h-4 mr-2" />
-            )}
-            Sincronizar Omie
-          </Button>
+          />
           
-          <Button 
-            onClick={handleSync} 
-            disabled={syncMutation.isPending}
-            data-testid="button-sync"
+          <SyncButton
+            syncType="omie_billings"
+            onSync={handleSync}
+            isLoading={syncMutation.isPending}
+            label="Sincronizar"
             variant="outline"
-          >
-            {syncMutation.isPending ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <RotateCw className="w-4 h-4 mr-2" />
-            )}
-            Sincronizar
-          </Button>
+            data-testid="button-sync"
+          />
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />

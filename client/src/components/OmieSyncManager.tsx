@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { RefreshCw as Sync, Users, AlertTriangle, DollarSign, Calendar, Check, X, Loader2, RefreshCw, MapPin } from "lucide-react";
 import type { User } from "@shared/schema";
+import { SyncButton } from "@/components/SyncButton";
 
 interface OmieSyncManagerProps {
   isOpen: boolean;
@@ -662,25 +663,16 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                       </Select>
                     </div>
 
-                    <div className="flex items-end">
-                      <Button
-                        onClick={handleSyncAllClients}
-                        disabled={isSyncing}
+                    <div className="flex items-end w-full">
+                      <SyncButton
+                        syncType="omie_clients"
+                        onSync={handleSyncAllClients}
+                        isLoading={isSyncing}
+                        label="Sincronizar Ativos"
+                        variant="default"
                         className="bg-honest-blue hover:bg-honest-blue/90 w-full"
                         data-testid="button-sync-clients"
-                      >
-                        {isSyncing ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Sincronizando...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="h-4 w-4 mr-2" />
-                            Sincronizar Ativos
-                          </>
-                        )}
-                      </Button>
+                      />
                     </div>
                   </div>
 
@@ -784,23 +776,15 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                   </p>
                   
                   <div className="flex justify-center">
-                    <Button
-                      onClick={handleSyncVendors}
-                      disabled={isSyncing}
+                    <SyncButton
+                      syncType="omie_vendors"
+                      onSync={handleSyncVendors}
+                      isLoading={isSyncing}
+                      label="Sincronizar Vendedores"
+                      variant="default"
                       className="bg-honest-blue hover:bg-honest-blue/90"
-                    >
-                      {isSyncing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Sincronizando...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="h-4 w-4 mr-2" />
-                          Sincronizar Vendedores
-                        </>
-                      )}
-                    </Button>
+                      data-testid="button-sync-vendors"
+                    />
                   </div>
 
                   {/* Progresso */}
@@ -908,23 +892,15 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                   </div>
                   
                   <div className="flex justify-center">
-                    <Button
-                      onClick={handleSyncProducts}
-                      disabled={isSyncing}
+                    <SyncButton
+                      syncType="omie_products"
+                      onSync={handleSyncProducts}
+                      isLoading={isSyncing}
+                      label="Sincronizar Produtos"
+                      variant="default"
                       className="bg-honest-blue hover:bg-honest-blue/90"
-                    >
-                      {isSyncing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Sincronizando...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="h-4 w-4 mr-2" />
-                          Sincronizar Produtos
-                        </>
-                      )}
-                    </Button>
+                      data-testid="button-sync-products"
+                    />
                   </div>
 
                   {/* Progresso */}
