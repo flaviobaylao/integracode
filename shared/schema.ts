@@ -841,6 +841,21 @@ export const insertSalesGoalSchema = createInsertSchema(salesGoals).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  // Aceitar números e converter para string (PostgreSQL decimal)
+  // Preserva zero como valor válido, apenas converte null/undefined/string vazia
+  positivationGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
+  revenueGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
+  overdueDebtGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
+  serviceGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
 });
 
 export const insertVisitAgendaSchema = createInsertSchema(visitAgenda).omit({

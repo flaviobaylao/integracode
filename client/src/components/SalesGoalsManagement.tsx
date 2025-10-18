@@ -27,13 +27,13 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   const queryClient = useQueryClient();
 
   // Buscar vendedores (apenas para admins/coordinators/administrative)
-  const { data: sellers = [] } = useQuery({
+  const { data: sellers = [] } = useQuery<User[]>({
     queryKey: ['/api/users'],
     enabled: ['admin', 'coordinator', 'administrative'].includes(user.role)
   });
 
   // Buscar metas
-  const { data: salesGoals = [], isLoading } = useQuery({
+  const { data: salesGoals = [], isLoading } = useQuery<SalesGoal[]>({
     queryKey: ['/api/sales-goals', selectedMonth, selectedYear],
     queryFn: () => fetch(`/api/sales-goals?month=${selectedMonth}&year=${selectedYear}`)
       .then(res => res.json())
@@ -43,15 +43,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   const createGoalMutation = useMutation({
     mutationFn: (goalData: any) => {
       if (editingGoal) {
-        return apiRequest(`/api/sales-goals/${editingGoal.id}`, {
-          method: 'PUT',
-          body: JSON.stringify(goalData),
-        });
+        return apiRequest('PUT', `/api/sales-goals/${editingGoal.id}`, goalData);
       } else {
-        return apiRequest('/api/sales-goals', {
-          method: 'POST',
-          body: JSON.stringify(goalData),
-        });
+        return apiRequest('POST', '/api/sales-goals', goalData);
       }
     },
     onSuccess: () => {
@@ -76,9 +70,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   // Mutação para deletar meta
   const deleteGoalMutation = useMutation({
     mutationFn: (goalId: string) => {
-      return apiRequest(`/api/sales-goals/${goalId}`, {
-        method: 'DELETE',
-      });
+      return apiRequest('DELETE', `/api/sales-goals/${goalId}`);
     },
     onSuccess: () => {
       toast({
