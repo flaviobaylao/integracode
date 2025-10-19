@@ -7937,15 +7937,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 45 dias atrás
-      const fortyFiveDaysAgo = new Date();
-      fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
+      // Calcular data de 90 dias atrás (aumentado para garantir captura de todas as notas)
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
       const allBillings: any[] = [];
       let page = 1;
       let hasMorePages = true;
 
-      // Buscar notas fiscais dos últimos 45 dias
+      // Buscar notas fiscais dos últimos 90 dias
       while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
@@ -7970,11 +7970,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const [dia, mes, ano] = invoiceDate.split('/');
           const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
           
-          // Filtrar últimos 45 dias
-          if (invoiceDateObj < fortyFiveDaysAgo) {
-            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 45 dias (${invoiceDate}) - parando`);
-            hasMorePages = false;
-            break;
+          // Filtrar últimos 90 dias - PULAR nota antiga mas CONTINUAR buscando páginas
+          if (invoiceDateObj < ninetyDaysAgo) {
+            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 90 dias (${invoiceDate}) - pulando`);
+            continue; // Pular essa nota mas continuar processando outras
           }
 
           // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
