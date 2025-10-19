@@ -2320,11 +2320,15 @@ export class DatabaseStorage implements IStorage {
   async getBillings(sellerId?: string): Promise<Billing[]> {
     const baseQuery = db.select().from(billings);
     
-    const queryWithConditions = sellerId ? 
-      baseQuery.where(eq(billings.sellerId, sellerId)) : 
-      baseQuery;
+    // Filtrar notas canceladas e aplicar filtro de sellerId se fornecido
+    const conditions = [eq(billings.isCancelled, false)];
+    if (sellerId) {
+      conditions.push(eq(billings.sellerId, sellerId));
+    }
     
-    const result = await queryWithConditions.orderBy(desc(billings.invoiceDate));
+    const result = await baseQuery
+      .where(and(...conditions))
+      .orderBy(desc(billings.invoiceDate));
     return result;
   }
 
