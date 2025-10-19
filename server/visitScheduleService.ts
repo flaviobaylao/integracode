@@ -316,24 +316,19 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         let currentDate = new Date(lastCard.scheduledDate);
         let cardsGenerated = 0;
         
-        // Seguir a cadeia de next_card_id até o último
-        while (lastCard.nextCardId) {
+        // Seguir a cadeia de next_card_id até o último card
+        let currentCard = lastCard;
+        while (currentCard.nextCardId) {
           const nextCards = await db.select()
             .from(salesCards)
-            .where(eq(salesCards.id, lastCard.nextCardId))
+            .where(eq(salesCards.id, currentCard.nextCardId))
             .limit(1);
           
           if (nextCards.length === 0) break;
           
-          const nextCard = nextCards[0];
-          currentCardId = nextCard.id;
-          currentDate = new Date(nextCard.scheduledDate);
-          
-          if (nextCard.nextCardId) {
-            Object.assign(lastCard, { nextCardId: nextCard.nextCardId });
-          } else {
-            break;
-          }
+          currentCard = nextCards[0];
+          currentCardId = currentCard.id;
+          currentDate = new Date(currentCard.scheduledDate);
         }
         
         // Gerar cards até cobrir targetDate

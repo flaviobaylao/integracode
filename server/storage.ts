@@ -888,6 +888,33 @@ export class DatabaseStorage implements IStorage {
       const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
       const derivedRouteDay = weekdayNames[dayOfWeek];
       
+      // Verificar se já existe um card para este cliente nesta data (prevenir duplicatas)
+      const [existingCard] = await db
+        .select()
+        .from(salesCards)
+        .where(
+          and(
+            eq(salesCards.customerId, parentCard.customerId),
+            sql`DATE(${salesCards.scheduledDate}) = DATE(${nextDate.toISOString()})`
+          )
+        )
+        .limit(1);
+      
+      if (existingCard) {
+        console.log(`♻️ generateNextSalesCard: Card já existe para ${parentCard.customerId} na data ${nextDate.toISOString().split('T')[0]}, retornando card existente ${existingCard.id}`);
+        
+        // Atualizar card pai com referência ao card existente se ainda não tiver
+        if (!parentCard.nextCardId) {
+          await db
+            .update(salesCards)
+            .set({ nextCardId: existingCard.id })
+            .where(eq(salesCards.id, parentCardId));
+          console.log(`🔗 Card pai ${parentCardId} atualizado com next_card_id existente: ${existingCard.id}`);
+        }
+        
+        return existingCard;
+      }
+      
       // Criar novo card copiando dados da venda anterior
       // IMPORTANTE: Usar seller_id do CLIENTE, não do card pai (para corrigir vendedores incorretos)
       const nextCardData: InsertSalesCard = {
@@ -916,13 +943,42 @@ export class DatabaseStorage implements IStorage {
 
       console.log(`📝 Tentando criar card para cliente ${parentCard.customerId}, data: ${nextDate.toISOString().split('T')[0]}`);
       
-      const [newCard] = await db.insert(salesCards).values(nextCardData as any).returning();
+      // Usar onConflictDoNothing para evitar erros em caso de duplicatas
+      const newCards = await db.insert(salesCards)
+        .values(nextCardData as any)
+        .onConflictDoNothing()
+        .returning();
 
-      if (!newCard) {
-        console.error(`❌ Card não foi criado para cliente ${parentCard.customerId}`);
+      // Se nenhum card foi retornado, significa que já existia (conflito)
+      if (!newCards || newCards.length === 0) {
+        console.log(`⚠️ Card já existe para cliente ${parentCard.customerId} na data ${nextDate.toISOString().split('T')[0]}, buscando card existente`);
+        
+        // Buscar o card existente
+        const [found] = await db.select()
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, parentCard.customerId),
+              sql`DATE(${salesCards.scheduledDate}) = DATE(${nextDate.toISOString()})`
+            )
+          )
+          .limit(1);
+        
+        if (found) {
+          // Atualizar card pai com referência ao card existente
+          if (!parentCard.nextCardId) {
+            await db.update(salesCards)
+              .set({ nextCardId: found.id })
+              .where(eq(salesCards.id, parentCardId));
+          }
+          return found;
+        }
+        
+        console.error(`❌ Card não foi criado e não foi encontrado para cliente ${parentCard.customerId}`);
         return null;
       }
 
+      const newCard = newCards[0];
       console.log(`✅ Card criado: ${newCard.id} para cliente ${parentCard.customerId}, data: ${newCard.scheduledDate}`);
 
       // Atualizar card pai com referência ao próximo

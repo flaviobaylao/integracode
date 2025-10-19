@@ -106,9 +106,7 @@ export default function SalesSchedule() {
   // Mutation para gerar cards futuros
   const generateFutureCardsMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('/api/sales-cards/generate-future', {
-        method: 'POST'
-      });
+      const response = await apiRequest('POST', '/api/sales-cards/generate-future');
       return response;
     },
     onSuccess: (data) => {
