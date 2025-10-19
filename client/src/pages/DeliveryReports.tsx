@@ -347,7 +347,7 @@ export default function DeliveryReports() {
                 
                 return (
                   <div key={day.date} className="grid grid-cols-4 gap-4 py-2 text-sm" data-testid={`daily-stat-${day.date}`}>
-                    <div>{new Date(day.date).toLocaleDateString('pt-BR')}</div>
+                    <div>{new Date(day.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</div>
                     <div className="text-center font-medium">{day.deliveries}</div>
                     <div className="text-center text-green-600">{day.success} ({successRate.toFixed(1)}%)</div>
                     <div className="text-center text-red-600">{day.failed}</div>

@@ -213,7 +213,7 @@ export default function DeliveryDashboard() {
                     <div className="text-right">
                       <Badge variant="secondary">{delivery.deliveryStatus}</Badge>
                       <div className="text-xs text-muted-foreground mt-1">
-                        {delivery.scheduledDate && new Date(delivery.scheduledDate).toLocaleDateString('pt-BR')}
+                        {delivery.scheduledDate && new Date(delivery.scheduledDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                       </div>
                     </div>
                   </div>

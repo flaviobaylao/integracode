@@ -256,7 +256,7 @@ export default function LocationsManagement() {
                       <TableCell className="font-mono text-sm">{location.longitude}</TableCell>
                       <TableCell>
                         {location.importedAt 
-                          ? new Date(location.importedAt).toLocaleDateString('pt-BR')
+                          ? new Date(location.importedAt).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
                           : 'Manual'
                         }
                       </TableCell>
