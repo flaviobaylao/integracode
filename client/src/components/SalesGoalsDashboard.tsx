@@ -47,7 +47,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
   });
 
   // Buscar métricas atuais
-  const { data: salesMetrics = null } = useQuery({
+  const { data: salesMetrics = null, isLoading: isLoadingMetrics, error: metricsError } = useQuery({
     queryKey: ['/api/sales-metrics', selectedMonth, selectedYear, selectedSeller],
     queryFn: () => {
       const params = new URLSearchParams({
@@ -55,9 +55,19 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
         year: selectedYear.toString(),
         ...(selectedSeller !== 'all' && { sellerId: selectedSeller })
       });
+      console.log('🔍 Buscando métricas:', { month: selectedMonth, year: selectedYear, sellerId: selectedSeller });
       return fetch(`/api/sales-metrics?${params}`)
-        .then(res => res.json());
-    }
+        .then(res => {
+          if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`);
+          return res.json();
+        })
+        .then(data => {
+          console.log('📊 Métricas recebidas:', data);
+          return data;
+        });
+    },
+    staleTime: 0,
+    gcTime: 0
   });
 
   const months = [
