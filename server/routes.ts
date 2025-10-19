@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
-import { generateVisitAgenda } from "./visitScheduleService";
+import { generateVisitAgenda, ensureFutureAgendaCoverage } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import {
@@ -2054,6 +2054,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error generating next card:", error);
       res.status(500).json({ message: "Failed to generate next card" });
+    }
+  });
+
+  // Endpoint para gerar cards futuros (próximos 2 meses) para todos os clientes
+  app.post('/api/sales-cards/generate-future', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      console.log('🚀 Iniciando geração manual de cards futuros...');
+      
+      const result = await ensureFutureAgendaCoverage(2);
+      
+      console.log('✅ Geração manual concluída:', result);
+      
+      res.json({
+        success: true,
+        message: `Geração concluída com sucesso`,
+        stats: {
+          processed: result.processed,
+          generated: result.generated,
+          skipped: result.skipped,
+          errors: result.errors
+        }
+      });
+    } catch (error: any) {
+      console.error("❌ Erro ao gerar cards futuros:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Erro ao gerar cards futuros",
+        error: error.message 
+      });
     }
   });
 
