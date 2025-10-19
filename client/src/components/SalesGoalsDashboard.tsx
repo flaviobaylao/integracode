@@ -50,35 +50,61 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     }
   });
 
-  // Buscar métricas atuais
+  // Buscar métricas atuais - individuais para cada vendedor quando "all" selecionado
   const { data: salesMetrics = null, isLoading: isLoadingMetrics, error: metricsError } = useQuery({
-    queryKey: ['/api/sales-metrics', selectedMonth, selectedYear, selectedSeller],
-    queryFn: () => {
-      const params = new URLSearchParams({
-        month: selectedMonth.toString(),
-        year: selectedYear.toString(),
-        ...(selectedSeller !== 'all' && { sellerId: selectedSeller })
-      });
-      console.log('🔍 Buscando métricas:', { month: selectedMonth, year: selectedYear, sellerId: selectedSeller, url: `/api/sales-metrics?${params}` });
-      return fetch(`/api/sales-metrics?${params}`, {
-        credentials: 'include'
-      })
-        .then(res => {
-          console.log('📡 Response status:', res.status);
-          if (!res.ok) {
-            throw new Error(`Erro ${res.status}: ${res.statusText}`);
-          }
-          return res.json();
-        })
-        .then(data => {
-          console.log('📊 Métricas recebidas:', JSON.stringify(data, null, 2));
-          return data;
-        })
-        .catch(error => {
-          console.error('❌ Erro ao buscar métricas:', error);
-          throw error;
+    queryKey: ['/api/sales-metrics', selectedMonth, selectedYear, selectedSeller, salesGoals],
+    queryFn: async () => {
+      if (selectedSeller === 'all') {
+        // Quando "Todos os vendedores", buscar métricas individuais de cada vendedor com meta
+        const sellerIds = salesGoals.map((g: SalesGoal) => g.sellerId).filter(Boolean);
+        
+        if (sellerIds.length === 0) {
+          return {};
+        }
+        
+        const params = new URLSearchParams({
+          month: selectedMonth.toString(),
+          year: selectedYear.toString(),
+          sellerIds: sellerIds.join(',')
         });
+        
+        console.log('🔍 Buscando métricas múltiplas:', { month: selectedMonth, year: selectedYear, sellerIds });
+        
+        const res = await fetch(`/api/sales-metrics/multiple?${params}`, {
+          credentials: 'include'
+        });
+        
+        if (!res.ok) {
+          throw new Error(`Erro ${res.status}: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        console.log('📊 Métricas múltiplas recebidas:', JSON.stringify(data, null, 2));
+        return data; // Retorna um objeto { sellerId: metrics, ... }
+      } else {
+        // Quando vendedor específico, buscar métricas apenas dele
+        const params = new URLSearchParams({
+          month: selectedMonth.toString(),
+          year: selectedYear.toString(),
+          sellerId: selectedSeller
+        });
+        
+        console.log('🔍 Buscando métrica individual:', { month: selectedMonth, year: selectedYear, sellerId: selectedSeller });
+        
+        const res = await fetch(`/api/sales-metrics?${params}`, {
+          credentials: 'include'
+        });
+        
+        if (!res.ok) {
+          throw new Error(`Erro ${res.status}: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        console.log('📊 Métrica individual recebida:', JSON.stringify(data, null, 2));
+        return data;
+      }
     },
+    enabled: salesGoals.length > 0,
     staleTime: 0,
     gcTime: 0,
     retry: false
@@ -348,12 +374,13 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
       {salesGoals.length > 0 ? (
         <div className="space-y-4">
           {selectedSeller === 'all' ? (
-            // Visualização agregada para todos os vendedores
-            salesGoals.map((goal: SalesGoal) => (
-              <GoalCard key={goal.id} goal={goal} metrics={salesMetrics} />
-            ))
+            // Visualização agregada para todos os vendedores - pegar métricas individuais
+            salesGoals.map((goal: SalesGoal) => {
+              const sellerMetrics = salesMetrics?.[goal.sellerId] || null;
+              return <GoalCard key={goal.id} goal={goal} metrics={sellerMetrics} />;
+            })
           ) : (
-            // Visualização para vendedor específico
+            // Visualização para vendedor específico - métricas diretas
             salesGoals.map((goal: SalesGoal) => (
               <GoalCard key={goal.id} goal={goal} metrics={salesMetrics} />
             ))

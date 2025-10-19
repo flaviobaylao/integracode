@@ -1104,7 +1104,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sales metrics routes
+  // Sales metrics routes - múltiplos vendedores
+  app.get('/api/sales-metrics/multiple', authenticateUser, async (req: any, res) => {
+    try {
+      const { month, year, sellerIds } = req.query;
+      const user = req.currentUser;
+      
+      console.log('📊 Requisição de métricas múltiplas:', { month, year, sellerIds, userRole: user.role });
+      
+      // Apenas admins/coordinators/administrative podem ver métricas de múltiplos vendedores
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Validar e processar sellerIds
+      if (!sellerIds || typeof sellerIds !== 'string') {
+        console.log('⚠️ sellerIds inválido ou vazio');
+        return res.json({});
+      }
+      
+      const sellerIdArray = sellerIds.split(',').filter(id => id.trim().length > 0);
+      
+      if (sellerIdArray.length === 0) {
+        console.log('⚠️ Array de sellerIds vazio após filtro');
+        return res.json({});
+      }
+      
+      console.log('✅ Processando métricas para vendedores:', sellerIdArray);
+      
+      const metricsMap: Record<string, any> = {};
+      
+      // Buscar métricas para cada vendedor
+      for (const sellerId of sellerIdArray) {
+        console.log(`  → Buscando métricas para vendedor: ${sellerId}`);
+        const metrics = await storage.getSalesMetrics(
+          sellerId.trim(),
+          month ? parseInt(month as string) : undefined,
+          year ? parseInt(year as string) : undefined
+        );
+        metricsMap[sellerId] = metrics;
+        console.log(`  ✓ Métricas de ${sellerId}:`, { totalRevenue: metrics.totalRevenue });
+      }
+      
+      console.log('📦 Retornando métricas múltiplas:', Object.keys(metricsMap));
+      res.json(metricsMap);
+    } catch (error) {
+      console.error("❌ Error fetching multiple sales metrics:", error);
+      console.error('Stack:', error instanceof Error ? error.stack : 'No stack');
+      res.status(500).json({ message: "Failed to fetch sales metrics", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.get('/api/sales-metrics', authenticateUser, async (req: any, res) => {
     try {
       const { month, year, sellerId } = req.query;

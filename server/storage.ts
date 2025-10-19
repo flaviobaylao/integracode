@@ -2116,6 +2116,13 @@ export class DatabaseStorage implements IStorage {
   // Sales Metrics operations
   async getSalesMetrics(sellerId?: string, month?: number, year?: number): Promise<any> {
     try {
+      console.log(`📊 getSalesMetrics chamado:`, { sellerId, month, year });
+      console.log(`  Verificando tabela billings:`, { 
+        definida: !!billings,
+        tipo: typeof billings,
+        keys: billings ? Object.keys(billings).slice(0, 5) : 'undefined'
+      });
+      
       const currentDate = new Date();
       const targetMonth = month || (currentDate.getMonth() + 1);
       const targetYear = year || currentDate.getFullYear();
@@ -2123,6 +2130,8 @@ export class DatabaseStorage implements IStorage {
       // Normalizar sellerId: billings usa ID numérico, mas customers/users usam prefixo "omie-vendor-"
       const numericSellerId = sellerId ? sellerId.replace('omie-vendor-', '') : undefined;
       const prefixedSellerId = sellerId; // Mantém o ID original com prefixo para queries de customers
+      
+      console.log(`  IDs normalizados:`, { numericSellerId, prefixedSellerId });
       
       // Calcular dias úteis do mês (excluindo domingos)
       const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
@@ -2156,18 +2165,21 @@ export class DatabaseStorage implements IStorage {
         )
       );
 
-      // Buscar faturamentos do mês
-      const monthBillings = await db.select({
-        id: billings.id,
-        customerDocument: billings.customerDocument,
-        cfop: billings.cfop,
-        totalValue: billings.totalValue
-      })
-        .from(billings)
-        .where(and(...billingConditions));
+      // Buscar faturamentos do mês usando SQL raw para evitar problemas do Drizzle
+      console.log(`  Buscando faturamentos para:`, { numericSellerId, startOfMonth, endOfMonth });
+      
+      const monthBillings = await db.execute(sql`
+        SELECT id, customer_document, cfop, total_value
+        FROM billings
+        WHERE invoice_date >= ${startOfMonth}
+          AND invoice_date <= ${endOfMonth}
+          ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
+      `);
+      
+      console.log(`  ✅ Faturamentos encontrados: ${monthBillings.rows.length}`);
 
       // Clientes únicos positivados (que tiveram venda)
-      const uniqueCustomers = new Set(monthBillings.map(b => b.customerDocument));
+      const uniqueCustomers = new Set(monthBillings.rows.map((b: any) => b.customer_document));
       const positivatedCustomers = uniqueCustomers.size;
 
       // Total de clientes ativos na carteira do vendedor
@@ -2198,12 +2210,12 @@ export class DatabaseStorage implements IStorage {
         '5.910', '5910', '6.910', '6910', '5.915', '5915'  // Bonificações
       ];
 
-      const validBillings = monthBillings.filter(billing => 
+      const validBillings = monthBillings.rows.filter((billing: any) => 
         billing.cfop && !excludedCFOPs.includes(billing.cfop)
       );
 
-      const totalRevenue = validBillings.reduce((sum, billing) => {
-        const value = parseFloat(billing.totalValue?.toString() || '0');
+      const totalRevenue = validBillings.reduce((sum: number, billing: any) => {
+        const value = parseFloat(billing.total_value?.toString() || '0');
         return sum + (isNaN(value) ? 0 : value);
       }, 0);
 
@@ -2307,7 +2319,7 @@ export class DatabaseStorage implements IStorage {
         positivatedCustomers,
         totalCustomersInRoute,
         dailyAverageRevenue,
-        totalBillings: monthBillings.length,
+        totalBillings: monthBillings.rows.length,
         validBillings: validBillings.length
       };
     } catch (error) {
