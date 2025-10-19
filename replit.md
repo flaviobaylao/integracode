@@ -29,6 +29,7 @@
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes (e.g., routeDay, paymentMethod, deliveryTimeSlots) to all future pending sales cards of a customer.
 - **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and invoices hourly. Includes product mapping, vendor resolution, and specific filters for active records and invoice dates. Features stage extraction from related orders, fallback mechanisms, and detection of cancelled orders. A dedicated endpoint for filtered billing synchronization is available, along with a batch script for correcting sales card seller assignments.
 - **Sync Status Tracking**: Comprehensive system to track and display the last synchronization date/time for all major sync operations (Omie clients, vendors, products, billings) via a dedicated `sync_status` table. Features `SyncStatusDisplay` component with three states (loading, empty, data), auto-refresh every 30 seconds, and automatic timestamp recording after sync completion. Integrated in Dashboard below sync button with cache invalidation support.
+- **Sales Goals Dashboard**: Individual seller metrics displayed when "All sellers" view is selected. Uses `/api/sales-metrics/multiple` endpoint to fetch metrics for multiple sellers simultaneously. The `getSalesMetrics` function uses raw SQL queries (instead of Drizzle ORM) to avoid compatibility issues with complex aggregations.
 
 # External Dependencies
 

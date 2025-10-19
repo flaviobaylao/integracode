@@ -2185,14 +2185,13 @@ export class DatabaseStorage implements IStorage {
       // Total de clientes ativos na carteira do vendedor
       let totalCustomersInRoute = 0;
       if (prefixedSellerId) {
-        const routeCustomers = await db.select({ id: customers.id })
-          .from(customers)
-          .where(and(
-            eq(customers.sellerId, prefixedSellerId),
-            eq(customers.omieStatus, 'ativo'),
-            eq(customers.virtualService, false)
-          ));
-        totalCustomersInRoute = routeCustomers.length;
+        const routeCustomersResult = await db.execute(sql`
+          SELECT id FROM customers
+          WHERE seller_id = ${prefixedSellerId}
+            AND omie_status = 'ativo'
+            AND virtual_service = false
+        `);
+        totalCustomersInRoute = routeCustomersResult.rows.length;
       }
 
       const positivationRate = totalCustomersInRoute > 0 
@@ -2226,55 +2225,49 @@ export class DatabaseStorage implements IStorage {
       let overdueDebtRatio = 0;
       
       if (prefixedSellerId && totalRevenue > 0) {
-        // Buscar débitos vencidos da carteira do vendedor
-        const customerDocs = await db.select({ document: customers.document })
-          .from(customers)
-          .where(and(
-            eq(customers.sellerId, prefixedSellerId),
-            eq(customers.omieStatus, 'ativo')
-          ));
+        // Buscar débitos vencidos da carteira do vendedor usando SQL raw
+        const customerDocsResult = await db.execute(sql`
+          SELECT document FROM customers
+          WHERE seller_id = ${prefixedSellerId}
+            AND omie_status = 'ativo'
+        `);
 
-        const sellerCustomerDocs = customerDocs.map(c => c.document).filter(Boolean);
+        const sellerCustomerDocs = customerDocsResult.rows
+          .map((c: any) => c.document)
+          .filter(Boolean);
 
-        // Buscar débitos vencidos dos clientes da carteira
-        const overdueDebtsData = await db.select({
-          id: overdueDebts.id,
-          clientDocument: overdueDebts.clientDocument,
-          totalAmount: overdueDebts.totalAmount
-        })
-          .from(overdueDebts)
-          .where(sql`${overdueDebts.clientDocument} = ANY(${sellerCustomerDocs})`);
+        if (sellerCustomerDocs.length > 0) {
+          // Buscar débitos vencidos dos clientes da carteira
+          const overdueDebtsResult = await db.execute(sql`
+            SELECT id, client_document, total_amount
+            FROM overdue_debts
+            WHERE client_document = ANY(${sellerCustomerDocs})
+          `);
 
-        const totalOverdueDebt = overdueDebtsData.reduce((sum, debt) => {
-          const value = parseFloat(debt.totalAmount?.toString() || '0');
-          return sum + (isNaN(value) ? 0 : value);
-        }, 0);
+          const totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
+            const value = parseFloat(debt.total_amount?.toString() || '0');
+            return sum + (isNaN(value) ? 0 : value);
+          }, 0);
 
-        overdueDebtRatio = (totalOverdueDebt / totalRevenue) * 100;
+          overdueDebtRatio = (totalOverdueDebt / totalRevenue) * 100;
+        }
       }
 
       // === 4. META DE ATENDIMENTO: Média do percentual de visitas efetuadas dia a dia ===
       // Calcular baseado em salesCards com status success vs total de cards programados
-      const cardConditions = [];
+      const monthSalesCardsResult = await db.execute(sql`
+        SELECT id, status, scheduled_date
+        FROM sales_cards
+        WHERE scheduled_date >= ${startOfMonth}
+          AND scheduled_date <= ${endOfMonth}
+          ${prefixedSellerId ? sql`AND seller_id = ${prefixedSellerId}` : sql``}
+      `);
       
-      if (prefixedSellerId) {
-        cardConditions.push(eq(salesCards.sellerId, prefixedSellerId));
-      }
-      
-      cardConditions.push(
-        and(
-          gte(salesCards.scheduledDate, startOfMonth),
-          lte(salesCards.scheduledDate, endOfMonth)
-        )
-      );
-
-      const monthSalesCards = await db.select({
-        id: salesCards.id,
-        status: salesCards.status,
-        scheduledDate: salesCards.scheduledDate
-      })
-        .from(salesCards)
-        .where(and(...cardConditions));
+      const monthSalesCards = monthSalesCardsResult.rows.map((row: any) => ({
+        id: row.id,
+        status: row.status,
+        scheduledDate: new Date(row.scheduled_date)
+      }));
 
       // Agrupar por dia e calcular percentual de atendimento diário
       const dailyServiceRates: number[] = [];
