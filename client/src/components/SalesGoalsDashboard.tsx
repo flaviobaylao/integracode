@@ -5,6 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { RefreshCw } from "lucide-react";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { SalesGoal, User } from "@shared/schema";
 
 interface SalesGoalsDashboardProps {
@@ -122,6 +126,30 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
   };
 
   const canViewAllSellers = ['admin', 'coordinator', 'administrative'].includes(user.role);
+
+  const { toast } = useToast();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['/api/sales-metrics'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/sales-goals'] });
+      
+      toast({
+        title: "Dados atualizados",
+        description: "Os resultados de cumprimento de metas foram atualizados com os dados mais recentes do sistema.",
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao atualizar",
+        description: "Não foi possível atualizar os dados. Tente novamente.",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const GoalCard = ({ goal, metrics }: { goal: SalesGoal; metrics: SalesMetrics | null }) => {
     const seller = sellers.find((s: User) => s.id === goal.sellerId);
@@ -264,8 +292,19 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
           {user.role === 'vendedor' ? 'Meu Desempenho' : 'Dashboard de Metas'}
         </h2>
         <div className="flex space-x-2">
+          <Button
+            onClick={handleRefreshData}
+            disabled={isRefreshing}
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            data-testid="button-refresh-goals"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Atualizar Dados
+          </Button>
           <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-32" data-testid="select-month">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -277,7 +316,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
             </SelectContent>
           </Select>
           <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-            <SelectTrigger className="w-24">
+            <SelectTrigger className="w-24" data-testid="select-year">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -290,7 +329,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
           </Select>
           {canViewAllSellers && (
             <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-48" data-testid="select-seller">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
