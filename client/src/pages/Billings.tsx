@@ -112,7 +112,7 @@ export default function Billings() {
       }
       
       // Customer Document filter
-      if (filters.customerDocument && !billing.customerDocument.includes(filters.customerDocument)) {
+      if (filters.customerDocument && !billing.customerDocument?.includes(filters.customerDocument)) {
         return false;
       }
       
