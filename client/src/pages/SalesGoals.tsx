@@ -8,6 +8,8 @@ import type { User as SchemaUser } from "@shared/schema";
 export default function SalesGoalsPage() {
   const { user } = useAuth();
 
+  console.log('🎯 SalesGoalsPage carregada!', { user: user?.email, role: user?.role });
+
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">

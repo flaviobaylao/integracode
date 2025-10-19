@@ -55,19 +55,29 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
         year: selectedYear.toString(),
         ...(selectedSeller !== 'all' && { sellerId: selectedSeller })
       });
-      console.log('🔍 Buscando métricas:', { month: selectedMonth, year: selectedYear, sellerId: selectedSeller });
-      return fetch(`/api/sales-metrics?${params}`)
+      console.log('🔍 Buscando métricas:', { month: selectedMonth, year: selectedYear, sellerId: selectedSeller, url: `/api/sales-metrics?${params}` });
+      return fetch(`/api/sales-metrics?${params}`, {
+        credentials: 'include'
+      })
         .then(res => {
-          if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`);
+          console.log('📡 Response status:', res.status);
+          if (!res.ok) {
+            throw new Error(`Erro ${res.status}: ${res.statusText}`);
+          }
           return res.json();
         })
         .then(data => {
-          console.log('📊 Métricas recebidas:', data);
+          console.log('📊 Métricas recebidas:', JSON.stringify(data, null, 2));
           return data;
+        })
+        .catch(error => {
+          console.error('❌ Erro ao buscar métricas:', error);
+          throw error;
         });
     },
     staleTime: 0,
-    gcTime: 0
+    gcTime: 0,
+    retry: false
   });
 
   const months = [
