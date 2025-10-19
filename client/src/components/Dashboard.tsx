@@ -199,51 +199,77 @@ export default function Dashboard() {
         // Invalidar o cache do sync status para forçar atualização
         queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] });
 
+        let pollingTimeoutId: NodeJS.Timeout | null = null;
+
         // Fazer polling a cada 5 segundos para verificar o status
         const checkSyncStatus = async () => {
-          const statuses = await apiRequest('GET', '/api/sync-status');
-          const syncStatus = statuses?.find((s: any) => s.syncType === 'omie_complete');
-          
-          if (syncStatus) {
-            if (syncStatus.status === 'success') {
-              setIsSyncingComplete(false);
-              toast({
-                title: "Sincronização Concluída",
-                description: `✅ ${syncStatus.recordsProcessed || 0} registros processados com sucesso!`,
-                variant: "default",
-              });
-              
-              // Invalidar cache dos dados para forçar atualização
-              await Promise.all([
-                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/today-clients'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] }),
-                queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] })
-              ]);
-            } else if (syncStatus.status === 'error') {
-              setIsSyncingComplete(false);
-              toast({
-                title: "Erro na Sincronização",
-                description: syncStatus.message || "Falha na sincronização",
-                variant: "destructive",
-              });
-            } else if (syncStatus.status === 'in_progress') {
-              // Continuar verificando
-              setTimeout(checkSyncStatus, 5000);
+          try {
+            const statuses = await apiRequest('GET', '/api/sync-status');
+            const syncStatus = statuses?.find((s: any) => s.syncType === 'omie_complete');
+            
+            if (syncStatus) {
+              if (syncStatus.status === 'success') {
+                setIsSyncingComplete(false);
+                toast({
+                  title: "Sincronização Concluída",
+                  description: `✅ ${syncStatus.recordsProcessed || 0} registros processados com sucesso!`,
+                  variant: "default",
+                });
+                
+                // Invalidar cache dos dados para forçar atualização
+                await Promise.all([
+                  queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/dashboard/today-clients'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] }),
+                  queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] })
+                ]);
+              } else if (syncStatus.status === 'error') {
+                setIsSyncingComplete(false);
+                toast({
+                  title: "Erro na Sincronização",
+                  description: syncStatus.message || "Falha na sincronização",
+                  variant: "destructive",
+                });
+              } else if (syncStatus.status === 'in_progress') {
+                // Continuar verificando
+                pollingTimeoutId = setTimeout(checkSyncStatus, 5000);
+              }
+            } else {
+              // Se não há status ainda, continuar verificando
+              pollingTimeoutId = setTimeout(checkSyncStatus, 5000);
             }
+          } catch (error: any) {
+            // Ignorar erros de abort silenciosamente
+            if (error.name === 'AbortError' || error.message?.includes('abort')) {
+              console.log('Polling cancelado');
+              return;
+            }
+            console.error('Erro ao verificar status da sincronização:', error);
+            setIsSyncingComplete(false);
           }
         };
 
         // Iniciar polling após 5 segundos
-        setTimeout(checkSyncStatus, 5000);
+        pollingTimeoutId = setTimeout(checkSyncStatus, 5000);
+
+        // Cleanup: cancelar polling quando componente desmontar
+        return () => {
+          if (pollingTimeoutId) {
+            clearTimeout(pollingTimeoutId);
+          }
+        };
       } else {
         throw new Error(result.message || 'Erro desconhecido');
       }
       
     } catch (error: any) {
+      // Ignorar erros de abort
+      if (error.name === 'AbortError' || error.message?.includes('abort')) {
+        return;
+      }
       console.error('Erro na sincronização completa:', error);
       setIsSyncingComplete(false);
       toast({
