@@ -241,6 +241,28 @@ export default function Billings() {
     syncOmieBillingsMutation.mutate();
   };
 
+  // Mutation para atualizar seller_names retroativamente
+  const updateSellerNamesMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/billings/update-seller-names');
+      return response;
+    },
+    onSuccess: (result) => {
+      toast({
+        title: 'Nomes de vendedores atualizados',
+        description: `${result.updated} faturamentos atualizados com sucesso. ${result.notFound} vendedores não encontrados.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao atualizar nomes',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
       ...prev,
@@ -347,6 +369,21 @@ export default function Billings() {
             variant="default"
             data-testid="button-sync-billings"
           />
+          
+          <Button 
+            variant="secondary" 
+            onClick={() => updateSellerNamesMutation.mutate()}
+            disabled={updateSellerNamesMutation.isPending}
+            data-testid="button-update-sellers"
+            title="Atualizar nomes de vendedores retroativamente"
+          >
+            {updateSellerNamesMutation.isPending ? (
+              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RotateCw className="w-4 h-4 mr-2" />
+            )}
+            Atualizar Vendedores
+          </Button>
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />

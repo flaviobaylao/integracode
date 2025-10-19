@@ -2938,6 +2938,20 @@ export class OmieService {
                 const firstTitle = invoice.titulos[0];
                 if (firstTitle.nCodVendedor) {
                   sellerId = firstTitle.nCodVendedor.toString();
+                  
+                  // Buscar nome do vendedor no storage
+                  try {
+                    const vendorUserId = `omie-vendor-${sellerId}`;
+                    const vendor = await this.storage.getUser(vendorUserId);
+                    if (vendor) {
+                      sellerName = `${vendor.firstName} ${vendor.lastName}`.trim();
+                      console.log(`✅ Vendedor encontrado: ${sellerName} (ID: ${sellerId})`);
+                    } else {
+                      console.log(`⚠️ Vendedor não encontrado no storage: ${vendorUserId}`);
+                    }
+                  } catch (error) {
+                    console.log(`⚠️ Erro ao buscar vendedor ${sellerId}:`, error instanceof Error ? error.message : error);
+                  }
                 }
               }
               

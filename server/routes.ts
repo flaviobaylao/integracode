@@ -27,7 +27,7 @@ import {
   syncStates,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql, eq, and, gte, lte, isNotNull, inArray } from "drizzle-orm";
+import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -3608,6 +3608,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('❌ Erro na sincronização completa de faturamentos:', error);
       res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
+  // Atualizar seller_name retroativamente para todos os faturamentos
+  app.post('/api/billings/update-seller-names', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log('🔄 Iniciando atualização retroativa de seller_names...');
+      
+      // Buscar todos os billings com seller_id mas sem seller_name
+      const billingsToUpdate = await db.select({
+        id: billingsTable.id,
+        sellerId: billingsTable.sellerId,
+        invoiceNumber: billingsTable.invoiceNumber
+      })
+        .from(billingsTable)
+        .where(
+          and(
+            isNotNull(billingsTable.sellerId),
+            ne(billingsTable.sellerId, ''),
+            or(
+              isNull(billingsTable.sellerName),
+              eq(billingsTable.sellerName, '')
+            )
+          )
+        );
+      
+      console.log(`📊 Encontrados ${billingsToUpdate.length} faturamentos sem seller_name`);
+      
+      let updated = 0;
+      let notFound = 0;
+      const errors: any[] = [];
+      
+      // Agrupar por sellerId para reduzir queries
+      const sellerIds = new Set(billingsToUpdate.map(b => b.sellerId));
+      const sellerMap = new Map<string, string>();
+      
+      // Buscar todos os vendedores de uma vez
+      for (const sellerId of sellerIds) {
+        try {
+          const vendorUserId = `omie-vendor-${sellerId}`;
+          const vendor = await storage.getUser(vendorUserId);
+          
+          if (vendor) {
+            const sellerName = `${vendor.firstName} ${vendor.lastName}`.trim();
+            sellerMap.set(sellerId, sellerName);
+            console.log(`✅ Vendedor encontrado: ${sellerName} (ID: ${sellerId})`);
+          } else {
+            notFound++;
+            console.log(`⚠️ Vendedor não encontrado: ${vendorUserId}`);
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao buscar vendedor ${sellerId}:`, error);
+          errors.push({ sellerId, error: error instanceof Error ? error.message : 'Erro desconhecido' });
+        }
+      }
+      
+      // Atualizar billings
+      for (const billing of billingsToUpdate) {
+        try {
+          const sellerName = sellerMap.get(billing.sellerId);
+          
+          if (sellerName) {
+            await db.update(billingsTable)
+              .set({ 
+                sellerName,
+                updatedAt: new Date()
+              })
+              .where(eq(billingsTable.id, billing.id));
+            
+            updated++;
+            
+            if (updated % 100 === 0) {
+              console.log(`📈 Atualizados ${updated}/${billingsToUpdate.length} faturamentos...`);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao atualizar billing ${billing.invoiceNumber}:`, error);
+          errors.push({ 
+            invoiceNumber: billing.invoiceNumber, 
+            error: error instanceof Error ? error.message : 'Erro desconhecido' 
+          });
+        }
+      }
+      
+      console.log(`✅ Atualização concluída: ${updated} atualizados, ${notFound} vendedores não encontrados, ${errors.length} erros`);
+      
+      res.json({
+        success: true,
+        total: billingsToUpdate.length,
+        updated,
+        notFound,
+        errors: errors.length,
+        errorDetails: errors.slice(0, 10) // Retornar apenas os primeiros 10 erros
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro na atualização de seller_names:', error);
+      res.status(500).json({ 
+        success: false,
         error: 'Erro interno do servidor',
         message: error.message 
       });
