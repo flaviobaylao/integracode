@@ -191,7 +191,7 @@ export default function Dashboard() {
         variant: "default",
       });
 
-      const result = await apiRequest('POST', '/api/omie/sync-complete');
+      const result = await apiRequest('POST', '/api/omie/sync-complete', undefined, { timeout: 600000 }); // 10 minutos
 
       if (result.success) {
         const { summary, duration } = result;
