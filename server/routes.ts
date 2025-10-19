@@ -3524,6 +3524,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         erros: results.errors.length
       });
 
+      // Registrar timestamp da sincronização completa
+      try {
+        const totalRecords = (results.clients?.totalProcessed || 0) + 
+                            (results.billings?.totalProcessed || 0) + 
+                            (results.overdueDebts?.debts || 0);
+        
+        await storage.upsertSyncStatus({
+          syncType: 'omie_complete',
+          lastSyncAt: new Date(),
+          status: results.errors.length > 0 ? 'error' : 'success',
+          message: results.errors.length > 0 ? results.errors.join('; ') : 'Sincronização completa realizada com sucesso',
+          recordsProcessed: totalRecords
+        });
+        console.log('✅ Sync status atualizado para omie_complete');
+      } catch (error: any) {
+        console.error('❌ Erro ao atualizar sync status:', error);
+      }
+
       res.json({
         success: true,
         duration: `${duration}s`,

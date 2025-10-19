@@ -12,6 +12,7 @@ import { apiRequest } from "@/lib/queryClient";
 import RouteMetricsCard from "./RouteMetricsCard";
 import { DailyRoutesOverview } from "./DailyRoutesOverview";
 import { MonthlyMetricsOverview } from "./MonthlyMetricsOverview";
+import { SyncStatusDisplay } from "./SyncStatusDisplay";
 
 interface DashboardStats {
   todaySales: string;
@@ -209,7 +210,8 @@ export default function Dashboard() {
           queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
           queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
           queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] })
+          queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] })
         ]);
 
         if (result.results.errors.length > 0) {
@@ -277,20 +279,23 @@ export default function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4">
-            <div className="flex gap-4">
-              <Button
-                onClick={handleCompleteSync}
-                disabled={isSyncingComplete}
-                variant="default"
-                className="flex items-center gap-2 bg-honest-blue hover:bg-honest-blue/90"
-                data-testid="button-sync-complete"
-              >
-                <RotateCcw className={`h-4 w-4 ${isSyncingComplete ? 'animate-spin' : ''}`} />
-                {isSyncingComplete ? 'Sincronizando...' : 'Sincronizar Tudo'}
-              </Button>
-              <div className="text-sm text-gray-600 flex items-center">
-                Sincroniza clientes, faturamentos e débitos vencidos simultaneamente
+            <div className="flex flex-col gap-4">
+              <div className="flex gap-4 items-center">
+                <Button
+                  onClick={handleCompleteSync}
+                  disabled={isSyncingComplete}
+                  variant="default"
+                  className="flex items-center gap-2 bg-honest-blue hover:bg-honest-blue/90"
+                  data-testid="button-sync-complete"
+                >
+                  <RotateCcw className={`h-4 w-4 ${isSyncingComplete ? 'animate-spin' : ''}`} />
+                  {isSyncingComplete ? 'Sincronizando...' : 'Sincronizar Tudo'}
+                </Button>
+                <div className="text-sm text-gray-600 flex items-center">
+                  Sincroniza clientes, faturamentos e débitos vencidos simultaneamente
+                </div>
               </div>
+              <SyncStatusDisplay syncType="omie_complete" compact={true} />
             </div>
           </CardContent>
         </Card>

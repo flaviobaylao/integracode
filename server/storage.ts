@@ -3593,18 +3593,45 @@ export class DatabaseStorage implements IStorage {
     message?: string; 
     recordsProcessed?: number;
   }): Promise<SyncStatus> {
-    const [status] = await db
-      .update(syncStatus)
-      .set({
-        status: data.status,
-        message: data.message,
-        recordsProcessed: data.recordsProcessed,
-        lastSyncAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(syncStatus.syncType, syncType))
-      .returning();
-    return status;
+    // Tentar atualizar primeiro
+    const [existing] = await db
+      .select()
+      .from(syncStatus)
+      .where(eq(syncStatus.syncType, syncType));
+    
+    if (existing) {
+      // Atualizar registro existente
+      const [status] = await db
+        .update(syncStatus)
+        .set({
+          status: data.status,
+          message: data.message,
+          recordsProcessed: data.recordsProcessed,
+          lastSyncAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(syncStatus.syncType, syncType))
+        .returning();
+      return status;
+    } else {
+      // Criar novo registro
+      const [status] = await db
+        .insert(syncStatus)
+        .values({
+          syncType,
+          status: data.status,
+          message: data.message,
+          recordsProcessed: data.recordsProcessed,
+          lastSyncAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+      return status;
+    }
+  }
+
+  async getSyncStatuses(): Promise<SyncStatus[]> {
+    return await db.select().from(syncStatus);
   }
 }
 
