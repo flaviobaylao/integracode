@@ -2120,6 +2120,10 @@ export class DatabaseStorage implements IStorage {
       const targetMonth = month || (currentDate.getMonth() + 1);
       const targetYear = year || currentDate.getFullYear();
       
+      // Normalizar sellerId: billings usa ID numérico, mas customers/users usam prefixo "omie-vendor-"
+      const numericSellerId = sellerId ? sellerId.replace('omie-vendor-', '') : undefined;
+      const prefixedSellerId = sellerId; // Mantém o ID original com prefixo para queries de customers
+      
       // Calcular dias úteis do mês (excluindo domingos)
       const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
       const workingDays = [];
@@ -2141,8 +2145,8 @@ export class DatabaseStorage implements IStorage {
       // === 1. POSITIVAÇÃO: Clientes únicos que tiveram venda no mês (via faturamentos) ===
       const billingConditions = [];
       
-      if (sellerId) {
-        billingConditions.push(eq(billings.sellerId, sellerId));
+      if (numericSellerId) {
+        billingConditions.push(eq(billings.sellerId, numericSellerId));
       }
       
       billingConditions.push(
@@ -2163,11 +2167,11 @@ export class DatabaseStorage implements IStorage {
 
       // Total de clientes ativos na carteira do vendedor
       let totalCustomersInRoute = 0;
-      if (sellerId) {
+      if (prefixedSellerId) {
         const routeCustomers = await db.select({ id: customers.id })
           .from(customers)
           .where(and(
-            eq(customers.sellerId, sellerId),
+            eq(customers.sellerId, prefixedSellerId),
             eq(customers.omieStatus, 'ativo'),
             eq(customers.virtualService, false)
           ));
@@ -2204,16 +2208,16 @@ export class DatabaseStorage implements IStorage {
       // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Vendas da carteira ===
       let overdueDebtRatio = 0;
       
-      if (sellerId && totalRevenue > 0) {
+      if (prefixedSellerId && totalRevenue > 0) {
         // Buscar débitos vencidos da carteira do vendedor
-        const customerDocs = await db.select({ documentNumber: customers.documentNumber })
+        const customerDocs = await db.select({ document: customers.document })
           .from(customers)
           .where(and(
-            eq(customers.sellerId, sellerId),
+            eq(customers.sellerId, prefixedSellerId),
             eq(customers.omieStatus, 'ativo')
           ));
 
-        const sellerCustomerDocs = customerDocs.map(c => c.documentNumber).filter(Boolean);
+        const sellerCustomerDocs = customerDocs.map(c => c.document).filter(Boolean);
 
         // Buscar débitos vencidos dos clientes da carteira
         const overdueDebtsData = await db.select()
@@ -2232,8 +2236,8 @@ export class DatabaseStorage implements IStorage {
       // Calcular baseado em salesCards com status success vs total de cards programados
       const cardConditions = [];
       
-      if (sellerId) {
-        cardConditions.push(eq(salesCards.sellerId, sellerId));
+      if (prefixedSellerId) {
+        cardConditions.push(eq(salesCards.sellerId, prefixedSellerId));
       }
       
       cardConditions.push(
