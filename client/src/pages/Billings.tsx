@@ -93,7 +93,6 @@ export default function Billings() {
     page: 1,
     pageSize: 50,
   });
-  const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
@@ -204,77 +203,7 @@ export default function Billings() {
     queryFn: () => fetch('/api/billings/sellers').then(res => res.json())
   });
 
-  // Mutation para sincronização de pedidos (NOVO)
-  const syncOrdersMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/omie/sync-all-orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Erro ${response.status}: ${response.statusText}`);
-      }
-      
-      return response.json();
-    },
-    onSuccess: (result) => {
-      toast({
-        title: 'Sincronização de pedidos concluída',
-        description: `${result.totalProcessed} pedidos processados. ${result.imported} importados, ${result.updated} atualizados.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      setShowSyncDialog(false);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro na sincronização de pedidos',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  // Mutation para sincronização de notas fiscais (LEGADO)
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/billings/sync-all', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Erro ${response.status}: ${response.statusText}`);
-      }
-      
-      return response.json();
-    },
-    onSuccess: (result) => {
-      toast({
-        title: 'Sincronização de NFs concluída',
-        description: `${result.totalProcessed} notas fiscais processadas. ${result.imported} importadas, ${result.updated} atualizadas.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      setShowSyncDialog(false);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro na sincronização de NFs',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  // Mutation para sincronização de faturamentos do Omie (NOVO)
+  // Mutation para sincronização de faturamentos do Omie
   const syncOmieBillingsMutation = useMutation({
     mutationFn: async () => {
       const response = await fetch('/api/omie/sync-billings', {
@@ -307,14 +236,6 @@ export default function Billings() {
       });
     }
   });
-
-  const handleSync = () => {
-    syncMutation.mutate();
-  };
-
-  const handleSyncOrders = () => {
-    syncOrdersMutation.mutate();
-  };
 
   const handleSyncOmieBillings = () => {
     syncOmieBillingsMutation.mutate();
@@ -422,18 +343,9 @@ export default function Billings() {
             syncType="omie_billings"
             onSync={handleSyncOmieBillings}
             isLoading={syncOmieBillingsMutation.isPending}
-            label="Sincronizar Omie"
+            label="Sincronizar Faturamentos"
             variant="default"
-            data-testid="button-sync-omie"
-          />
-          
-          <SyncButton
-            syncType="omie_billings"
-            onSync={handleSync}
-            isLoading={syncMutation.isPending}
-            label="Sincronizar"
-            variant="outline"
-            data-testid="button-sync"
+            data-testid="button-sync-billings"
           />
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
