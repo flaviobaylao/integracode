@@ -18,15 +18,31 @@ interface SyncStatusDisplayProps {
 }
 
 export function SyncStatusDisplay({ syncType = 'omie_complete', compact = false }: SyncStatusDisplayProps) {
-  const { data: statuses } = useQuery<SyncStatus[]>({
+  const { data: statuses, isLoading } = useQuery<SyncStatus[]>({
     queryKey: ['/api/sync-status'],
     refetchInterval: 30000, // Atualiza a cada 30 segundos
   });
 
   const syncStatus = statuses?.find(s => s.syncType === syncType);
 
+  // Mostrar loading enquanto carrega
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="sync-status-loading">
+        <Clock className="h-4 w-4 animate-pulse" />
+        <span>Carregando status...</span>
+      </div>
+    );
+  }
+
+  // Mostrar mensagem se não há dados
   if (!syncStatus) {
-    return null;
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="sync-status-empty">
+        <Clock className="h-4 w-4" />
+        <span>Nenhuma sincronização realizada ainda</span>
+      </div>
+    );
   }
 
   const formattedDate = format(new Date(syncStatus.lastSyncAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
