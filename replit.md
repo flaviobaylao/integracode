@@ -28,7 +28,7 @@
 - **Automated Agenda Management**: Automatic generation of future sales cards based on customer visit schedules and periodicity. Recursive card generation ensures continuous agenda coverage. Includes scheduled daily maintenance to ensure future programming for all clients.
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes (e.g., routeDay, paymentMethod, deliveryTimeSlots) to all future pending sales cards of a customer.
 - **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and invoices hourly. Includes product mapping, vendor resolution, and specific filters for active records and invoice dates. Features stage extraction from related orders, fallback mechanisms, and detection of cancelled orders. A dedicated endpoint for filtered billing synchronization is available, along with a batch script for correcting sales card seller assignments.
-- **Sync Status Tracking**: Comprehensive system to track and display the last synchronization date/time for all major sync operations (Omie clients, vendors, products, billings) via a dedicated `sync_status` table and a reusable frontend component.
+- **Sync Status Tracking**: Comprehensive system to track and display the last synchronization date/time for all major sync operations (Omie clients, vendors, products, billings) via a dedicated `sync_status` table. Features `SyncStatusDisplay` component with three states (loading, empty, data), auto-refresh every 30 seconds, and automatic timestamp recording after sync completion. Integrated in Dashboard below sync button with cache invalidation support.
 
 # External Dependencies
 
