@@ -2157,7 +2157,12 @@ export class DatabaseStorage implements IStorage {
       );
 
       // Buscar faturamentos do mês
-      const monthBillings = await db.select()
+      const monthBillings = await db.select({
+        id: billings.id,
+        customerDocument: billings.customerDocument,
+        cfop: billings.cfop,
+        totalValue: billings.totalValue
+      })
         .from(billings)
         .where(and(...billingConditions));
 
@@ -2220,7 +2225,11 @@ export class DatabaseStorage implements IStorage {
         const sellerCustomerDocs = customerDocs.map(c => c.document).filter(Boolean);
 
         // Buscar débitos vencidos dos clientes da carteira
-        const overdueDebtsData = await db.select()
+        const overdueDebtsData = await db.select({
+          id: overdueDebts.id,
+          clientDocument: overdueDebts.clientDocument,
+          totalAmount: overdueDebts.totalAmount
+        })
           .from(overdueDebts)
           .where(sql`${overdueDebts.clientDocument} = ANY(${sellerCustomerDocs})`);
 
@@ -2247,7 +2256,11 @@ export class DatabaseStorage implements IStorage {
         )
       );
 
-      const monthSalesCards = await db.select()
+      const monthSalesCards = await db.select({
+        id: salesCards.id,
+        status: salesCards.status,
+        scheduledDate: salesCards.scheduledDate
+      })
         .from(salesCards)
         .where(and(...cardConditions));
 
