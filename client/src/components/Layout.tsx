@@ -116,7 +116,16 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   };
 
   const handleMenuItemClick = (itemId: string) => {
-    setActiveView(itemId);
+    // Rotas que têm páginas próprias devem navegar diretamente
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'contas-receber', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management'];
+    
+    if (routePages.includes(itemId)) {
+      // Navega para a rota correspondente
+      const route = '/' + itemId.replace(/_/g, '-');
+      window.location.href = route;
+    } else {
+      setActiveView(itemId);
+    }
     setMobileMenuOpen(false);
   };
 

@@ -26,6 +26,7 @@ import UserManagementPage from "@/pages/UserManagementPage";
 import BankAccountsDebug from "@/pages/BankAccountsDebug";
 import ContasReceber from "@/pages/ContasReceber";
 import OverdueDebtsPage from "@/pages/OverdueDebts";
+import SalesGoalsPage from "@/pages/SalesGoals";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -125,6 +126,7 @@ function Router() {
           <Route path="/telemarketing" component={TelemarketingPage} />
           <Route path="/sales-schedule" component={SalesSchedule} />
           <Route path="/billings" component={Billings} />
+          <Route path="/sales-goals" component={SalesGoalsPage} />
           <Route path="/blocked-orders" component={BlockedOrdersPage} />
           <Route path="/contas-receber" component={ContasReceber} />
           <Route path="/overdue-debts" component={OverdueDebtsPage} />
