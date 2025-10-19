@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
@@ -21,9 +22,11 @@ import {
   Package,
   RefreshCw,
   Filter,
-  Monitor
+  Monitor,
+  Sparkles
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 const DAYS_OF_WEEK = [
   { value: 'atrasados', label: '⚠️ Atrasados (>3 dias)' },
@@ -82,6 +85,7 @@ const getWeekdaysLabel = (weekdays: string) => {
 
 export default function SalesSchedule() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [selectedDay, setSelectedDay] = useState('segunda');
   const [startDate, setStartDate] = useState(() => {
     const today = new Date();
@@ -98,6 +102,31 @@ export default function SalesSchedule() {
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
+
+  // Mutation para gerar cards futuros
+  const generateFutureCardsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('/api/sales-cards/generate-future', {
+        method: 'POST'
+      });
+      return response;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Cards gerados com sucesso!",
+        description: `${data.stats.generated} cards criados para ${data.stats.processed} clientes. ${data.stats.skipped} pulados, ${data.stats.errors} erros.`,
+        variant: "default"
+      });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao gerar cards",
+        description: error.message || "Ocorreu um erro ao gerar os cards futuros",
+        variant: "destructive"
+      });
+    }
+  });
 
   // Buscar cards por dia da semana ou cards atrasados
   const { data: cardsData, isLoading, refetch } = useQuery({
@@ -182,15 +211,33 @@ export default function SalesSchedule() {
           <h1 className="text-3xl font-bold text-gray-900">Agenda de Vendas</h1>
           <p className="text-gray-600">Visualize e gerencie os cards de vendas por dia da semana</p>
         </div>
-        <Button
-          onClick={() => refetch()}
-          variant="outline"
-          size="sm"
-          className="flex items-center space-x-2"
-        >
-          <RefreshCw className="h-4 w-4" />
-          <span>Atualizar</span>
-        </Button>
+        <div className="flex items-center space-x-2">
+          {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
+            <Button
+              onClick={() => generateFutureCardsMutation.mutate()}
+              variant="default"
+              size="sm"
+              className="flex items-center space-x-2"
+              disabled={generateFutureCardsMutation.isPending}
+              data-testid="button-generate-future-cards"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>
+                {generateFutureCardsMutation.isPending ? 'Gerando...' : 'Gerar Cards Futuros'}
+              </span>
+            </Button>
+          )}
+          <Button
+            onClick={() => refetch()}
+            variant="outline"
+            size="sm"
+            className="flex items-center space-x-2"
+            data-testid="button-refresh"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Atualizar</span>
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}
