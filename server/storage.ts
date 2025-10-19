@@ -2134,63 +2134,34 @@ export class DatabaseStorage implements IStorage {
       const workingDaysInMonth = workingDays.length;
       const workingDaysElapsed = workingDays.filter(date => date <= currentDate).length;
       
-      // Base query conditions
-      const conditions = [];
-      
-      if (sellerId) {
-        conditions.push(eq(salesCards.sellerId, sellerId));
-      }
-      
       // Data range for the month
       const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
       const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59);
       
-      conditions.push(
+      // === 1. POSITIVAÇÃO: Clientes únicos que tiveram venda no mês (via faturamentos) ===
+      const billingConditions = [];
+      
+      if (sellerId) {
+        billingConditions.push(eq(billings.sellerId, sellerId));
+      }
+      
+      billingConditions.push(
         and(
-          gte(salesCards.scheduledDate, startOfMonth),
-          lte(salesCards.scheduledDate, endOfMonth)
+          gte(billings.invoiceDate, startOfMonth),
+          lte(billings.invoiceDate, endOfMonth)
         )
       );
 
-      // Buscar cards de venda do mês
-      const salesCardsQuery = db.select({
-        id: salesCards.id,
-        status: salesCards.status,
-        saleValue: salesCards.saleValue,
-        scheduledDate: salesCards.scheduledDate,
-        customerId: salesCards.customerId,
-        sellerId: salesCards.sellerId
-      })
-      .from(salesCards)
-      .innerJoin(customers, eq(salesCards.customerId, customers.id))
-      .where(and(...conditions));
+      // Buscar faturamentos do mês
+      const monthBillings = await db.select()
+        .from(billings)
+        .where(and(...billingConditions));
 
-      const monthSalesCards = await salesCardsQuery;
+      // Clientes únicos positivados (que tiveram venda)
+      const uniqueCustomers = new Set(monthBillings.map(b => b.customerDocument));
+      const positivatedCustomers = uniqueCustomers.size;
 
-      // Calcular métricas
-      const totalCards = monthSalesCards.length;
-      const successfulCards = monthSalesCards.filter(card => card.status === 'success').length;
-      const positivationRate = totalCards > 0 ? (successfulCards / totalCards) * 100 : 0;
-      
-      const totalRevenue = monthSalesCards
-        .filter(card => card.status === 'success' && card.saleValue)
-        .reduce((sum, card) => sum + parseFloat(card.saleValue?.toString() || '0'), 0);
-      
-      const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
-      const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
-
-      // Para débito vencido, vamos simular por enquanto (precisa integração com dados do Omie)
-      const overdueDebtRatio = Math.random() * 10; // Temporário - deve vir dos dados reais
-
-      // Para atendimento, calcular baseado em clientes únicos atendidos vs total da rota
-      // Excluindo clientes com virtualService = true
-      const uniqueCustomersAttended = new Set(
-        monthSalesCards
-          .filter(card => card.status === 'success')
-          .map(card => card.customerId)
-      ).size;
-
-      // Contar total de clientes na rota do vendedor (excluindo virtualService)
+      // Total de clientes ativos na carteira do vendedor
       let totalCustomersInRoute = 0;
       if (sellerId) {
         const routeCustomers = await db.select({ id: customers.id })
@@ -2203,7 +2174,110 @@ export class DatabaseStorage implements IStorage {
         totalCustomersInRoute = routeCustomers.length;
       }
 
-      const serviceRate = totalCustomersInRoute > 0 ? (uniqueCustomersAttended / totalCustomersInRoute) * 100 : 0;
+      const positivationRate = totalCustomersInRoute > 0 
+        ? (positivatedCustomers / totalCustomersInRoute) * 100 
+        : 0;
+
+      // === 2. VENDAS: Somar faturamentos EXCLUINDO trocas, amostras e bonificações ===
+      // CFOPs a excluir:
+      // - Trocas: 5.949, 6.949
+      // - Amostras: 5.911, 6.911
+      // - Bonificações: 5.910, 6.910, 5.915
+      const excludedCFOPs = [
+        '5.949', '5949', '6.949', '6949',  // Trocas
+        '5.911', '5911', '6.911', '6911',  // Amostras
+        '5.910', '5910', '6.910', '6910', '5.915', '5915'  // Bonificações
+      ];
+
+      const validBillings = monthBillings.filter(billing => 
+        billing.cfop && !excludedCFOPs.includes(billing.cfop)
+      );
+
+      const totalRevenue = validBillings.reduce((sum, billing) => {
+        const value = parseFloat(billing.totalValue?.toString() || '0');
+        return sum + (isNaN(value) ? 0 : value);
+      }, 0);
+
+      const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
+      const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
+
+      // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Vendas da carteira ===
+      let overdueDebtRatio = 0;
+      
+      if (sellerId && totalRevenue > 0) {
+        // Buscar débitos vencidos da carteira do vendedor
+        const customerDocs = await db.select({ documentNumber: customers.documentNumber })
+          .from(customers)
+          .where(and(
+            eq(customers.sellerId, sellerId),
+            eq(customers.omieStatus, 'ativo')
+          ));
+
+        const sellerCustomerDocs = customerDocs.map(c => c.documentNumber).filter(Boolean);
+
+        // Buscar débitos vencidos dos clientes da carteira
+        const overdueDebtsData = await db.select()
+          .from(overdueDebts)
+          .where(sql`${overdueDebts.clientDocument} = ANY(${sellerCustomerDocs})`);
+
+        const totalOverdueDebt = overdueDebtsData.reduce((sum, debt) => {
+          const value = parseFloat(debt.totalAmount?.toString() || '0');
+          return sum + (isNaN(value) ? 0 : value);
+        }, 0);
+
+        overdueDebtRatio = (totalOverdueDebt / totalRevenue) * 100;
+      }
+
+      // === 4. META DE ATENDIMENTO: Média do percentual de visitas efetuadas dia a dia ===
+      // Calcular baseado em salesCards com status success vs total de cards programados
+      const cardConditions = [];
+      
+      if (sellerId) {
+        cardConditions.push(eq(salesCards.sellerId, sellerId));
+      }
+      
+      cardConditions.push(
+        and(
+          gte(salesCards.scheduledDate, startOfMonth),
+          lte(salesCards.scheduledDate, endOfMonth)
+        )
+      );
+
+      const monthSalesCards = await db.select()
+        .from(salesCards)
+        .where(and(...cardConditions));
+
+      // Agrupar por dia e calcular percentual de atendimento diário
+      const dailyServiceRates: number[] = [];
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayDate = new Date(targetYear, targetMonth - 1, day);
+        
+        // Pular se for domingo ou dia futuro
+        if (dayDate.getDay() === 0 || dayDate > currentDate) {
+          continue;
+        }
+
+        const dayStart = new Date(targetYear, targetMonth - 1, day, 0, 0, 0);
+        const dayEnd = new Date(targetYear, targetMonth - 1, day, 23, 59, 59);
+
+        const dayCards = monthSalesCards.filter(card => {
+          const cardDate = new Date(card.scheduledDate);
+          return cardDate >= dayStart && cardDate <= dayEnd;
+        });
+
+        const daySuccessCards = dayCards.filter(card => card.status === 'success');
+
+        if (dayCards.length > 0) {
+          const dayServiceRate = (daySuccessCards.length / dayCards.length) * 100;
+          dailyServiceRates.push(dayServiceRate);
+        }
+      }
+
+      // Média dos percentuais diários
+      const serviceRate = dailyServiceRates.length > 0
+        ? dailyServiceRates.reduce((sum, rate) => sum + rate, 0) / dailyServiceRates.length
+        : 0;
 
       return {
         positivationRate,
@@ -2213,11 +2287,11 @@ export class DatabaseStorage implements IStorage {
         serviceRate,
         workingDaysInMonth,
         workingDaysElapsed,
-        totalCards,
-        successfulCards,
-        uniqueCustomersAttended,
+        positivatedCustomers,
         totalCustomersInRoute,
-        dailyAverageRevenue
+        dailyAverageRevenue,
+        totalBillings: monthBillings.length,
+        validBillings: validBillings.length
       };
     } catch (error) {
       console.error('Erro ao calcular métricas de vendas:', error);
