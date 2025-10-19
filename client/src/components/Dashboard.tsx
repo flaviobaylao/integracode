@@ -188,53 +188,69 @@ export default function Dashboard() {
     try {
       toast({
         title: "Sincronização Iniciada",
-        description: "Sincronizando clientes, faturamentos e débitos vencidos...",
+        description: "Processando em segundo plano. Aguarde...",
         variant: "default",
       });
 
-      const result = await apiRequest('POST', '/api/omie/sync-complete', undefined, { timeout: 600000 }); // 10 minutos
+      // Iniciar sincronização (retorna imediatamente)
+      const result = await apiRequest('POST', '/api/omie/sync-complete');
 
       if (result.success) {
-        const { summary, duration } = result;
-        
-        toast({
-          title: "Sincronização Concluída",
-          description: `✅ ${summary.clientsProcessed} clientes, ${summary.billingsProcessed} faturamentos, ${summary.overdueClientsFound} débitos em ${duration}`,
-          variant: "default",
-        });
+        // Invalidar o cache do sync status para forçar atualização
+        queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] });
 
-        // Invalidar cache dos dados para forçar atualização
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/today-clients'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] })
-        ]);
+        // Fazer polling a cada 5 segundos para verificar o status
+        const checkSyncStatus = async () => {
+          const statuses = await apiRequest('GET', '/api/sync-status');
+          const syncStatus = statuses?.find((s: any) => s.syncType === 'omie_complete');
+          
+          if (syncStatus) {
+            if (syncStatus.status === 'success') {
+              setIsSyncingComplete(false);
+              toast({
+                title: "Sincronização Concluída",
+                description: `✅ ${syncStatus.recordsProcessed || 0} registros processados com sucesso!`,
+                variant: "default",
+              });
+              
+              // Invalidar cache dos dados para forçar atualização
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/today-clients'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/dashboard/overdue-clients'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/customers'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/billings'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts'] }),
+                queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] })
+              ]);
+            } else if (syncStatus.status === 'error') {
+              setIsSyncingComplete(false);
+              toast({
+                title: "Erro na Sincronização",
+                description: syncStatus.message || "Falha na sincronização",
+                variant: "destructive",
+              });
+            } else if (syncStatus.status === 'in_progress') {
+              // Continuar verificando
+              setTimeout(checkSyncStatus, 5000);
+            }
+          }
+        };
 
-        if (result.results.errors.length > 0) {
-          toast({
-            title: "Sincronização com Avisos",
-            description: `${result.results.errors.length} erro(s) encontrado(s). Verifique os logs.`,
-            variant: "destructive",
-          });
-        }
-        
+        // Iniciar polling após 5 segundos
+        setTimeout(checkSyncStatus, 5000);
       } else {
         throw new Error(result.message || 'Erro desconhecido');
       }
       
     } catch (error: any) {
       console.error('Erro na sincronização completa:', error);
+      setIsSyncingComplete(false);
       toast({
         title: "Erro na Sincronização",
-        description: error.message || "Falha na sincronização completa",
+        description: error.message || "Falha ao iniciar sincronização",
         variant: "destructive",
       });
-    } finally {
-      setIsSyncingComplete(false);
     }
   };
 

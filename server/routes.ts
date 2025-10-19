@@ -3453,14 +3453,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const results = {
-        clients: null,
-        billings: null,
-        overdueDebts: null,
-        errors: [],
-        startTime: new Date(),
-        endTime: null
-      };
+      // Registrar início da sincronização
+      await storage.upsertSyncStatus({
+        syncType: 'omie_complete',
+        lastSyncAt: new Date(),
+        status: 'in_progress',
+        message: 'Sincronização em andamento...',
+        recordsProcessed: 0
+      });
+
+      // Responder imediatamente ao cliente
+      res.json({
+        success: true,
+        message: 'Sincronização iniciada em background',
+        status: 'in_progress'
+      });
+
+      // Processar sincronização em background
+      (async () => {
+        const results = {
+          clients: null,
+          billings: null,
+          overdueDebts: null,
+          errors: [],
+          startTime: new Date(),
+          endTime: null
+        };
 
       // 1. Sincronizar clientes ativos
       try {
@@ -3542,20 +3560,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('❌ Erro ao atualizar sync status:', error);
       }
 
-      res.json({
-        success: true,
-        duration: `${duration}s`,
-        results,
-        summary: {
-          clientsProcessed: results.clients?.totalProcessed || 0,
-          billingsProcessed: results.billings?.totalProcessed || 0,
-          overdueClientsFound: results.overdueDebts?.totalClients || 0,
-          totalErrors: results.errors.length
-        }
+      })().catch(async (error: any) => {
+        console.error('❌ Erro geral na sincronização completa em background:', error);
+        await storage.upsertSyncStatus({
+          syncType: 'omie_complete',
+          lastSyncAt: new Date(),
+          status: 'error',
+          message: `Erro na sincronização: ${error.message}`,
+          recordsProcessed: 0
+        });
       });
 
     } catch (error: any) {
-      console.error('❌ Erro geral na sincronização completa:', error);
+      console.error('❌ Erro ao iniciar sincronização completa:', error);
+      await storage.upsertSyncStatus({
+        syncType: 'omie_complete',
+        lastSyncAt: new Date(),
+        status: 'error',
+        message: `Erro ao iniciar sincronização: ${error.message}`,
+        recordsProcessed: 0
+      });
       res.status(500).json({ 
         success: false,
         error: 'Erro interno do servidor',
