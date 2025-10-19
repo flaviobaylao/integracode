@@ -717,9 +717,20 @@ export class OmieService {
   // ==================== MÉTODOS DE FATURAMENTO ====================
   
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
-  async listOrders(page: number = 1, pageSize: number = 50, dateFrom: string = '01/01/2025', dateTo: string = ''): Promise<any> {
+  async listOrders(page: number = 1, pageSize: number = 50, dateFrom: string = '', dateTo: string = ''): Promise<any> {
     try {
-      console.log(`🔍 Listando pedidos - Página ${page} (${pageSize} registros) - Data: ${dateFrom || 'TODAS'} até ${dateTo || 'HOJE'}...`);
+      // Se não fornecer data, usar últimos 2 meses por padrão
+      let effectiveDateFrom = dateFrom;
+      if (!effectiveDateFrom) {
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+        const day = String(twoMonthsAgo.getDate()).padStart(2, '0');
+        const month = String(twoMonthsAgo.getMonth() + 1).padStart(2, '0');
+        const year = twoMonthsAgo.getFullYear();
+        effectiveDateFrom = `${day}/${month}/${year}`;
+      }
+      
+      console.log(`🔍 Listando pedidos - Página ${page} (${pageSize} registros) - Data: ${effectiveDateFrom} até ${dateTo || 'HOJE'}...`);
       
       const payload = {
         call: 'ListarPedidos',
@@ -727,13 +738,13 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: dateFrom, // Filtrar a partir de 01/01/2025 por padrão
+          filtrar_por_data_de: effectiveDateFrom, // Filtrar a partir dos últimos 2 meses por padrão
           filtrar_por_data_ate: dateTo    // Até hoje (vazio = até hoje)
         }]
       };
 
-      console.log(`📤 ✅ COM FILTRO DE DATA - De ${dateFrom || 'INÍCIO'} até ${dateTo || 'HOJE'}`);
-      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify({ call: payload.call, dateFrom, dateTo, paramCount: payload.param.length }, null, 2));
+      console.log(`📤 ✅ COM FILTRO DE DATA - De ${effectiveDateFrom} até ${dateTo || 'HOJE'}`);
+      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify({ call: payload.call, dateFrom: effectiveDateFrom, dateTo, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
