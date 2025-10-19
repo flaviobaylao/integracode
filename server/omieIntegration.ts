@@ -717,9 +717,9 @@ export class OmieService {
   // ==================== MÉTODOS DE FATURAMENTO ====================
   
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
-  async listOrders(page: number = 1, pageSize: number = 50): Promise<any> {
+  async listOrders(page: number = 1, pageSize: number = 50, dateFrom: string = '01/01/2025', dateTo: string = ''): Promise<any> {
     try {
-      console.log(`🔍 Listando TODOS os pedidos - Página ${page} (${pageSize} registros)...`);
+      console.log(`🔍 Listando pedidos - Página ${page} (${pageSize} registros) - Data: ${dateFrom || 'TODAS'} até ${dateTo || 'HOJE'}...`);
       
       const payload = {
         call: 'ListarPedidos',
@@ -727,13 +727,13 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: '', // SEM FILTRO - buscar TODOS os pedidos históricos
-          filtrar_por_data_ate: ''  // SEM FILTRO - buscar TODOS os pedidos históricos
+          filtrar_por_data_de: dateFrom, // Filtrar a partir de 01/01/2025 por padrão
+          filtrar_por_data_ate: dateTo    // Até hoje (vazio = até hoje)
         }]
       };
 
-      console.log(`📤 ✅ SEM FILTRO DE DATA - Buscando TODOS os pedidos históricos`);
-      console.log(`📤 Enviando payload ListarPedidos (sem filtro):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
+      console.log(`📤 ✅ COM FILTRO DE DATA - De ${dateFrom || 'INÍCIO'} até ${dateTo || 'HOJE'}`);
+      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify({ call: payload.call, dateFrom, dateTo, paramCount: payload.param.length }, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
       console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
