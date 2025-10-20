@@ -541,6 +541,12 @@ export default function SalesSchedule() {
                       
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
                         <div className="flex items-center space-x-2">
+                          <User className="h-4 w-4" />
+                          <span data-testid={`text-seller-${card.id}`}>
+                            {card.seller ? `${card.seller.firstName || ''} ${card.seller.lastName || ''}`.trim() || card.seller.email || 'Sem vendedor' : 'Sem vendedor'}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
                           <Phone className="h-4 w-4" />
                           <span>{card.customer.phone}</span>
                         </div>
@@ -556,6 +562,16 @@ export default function SalesSchedule() {
                           <RefreshCw className="h-4 w-4" />
                           <span>{RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS]}</span>
                         </div>
+                        {(card.customer.latitude || card.customer.longitude) && (
+                          <div className="flex items-center space-x-2">
+                            <MapPin className="h-4 w-4 text-blue-600" />
+                            <span className="text-xs" data-testid={`text-coordinates-${card.id}`}>
+                              {card.customer.latitude && `${parseFloat(card.customer.latitude).toFixed(6)}`}
+                              {card.customer.latitude && card.customer.longitude && ', '}
+                              {card.customer.longitude && `${parseFloat(card.customer.longitude).toFixed(6)}`}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {card.saleValue && (
