@@ -255,7 +255,7 @@ export class OmieService {
       
       const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', {
         codigo_cliente_omie: omieClientCode,
-        inativo: 'S'
+        situacao: 'inativo'
       });
 
       if (response && response.codigo_cliente_omie) {
