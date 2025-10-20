@@ -75,6 +75,7 @@ export interface IStorage {
   getCustomerByCnpj(cnpj: string): Promise<Customer | undefined>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   updateCustomer(id: string, customer: Partial<InsertCustomer>): Promise<Customer>;
+  inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }>;
   deleteCustomer(id: string): Promise<void>;
   getCustomersByRoute(route: string): Promise<Customer[]>;
   getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]>;
@@ -498,6 +499,43 @@ export class DatabaseStorage implements IStorage {
       .where(eq(customers.id, id))
       .returning();
     return updatedCustomer;
+  }
+
+  async inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }> {
+    // 1. Update customer: set isActive = false and inactivatedAt = now
+    const [inactivatedCustomer] = await db
+      .update(customers)
+      .set({ 
+        isActive: false, 
+        inactivatedAt: new Date(),
+        updatedAt: new Date() 
+      })
+      .where(eq(customers.id, customerId))
+      .returning();
+    
+    // 2. Delete all future pending sales cards for this customer, except the current one
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const result = await db
+      .delete(salesCards)
+      .where(
+        and(
+          eq(salesCards.customerId, customerId),
+          ne(salesCards.id, currentCardId),
+          or(
+            eq(salesCards.status, 'pending'),
+            eq(salesCards.status, 'in_progress')
+          ),
+          gte(salesCards.scheduledDate, today)
+        )
+      )
+      .returning();
+    
+    return {
+      customer: inactivatedCustomer,
+      deletedCards: result.length
+    };
   }
 
   async deleteCustomer(id: string): Promise<void> {
