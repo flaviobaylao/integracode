@@ -32,6 +32,7 @@
       - `generate-missing-monday-cards.ts`: Created 492 cards for 20/10/2025 (segunda)
       - `generate-missing-tuesday-cards.ts`: Created 487 cards for 21/10/2025 (terça)
       - `generate-missing-weekday-cards.ts`: Created 500 cards for 22/10/2025 (quarta) and 478 cards for 23/10/2025 (quinta)
+      - `fix-friday-cards.ts`: Created 457 cards for 24/10/2025 (sexta)
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes (e.g., routeDay, paymentMethod, deliveryTimeSlots) to all future pending sales cards of a customer.
 - **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and invoices hourly. Includes product mapping, vendor resolution, and specific filters for active records and invoice dates. Features stage extraction from related orders, fallback mechanisms, and detection of cancelled orders. A dedicated endpoint for filtered billing synchronization is available, along with a batch script for correcting sales card seller assignments.
 - **Sync Status Tracking**: Comprehensive system to track and display the last synchronization date/time for all major sync operations (Omie clients, vendors, products, billings) via a dedicated `sync_status` table. Features `SyncStatusDisplay` component with three states (loading, empty, data), auto-refresh every 30 seconds, and automatic timestamp recording after sync completion. Integrated in Dashboard below sync button with cache invalidation support.
