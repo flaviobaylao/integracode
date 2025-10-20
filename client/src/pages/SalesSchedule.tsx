@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
+import CustomerEditModal from "@/components/CustomerEditModal";
 import {
   Calendar,
   Clock,
@@ -24,10 +25,11 @@ import {
   Filter,
   Monitor,
   Sparkles,
-  Download
+  Download,
+  Pencil
 } from "lucide-react";
 import * as XLSX from 'xlsx';
-import type { SalesCardWithRelations } from "@shared/schema";
+import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
 const DAYS_OF_WEEK = [
@@ -105,6 +107,8 @@ export default function SalesSchedule() {
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
+  const [isCustomerEditModalOpen, setIsCustomerEditModalOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // Buscar lista de vendedores (apenas para admin/coordinator/administrative)
   const { data: sellers } = useQuery({
@@ -199,11 +203,18 @@ export default function SalesSchedule() {
     setIsNoSaleModalOpen(true);
   };
 
+  const handleEditCustomer = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setIsCustomerEditModalOpen(true);
+  };
+
   const closeModals = () => {
     setSelectedCard(null);
+    setSelectedCustomer(null);
     setIsDetailsModalOpen(false);
     setIsEditModalOpen(false);
     setIsNoSaleModalOpen(false);
+    setIsCustomerEditModalOpen(false);
     refetch();
   };
 
@@ -513,10 +524,26 @@ export default function SalesSchedule() {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center space-x-3 mb-2">
-                        <div>
-                          <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
-                            {card.customer.fantasyName || card.customer.name}
-                          </h3>
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2">
+                            <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
+                              {card.customer.fantasyName || card.customer.name}
+                            </h3>
+                            {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 w-6 p-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEditCustomer(card.customer);
+                                }}
+                                data-testid={`button-edit-customer-${card.id}`}
+                              >
+                                <Pencil className="h-3 w-3 text-gray-500 hover:text-gray-700" />
+                              </Button>
+                            )}
+                          </div>
                           {card.customer.fantasyName && card.customer.companyName && (
                             <p className="text-sm text-gray-500" data-testid={`text-company-${card.id}`}>
                               {card.customer.companyName}
@@ -662,6 +689,12 @@ export default function SalesSchedule() {
         isOpen={isNoSaleModalOpen}
         onClose={closeModals}
         card={selectedCard}
+      />
+
+      <CustomerEditModal
+        isOpen={isCustomerEditModalOpen}
+        onClose={closeModals}
+        customer={selectedCustomer}
       />
     </div>
   );
