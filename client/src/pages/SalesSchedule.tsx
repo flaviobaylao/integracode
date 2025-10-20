@@ -279,7 +279,7 @@ export default function SalesSchedule() {
         'Endereço': card.customer.address,
         'Cidade': card.customer.city || '-',
         'Estado': card.customer.state || '-',
-        'Vendedor': card.seller?.name || '-',
+        'Vendedor': card.seller ? `${card.seller.firstName || ''} ${card.seller.lastName || ''}`.trim() || card.seller.email || '-' : '-',
         'Status': STATUS_LABELS[card.status as keyof typeof STATUS_LABELS],
         'Tipo de Recorrência': RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS],
         'Dias da Semana': getWeekdaysLabel(card.customer.weekdays),
