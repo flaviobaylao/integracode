@@ -1906,7 +1906,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Endpoint para buscar cards criticamente atrasados (>3 dias, devem ser marcados como failed)
   app.get('/api/sales-cards/critically-overdue', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const sellerId = req.sellerId;
+      const user = req.currentUser;
+      const { sellerId: filterSellerId } = req.query;
+      let sellerId = req.sellerId;
+      
+      // Admin/coordinator/administrative podem filtrar por vendedor específico ou ver todos
+      if (!sellerId && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        sellerId = filterSellerId && filterSellerId !== 'all' ? filterSellerId as string : undefined;
+      }
+      
       const criticallyOverdueCards = await storage.getCriticallyOverdueCards(sellerId);
       res.json(criticallyOverdueCards);
     } catch (error) {
@@ -1943,10 +1951,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/sales-cards/by-day/:routeDay', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
       const { routeDay } = req.params;
-      const { startDate, endDate, page = 1, limit = 20 } = req.query;
+      const { startDate, endDate, page = 1, limit = 20, sellerId: filterSellerId } = req.query;
       
       const user = req.currentUser;
-      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      let sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      
+      // Admin/coordinator/administrative podem filtrar por vendedor específico ou ver todos
+      if (!sellerId && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        sellerId = filterSellerId && filterSellerId !== 'all' ? filterSellerId as string : undefined;
+      }
       
       // Parse dates safely - use ISO format with UTC timezone
       let start: Date;

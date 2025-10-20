@@ -23,8 +23,10 @@ import {
   RefreshCw,
   Filter,
   Monitor,
-  Sparkles
+  Sparkles,
+  Download
 } from "lucide-react";
+import * as XLSX from 'xlsx';
 import type { SalesCardWithRelations } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -87,6 +89,7 @@ export default function SalesSchedule() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedDay, setSelectedDay] = useState('segunda');
+  const [selectedSeller, setSelectedSeller] = useState<string>('all');
   const [startDate, setStartDate] = useState(() => {
     const today = new Date();
     today.setDate(today.getDate() - 7); // Última semana
@@ -102,6 +105,18 @@ export default function SalesSchedule() {
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
+
+  // Buscar lista de vendedores (apenas para admin/coordinator/administrative)
+  const { data: sellers } = useQuery({
+    queryKey: ['/api/users'],
+    queryFn: async () => {
+      const params = new URLSearchParams({ role: 'vendedor' });
+      const response = await fetch(`/api/users?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch sellers');
+      return response.json();
+    },
+    enabled: user ? ['admin', 'coordinator', 'administrative'].includes(user.role) : false
+  });
 
   // Mutation para gerar cards futuros
   const generateFutureCardsMutation = useMutation({
@@ -128,11 +143,15 @@ export default function SalesSchedule() {
 
   // Buscar cards por dia da semana ou cards atrasados
   const { data: cardsData, isLoading, refetch } = useQuery({
-    queryKey: ['/api/sales-cards/by-day', selectedDay, startDate, endDate, currentPage],
+    queryKey: ['/api/sales-cards/by-day', selectedDay, selectedSeller, startDate, endDate, currentPage],
     queryFn: async () => {
       // Se "atrasados" for selecionado, usar endpoint específico
       if (selectedDay === 'atrasados') {
-        const response = await fetch('/api/sales-cards/critically-overdue');
+        const params = new URLSearchParams();
+        if (selectedSeller !== 'all') {
+          params.append('sellerId', selectedSeller);
+        }
+        const response = await fetch(`/api/sales-cards/critically-overdue?${params}`);
         if (!response.ok) throw new Error('Failed to fetch overdue cards');
         const cards = await response.json();
         return { cards, pagination: { hasMore: false } };
@@ -145,6 +164,10 @@ export default function SalesSchedule() {
         page: currentPage.toString(),
         limit: '20'
       });
+      
+      if (selectedSeller !== 'all') {
+        params.append('sellerId', selectedSeller);
+      }
       
       const response = await fetch(`/api/sales-cards/by-day/${selectedDay}?${params}`);
       if (!response.ok) throw new Error('Failed to fetch cards');
@@ -159,7 +182,7 @@ export default function SalesSchedule() {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDay, startDate, endDate]);
+  }, [selectedDay, selectedSeller, startDate, endDate]);
 
   const handleCardClick = (card: SalesCardWithRelations) => {
     setSelectedCard(card);
@@ -201,6 +224,109 @@ export default function SalesSchedule() {
     }).format(numValue || 0);
   };
 
+  const exportToExcel = async () => {
+    try {
+      toast({
+        title: "Exportando...",
+        description: "Buscando todos os registros filtrados",
+        variant: "default"
+      });
+
+      // Buscar TODOS os cards com os filtros atuais (sem paginação)
+      let allCards: SalesCardWithRelations[] = [];
+      
+      if (selectedDay === 'atrasados') {
+        const params = new URLSearchParams();
+        if (selectedSeller !== 'all') {
+          params.append('sellerId', selectedSeller);
+        }
+        const response = await fetch(`/api/sales-cards/critically-overdue?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch overdue cards');
+        allCards = await response.json();
+      } else {
+        // Buscar todos os cards sem limite de paginação
+        const params = new URLSearchParams({
+          startDate,
+          endDate,
+          limit: '10000' // Limite alto para pegar todos os cards
+        });
+        
+        if (selectedSeller !== 'all') {
+          params.append('sellerId', selectedSeller);
+        }
+        
+        const response = await fetch(`/api/sales-cards/by-day/${selectedDay}?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch cards');
+        const data = await response.json();
+        allCards = data.cards;
+      }
+
+      if (!allCards || allCards.length === 0) {
+        toast({
+          title: "Nenhum dado para exportar",
+          description: "Não há cards disponíveis com os filtros atuais",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Preparar dados para exportação
+      const exportData = allCards.map((card: SalesCardWithRelations) => ({
+        'Data Agendada': formatDate(card.scheduledDate),
+        'Cliente': card.customer.fantasyName || card.customer.name,
+        'Razão Social': card.customer.companyName || '-',
+        'Telefone': card.customer.phone,
+        'Endereço': card.customer.address,
+        'Cidade': card.customer.city || '-',
+        'Estado': card.customer.state || '-',
+        'Vendedor': card.seller?.name || '-',
+        'Status': STATUS_LABELS[card.status as keyof typeof STATUS_LABELS],
+        'Tipo de Recorrência': RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS],
+        'Dias da Semana': getWeekdaysLabel(card.customer.weekdays),
+        'Valor da Venda': card.saleValue ? formatCurrency(card.saleValue) : '-',
+        'Atendimento': card.customer.virtualService ? 'Virtual' : 'Presencial'
+      }));
+
+      // Criar workbook e worksheet
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Agenda de Vendas');
+
+      // Ajustar largura das colunas
+      const maxWidth = 50;
+      const colWidths = Object.keys(exportData[0] || {}).map(key => ({
+        wch: Math.min(
+          Math.max(
+            key.length,
+            ...exportData.map(row => String(row[key as keyof typeof row] || '').length)
+          ),
+          maxWidth
+        )
+      }));
+      ws['!cols'] = colWidths;
+
+      // Gerar nome do arquivo
+      const dayLabel = DAYS_OF_WEEK.find(d => d.value === selectedDay)?.label || 'Todos';
+      const fileName = `agenda_vendas_${dayLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      // Fazer download
+      XLSX.writeFile(wb, fileName);
+
+      toast({
+        title: "Exportação concluída!",
+        description: `${allCards.length} registros exportados para ${fileName}`,
+        variant: "default"
+      });
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      toast({
+        title: "Erro ao exportar",
+        description: "Ocorreu um erro ao exportar os dados para Excel",
+        variant: "destructive"
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -226,6 +352,17 @@ export default function SalesSchedule() {
             </Button>
           )}
           <Button
+            onClick={exportToExcel}
+            variant="outline"
+            size="sm"
+            className="flex items-center space-x-2"
+            disabled={!cards || cards.length === 0}
+            data-testid="button-export-excel"
+          >
+            <Download className="h-4 w-4" />
+            <span>Exportar Excel</span>
+          </Button>
+          <Button
             onClick={() => refetch()}
             variant="outline"
             size="sm"
@@ -247,11 +384,11 @@ export default function SalesSchedule() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <Label>Dia da Semana</Label>
               <Select value={selectedDay} onValueChange={setSelectedDay}>
-                <SelectTrigger>
+                <SelectTrigger data-testid="select-day">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -264,12 +401,32 @@ export default function SalesSchedule() {
               </Select>
             </div>
             
+            {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
+              <div>
+                <Label>Vendedor</Label>
+                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                  <SelectTrigger data-testid="select-seller">
+                    <SelectValue placeholder="Todos os vendedores" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os vendedores</SelectItem>
+                    {sellers?.map((seller: any) => (
+                      <SelectItem key={seller.id} value={seller.id}>
+                        {seller.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            
             <div>
               <Label>Data Inicial</Label>
               <Input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                data-testid="input-start-date"
               />
             </div>
             
@@ -279,6 +436,7 @@ export default function SalesSchedule() {
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
+                data-testid="input-end-date"
               />
             </div>
 
@@ -355,9 +513,16 @@ export default function SalesSchedule() {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center space-x-3 mb-2">
-                        <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
-                          {card.customer.name}
-                        </h3>
+                        <div>
+                          <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
+                            {card.customer.fantasyName || card.customer.name}
+                          </h3>
+                          {card.customer.fantasyName && card.customer.companyName && (
+                            <p className="text-sm text-gray-500" data-testid={`text-company-${card.id}`}>
+                              {card.customer.companyName}
+                            </p>
+                          )}
+                        </div>
                         <Badge className={STATUS_COLORS[card.status as keyof typeof STATUS_COLORS]}>
                           {STATUS_LABELS[card.status as keyof typeof STATUS_LABELS]}
                         </Badge>
