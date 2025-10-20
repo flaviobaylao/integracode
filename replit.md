@@ -40,7 +40,12 @@
     - **Multi-Vehicle Route Planning (VRP)**: Advanced delivery route optimization with a 4-phase algorithm for vehicle assignment, route optimization (NN+2-opt+OSRM), and persistence. Supports manual order selection, vehicle configuration, and results display with ETAs. Integrated with Omie billings for delivery management, using intelligent customer matching and supporting urgent deliveries and exclusive vehicle configurations.
 - **Automated Agenda Management**: 
     - **Automatic Generation**: Scheduled daily maintenance at midnight ensures continuous 2-month future agenda coverage for all clients. Recursive card generation follows customer visit schedules and periodicity. Initial card generation starts ~7 days in the future to allow planning time.
-    - **Manual Generation**: "Gerar Cards Futuros" button in Agenda de Vendas page (accessible to admin/coordinator/administrative roles) allows on-demand generation of sales cards for the next 2 months. Features comprehensive duplicate prevention with 2-layer protection: pre-insert existence check and `onConflictDoNothing()` in Drizzle ORM. Idempotent - repeated executions return existing cards without creating duplicates.
+    - **Manual Synchronization**: "Sincronizar Agenda" button in Agenda de Vendas page (accessible to admin/coordinator/administrative roles) performs comprehensive synchronization of sales cards for the next 2 months. The sync process:
+      1. Calculates correct visit dates based on each customer's `visitPeriodicity` and `weekdays` configuration
+      2. Deletes cards that are scheduled on incorrect dates (don't match the customer's periodicity/weekdays)
+      3. Creates missing cards for dates that should exist according to the customer's configuration
+      4. Returns detailed statistics (processed customers, cards created, cards deleted, errors)
+      5. Uses `onConflictDoNothing()` in Drizzle ORM for duplicate prevention
     - **Legacy Scripts**: For retroactive or near-future dates:
       - `generate-missing-monday-cards.ts`: Created 492 cards for 20/10/2025 (segunda)
       - `generate-missing-tuesday-cards.ts`: Created 487 cards for 21/10/2025 (terça)
