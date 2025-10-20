@@ -552,8 +552,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
+      console.log('📝 Dados recebidos para atualização:', JSON.stringify(cleanedData, null, 2));
+      
       // Update customer
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
+      
+      console.log('✅ Cliente atualizado:', {
+        id: updatedCustomer.id,
+        weekdays: updatedCustomer.weekdays,
+        visitPeriodicity: updatedCustomer.visitPeriodicity
+      });
+      
       res.json(updatedCustomer);
     } catch (error) {
       console.error("Error updating customer:", error);
