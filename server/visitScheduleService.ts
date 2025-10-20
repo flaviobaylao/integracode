@@ -307,7 +307,8 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
         const firstVisit = calculateNextVisitDate({
           weekdays: parsedWeekdays as any[],
           periodicity: customer.visitPeriodicity as any,
-          lastCompletedDate: undefined // Sem última visita = próximo dia da semana
+          lastCompletedDate: undefined, // Sem última visita = próximo dia da semana
+          referenceDate: today // Usar hoje como referência (inclui hoje se for dia válido)
         });
         
         if (firstVisit.nextDate <= targetDate) {
