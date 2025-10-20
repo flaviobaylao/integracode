@@ -561,6 +561,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/customers/:id/inactivate', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { cardId } = req.body;
+      const user = req.currentUser;
+      
+      // Only admin, coordinator, and administrative can inactivate customers
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem inativar clientes." });
+      }
+      
+      // Validate cardId
+      if (!cardId) {
+        return res.status(400).json({ message: "ID do card é obrigatório" });
+      }
+      
+      // Check if customer exists
+      const existingCustomer = await storage.getCustomer(id);
+      if (!existingCustomer) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      
+      // Check if customer is already inactive
+      if (!existingCustomer.isActive) {
+        return res.status(400).json({ message: "Cliente já está inativo" });
+      }
+      
+      // Inactivate customer and delete future cards
+      const result = await storage.inactivateCustomer(id, cardId);
+      
+      res.json({
+        message: "Cliente inativado com sucesso",
+        customer: result.customer,
+        deletedCards: result.deletedCards
+      });
+    } catch (error) {
+      console.error("Error inactivating customer:", error);
+      res.status(500).json({ message: "Falha ao inativar cliente" });
+    }
+  });
+
   app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
       // Transformar strings vazias em null para campos numéricos
