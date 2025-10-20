@@ -129,7 +129,8 @@ export default function SalesSchedule() {
   // Mutation para sincronizar cards futuros (criar e deletar conforme periodicidade)
   const generateFutureCardsMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/sales-cards/generate-future');
+      // Timeout de 5 minutos para sincronização (pode levar tempo com muitos clientes)
+      const response = await apiRequest('POST', '/api/sales-cards/generate-future', undefined, { timeout: 300000 });
       return response;
     },
     onSuccess: (data) => {
