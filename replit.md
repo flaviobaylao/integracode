@@ -10,11 +10,12 @@
 # Recent Changes (October 20, 2025)
 
 ## Agenda de Vendas - New Features
-- **Seller Filter**: Added dropdown filter to view sales cards by specific seller or all sellers (visible only for admin/coordinator/administrative roles)
+- **Seller Filter**: Added dropdown filter to view sales cards by specific seller or all sellers (visible only for admin/coordinator/administrative roles). Fixed to properly display seller names (firstName + lastName) with fallback to email
 - **Fantasy Name Display**: Sales cards now prominently display the fantasy name (nome fantasia) as the main title, with company name (razão social) shown as a subtitle when both exist
 - **Excel Export**: Implemented comprehensive export functionality that exports ALL filtered sales cards (not just current page) to Excel with complete customer and sales information including: Data Agendada, Cliente, Razão Social, Telefone, Endereço, Cidade, Estado, Vendedor, Status, Tipo de Recorrência, Dias da Semana, Valor da Venda, and Atendimento type
 - **Seller Name in Cards**: Sales cards now display the seller's full name (firstName + lastName) with User icon, with fallback to email if name is unavailable
 - **Geographic Coordinates**: Cards display customer's latitude and longitude when available, formatted with 6 decimal places and shown with MapPin icon in blue
+- **CPF/CNPJ Display**: Cards now show customer's CNPJ (priority) or CPF when available
 - **Removed Pagination Limit**: Increased from 20 to 1000 records per page in the sales agenda, allowing users to view significantly more sales cards without pagination
 
 # System Architecture
