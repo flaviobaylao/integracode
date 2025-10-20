@@ -2164,29 +2164,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint para gerar cards futuros (próximos 2 meses) para todos os clientes
+  // SINCRONIZA COMPLETAMENTE: deleta cards incorretos e cria os faltantes
   app.post('/api/sales-cards/generate-future', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      console.log('🚀 Iniciando geração manual de cards futuros...');
+      console.log('🚀 Iniciando sincronização completa de cards futuros...');
       
-      const result = await ensureFutureAgendaCoverage(2);
+      const { syncFutureSalesCards } = await import('./visitScheduleService');
+      const result = await syncFutureSalesCards(2);
       
-      console.log('✅ Geração manual concluída:', result);
+      console.log('✅ Sincronização concluída:', result);
       
       res.json({
         success: true,
-        message: `Geração concluída com sucesso`,
+        message: `Sincronização concluída: ${result.created} cards criados, ${result.deleted} cards deletados`,
         stats: {
           processed: result.processed,
-          generated: result.generated,
-          skipped: result.skipped,
+          created: result.created,
+          deleted: result.deleted,
           errors: result.errors
         }
       });
     } catch (error: any) {
-      console.error("❌ Erro ao gerar cards futuros:", error);
+      console.error("❌ Erro ao sincronizar cards futuros:", error);
       res.status(500).json({ 
         success: false,
-        message: "Erro ao gerar cards futuros",
+        message: "Erro ao sincronizar cards futuros",
         error: error.message 
       });
     }

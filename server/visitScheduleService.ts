@@ -232,6 +232,186 @@ export async function generateVisitAgenda(): Promise<{ processed: number; genera
   }
 }
 
+// Função para sincronizar COMPLETAMENTE os cards futuros (deletar incorretos e criar faltantes)
+export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
+  processed: number;
+  created: number;
+  deleted: number;
+  errors: number;
+}> {
+  console.log(`🔄 [SYNC-CARDS] Sincronizando cards futuros para ${monthsAhead} meses...`);
+  
+  const startTime = Date.now();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const targetDate = new Date(today);
+  targetDate.setMonth(targetDate.getMonth() + monthsAhead);
+  
+  console.log(`📊 [SYNC-CARDS] Janela: ${today.toISOString().split('T')[0]} até ${targetDate.toISOString().split('T')[0]}`);
+  
+  const stats = {
+    processed: 0,
+    created: 0,
+    deleted: 0,
+    errors: 0
+  };
+  
+  try {
+    const { salesCards } = await import('../shared/schema');
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    const { storage } = await import('./storage');
+    const { inArray, notInArray } = await import('drizzle-orm');
+    
+    // Buscar todos os clientes ativos com periodicidade e weekdays configurados
+    const activeCustomers = await db.select({
+      id: customers.id,
+      name: customers.name,
+      sellerId: customers.sellerId,
+      visitPeriodicity: customers.visitPeriodicity,
+      weekdays: customers.weekdays
+    })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.isActive, true),
+        isNotNull(customers.visitPeriodicity),
+        isNotNull(customers.weekdays)
+      )
+    );
+    
+    console.log(`📊 [SYNC-CARDS] Encontrados ${activeCustomers.length} clientes ativos`);
+    
+    for (const customer of activeCustomers) {
+      try {
+        stats.processed++;
+        
+        // Parsear weekdays
+        let parsedWeekdays;
+        try {
+          parsedWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays;
+        } catch (parseError) {
+          console.log(`⚠️ [SYNC-CARDS] ${customer.name}: weekdays inválido, pulando`);
+          continue;
+        }
+        
+        if (!Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
+          console.log(`⚠️ [SYNC-CARDS] ${customer.name}: weekdays vazio, pulando`);
+          continue;
+        }
+        
+        // Calcular todas as datas corretas para este cliente nos próximos 2 meses
+        const correctDates: Date[] = [];
+        let currentDate = new Date(today);
+        
+        while (currentDate <= targetDate) {
+          const result = calculateNextVisitDate({
+            weekdays: parsedWeekdays as any[],
+            periodicity: customer.visitPeriodicity as any,
+            lastCompletedDate: currentDate
+          });
+          
+          if (result.nextDate > targetDate) break;
+          
+          correctDates.push(new Date(result.nextDate));
+          currentDate = new Date(result.nextDate);
+        }
+        
+        // Buscar todos os cards futuros pendentes deste cliente
+        const existingCards = await db.select()
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, customer.id),
+              inArray(salesCards.status, ['pending', 'in_progress']),
+              gte(salesCards.scheduledDate, today),
+              lte(salesCards.scheduledDate, targetDate)
+            )
+          );
+        
+        // Identificar cards a deletar (que não estão nas datas corretas)
+        const correctDateStrings = correctDates.map(d => {
+          const normalized = new Date(d);
+          normalized.setHours(0, 0, 0, 0);
+          return normalized.toISOString().split('T')[0];
+        });
+        
+        const cardsToDelete = existingCards.filter(card => {
+          const cardDate = new Date(card.scheduledDate);
+          cardDate.setHours(0, 0, 0, 0);
+          const cardDateStr = cardDate.toISOString().split('T')[0];
+          return !correctDateStrings.includes(cardDateStr);
+        });
+        
+        // Deletar cards incorretos
+        for (const card of cardsToDelete) {
+          await storage.deleteSalesCard(card.id);
+          stats.deleted++;
+          console.log(`🗑️ [SYNC-CARDS] ${customer.name}: deletado card em ${new Date(card.scheduledDate).toISOString().split('T')[0]}`);
+        }
+        
+        // Identificar datas faltantes
+        const existingDateStrings = existingCards
+          .filter(card => !cardsToDelete.find(c => c.id === card.id))
+          .map(card => {
+            const d = new Date(card.scheduledDate);
+            d.setHours(0, 0, 0, 0);
+            return d.toISOString().split('T')[0];
+          });
+        
+        const datesToCreate = correctDates.filter(date => {
+          const dateStr = new Date(date).toISOString().split('T')[0];
+          return !existingDateStrings.includes(dateStr);
+        });
+        
+        // Criar cards faltantes
+        for (const date of datesToCreate) {
+          const routeDay = getRouteDay(date);
+          
+          await db.insert(salesCards).values({
+            customerId: customer.id,
+            sellerId: customer.sellerId,
+            status: 'pending',
+            scheduledDate: date,
+            routeDay,
+            recurrenceType: customer.visitPeriodicity || 'semanal',
+            isRecurring: true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }).onConflictDoNothing();
+          
+          stats.created++;
+          console.log(`✅ [SYNC-CARDS] ${customer.name}: criado card em ${date.toISOString().split('T')[0]}`);
+        }
+        
+        if (cardsToDelete.length > 0 || datesToCreate.length > 0) {
+          console.log(`📝 [SYNC-CARDS] ${customer.name}: ${stats.created} criados, ${stats.deleted} deletados`);
+        }
+        
+      } catch (error) {
+        console.error(`❌ [SYNC-CARDS] Erro ao processar ${customer.name}:`, error);
+        stats.errors++;
+      }
+    }
+    
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    console.log(`✨ [SYNC-CARDS] Sincronização concluída em ${duration}s:`);
+    console.log(`   - Clientes processados: ${stats.processed}`);
+    console.log(`   - Cards criados: ${stats.created}`);
+    console.log(`   - Cards deletados: ${stats.deleted}`);
+    console.log(`   - Erros: ${stats.errors}`);
+    
+    return stats;
+    
+  } catch (error) {
+    console.error('❌ [SYNC-CARDS] Erro na sincronização:', error);
+    throw error;
+  }
+}
+
 // Função para garantir cobertura de 2 meses de agenda futura (usando sales_cards)
 export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promise<{
   processed: number;
