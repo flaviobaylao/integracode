@@ -591,10 +591,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Inactivate customer and delete future cards
       const result = await storage.inactivateCustomer(id, cardId);
       
+      // Build success message based on Omie result
+      let message = "Cliente inativado com sucesso no sistema";
+      if (result.omieResult) {
+        if (result.omieResult.success) {
+          message += " e no Omie ERP";
+        } else {
+          message += ". Atenção: Falha ao inativar no Omie ERP - " + result.omieResult.message;
+        }
+      }
+      
       res.json({
-        message: "Cliente inativado com sucesso",
+        message,
         customer: result.customer,
-        deletedCards: result.deletedCards
+        deletedCards: result.deletedCards,
+        omieSuccess: result.omieResult?.success
       });
     } catch (error) {
       console.error("Error inactivating customer:", error);
