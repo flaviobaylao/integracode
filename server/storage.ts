@@ -47,7 +47,6 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne, like } from "drizzle-orm";
-import { getOmieService } from "./omieIntegration";
 
 export interface IStorage {
   // User operations
@@ -76,7 +75,7 @@ export interface IStorage {
   getCustomerByCnpj(cnpj: string): Promise<Customer | undefined>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   updateCustomer(id: string, customer: Partial<InsertCustomer>): Promise<Customer>;
-  inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number; omieResult?: { success: boolean; message: string } }>;
+  inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }>;
   deleteCustomer(id: string): Promise<void>;
   getCustomersByRoute(route: string): Promise<Customer[]>;
   getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]>;
@@ -502,8 +501,8 @@ export class DatabaseStorage implements IStorage {
     return updatedCustomer;
   }
 
-  async inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number; omieResult?: { success: boolean; message: string } }> {
-    // 0. Get customer data first to extract omieClientCode
+  async inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }> {
+    // Get customer data first
     const [customerData] = await db
       .select()
       .from(customers)
@@ -513,30 +512,10 @@ export class DatabaseStorage implements IStorage {
       throw new Error('Cliente não encontrado');
     }
     
-    // 0.1. Try to inactivate in Omie if customer has omieClientCode
-    let omieResult: { success: boolean; message: string } | undefined = undefined;
+    // Note: Omie API does not support inactivating clients programmatically
+    // Users must inactivate clients manually in the Omie ERP interface
     if (customerData.omieClientCode) {
-      try {
-        const omieService = getOmieService();
-        if (omieService) {
-          console.log(`🔄 Tentando inativar cliente no Omie (código: ${customerData.omieClientCode})...`);
-          omieResult = await omieService.inactivateClient(customerData.omieClientCode);
-          
-          if (!omieResult.success) {
-            console.warn(`⚠️ Falha ao inativar no Omie, mas continuando com inativação local: ${omieResult.message}`);
-          }
-        } else {
-          console.log('ℹ️ Omie não configurado, pulando inativação no Omie');
-        }
-      } catch (error) {
-        console.error('❌ Erro ao tentar inativar cliente no Omie:', error);
-        omieResult = {
-          success: false,
-          message: `Erro ao inativar no Omie: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
-        };
-      }
-    } else {
-      console.log('ℹ️ Cliente não tem código Omie, pulando inativação no Omie');
+      console.log(`ℹ️ Cliente possui código Omie (${customerData.omieClientCode}). Inativação no Omie deve ser feita manualmente no ERP.`);
     }
     
     // 1. Update customer: set isActive = false and inactivatedAt = now
@@ -571,8 +550,7 @@ export class DatabaseStorage implements IStorage {
     
     return {
       customer: inactivatedCustomer,
-      deletedCards: result.length,
-      omieResult
+      deletedCards: result.length
     };
   }
 
