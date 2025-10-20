@@ -2425,6 +2425,7 @@ export class OmieService {
           situacao: finalStatus
         };
       })(),
+      omieClientCode: omieClient.codigo_cliente_omie?.toString() || null,
       document: documento || null // Documento original apenas se houver
     };
   }

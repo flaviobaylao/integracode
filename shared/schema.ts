@@ -120,6 +120,7 @@ export const customers = pgTable("customers", {
   // Status no Omie (ativo/inativo)
   omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
+  omieClientCode: varchar("omie_client_code"), // Código numérico do cliente no Omie (codigo_cliente_omie)
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
