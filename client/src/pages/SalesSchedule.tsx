@@ -322,7 +322,9 @@ export default function SalesSchedule() {
         'Estado': card.customer.state || '-',
         'Vendedor': card.seller ? `${card.seller.firstName || ''} ${card.seller.lastName || ''}`.trim() || card.seller.email || '-' : '-',
         'Status': STATUS_LABELS[card.status as keyof typeof STATUS_LABELS],
-        'Tipo de Recorrência': RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS],
+        'Periodicidade de Visitas': card.customer.visitPeriodicity 
+          ? RECURRENCE_LABELS[card.customer.visitPeriodicity as keyof typeof RECURRENCE_LABELS]
+          : RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS],
         'Dias da Semana': getWeekdaysLabel(card.customer.weekdays),
         'Valor da Venda': card.saleValue ? formatCurrency(card.saleValue) : '-',
         'Atendimento': card.customer.virtualService ? 'Virtual' : 'Presencial'
