@@ -248,6 +248,34 @@ export class OmieService {
     }
   }
 
+  // Inativar cliente no Omie
+  async inactivateClient(omieClientCode: number): Promise<{ success: boolean; message: string }> {
+    try {
+      console.log(`🔴 Inativando cliente no Omie (código: ${omieClientCode})...`);
+      
+      const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', {
+        codigo_cliente_omie: omieClientCode,
+        inativo: 'S'
+      });
+
+      if (response && response.codigo_cliente_omie) {
+        console.log(`✅ Cliente ${omieClientCode} inativado com sucesso no Omie`);
+        return {
+          success: true,
+          message: response.descricao_status || 'Cliente inativado com sucesso no Omie'
+        };
+      } else {
+        throw new Error('Resposta inválida da API Omie ao inativar cliente');
+      }
+    } catch (error) {
+      console.error(`❌ Erro ao inativar cliente ${omieClientCode} no Omie:`, error);
+      return {
+        success: false,
+        message: `Erro ao inativar cliente no Omie: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      };
+    }
+  }
+
   // ==================== MÉTODOS AUXILIARES PARA VENDEDORES E ETAPAS ====================
   
   // Cache para vendedores, etapas e clientes (para evitar múltiplas requisições)
