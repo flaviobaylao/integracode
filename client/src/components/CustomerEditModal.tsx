@@ -10,6 +10,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
@@ -41,12 +49,19 @@ export default function CustomerEditModal({
     zipCode: "",
     latitude: "",
     longitude: "",
+    weekdays: [] as string[],
+    visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
   });
 
   const updateCustomerMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       if (!customer?.id) throw new Error("Customer ID is required");
-      return await apiRequest("PATCH", `/api/customers/${customer.id}`, data);
+      // Convert weekdays array to JSON string for API
+      const payload = {
+        ...data,
+        weekdays: JSON.stringify(data.weekdays),
+      };
+      return await apiRequest("PATCH", `/api/customers/${customer.id}`, payload);
     },
     onSuccess: () => {
       toast({
@@ -78,9 +93,36 @@ export default function CustomerEditModal({
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  const toggleWeekday = (day: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      weekdays: prev.weekdays.includes(day)
+        ? prev.weekdays.filter((d) => d !== day)
+        : [...prev.weekdays, day],
+    }));
+  };
+
+  const handlePeriodicityChange = (value: string) => {
+    setFormData((prev) => ({ 
+      ...prev, 
+      visitPeriodicity: value as "semanal" | "quinzenal" | "mensal" | "bimestral"
+    }));
+  };
+
   // Update form data when customer changes
   useEffect(() => {
     if (customer) {
+      // Parse weekdays from JSON string
+      let parsedWeekdays: string[] = [];
+      try {
+        parsedWeekdays = typeof customer.weekdays === 'string' 
+          ? JSON.parse(customer.weekdays) 
+          : customer.weekdays || [];
+      } catch (e) {
+        console.error("Error parsing weekdays:", e);
+        parsedWeekdays = [];
+      }
+
       setFormData({
         name: customer.name || "",
         fantasyName: customer.fantasyName || "",
@@ -95,6 +137,8 @@ export default function CustomerEditModal({
         zipCode: customer.zipCode || "",
         latitude: customer.latitude || "",
         longitude: customer.longitude || "",
+        weekdays: parsedWeekdays,
+        visitPeriodicity: customer.visitPeriodicity || "semanal",
       });
     }
   }, [customer]);
@@ -256,6 +300,55 @@ export default function CustomerEditModal({
                 data-testid="input-customer-longitude"
               />
             </div>
+          </div>
+
+          {/* Dias da Semana de Visita */}
+          <div>
+            <Label className="mb-2 block">Dias da Semana de Visita *</Label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { value: "segunda", label: "Segunda-feira" },
+                { value: "terca", label: "Terça-feira" },
+                { value: "quarta", label: "Quarta-feira" },
+                { value: "quinta", label: "Quinta-feira" },
+                { value: "sexta", label: "Sexta-feira" },
+                { value: "sabado", label: "Sábado" },
+              ].map((day) => (
+                <div key={day.value} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`weekday-${day.value}`}
+                    checked={formData.weekdays.includes(day.value)}
+                    onCheckedChange={() => toggleWeekday(day.value)}
+                    data-testid={`checkbox-weekday-${day.value}`}
+                  />
+                  <label
+                    htmlFor={`weekday-${day.value}`}
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    {day.label}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Periodicidade de Visita */}
+          <div>
+            <Label htmlFor="visitPeriodicity">Periodicidade de Visita *</Label>
+            <Select
+              value={formData.visitPeriodicity}
+              onValueChange={handlePeriodicityChange}
+            >
+              <SelectTrigger data-testid="select-visit-periodicity">
+                <SelectValue placeholder="Selecione a periodicidade" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semanal">Semanal</SelectItem>
+                <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                <SelectItem value="mensal">Mensal</SelectItem>
+                <SelectItem value="bimestral">Bimestral</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Botões */}
