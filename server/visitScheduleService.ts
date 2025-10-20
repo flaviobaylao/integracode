@@ -293,12 +293,10 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
             ? JSON.parse(customer.weekdays) 
             : customer.weekdays;
         } catch (parseError) {
-          console.log(`⚠️ [SYNC-CARDS] ${customer.name}: weekdays inválido, pulando`);
           continue;
         }
         
         if (!Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
-          console.log(`⚠️ [SYNC-CARDS] ${customer.name}: weekdays vazio, pulando`);
           continue;
         }
         
@@ -345,11 +343,11 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           return !correctDateStrings.includes(cardDateStr);
         });
         
-        // Deletar cards incorretos
-        for (const card of cardsToDelete) {
-          await storage.deleteSalesCard(card.id);
-          stats.deleted++;
-          console.log(`🗑️ [SYNC-CARDS] ${customer.name}: deletado card em ${new Date(card.scheduledDate).toISOString().split('T')[0]}`);
+        // Deletar cards incorretos em batch
+        if (cardsToDelete.length > 0) {
+          const cardIds = cardsToDelete.map(c => c.id);
+          await db.delete(salesCards).where(inArray(salesCards.id, cardIds));
+          stats.deleted += cardsToDelete.length;
         }
         
         // Identificar datas faltantes
@@ -366,28 +364,27 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           return !existingDateStrings.includes(dateStr);
         });
         
-        // Criar cards faltantes
-        for (const date of datesToCreate) {
-          const routeDay = getRouteDay(date);
-          
-          await db.insert(salesCards).values({
+        // Criar cards faltantes em batch
+        if (datesToCreate.length > 0) {
+          const cardsToInsert = datesToCreate.map(date => ({
             customerId: customer.id,
             sellerId: customer.sellerId,
-            status: 'pending',
+            status: 'pending' as const,
             scheduledDate: date,
-            routeDay,
+            routeDay: getRouteDay(date),
             recurrenceType: customer.visitPeriodicity || 'semanal',
             isRecurring: true,
             createdAt: new Date(),
             updatedAt: new Date()
-          }).onConflictDoNothing();
+          }));
           
-          stats.created++;
-          console.log(`✅ [SYNC-CARDS] ${customer.name}: criado card em ${date.toISOString().split('T')[0]}`);
+          await db.insert(salesCards).values(cardsToInsert).onConflictDoNothing();
+          stats.created += datesToCreate.length;
         }
         
-        if (cardsToDelete.length > 0 || datesToCreate.length > 0) {
-          console.log(`📝 [SYNC-CARDS] ${customer.name}: ${stats.created} criados, ${stats.deleted} deletados`);
+        // Log apenas se houver mudanças significativas (mais de 5 cards)
+        if (cardsToDelete.length > 5 || datesToCreate.length > 5) {
+          console.log(`📝 [SYNC-CARDS] ${customer.name}: +${datesToCreate.length} criados, -${cardsToDelete.length} deletados`);
         }
         
       } catch (error) {
