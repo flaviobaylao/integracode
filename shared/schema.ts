@@ -99,6 +99,7 @@ export const customers = pgTable("customers", {
   weekdays: varchar("weekdays").notNull(), // JSON array with 1-2 weekdays: ["segunda"] or ["segunda","quarta"]
   visitPeriodicity: visitPeriodicityEnum("visit_periodicity").notNull().default('semanal'),
   isActive: boolean("is_active").notNull().default(true),
+  inactivatedAt: timestamp("inactivated_at"),
   lastSaleDate: timestamp("last_sale_date"),
   lastSaleValue: decimal("last_sale_value", { precision: 10, scale: 2 }),
   
