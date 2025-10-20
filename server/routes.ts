@@ -525,6 +525,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      
+      // Only admin, coordinator, and administrative can update customer data
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem editar dados de clientes." });
+      }
+      
+      // Check if customer exists
+      const existingCustomer = await storage.getCustomer(id);
+      if (!existingCustomer) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      
+      // Clean data: transform empty strings to null for numeric fields
+      const cleanedData: any = {};
+      Object.keys(req.body).forEach(key => {
+        const value = req.body[key];
+        if (['latitude', 'longitude', 'lastSaleValue'].includes(key)) {
+          cleanedData[key] = value === '' ? null : value;
+        } else {
+          cleanedData[key] = value;
+        }
+      });
+      
+      // Update customer
+      const updatedCustomer = await storage.updateCustomer(id, cleanedData);
+      res.json(updatedCustomer);
+    } catch (error) {
+      console.error("Error updating customer:", error);
+      res.status(500).json({ message: "Falha ao atualizar cliente" });
+    }
+  });
+
   app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
       // Transformar strings vazias em null para campos numéricos
