@@ -412,7 +412,7 @@ export default function SalesSchedule() {
                     <SelectItem value="all">Todos os vendedores</SelectItem>
                     {sellers?.map((seller: any) => (
                       <SelectItem key={seller.id} value={seller.id}>
-                        {seller.name}
+                        {`${seller.firstName || ''} ${seller.lastName || ''}`.trim() || seller.email || 'Vendedor'}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -569,6 +569,14 @@ export default function SalesSchedule() {
                               {card.customer.latitude && `${parseFloat(card.customer.latitude).toFixed(6)}`}
                               {card.customer.latitude && card.customer.longitude && ', '}
                               {card.customer.longitude && `${parseFloat(card.customer.longitude).toFixed(6)}`}
+                            </span>
+                          </div>
+                        )}
+                        {(card.customer.cpf || card.customer.cnpj) && (
+                          <div className="flex items-center space-x-2">
+                            <User className="h-4 w-4 text-gray-600" />
+                            <span className="text-xs" data-testid={`text-document-${card.id}`}>
+                              {card.customer.cnpj ? `CNPJ: ${card.customer.cnpj}` : `CPF: ${card.customer.cpf}`}
                             </span>
                           </div>
                         )}
