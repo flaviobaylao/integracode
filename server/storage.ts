@@ -1112,6 +1112,7 @@ export class DatabaseStorage implements IStorage {
           route: customers.route,
           sellerId: customers.sellerId,
           weekdays: customers.weekdays,
+          visitPeriodicity: customers.visitPeriodicity,
           latitude: customers.latitude,
           longitude: customers.longitude,
           virtualService: customers.virtualService,
