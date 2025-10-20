@@ -126,7 +126,7 @@ export default function SalesSchedule() {
     enabled: user ? ['admin', 'coordinator', 'administrative'].includes(user.role) : false
   });
 
-  // Mutation para gerar cards futuros
+  // Mutation para sincronizar cards futuros (criar e deletar conforme periodicidade)
   const generateFutureCardsMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest('POST', '/api/sales-cards/generate-future');
@@ -134,16 +134,16 @@ export default function SalesSchedule() {
     },
     onSuccess: (data) => {
       toast({
-        title: "Cards gerados com sucesso!",
-        description: `${data.stats.generated} cards criados para ${data.stats.processed} clientes. ${data.stats.skipped} pulados, ${data.stats.errors} erros.`,
+        title: "Cards sincronizados com sucesso!",
+        description: `${data.stats.processed} clientes processados. ${data.stats.created} cards criados, ${data.stats.deleted} cards deletados. ${data.stats.errors} erros.`,
         variant: "default"
       });
       refetch();
     },
     onError: (error: any) => {
       toast({
-        title: "Erro ao gerar cards",
-        description: error.message || "Ocorreu um erro ao gerar os cards futuros",
+        title: "Erro ao sincronizar cards",
+        description: error.message || "Ocorreu um erro ao sincronizar os cards futuros",
         variant: "destructive"
       });
     }
@@ -390,7 +390,7 @@ export default function SalesSchedule() {
             >
               <Sparkles className="h-4 w-4" />
               <span>
-                {generateFutureCardsMutation.isPending ? 'Gerando...' : 'Gerar Cards Futuros'}
+                {generateFutureCardsMutation.isPending ? 'Sincronizando...' : 'Sincronizar Agenda'}
               </span>
             </Button>
           )}
