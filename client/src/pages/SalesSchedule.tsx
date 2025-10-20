@@ -49,7 +49,8 @@ const RECURRENCE_LABELS = {
   'semanal': 'Semanal',
   'quinzenal': 'Quinzenal', 
   'trisemanal': 'Tri-semanal',
-  'mensal': 'Mensal'
+  'mensal': 'Mensal',
+  'bimestral': 'Bimestral'
 };
 
 const STATUS_LABELS = {
@@ -616,7 +617,11 @@ export default function SalesSchedule() {
                         </div>
                         <div className="flex items-center space-x-2">
                           <RefreshCw className="h-4 w-4" />
-                          <span>{RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS]}</span>
+                          <span data-testid={`text-periodicity-${card.id}`}>
+                            {card.customer.visitPeriodicity 
+                              ? RECURRENCE_LABELS[card.customer.visitPeriodicity as keyof typeof RECURRENCE_LABELS] 
+                              : RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS]}
+                          </span>
                         </div>
                         {(card.customer.latitude || card.customer.longitude) && (
                           <div className="flex items-center space-x-2">

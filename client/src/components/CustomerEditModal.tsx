@@ -68,7 +68,11 @@ export default function CustomerEditModal({
         title: "Cliente atualizado com sucesso!",
         description: "As informações do cliente foram atualizadas.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      // Invalidate all sales-cards queries (including by-day queries with all parameters)
+      queryClient.invalidateQueries({ 
+        queryKey: ['/api/sales-cards'],
+        refetchType: 'all'
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
       onClose();
     },
