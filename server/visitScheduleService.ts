@@ -249,6 +249,8 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
   const targetDate = new Date(today);
   targetDate.setMonth(targetDate.getMonth() + monthsAhead);
   
+  console.log(`📊 [FUTURE-AGENDA] Janela de geração: ${today.toISOString().split('T')[0]} até ${targetDate.toISOString().split('T')[0]}`);
+  
   const stats = {
     processed: 0,
     generated: 0,
@@ -284,12 +286,23 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
       try {
         stats.processed++;
         
-        // Validar weekdays
-        const parsedWeekdays = typeof customer.weekdays === 'string' 
-          ? JSON.parse(customer.weekdays) 
-          : customer.weekdays;
+        // Validar e parsear weekdays com tratamento de erros robusto
+        let parsedWeekdays;
+        try {
+          if (typeof customer.weekdays === 'string') {
+            // Tentar parsear como JSON
+            parsedWeekdays = JSON.parse(customer.weekdays);
+          } else {
+            parsedWeekdays = customer.weekdays;
+          }
+        } catch (parseError) {
+          console.log(`⚠️ [FUTURE-AGENDA] ${customer.name}: weekdays inválido (não é JSON válido), pulando`);
+          stats.skipped++;
+          continue;
+        }
         
-        if (!parsedWeekdays || parsedWeekdays.length === 0) {
+        if (!parsedWeekdays || !Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
+          console.log(`⚠️ [FUTURE-AGENDA] ${customer.name}: weekdays vazio ou inválido, pulando`);
           stats.skipped++;
           continue;
         }
@@ -318,7 +331,11 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         
         // Seguir a cadeia de next_card_id até o último card
         let currentCard = lastCard;
-        while (currentCard.nextCardId) {
+        let chainLength = 0;
+        const maxChainLength = 100; // Prevenir loops infinitos
+        
+        while (currentCard.nextCardId && chainLength < maxChainLength) {
+          chainLength++;
           const nextCards = await db.select()
             .from(salesCards)
             .where(eq(salesCards.id, currentCard.nextCardId))
@@ -330,6 +347,21 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
           currentCardId = currentCard.id;
           currentDate = new Date(currentCard.scheduledDate);
         }
+        
+        // Normalizar datas para comparação (remover horas/minutos)
+        const currentDateOnly = new Date(currentDate);
+        currentDateOnly.setHours(0, 0, 0, 0);
+        const targetDateOnly = new Date(targetDate);
+        targetDateOnly.setHours(0, 0, 0, 0);
+        
+        // Se o último card já está além ou igual à janela de 2 meses, pular este cliente
+        if (currentDateOnly >= targetDateOnly) {
+          console.log(`⏭️ [FUTURE-AGENDA] ${customer.name}: último card em ${currentDateOnly.toISOString().split('T')[0]} (janela até ${targetDateOnly.toISOString().split('T')[0]}), pulando`);
+          stats.skipped++;
+          continue;
+        }
+        
+        console.log(`🔄 [FUTURE-AGENDA] ${customer.name}: último card em ${currentDateOnly.toISOString().split('T')[0]}, gerando até ${targetDateOnly.toISOString().split('T')[0]}`);
         
         // Gerar cards até cobrir targetDate
         while (currentDate < targetDate) {
