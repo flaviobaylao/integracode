@@ -39,8 +39,9 @@
     - **Daily Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API for real motorcycle route distances. Includes visual mapping, checkpoint registration, performance dashboards, and manual route generation. Tracks actual distances based on check-ins and manages off-route visits.
     - **Multi-Vehicle Route Planning (VRP)**: Advanced delivery route optimization with a 4-phase algorithm for vehicle assignment, route optimization (NN+2-opt+OSRM), and persistence. Supports manual order selection, vehicle configuration, and results display with ETAs. Integrated with Omie billings for delivery management, using intelligent customer matching and supporting urgent deliveries and exclusive vehicle configurations.
 - **Automated Agenda Management**: 
-    - **Automatic Generation**: Scheduled daily maintenance at midnight ensures continuous 2-month future agenda coverage for all clients. Recursive card generation follows customer visit schedules and periodicity. Initial card generation starts ~7 days in the future to allow planning time.
-    - **Manual Synchronization**: "Sincronizar Agenda" button in Agenda de Vendas page (accessible to admin/coordinator/administrative roles) performs comprehensive synchronization of sales cards for the next 2 months. The sync process:
+    - **Automatic Synchronization (Midnight)**: Scheduled daily task at 00:00h (UTC-3) performs comprehensive synchronization of sales cards for the next 2 months. This ensures continuous agenda accuracy by automatically fixing any inconsistencies.
+    - **Manual Synchronization**: "Sincronizar Agenda" button in Agenda de Vendas page (accessible to admin/coordinator/administrative roles) performs on-demand synchronization.
+    - **Synchronization Process** (both automatic and manual):
       1. Calculates correct visit dates based on each customer's `visitPeriodicity` and `weekdays` configuration
       2. Deletes cards that are scheduled on incorrect dates (don't match the customer's periodicity/weekdays)
       3. Creates missing cards for dates that should exist according to the customer's configuration

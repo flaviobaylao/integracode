@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { getOmieService } from './omieIntegration';
-import { generateVisitAgenda, ensureFutureAgendaCoverage } from './visitScheduleService';
+import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
 
@@ -249,28 +249,29 @@ cron.schedule('0 5 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Verificação e geração de agenda futura (2 meses) todos os dias à meia-noite
+// Sincronização completa de agenda futura (2 meses) todos os dias à meia-noite
+// Deleta cards incorretos e cria cards faltantes baseado em periodicidade/weekdays
 cron.schedule('0 0 * * *', async () => {
-  console.log('🌙 [SCHEDULER] Iniciando verificação de agenda futura à meia-noite...');
+  console.log('🌙 [SCHEDULER] Iniciando sincronização completa de agenda futura à meia-noite...');
   
   try {
-    const result = await ensureFutureAgendaCoverage(2);
+    const result = await syncFutureSalesCards(2);
     
-    console.log(`✅ [SCHEDULER] Verificação de agenda concluída:`);
+    console.log(`✅ [SCHEDULER] Sincronização de agenda concluída:`);
     console.log(`   - ${result.processed} clientes processados`);
-    console.log(`   - ${result.generated} cards gerados`);
-    console.log(`   - ${result.skipped} clientes pulados`);
+    console.log(`   - ${result.created} cards criados`);
+    console.log(`   - ${result.deleted} cards deletados`);
     console.log(`   - ${result.errors} erros`);
     
   } catch (error) {
-    console.error('❌ [SCHEDULER] Erro na verificação de agenda futura:', error);
+    console.error('❌ [SCHEDULER] Erro na sincronização de agenda futura:', error);
   }
 }, {
   timezone: "America/Sao_Paulo"
 });
 
 console.log('✅ Agendador configurado:');
-console.log('   - Verificação de agenda futura (2 meses) à 00:00h (UTC-3)');
+console.log('   - Sincronização completa de agenda futura (2 meses) à 00:00h (UTC-3)');
 console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
