@@ -162,7 +162,7 @@ export default function SalesSchedule() {
         startDate,
         endDate,
         page: currentPage.toString(),
-        limit: '20'
+        limit: '1000'
       });
       
       if (selectedSeller !== 'all') {
