@@ -12,6 +12,7 @@ import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
+import CustomerInactivateModal from "@/components/CustomerInactivateModal";
 import {
   Calendar,
   Clock,
@@ -26,7 +27,8 @@ import {
   Monitor,
   Sparkles,
   Download,
-  Pencil
+  Pencil,
+  UserX
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
@@ -108,6 +110,7 @@ export default function SalesSchedule() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
   const [isCustomerEditModalOpen, setIsCustomerEditModalOpen] = useState(false);
+  const [isCustomerInactivateModalOpen, setIsCustomerInactivateModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // Buscar lista de vendedores (apenas para admin/coordinator/administrative)
@@ -208,6 +211,31 @@ export default function SalesSchedule() {
     setIsCustomerEditModalOpen(true);
   };
 
+  const handleInactivateCustomer = (card: SalesCardWithRelations) => {
+    // Extra security check - only admin/coordinator/administrative can inactivate
+    if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      toast({
+        title: "Acesso negado",
+        description: "Apenas administradores podem inativar clientes",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Check if customer is already inactive
+    if (!card.customer.isActive) {
+      toast({
+        title: "Cliente já inativo",
+        description: "Este cliente já foi inativado anteriormente",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setSelectedCard(card);
+    setIsCustomerInactivateModalOpen(true);
+  };
+
   const closeModals = () => {
     setSelectedCard(null);
     setSelectedCustomer(null);
@@ -215,6 +243,7 @@ export default function SalesSchedule() {
     setIsEditModalOpen(false);
     setIsNoSaleModalOpen(false);
     setIsCustomerEditModalOpen(false);
+    setIsCustomerInactivateModalOpen(false);
     refetch();
   };
 
@@ -619,46 +648,64 @@ export default function SalesSchedule() {
                       )}
                     </div>
 
-                    <div className="flex items-center space-x-2">
-                      {card.status === 'pending' && (
-                        <>
+                    <div className="flex flex-col items-end space-y-2">
+                      <div className="flex items-center space-x-2">
+                        {card.status === 'pending' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditSale(card);
+                              }}
+                              data-testid={`button-finalize-${card.id}`}
+                            >
+                              Finalizar Venda
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNoSale(card);
+                              }}
+                              className="text-red-600 hover:text-red-700"
+                              data-testid={`button-no-sale-${card.id}`}
+                            >
+                              Não Vendeu
+                            </Button>
+                          </>
+                        )}
+                        
+                        {card.status === 'in_progress' && (
                           <Button
                             size="sm"
-                            variant="outline"
+                            className="bg-blue-500 hover:bg-blue-600"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleEditSale(card);
                             }}
-                            data-testid={`button-finalize-${card.id}`}
+                            data-testid={`button-continue-${card.id}`}
                           >
-                            Finalizar Venda
+                            Continuar Venda
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleNoSale(card);
-                            }}
-                            className="text-red-600 hover:text-red-700"
-                            data-testid={`button-no-sale-${card.id}`}
-                          >
-                            Não Vendeu
-                          </Button>
-                        </>
-                      )}
+                        )}
+                      </div>
                       
-                      {card.status === 'in_progress' && (
+                      {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && card.customer.isActive && (
                         <Button
                           size="sm"
-                          className="bg-blue-500 hover:bg-blue-600"
+                          variant="ghost"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleEditSale(card);
+                            handleInactivateCustomer(card);
                           }}
-                          data-testid={`button-continue-${card.id}`}
+                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                          data-testid={`button-inactivate-customer-${card.id}`}
                         >
-                          Continuar Venda
+                          <UserX className="h-4 w-4 mr-1" />
+                          Inativar Cliente
                         </Button>
                       )}
                     </div>
@@ -695,6 +742,12 @@ export default function SalesSchedule() {
         isOpen={isCustomerEditModalOpen}
         onClose={closeModals}
         customer={selectedCustomer}
+      />
+
+      <CustomerInactivateModal
+        isOpen={isCustomerInactivateModalOpen}
+        onClose={closeModals}
+        card={selectedCard}
       />
     </div>
   );
