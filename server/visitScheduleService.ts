@@ -302,8 +302,20 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
         
         // Calcular todas as datas corretas para este cliente nos próximos 2 meses
         const correctDates: Date[] = [];
-        let currentDate = new Date(today);
         
+        // PRIMEIRA visita: próximo dia da semana (sem considerar periodicidade)
+        const firstVisit = calculateNextVisitDate({
+          weekdays: parsedWeekdays as any[],
+          periodicity: customer.visitPeriodicity as any,
+          lastCompletedDate: undefined // Sem última visita = próximo dia da semana
+        });
+        
+        if (firstVisit.nextDate <= targetDate) {
+          correctDates.push(new Date(firstVisit.nextDate));
+        }
+        
+        // VISITAS SEGUINTES: aplicar periodicidade a partir da primeira
+        let currentDate = new Date(firstVisit.nextDate);
         while (currentDate <= targetDate) {
           const result = calculateNextVisitDate({
             weekdays: parsedWeekdays as any[],
@@ -313,7 +325,11 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           
           if (result.nextDate > targetDate) break;
           
-          correctDates.push(new Date(result.nextDate));
+          // Evitar duplicar a primeira visita
+          if (result.nextDate.getTime() !== firstVisit.nextDate.getTime()) {
+            correctDates.push(new Date(result.nextDate));
+          }
+          
           currentDate = new Date(result.nextDate);
         }
         
