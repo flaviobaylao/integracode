@@ -17,6 +17,7 @@
 - **Geographic Coordinates**: Cards display customer's latitude and longitude when available, formatted with 6 decimal places and shown with MapPin icon in blue. Fixed API to include these fields in the response (storage.ts getSalesCardsByDayAndDate)
 - **CPF/CNPJ Display**: Cards now show customer's CNPJ (priority) or CPF when available
 - **Removed Pagination Limit**: Increased from 20 to 1000 records per page in the sales agenda, allowing users to view significantly more sales cards without pagination
+- **Inline Customer Edit**: Added pencil icon button next to customer name in each sales card, allowing admin/coordinator/administrative users to edit customer data directly. Opens a modal with all customer fields (name, fantasy name, CPF/CNPJ, contact info, address, coordinates). Changes are saved via PATCH /api/customers/:id endpoint with role-based access control. Cache is automatically invalidated after updates to refresh the display.
 
 # System Architecture
 
