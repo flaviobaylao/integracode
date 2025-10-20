@@ -317,6 +317,7 @@ export default function SalesSchedule() {
         'Data Agendada': formatDate(card.scheduledDate),
         'Cliente': card.customer.fantasyName || card.customer.name,
         'Razão Social': card.customer.companyName || '-',
+        'CNPJ/CPF': card.customer.cnpj || card.customer.cpf || '-',
         'Telefone': card.customer.phone,
         'Endereço': card.customer.address,
         'Cidade': card.customer.city || '-',
