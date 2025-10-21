@@ -266,6 +266,31 @@ export default function SalesSchedule() {
     }).format(numValue || 0);
   };
 
+  const formatCPF = (cpf: string) => {
+    // Remove tudo que não é dígito
+    const cleaned = cpf.replace(/\D/g, '');
+    // Formata: 000.000.000-00
+    return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  };
+
+  const formatCNPJ = (cnpj: string) => {
+    // Remove tudo que não é dígito
+    const cleaned = cnpj.replace(/\D/g, '');
+    // Formata: 00.000.000/0000-00
+    return cleaned.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  };
+
+  const formatCNPJorCPF = (value: string | null) => {
+    if (!value) return '-';
+    const cleaned = value.replace(/\D/g, '');
+    if (cleaned.length === 11) {
+      return formatCPF(cleaned);
+    } else if (cleaned.length === 14) {
+      return formatCNPJ(cleaned);
+    }
+    return value; // Retorna o valor original se não for CPF nem CNPJ
+  };
+
   const exportToExcel = async () => {
     try {
       toast({
@@ -317,7 +342,7 @@ export default function SalesSchedule() {
         'Data Agendada': formatDate(card.scheduledDate),
         'Cliente': card.customer.fantasyName || card.customer.name,
         'Razão Social': card.customer.companyName || '-',
-        'CNPJ/CPF': card.customer.cnpj || card.customer.cpf || '-',
+        'CNPJ/CPF': formatCNPJorCPF(card.customer.cnpj || card.customer.cpf),
         'Telefone': card.customer.phone,
         'Endereço': card.customer.address,
         'Cidade': card.customer.city || '-',
