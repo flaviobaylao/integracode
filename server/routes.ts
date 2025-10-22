@@ -1586,23 +1586,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue;
           }
 
-          // Limpar CNPJ
-          const cnpj = cnpjRaw.toString().replace(/\D/g, '');
+          // Limpar CNPJ/CPF
+          const document = cnpjRaw.toString().replace(/\D/g, '');
           
-          // Verificar se cliente existe
-          let customer = await storage.getCustomerByCnpj(cnpj);
+          // Verificar se cliente existe (busca tanto em CNPJ quanto em CPF)
+          let customer = await storage.getCustomerByDocument(document);
           
           // Se não existe, buscar na Receita Federal e criar
           if (!customer) {
-            console.log(`Cliente não encontrado para CNPJ ${cnpj}, consultando Receita Federal...`);
+            console.log(`Cliente não encontrado para documento ${document}, consultando Receita Federal...`);
             
-            const receitaData = await receitaService.consultarCNPJ(cnpj);
+            const receitaData = await receitaService.consultarCNPJ(document);
             
             if (!receitaData) {
               results.errors.push({
                 row: i + 2,
-                cnpj,
-                error: "CNPJ não encontrado na Receita Federal"
+                document,
+                error: "Documento não encontrado na Receita Federal"
               });
               continue;
             }
@@ -1628,7 +1628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
             
             results.created++;
-            console.log(`Cliente criado: ${customer.fantasyName} (${cnpj})`);
+            console.log(`Cliente criado: ${customer.fantasyName} (${document})`);
           } else {
             // Atualizar weekdays e periodicidade se fornecidos
             const updateData: any = {};
@@ -1661,7 +1661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (hasActiveCard) {
             results.errors.push({
               row: i + 2,
-              cnpj,
+              document,
               customer: customer.fantasyName,
               error: "Cliente já possui card ativo (pendente ou em telemarketing)"
             });

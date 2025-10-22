@@ -9,6 +9,9 @@
 
 # Recent Changes (October 22, 2025)
 
+## Sales Cards Import - Critical Bug Fix
+- **CPF/CNPJ Search Fix**: Fixed critical bug in bulk import where customers with CPF (Pessoa Física) were not being found. Previously, the import used `getCustomerByCnpj()` which only searched the `cnpj` field. Created new `getCustomerByDocument()` method that searches both `cpf` and `cnpj` fields using `or()` condition. This fix allows the system to correctly find and import sales cards for individuals (CPF) as well as companies (CNPJ). Impact: 164 previously "not found" customers are now correctly identified (160 CPFs + 4 CNPJs).
+
 ## Agenda de Vendas - Filter Improvements
 - **All Days Filter**: Added "📅 Todos os Dias" option in the day-of-week filter, allowing users to view sales cards from all weekdays within the selected date range. Uses new endpoint `/api/sales-cards/all-days` and `getSalesCardsByDateRange` storage method.
 
