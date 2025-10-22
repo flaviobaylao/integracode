@@ -1857,7 +1857,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 throw new Error('Data inválida');
               }
               
-              // Encontrar a próxima ocorrência do routeDay APÓS a DATA INICIO
+              // Encontrar a próxima ocorrência do routeDay A PARTIR da DATA INICIO (ou nela mesma se coincidir)
               const targetDayNumber = routeDayToNumber[routeDay];
               let nextVisitDate = new Date(dataInicio);
               nextVisitDate.setHours(0, 0, 0, 0);
@@ -1866,8 +1866,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const currentDayNumber = nextVisitDate.getDay();
               let daysUntilTarget = targetDayNumber - currentDayNumber;
               
-              // Se o dia já passou ou é hoje, ir para próxima semana
-              if (daysUntilTarget <= 0) {
+              // Se o dia já passou, ir para próxima semana
+              // IMPORTANTE: Se daysUntilTarget = 0, significa que DATA INICIO cai no dia da rota!
+              // Neste caso, devemos usar a própria DATA INICIO como primeira visita
+              if (daysUntilTarget < 0) {
                 daysUntilTarget += 7;
               }
               

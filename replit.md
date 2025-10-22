@@ -16,6 +16,7 @@
   - During import, validates seller IDs and assigns cards to "Vendedor Desconhecido" if seller not found
   - Fixed existing 90 orphan cards by reassigning them to "Vendedor Desconhecido"
   - All 837 imported cards now appear correctly in the sales agenda
+- **DATA INICIO Logic Fix**: Corrected date calculation logic when DATA INICIO falls exactly on the route day. Previously, the system would skip to the next week even when DATA INICIO matched the route day. Now correctly uses DATA INICIO as the first visit date when it coincides with the route day. Changed condition from `daysUntilTarget <= 0` to `daysUntilTarget < 0` to fix the issue.
 
 ## Agenda de Vendas - Filter Improvements
 - **All Days Filter**: Added "📅 Todos os Dias" option in the day-of-week filter, allowing users to view sales cards from all weekdays within the selected date range. Uses new endpoint `/api/sales-cards/all-days` and `getSalesCardsByDateRange` storage method.
