@@ -23,7 +23,7 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - **Opcional**
 
 3. **ROTA**
-   - **Uso**: Atualiza o dia da semana do card do cliente
+   - **Uso**: Define o dia da semana de visita do cliente
    - Dia da semana para a visita
    - Formatos aceitos (case-insensitive):
      - `SEGUNDA-FEIRA`, `segunda-feira`, `Segunda`, `SEG`
@@ -36,8 +36,8 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - **Obrigatório**
 
 4. **FREQUENCIA**
-   - **Uso**: Atualiza a frequência de visitas do card do cliente
-   - Periodicidade da visita (semanal, quinzenal ou mensal)
+   - **Uso**: Define a frequência de visitas do cliente
+   - Periodicidade da visita (semanal, quinzenal, mensal ou bimestral)
    - Valores aceitos (case-insensitive):
      - `SEMANAL` ou `SEMANALMENTE`
      - `QUINZENAL` ou `QUINZENALMENTE`
@@ -48,14 +48,14 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 ### Colunas Opcionais
 
 5. **LATITUDE**
-   - **Uso**: Atualiza a latitude do card do cliente
+   - **Uso**: Atualiza a coordenada de latitude do cliente
    - Coordenada geográfica (latitude)
    - Aceita formato decimal (exemplo: -16.123456)
    - Aceita vírgula ou ponto como separador decimal
    - **Opcional**
 
 6. **LONGITUDE**
-   - **Uso**: Atualiza a longitude do card do cliente
+   - **Uso**: Atualiza a coordenada de longitude do cliente
    - Coordenada geográfica (longitude)
    - Aceita formato decimal (exemplo: -48.987654)
    - Aceita vírgula ou ponto como separador decimal
@@ -63,30 +63,30 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 
 7. **DATA INICIO**
    - **Uso**: Define a data de início para criação de cards do cliente
-   - O primeiro card de vendas será alocado considerando a ROTA do cliente e será criado para data imediatamente após a DATA INICIO
+   - O primeiro card de vendas será alocado para a próxima ocorrência da ROTA após esta data
    - Formatos aceitos:
      - `DD/MM/YYYY` (exemplo: 25/10/2025)
      - `DD/MM/YY` (exemplo: 25/10/25)
      - `YYYY-MM-DD` (exemplo: 2025-10-25)
      - Número serial do Excel (convertido automaticamente)
-   - Se não fornecida, o card será criado para a próxima ocorrência da ROTA
+   - Se não fornecida, o card será criado para a próxima ocorrência da ROTA a partir de hoje
    - **Opcional**
 
-8. **OBSERVAÇÕES/IMPEDIMENTO**
-   - **Uso**: Campo livre para observações ou impedimentos
-   - ⚠️ **IMPORTANTE**: Se este campo estiver preenchido, o card **NÃO será criado** para o cliente
-   - Use este campo para registrar clientes que não devem ter cards criados no momento
-   - Exemplo: "Cliente em férias", "Renegociação em andamento", "Aguardando pagamento"
+8. **TIPO DE ATENDIMENTO**
+   - **Uso**: Define se o atendimento ao cliente é presencial ou virtual
+   - **Valores aceitos**:
+     - `PRESENCIAL` → Atendimento presencial (vendedor visita o cliente)
+     - `VIRTUAL` → Atendimento virtual (telefone, WhatsApp, remoto)
+   - Atualiza o campo `virtualService` do cliente no sistema
    - **Opcional**
 
 ### Exemplo de Planilha
 
-| CNPJ/CPF | Cliente (Nome Fantasia) | ROTA | FREQUENCIA | LATITUDE | LONGITUDE | DATA INICIO | OBSERVAÇÕES/IMPEDIMENTO |
-|----------|------------------------|------|------------|----------|-----------|-------------|-------------------------|
-| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | QUARTA-FEIRA | SEMANAL | -16.123456 | -48.987654 | 25/10/2025 | |
-| 00.065.979/0001-86 | MERCADINHO JAO | SEGUNDA-FEIRA | SEMANAL | -16.234567 | -48.876543 | | |
-| 00.066.852/0001-81 | SUPERMERCADO RIO DAS PEDRAS | SEGUNDA-FEIRA | QUINZENAL | | | 01/11/2025 | |
-| 00.104.071/0001-34 | PANIFICADORA LAGO DAS ROSAS | TERÇA-FEIRA | MENSAL | | | | Cliente em férias |
+| CNPJ/CPF | Cliente (Nome Fantasia) | ROTA | FREQUENCIA | LATITUDE | LONGITUDE | DATA INICIO | TIPO DE ATENDIMENTO |
+|----------|------------------------|------|------------|----------|-----------|-------------|---------------------|
+| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | QUARTA-FEIRA | SEMANAL | -16.6542229 | -49.2728202 | 25/10/2025 | PRESENCIAL |
+| 00.065.979/0001-86 | MERCADINHO JAO | SEGUNDA-FEIRA | QUINZENAL | -16.234567 | -48.876543 | 28/10/2025 | VIRTUAL |
+| 00.066.852/0001-81 | SUPERMERCADO RIO DAS PEDRAS | TERÇA-FEIRA | MENSAL | | | 01/11/2025 | PRESENCIAL |
 
 ## Como Importar
 
@@ -112,11 +112,14 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 4. **Coordenadas Geográficas**:
    - Se LATITUDE e/ou LONGITUDE forem fornecidas, os dados do cliente serão atualizados
    - Coordenadas são essenciais para geração de rotas otimizadas
+   - Aceita tanto vírgula quanto ponto como separador decimal
 
-5. **Impedimentos**:
-   - Se o campo OBSERVAÇÕES/IMPEDIMENTO estiver preenchido, o card **não será criado**
-   - O sistema registrará a observação nos logs de erro
-   - Use este campo para clientes que temporariamente não devem receber visitas
+5. **Tipo de Atendimento**:
+   - Define se o cliente será atendido presencialmente ou virtualmente
+   - **PRESENCIAL**: vendedor visita fisicamente o cliente
+   - **VIRTUAL**: atendimento remoto (telefone, WhatsApp, etc.)
+   - Apenas dois tipos disponíveis: PRESENCIAL ou VIRTUAL
+   - Esta informação é usada para planejamento de rotas e gestão de tempo
 
 6. **Fallbacks**:
    - Se o valor da ROTA não for reconhecido → usa `segunda-feira` como padrão
@@ -145,17 +148,22 @@ O sistema mapeia os dias para valores internos normalizados:
 | MENSAL, MENSALMENTE | `mensal` |
 | BIMESTRAL, BIMESTRALMENTE | `bimestral` |
 
+### Tipo de Atendimento
+| Entrada na Planilha | Valor Interno | Descrição |
+|---------------------|---------------|-----------|
+| PRESENCIAL | `virtualService = false` | Vendedor visita o cliente |
+| VIRTUAL | `virtualService = true` | Atendimento remoto |
+
 ## Resolução de Problemas
 
 ### Problema: Card não foi criado para um cliente
 
 **Causas possíveis**:
-1. Campo OBSERVAÇÕES/IMPEDIMENTO está preenchido
-2. Cliente não existe no sistema (CNPJ/CPF não encontrado)
-3. Cliente já possui card ativo (pending ou telemarketing)
+1. Cliente não existe no sistema (CNPJ/CPF não encontrado)
+2. Cliente já possui card ativo (pending ou telemarketing)
+3. CNPJ/CPF está incorreto
 
 **Solução**:
-- Verifique se o campo OBSERVAÇÕES/IMPEDIMENTO está vazio
 - Verifique se o cliente existe no cadastro
 - Para CNPJ/CPF, não importa se tem pontos/traços - o sistema normaliza automaticamente
 - Verifique se há cards pendentes para este cliente antes de importar
@@ -182,6 +190,17 @@ O sistema mapeia os dias para valores internos normalizados:
 - Verifique se os valores não estão como texto
 - Ambos LATITUDE e LONGITUDE podem ser fornecidos separadamente
 
+### Problema: Tipo de atendimento não foi atualizado
+
+**Causas possíveis**:
+1. Valor não reconhecido na coluna TIPO DE ATENDIMENTO
+2. Campo em branco
+
+**Solução**:
+- Use exatamente: **PRESENCIAL** ou **VIRTUAL**
+- Valores são case-insensitive (maiúsculas/minúsculas não importam)
+- Apenas estes dois tipos são aceitos
+
 ## Logs e Debugging
 
 Durante a importação, o sistema gera logs detalhados no console do servidor:
@@ -189,9 +208,10 @@ Durante a importação, o sistema gera logs detalhados no console do servidor:
 ```
 ✅ Dia da rota lido da planilha: "QUARTA-FEIRA" → "quarta" para cliente SUPERMERCADO PINTA SILGO
 ✅ Periodicidade lida da planilha: "SEMANAL" → "semanal" para cliente SUPERMERCADO PINTA SILGO
-📍 Coordenadas atualizadas para cliente SUPERMERCADO PINTA SILGO: Lat=-16.123456, Lon=-48.987654
+📍 Coordenadas atualizadas para cliente SUPERMERCADO PINTA SILGO: Lat=-16.6542229, Lon=-49.2728202
+🏪 Tipo de atendimento definido como PRESENCIAL para cliente SUPERMERCADO PINTA SILGO
 📅 DATA INICIO fornecida (25/10/2025). Primeira visita agendada para próximo quarta: 29/10/2025 para cliente SUPERMERCADO PINTA SILGO
-⚠️ Campo OBSERVAÇÕES/IMPEDIMENTO preenchido para cliente PANIFICADORA LAGO DAS ROSAS. Card NÃO será criado.
+📱 Tipo de atendimento definido como VIRTUAL para cliente MERCADINHO JAO
 ```
 
 Estes logs ajudam a identificar:
@@ -199,9 +219,16 @@ Estes logs ajudam a identificar:
 - Qual dia da semana foi atribuído a cada card
 - Se coordenadas foram atualizadas
 - Se DATA INICIO foi processada
-- Se algum cliente foi bloqueado por OBSERVAÇÕES/IMPEDIMENTO
+- Se o tipo de atendimento foi definido
 
 ## Histórico de Atualizações
+
+### Outubro 2025 - Novo Formato de Planilha
+- **Adicionado**: Campo TIPO DE ATENDIMENTO (PRESENCIAL/VIRTUAL)
+- **Removido**: Campo OBSERVAÇÕES/IMPEDIMENTO (não faz mais parte do modelo)
+- **Mantido**: Suporte para LATITUDE, LONGITUDE, DATA INICIO
+- **Modificado**: FREQUENCIA agora é lido prioritariamente (antes era Periodicidade)
+- **Modificado**: Cliente (Nome Fantasia) agora é apenas para conferência visual
 
 ### Outubro 2025 - Novos Campos
 - **Adicionado**: Suporte para LATITUDE e LONGITUDE

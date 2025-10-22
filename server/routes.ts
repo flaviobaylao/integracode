@@ -1742,45 +1742,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
           console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
-          // Ler OBSERVAÇÕES/IMPEDIMENTO - se preenchido, não criar card
-          const observacoesCol = row['OBSERVAÇÕES/IMPEDIMENTO'] || row['Observações/Impedimento'] || row['observações/impedimento'] || 
-                                 row['OBSERVACOES/IMPEDIMENTO'] || row['Observacoes/Impedimento'] || row['observacoes/impedimento'] ||
-                                 row['OBSERVAÇÕES'] || row['Observações'] || row['observações'] || row['OBSERVACOES'] || row['Observacoes'] || row['observacoes'] ||
-                                 row['IMPEDIMENTO'] || row['Impedimento'] || row['impedimento'];
+          // Ler e atualizar dados do cliente se fornecidos
+          const updateData: any = {};
           
-          if (observacoesCol && observacoesCol.toString().trim().length > 0) {
-            console.log(`⚠️ Campo OBSERVAÇÕES/IMPEDIMENTO preenchido para cliente ${customer.fantasyName}. Card NÃO será criado.`);
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: `Cliente com observação/impedimento: "${observacoesCol}". Card não criado.`
-            });
-            continue;
-          }
-
-          // Ler e atualizar LATITUDE e LONGITUDE se fornecidos
+          // LATITUDE e LONGITUDE
           const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
           const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
           
-          if (latitudeCol || longitudeCol) {
-            const updateData: any = {};
-            
-            if (latitudeCol) {
-              const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
-              if (!isNaN(latValue)) {
-                updateData.latitude = latValue.toString();
-              }
+          if (latitudeCol) {
+            const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
+            if (!isNaN(latValue)) {
+              updateData.latitude = latValue.toString();
             }
-            
-            if (longitudeCol) {
-              const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
-              if (!isNaN(lonValue)) {
-                updateData.longitude = lonValue.toString();
-              }
+          }
+          
+          if (longitudeCol) {
+            const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
+            if (!isNaN(lonValue)) {
+              updateData.longitude = lonValue.toString();
             }
-            
-            if (Object.keys(updateData).length > 0) {
-              await storage.updateCustomer(customer.id, updateData);
+          }
+          
+          // TIPO DE ATENDIMENTO
+          const tipoAtendimentoCol = row['TIPO DE ATENDIMENTO'] || row['Tipo de Atendimento'] || row['tipo de atendimento'] ||
+                                     row['TIPO DE ATENDIMENTO '] || row['Tipo de Atendimento '] || row['tipo de atendimento '] || // Com espaço no final
+                                     row['TIPOATENDIMENTO'] || row['TipoAtendimento'] || row['tipoatendimento'];
+          
+          if (tipoAtendimentoCol) {
+            const tipoStr = tipoAtendimentoCol.toString().toUpperCase().trim();
+            if (tipoStr === 'VIRTUAL' || tipoStr === 'REMOTO' || tipoStr === 'ONLINE') {
+              updateData.virtualService = true;
+              console.log(`📱 Tipo de atendimento definido como VIRTUAL para cliente ${customer.fantasyName}`);
+            } else if (tipoStr === 'PRESENCIAL' || tipoStr === 'FISICO' || tipoStr === 'FÍSICO') {
+              updateData.virtualService = false;
+              console.log(`🏪 Tipo de atendimento definido como PRESENCIAL para cliente ${customer.fantasyName}`);
+            }
+          }
+          
+          // Atualizar cliente se houver dados
+          if (Object.keys(updateData).length > 0) {
+            await storage.updateCustomer(customer.id, updateData);
+            if (updateData.latitude || updateData.longitude) {
               console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude || 'não fornecida'}, Lon=${updateData.longitude || 'não fornecida'}`);
             }
           }
