@@ -1742,90 +1742,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
           console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
-          // Validar campos obrigatórios: LATITUDE, LONGITUDE, TIPO DE ATENDIMENTO
+          // Ler campos (LATITUDE, LONGITUDE e TIPO DE ATENDIMENTO agora são opcionais)
           const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
           const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
           const tipoAtendimentoCol = row['TIPO DE ATENDIMENTO'] || row['Tipo de Atendimento'] || row['tipo de atendimento'] ||
                                      row['TIPO DE ATENDIMENTO '] || row['Tipo de Atendimento '] || row['tipo de atendimento '] ||
                                      row['TIPOATENDIMENTO'] || row['TipoAtendimento'] || row['tipoatendimento'];
 
-          // Validar LATITUDE (obrigatório)
-          if (!latitudeCol || latitudeCol.toString().trim() === '') {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: "Campo LATITUDE é obrigatório"
-            });
-            continue;
-          }
-
-          // Validar LONGITUDE (obrigatório)
-          if (!longitudeCol || longitudeCol.toString().trim() === '') {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: "Campo LONGITUDE é obrigatório"
-            });
-            continue;
-          }
-
-          // Validar TIPO DE ATENDIMENTO (obrigatório)
-          if (!tipoAtendimentoCol || tipoAtendimentoCol.toString().trim() === '') {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: "Campo TIPO DE ATENDIMENTO é obrigatório"
-            });
-            continue;
-          }
-
           // Processar e atualizar dados do cliente
           const updateData: any = {};
           
-          // LATITUDE
-          const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
-          if (isNaN(latValue)) {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: `LATITUDE inválida: "${latitudeCol}"`
-            });
-            continue;
-          }
-          updateData.latitude = latValue.toString();
-          
-          // LONGITUDE
-          const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
-          if (isNaN(lonValue)) {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: `LONGITUDE inválida: "${longitudeCol}"`
-            });
-            continue;
-          }
-          updateData.longitude = lonValue.toString();
-          
-          // TIPO DE ATENDIMENTO
-          const tipoStr = tipoAtendimentoCol.toString().toUpperCase().trim();
-          if (tipoStr === 'VIRTUAL') {
-            updateData.virtualService = true;
-            console.log(`📱 Tipo de atendimento definido como VIRTUAL para cliente ${customer.fantasyName}`);
-          } else if (tipoStr === 'PRESENCIAL') {
-            updateData.virtualService = false;
-            console.log(`🏪 Tipo de atendimento definido como PRESENCIAL para cliente ${customer.fantasyName}`);
+          // LATITUDE (opcional)
+          if (latitudeCol && latitudeCol.toString().trim() !== '') {
+            const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
+            if (isNaN(latValue)) {
+              console.warn(`⚠️ LATITUDE inválida ignorada para cliente ${customer.fantasyName}: "${latitudeCol}"`);
+            } else {
+              updateData.latitude = latValue.toString();
+              console.log(`📍 LATITUDE atualizada para cliente ${customer.fantasyName}: ${updateData.latitude}`);
+            }
           } else {
-            results.errors.push({
-              row: i + 2,
-              customer: customer.fantasyName,
-              error: `TIPO DE ATENDIMENTO inválido: "${tipoAtendimentoCol}". Use PRESENCIAL ou VIRTUAL`
-            });
-            continue;
+            console.warn(`⚠️ LATITUDE não fornecida para cliente ${customer.fantasyName} - card será criado sem coordenadas`);
           }
           
-          // Atualizar cliente
-          await storage.updateCustomer(customer.id, updateData);
-          console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
+          // LONGITUDE (opcional)
+          if (longitudeCol && longitudeCol.toString().trim() !== '') {
+            const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
+            if (isNaN(lonValue)) {
+              console.warn(`⚠️ LONGITUDE inválida ignorada para cliente ${customer.fantasyName}: "${longitudeCol}"`);
+            } else {
+              updateData.longitude = lonValue.toString();
+              console.log(`📍 LONGITUDE atualizada para cliente ${customer.fantasyName}: ${updateData.longitude}`);
+            }
+          } else {
+            console.warn(`⚠️ LONGITUDE não fornecida para cliente ${customer.fantasyName} - card será criado sem coordenadas`);
+          }
+          
+          // TIPO DE ATENDIMENTO (opcional - default é PRESENCIAL)
+          if (tipoAtendimentoCol && tipoAtendimentoCol.toString().trim() !== '') {
+            const tipoStr = tipoAtendimentoCol.toString().toUpperCase().trim();
+            if (tipoStr === 'VIRTUAL') {
+              updateData.virtualService = true;
+              console.log(`📱 Tipo de atendimento definido como VIRTUAL para cliente ${customer.fantasyName}`);
+            } else if (tipoStr === 'PRESENCIAL') {
+              updateData.virtualService = false;
+              console.log(`🏪 Tipo de atendimento definido como PRESENCIAL para cliente ${customer.fantasyName}`);
+            } else {
+              console.warn(`⚠️ TIPO DE ATENDIMENTO inválido ignorado para cliente ${customer.fantasyName}: "${tipoAtendimentoCol}". Usando PRESENCIAL como padrão.`);
+              updateData.virtualService = false;
+            }
+          } else {
+            // Default: PRESENCIAL
+            updateData.virtualService = false;
+            console.log(`🏪 Tipo de atendimento padrão (PRESENCIAL) para cliente ${customer.fantasyName}`);
+          }
+          
+          // Atualizar cliente (somente se houver dados para atualizar)
+          if (Object.keys(updateData).length > 0) {
+            await storage.updateCustomer(customer.id, updateData);
+            if (updateData.latitude && updateData.longitude) {
+              console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
+            }
+          }
 
           // Ler e validar DATA INICIO (obrigatório)
           const dataInicioCol = row['DATA INICIO'] || row['Data Inicio'] || row['data inicio'] || 

@@ -50,14 +50,14 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - Coordenada geográfica (latitude)
    - Aceita formato decimal (exemplo: -16.123456)
    - Aceita vírgula ou ponto como separador decimal
-   - **Obrigatório**
+   - **Opcional** - Se não fornecido, card será criado e um aviso vermelho "SEM COORDENADAS" será exibido na Agenda de Vendas
 
 6. **LONGITUDE**
    - **Uso**: Define a coordenada de longitude do cliente
    - Coordenada geográfica (longitude)
    - Aceita formato decimal (exemplo: -48.987654)
    - Aceita vírgula ou ponto como separador decimal
-   - **Obrigatório**
+   - **Opcional** - Se não fornecido, card será criado e um aviso vermelho "SEM COORDENADAS" será exibido na Agenda de Vendas
 
 7. **DATA INICIO**
    - **Uso**: Define a data de início para criação de cards do cliente
@@ -75,7 +75,7 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
      - `PRESENCIAL` → Atendimento presencial (vendedor visita o cliente)
      - `VIRTUAL` → Atendimento virtual (telefone, WhatsApp, remoto)
    - Atualiza o campo `virtualService` do cliente no sistema
-   - **Obrigatório**
+   - **Opcional** - Se não fornecido, o sistema assume `PRESENCIAL` como padrão
 
 ### Exemplo de Planilha
 
@@ -106,12 +106,13 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - Se **DATA INICIO** não for fornecida: O card será criado para a próxima ocorrência da ROTA a partir de hoje
    - Exemplo: Se hoje é quinta (20/10) e a ROTA é "segunda", com DATA INICIO em 25/10, o card será criado para segunda 27/10
 
-4. **Coordenadas Geográficas** (OBRIGATÓRIAS):
-   - LATITUDE e LONGITUDE são campos obrigatórios
-   - Os dados do cliente serão atualizados com estas coordenadas
+4. **Coordenadas Geográficas** (OPCIONAIS):
+   - LATITUDE e LONGITUDE são campos opcionais
+   - Se fornecidas, os dados do cliente serão atualizados com estas coordenadas
    - Coordenadas são essenciais para geração de rotas otimizadas
    - Aceita tanto vírgula quanto ponto como separador decimal
-   - Se os valores forem inválidos, a importação falhará para aquele cliente
+   - **Se não fornecidas**: Card será criado normalmente, mas um **aviso vermelho "SEM COORDENADAS"** aparecerá na Agenda de Vendas
+   - Se os valores forem inválidos (não numéricos), serão ignorados e o card será criado sem coordenadas
 
 5. **Data de Início** (OBRIGATÓRIA):
    - DATA INICIO é campo obrigatório
@@ -119,10 +120,10 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - O card será agendado para a próxima ocorrência da ROTA após esta data
    - Se não for fornecida ou estiver em formato inválido, a importação falhará para aquele cliente
 
-6. **Tipo de Atendimento** (OBRIGATÓRIO):
-   - TIPO DE ATENDIMENTO é campo obrigatório
+6. **Tipo de Atendimento** (OPCIONAL):
+   - TIPO DE ATENDIMENTO é campo opcional
    - Define se o cliente será atendido presencialmente ou virtualmente
-   - **PRESENCIAL**: vendedor visita fisicamente o cliente
+   - **PRESENCIAL**: vendedor visita fisicamente o cliente (padrão quando não fornecido)
    - **VIRTUAL**: atendimento remoto (telefone, WhatsApp, etc.)
    - Apenas dois valores aceitos: PRESENCIAL ou VIRTUAL
    - Se for fornecido valor diferente, a importação falhará para aquele cliente
@@ -186,18 +187,19 @@ O sistema mapeia os dias para valores internos normalizados:
 - Verifique se o dia da semana em ROTA está correto
 - O sistema sempre agenda para a próxima ocorrência do dia especificado
 
-### Problema: Importação falhou - campos obrigatórios vazios
+### Problema: Importação falhou - campo obrigatório vazio
 
 **Causas possíveis**:
-1. LATITUDE, LONGITUDE, DATA INICIO ou TIPO DE ATENDIMENTO estão vazios
-2. Formato incorreto dos valores
+1. DATA INICIO está vazio
+2. Formato incorreto do valor
 
 **Solução**:
-- Verifique se LATITUDE e LONGITUDE estão preenchidos
-- Use formato decimal: -16.123456 ou -16,123456
-- DATA INICIO deve estar no formato DD/MM/YYYY
-- TIPO DE ATENDIMENTO deve ser PRESENCIAL ou VIRTUAL
-- Todos estes 4 campos são obrigatórios
+- Verifique se DATA INICIO está preenchido
+- DATA INICIO deve estar no formato DD/MM/YYYY (exemplo: 25/10/2025)
+
+**Nota**: LATITUDE, LONGITUDE e TIPO DE ATENDIMENTO são opcionais:
+- Se LATITUDE/LONGITUDE não forem fornecidos, o card será criado e um aviso "SEM COORDENADAS" aparecerá na Agenda de Vendas
+- Se TIPO DE ATENDIMENTO não for fornecido, o sistema assume PRESENCIAL como padrão
 
 ### Problema: Tipo de atendimento não foi atualizado
 

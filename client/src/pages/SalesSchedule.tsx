@@ -671,13 +671,18 @@ export default function SalesSchedule() {
                               : RECURRENCE_LABELS[card.recurrenceType as keyof typeof RECURRENCE_LABELS]}
                           </span>
                         </div>
-                        {(card.customer.latitude || card.customer.longitude) && (
+                        {(card.customer.latitude && card.customer.longitude) ? (
                           <div className="flex items-center space-x-2">
                             <MapPin className="h-4 w-4 text-blue-600" />
                             <span className="text-xs" data-testid={`text-coordinates-${card.id}`}>
-                              {card.customer.latitude && `${parseFloat(card.customer.latitude).toFixed(6)}`}
-                              {card.customer.latitude && card.customer.longitude && ', '}
-                              {card.customer.longitude && `${parseFloat(card.customer.longitude).toFixed(6)}`}
+                              {parseFloat(card.customer.latitude).toFixed(6)}, {parseFloat(card.customer.longitude).toFixed(6)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-2 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded border border-red-300 dark:border-red-600">
+                            <MapPin className="h-4 w-4 text-red-600 dark:text-red-400" />
+                            <span className="text-xs font-semibold text-red-600 dark:text-red-400" data-testid={`text-no-coordinates-${card.id}`}>
+                              SEM COORDENADAS
                             </span>
                           </div>
                         )}

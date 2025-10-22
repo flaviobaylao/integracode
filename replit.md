@@ -14,15 +14,15 @@
 
 ## Excel Import/Export Improvements
 - **Excel Export with CNPJ/CPF**: Enhanced export functionality in Agenda de Vendas now includes CNPJ/CPF field with proper formatting (CPF: 000.000.000-00, CNPJ: 00.000.000/0000-00). Automatically detects and formats based on document length (11 digits = CPF, 14 digits = CNPJ).
-- **Enhanced Sales Card Import**: Completely redesigned bulk import for sales cards with mandatory fields:
+- **Flexible Sales Card Import**: Completely redesigned bulk import for sales cards. Mandatory fields reduced to allow greater flexibility:
   - **CNPJ/CPF** (OBRIGATÓRIO): Used as primary key for customer identification
   - **Cliente (Nome Fantasia)** (OPCIONAL): For visual reference only (not used for lookups)
   - **ROTA** (OBRIGATÓRIO): Updates the route day for the customer's card
   - **FREQUENCIA** (OBRIGATÓRIO): Updates visit frequency (semanal, quinzenal, mensal, bimestral)
-  - **LATITUDE** (OBRIGATÓRIO): Updates customer's latitude coordinate (accepts comma or period as decimal separator). Import fails if empty or invalid.
-  - **LONGITUDE** (OBRIGATÓRIO): Updates customer's longitude coordinate (accepts comma or period as decimal separator). Import fails if empty or invalid.
+  - **LATITUDE** (OPCIONAL): Updates customer's latitude coordinate (accepts comma or period as decimal separator). If not provided or invalid, card is created without coordinates and displays red "SEM COORDENADAS" warning in Agenda de Vendas.
+  - **LONGITUDE** (OPCIONAL): Updates customer's longitude coordinate (accepts comma or period as decimal separator). If not provided or invalid, card is created without coordinates and displays red "SEM COORDENADAS" warning in Agenda de Vendas.
   - **DATA INICIO** (OBRIGATÓRIO): Defines start date for card creation. First card is scheduled for the next occurrence of ROTA after this date. Supports DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, and Excel serial date formats. Import fails if empty.
-  - **TIPO DE ATENDIMENTO** (OBRIGATÓRIO): Defines service type - only two values accepted: PRESENCIAL (in-person visit) or VIRTUAL (remote service). Import fails if empty or invalid.
+  - **TIPO DE ATENDIMENTO** (OPCIONAL): Defines service type - accepts PRESENCIAL (in-person visit) or VIRTUAL (remote service). Defaults to PRESENCIAL if not provided or invalid.
 - **Synchronization Timeout Fix**: Increased timeout from 2 to 5 minutes (300000ms) for "Sincronizar Agenda" operation to prevent "aborted without reason" errors during large batch processing.
 
 ## Agenda de Vendas - Previous Features (October 20, 2025)
