@@ -35,6 +35,7 @@ import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
 const DAYS_OF_WEEK = [
+  { value: 'todos', label: '📅 Todos os Dias' },
   { value: 'atrasados', label: '⚠️ Atrasados (>3 dias)' },
   { value: 'segunda', label: 'Segunda-feira' },
   { value: 'terca', label: 'Terça-feira' },
@@ -164,6 +165,24 @@ export default function SalesSchedule() {
         if (!response.ok) throw new Error('Failed to fetch overdue cards');
         const cards = await response.json();
         return { cards, pagination: { hasMore: false } };
+      }
+      
+      // Se "todos" for selecionado, usar endpoint que busca todos os dias
+      if (selectedDay === 'todos') {
+        const params = new URLSearchParams({
+          startDate,
+          endDate,
+          page: currentPage.toString(),
+          limit: '1000'
+        });
+        
+        if (selectedSeller !== 'all') {
+          params.append('sellerId', selectedSeller);
+        }
+        
+        const response = await fetch(`/api/sales-cards/all-days?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch cards');
+        return response.json();
       }
       
       // Caso contrário, usar endpoint normal de busca por dia

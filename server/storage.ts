@@ -148,6 +148,7 @@ export interface IStorage {
   
   // Additional methods needed
   getSalesCardsByDayAndDate(sellerId: string, routeDay: string, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
+  getSalesCardsByDateRange(sellerId: string | undefined, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
   generateNextSalesCard(parentCardId: string): Promise<SalesCard | null>;
   
   // Location operations
@@ -1149,6 +1150,113 @@ export class DatabaseStorage implements IStorage {
             )
           : and(
               eq(salesCards.routeDay, routeDay),
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
+            )
+      )
+      .orderBy(salesCards.scheduledDate)
+      .limit(limit)
+      .offset(offset);
+
+    return cardsWithRelations as SalesCardWithRelations[];
+  }
+
+  // Buscar cards por intervalo de datas (todos os dias da semana)
+  async getSalesCardsByDateRange(
+    sellerId: string | undefined,
+    startDate: Date,
+    endDate: Date,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<SalesCardWithRelations[]> {
+    const cardsWithRelations = await db
+      .select({
+        // Sales card fields
+        id: salesCards.id,
+        customerId: salesCards.customerId,
+        sellerId: salesCards.sellerId,
+        status: salesCards.status,
+        scheduledDate: salesCards.scheduledDate,
+        completedDate: salesCards.completedDate,
+        saleValue: salesCards.saleValue,
+        noSaleReason: salesCards.noSaleReason,
+        notes: salesCards.notes,
+        products: salesCards.products,
+        routeDay: salesCards.routeDay,
+        recurrenceType: salesCards.recurrenceType,
+        isRecurring: salesCards.isRecurring,
+        parentCardId: salesCards.parentCardId,
+        nextCardId: salesCards.nextCardId,
+        duplicatedFromId: salesCards.duplicatedFromId,
+        telemarketingAssignedTo: salesCards.telemarketingAssignedTo,
+        telemarketingDate: salesCards.telemarketingDate,
+        telemarketingNotes: salesCards.telemarketingNotes,
+        deliveryStatus: salesCards.deliveryStatus,
+        deliveryScheduledDate: salesCards.deliveryScheduledDate,
+        deliveryCompletedDate: salesCards.deliveryCompletedDate,
+        deliveryFailureReason: salesCards.deliveryFailureReason,
+        deliveryNotes: salesCards.deliveryNotes,
+        deliveryDriverId: salesCards.deliveryDriverId,
+        trackingCode: salesCards.trackingCode,
+        omieOrderId: salesCards.omieOrderId,
+        invoiceNumber: salesCards.invoiceNumber,
+        paymentMethod: salesCards.paymentMethod,
+        operationType: salesCards.operationType,
+        createdAt: salesCards.createdAt,
+        updatedAt: salesCards.updatedAt,
+        // Customer fields
+        customer: {
+          id: customers.id,
+          name: customers.name,
+          customerType: customers.customerType,
+          cpf: customers.cpf,
+          cnpj: customers.cnpj,
+          companyName: customers.companyName,
+          fantasyName: customers.fantasyName,
+          phone: customers.phone,
+          email: customers.email,
+          address: customers.address,
+          city: customers.city,
+          state: customers.state,
+          zipCode: customers.zipCode,
+          route: customers.route,
+          sellerId: customers.sellerId,
+          weekdays: customers.weekdays,
+          visitPeriodicity: customers.visitPeriodicity,
+          latitude: customers.latitude,
+          longitude: customers.longitude,
+          virtualService: customers.virtualService,
+          isActive: customers.isActive,
+          lastSaleDate: customers.lastSaleDate,
+          lastSaleValue: customers.lastSaleValue,
+          createdAt: customers.createdAt,
+          updatedAt: customers.updatedAt,
+        },
+        // Seller fields
+        seller: {
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          profileImageUrl: users.profileImageUrl,
+          role: users.role,
+          route: users.route,
+          isActive: users.isActive,
+          createdAt: users.createdAt,
+          updatedAt: users.updatedAt,
+        }
+      })
+      .from(salesCards)
+      .innerJoin(customers, eq(salesCards.customerId, customers.id))
+      .innerJoin(users, eq(salesCards.sellerId, users.id))
+      .where(
+        sellerId
+          ? and(
+              eq(salesCards.sellerId, sellerId),
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
+            )
+          : and(
               gte(salesCards.scheduledDate, startDate),
               lte(salesCards.scheduledDate, endDate)
             )

@@ -2258,6 +2258,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para buscar cards de todos os dias da semana no período
+  app.get('/api/sales-cards/all-days', authenticateUser, checkSellerAccess, async (req: any, res) => {
+    try {
+      const { startDate, endDate, page = 1, limit = 20, sellerId: filterSellerId } = req.query;
+      
+      const user = req.currentUser;
+      let sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      
+      // Admin/coordinator/administrative podem filtrar por vendedor específico ou ver todos
+      if (!sellerId && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        sellerId = filterSellerId && filterSellerId !== 'all' ? filterSellerId as string : undefined;
+      }
+      
+      // Parse dates safely - use ISO format with UTC timezone
+      let start: Date;
+      let end: Date;
+      
+      if (startDate) {
+        start = new Date(`${startDate}T00:00:00.000Z`);
+      } else {
+        start = new Date();
+        start.setHours(0, 0, 0, 0);
+      }
+      
+      if (endDate) {
+        end = new Date(`${endDate}T23:59:59.999Z`);
+      } else {
+        end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        end.setHours(23, 59, 59, 999);
+      }
+      
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      const cards = await storage.getSalesCardsByDateRange(
+        sellerId,
+        start,
+        end,
+        Number(limit),
+        offset
+      );
+      
+      res.json({
+        cards,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          hasMore: cards.length === Number(limit)
+        }
+      });
+    } catch (error) {
+      console.error("Error fetching sales cards for all days:", error);
+      res.status(500).json({ message: "Failed to fetch sales cards" });
+    }
+  });
+
   // Endpoint para buscar cards por data específica
   app.get('/api/sales-cards/by-date/:date', authenticateUser, async (req: any, res) => {
     try {

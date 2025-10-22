@@ -9,6 +9,9 @@
 
 # Recent Changes (October 22, 2025)
 
+## Agenda de Vendas - Filter Improvements
+- **All Days Filter**: Added "📅 Todos os Dias" option in the day-of-week filter, allowing users to view sales cards from all weekdays within the selected date range. Uses new endpoint `/api/sales-cards/all-days` and `getSalesCardsByDateRange` storage method.
+
 ## Excel Import/Export Improvements
 - **Excel Export with CNPJ/CPF**: Enhanced export functionality in Agenda de Vendas now includes CNPJ/CPF field with proper formatting (CPF: 000.000.000-00, CNPJ: 00.000.000/0000-00). Automatically detects and formats based on document length (11 digits = CPF, 14 digits = CNPJ).
 - **Enhanced Sales Card Import**: Completely redesigned bulk import for sales cards with mandatory fields:
