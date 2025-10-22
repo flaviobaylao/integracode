@@ -1742,55 +1742,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
           console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
-          // Ler e atualizar dados do cliente se fornecidos
-          const updateData: any = {};
-          
-          // LATITUDE e LONGITUDE
+          // Validar campos obrigatórios: LATITUDE, LONGITUDE, TIPO DE ATENDIMENTO
           const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
           const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
-          
-          if (latitudeCol) {
-            const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
-            if (!isNaN(latValue)) {
-              updateData.latitude = latValue.toString();
-            }
-          }
-          
-          if (longitudeCol) {
-            const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
-            if (!isNaN(lonValue)) {
-              updateData.longitude = lonValue.toString();
-            }
-          }
-          
-          // TIPO DE ATENDIMENTO
           const tipoAtendimentoCol = row['TIPO DE ATENDIMENTO'] || row['Tipo de Atendimento'] || row['tipo de atendimento'] ||
-                                     row['TIPO DE ATENDIMENTO '] || row['Tipo de Atendimento '] || row['tipo de atendimento '] || // Com espaço no final
+                                     row['TIPO DE ATENDIMENTO '] || row['Tipo de Atendimento '] || row['tipo de atendimento '] ||
                                      row['TIPOATENDIMENTO'] || row['TipoAtendimento'] || row['tipoatendimento'];
-          
-          if (tipoAtendimentoCol) {
-            const tipoStr = tipoAtendimentoCol.toString().toUpperCase().trim();
-            if (tipoStr === 'VIRTUAL' || tipoStr === 'REMOTO' || tipoStr === 'ONLINE') {
-              updateData.virtualService = true;
-              console.log(`📱 Tipo de atendimento definido como VIRTUAL para cliente ${customer.fantasyName}`);
-            } else if (tipoStr === 'PRESENCIAL' || tipoStr === 'FISICO' || tipoStr === 'FÍSICO') {
-              updateData.virtualService = false;
-              console.log(`🏪 Tipo de atendimento definido como PRESENCIAL para cliente ${customer.fantasyName}`);
-            }
-          }
-          
-          // Atualizar cliente se houver dados
-          if (Object.keys(updateData).length > 0) {
-            await storage.updateCustomer(customer.id, updateData);
-            if (updateData.latitude || updateData.longitude) {
-              console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude || 'não fornecida'}, Lon=${updateData.longitude || 'não fornecida'}`);
-            }
+
+          // Validar LATITUDE (obrigatório)
+          if (!latitudeCol || latitudeCol.toString().trim() === '') {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: "Campo LATITUDE é obrigatório"
+            });
+            continue;
           }
 
-          // Ler DATA INICIO - se fornecida, será usada para calcular a data do primeiro card
+          // Validar LONGITUDE (obrigatório)
+          if (!longitudeCol || longitudeCol.toString().trim() === '') {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: "Campo LONGITUDE é obrigatório"
+            });
+            continue;
+          }
+
+          // Validar TIPO DE ATENDIMENTO (obrigatório)
+          if (!tipoAtendimentoCol || tipoAtendimentoCol.toString().trim() === '') {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: "Campo TIPO DE ATENDIMENTO é obrigatório"
+            });
+            continue;
+          }
+
+          // Processar e atualizar dados do cliente
+          const updateData: any = {};
+          
+          // LATITUDE
+          const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
+          if (isNaN(latValue)) {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: `LATITUDE inválida: "${latitudeCol}"`
+            });
+            continue;
+          }
+          updateData.latitude = latValue.toString();
+          
+          // LONGITUDE
+          const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
+          if (isNaN(lonValue)) {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: `LONGITUDE inválida: "${longitudeCol}"`
+            });
+            continue;
+          }
+          updateData.longitude = lonValue.toString();
+          
+          // TIPO DE ATENDIMENTO
+          const tipoStr = tipoAtendimentoCol.toString().toUpperCase().trim();
+          if (tipoStr === 'VIRTUAL') {
+            updateData.virtualService = true;
+            console.log(`📱 Tipo de atendimento definido como VIRTUAL para cliente ${customer.fantasyName}`);
+          } else if (tipoStr === 'PRESENCIAL') {
+            updateData.virtualService = false;
+            console.log(`🏪 Tipo de atendimento definido como PRESENCIAL para cliente ${customer.fantasyName}`);
+          } else {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: `TIPO DE ATENDIMENTO inválido: "${tipoAtendimentoCol}". Use PRESENCIAL ou VIRTUAL`
+            });
+            continue;
+          }
+          
+          // Atualizar cliente
+          await storage.updateCustomer(customer.id, updateData);
+          console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
+
+          // Ler e validar DATA INICIO (obrigatório)
           const dataInicioCol = row['DATA INICIO'] || row['Data Inicio'] || row['data inicio'] || 
                                 row['DATA INÍCIO'] || row['Data Início'] || row['data início'] ||
                                 row['DATAINICIO'] || row['DataInicio'] || row['datainicio'];
+          
+          if (!dataInicioCol || dataInicioCol.toString().trim() === '') {
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: "Campo DATA INICIO é obrigatório"
+            });
+            continue;
+          }
           
           let scheduledDateFinal = scheduledDate; // scheduledDate já calculado baseado em routeDay
           

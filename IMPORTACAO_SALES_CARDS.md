@@ -45,21 +45,19 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
      - `BIMESTRAL` ou `BIMESTRALMENTE`
    - **Obrigatório**
 
-### Colunas Opcionais
-
 5. **LATITUDE**
-   - **Uso**: Atualiza a coordenada de latitude do cliente
+   - **Uso**: Define a coordenada de latitude do cliente
    - Coordenada geográfica (latitude)
    - Aceita formato decimal (exemplo: -16.123456)
    - Aceita vírgula ou ponto como separador decimal
-   - **Opcional**
+   - **Obrigatório**
 
 6. **LONGITUDE**
-   - **Uso**: Atualiza a coordenada de longitude do cliente
+   - **Uso**: Define a coordenada de longitude do cliente
    - Coordenada geográfica (longitude)
    - Aceita formato decimal (exemplo: -48.987654)
    - Aceita vírgula ou ponto como separador decimal
-   - **Opcional**
+   - **Obrigatório**
 
 7. **DATA INICIO**
    - **Uso**: Define a data de início para criação de cards do cliente
@@ -69,8 +67,7 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
      - `DD/MM/YY` (exemplo: 25/10/25)
      - `YYYY-MM-DD` (exemplo: 2025-10-25)
      - Número serial do Excel (convertido automaticamente)
-   - Se não fornecida, o card será criado para a próxima ocorrência da ROTA a partir de hoje
-   - **Opcional**
+   - **Obrigatório**
 
 8. **TIPO DE ATENDIMENTO**
    - **Uso**: Define se o atendimento ao cliente é presencial ou virtual
@@ -78,7 +75,7 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
      - `PRESENCIAL` → Atendimento presencial (vendedor visita o cliente)
      - `VIRTUAL` → Atendimento virtual (telefone, WhatsApp, remoto)
    - Atualiza o campo `virtualService` do cliente no sistema
-   - **Opcional**
+   - **Obrigatório**
 
 ### Exemplo de Planilha
 
@@ -109,19 +106,29 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
    - Se **DATA INICIO** não for fornecida: O card será criado para a próxima ocorrência da ROTA a partir de hoje
    - Exemplo: Se hoje é quinta (20/10) e a ROTA é "segunda", com DATA INICIO em 25/10, o card será criado para segunda 27/10
 
-4. **Coordenadas Geográficas**:
-   - Se LATITUDE e/ou LONGITUDE forem fornecidas, os dados do cliente serão atualizados
+4. **Coordenadas Geográficas** (OBRIGATÓRIAS):
+   - LATITUDE e LONGITUDE são campos obrigatórios
+   - Os dados do cliente serão atualizados com estas coordenadas
    - Coordenadas são essenciais para geração de rotas otimizadas
    - Aceita tanto vírgula quanto ponto como separador decimal
+   - Se os valores forem inválidos, a importação falhará para aquele cliente
 
-5. **Tipo de Atendimento**:
+5. **Data de Início** (OBRIGATÓRIA):
+   - DATA INICIO é campo obrigatório
+   - Define quando o primeiro card será criado para o cliente
+   - O card será agendado para a próxima ocorrência da ROTA após esta data
+   - Se não for fornecida ou estiver em formato inválido, a importação falhará para aquele cliente
+
+6. **Tipo de Atendimento** (OBRIGATÓRIO):
+   - TIPO DE ATENDIMENTO é campo obrigatório
    - Define se o cliente será atendido presencialmente ou virtualmente
    - **PRESENCIAL**: vendedor visita fisicamente o cliente
    - **VIRTUAL**: atendimento remoto (telefone, WhatsApp, etc.)
-   - Apenas dois tipos disponíveis: PRESENCIAL ou VIRTUAL
+   - Apenas dois valores aceitos: PRESENCIAL ou VIRTUAL
+   - Se for fornecido valor diferente, a importação falhará para aquele cliente
    - Esta informação é usada para planejamento de rotas e gestão de tempo
 
-6. **Fallbacks**:
+7. **Fallbacks**:
    - Se o valor da ROTA não for reconhecido → usa `segunda-feira` como padrão
    - Se FREQUENCIA não for especificada → usa a periodicidade cadastrada do cliente
 
@@ -179,16 +186,18 @@ O sistema mapeia os dias para valores internos normalizados:
 - Verifique se o dia da semana em ROTA está correto
 - O sistema sempre agenda para a próxima ocorrência do dia especificado
 
-### Problema: Coordenadas não foram atualizadas
+### Problema: Importação falhou - campos obrigatórios vazios
 
 **Causas possíveis**:
-1. Formato incorreto (usar ponto ou vírgula como decimal)
-2. Valores vazios
+1. LATITUDE, LONGITUDE, DATA INICIO ou TIPO DE ATENDIMENTO estão vazios
+2. Formato incorreto dos valores
 
 **Solução**:
+- Verifique se LATITUDE e LONGITUDE estão preenchidos
 - Use formato decimal: -16.123456 ou -16,123456
-- Verifique se os valores não estão como texto
-- Ambos LATITUDE e LONGITUDE podem ser fornecidos separadamente
+- DATA INICIO deve estar no formato DD/MM/YYYY
+- TIPO DE ATENDIMENTO deve ser PRESENCIAL ou VIRTUAL
+- Todos estes 4 campos são obrigatórios
 
 ### Problema: Tipo de atendimento não foi atualizado
 
