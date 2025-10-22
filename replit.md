@@ -7,12 +7,25 @@
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
 
-# Recent Changes (October 20, 2025)
+# Recent Changes (October 22, 2025)
 
-## Agenda de Vendas - New Features
+## Excel Import/Export Improvements
+- **Excel Export with CNPJ/CPF**: Enhanced export functionality in Agenda de Vendas now includes CNPJ/CPF field with proper formatting (CPF: 000.000.000-00, CNPJ: 00.000.000/0000-00). Automatically detects and formats based on document length (11 digits = CPF, 14 digits = CNPJ).
+- **Enhanced Sales Card Import**: Completely redesigned bulk import for sales cards with new fields:
+  - **CNPJ/CPF**: Used as primary key for customer identification
+  - **Cliente (Nome Fantasia)**: For visual reference only (not used for lookups)
+  - **ROTA**: Updates the route day for the customer's card
+  - **FREQUENCIA**: Updates visit frequency (semanal, quinzenal, mensal, bimestral)
+  - **LATITUDE**: Updates customer's latitude coordinate (accepts comma or period as decimal separator)
+  - **LONGITUDE**: Updates customer's longitude coordinate (accepts comma or period as decimal separator)
+  - **DATA INICIO**: Defines start date for card creation. First card is scheduled for the next occurrence of ROTA after this date. Supports DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, and Excel serial date formats.
+  - **OBSERVAÇÕES/IMPEDIMENTO**: If filled, prevents card creation for that customer. Used for temporary blocks (e.g., "Cliente em férias", "Aguardando pagamento").
+- **Synchronization Timeout Fix**: Increased timeout from 2 to 5 minutes (300000ms) for "Sincronizar Agenda" operation to prevent "aborted without reason" errors during large batch processing.
+
+## Agenda de Vendas - Previous Features (October 20, 2025)
 - **Seller Filter**: Added dropdown filter to view sales cards by specific seller or all sellers (visible only for admin/coordinator/administrative roles). Fixed to properly display seller names (firstName + lastName) with fallback to email
 - **Fantasy Name Display**: Sales cards now prominently display the fantasy name (nome fantasia) as the main title, with company name (razão social) shown as a subtitle when both exist
-- **Excel Export**: Implemented comprehensive export functionality that exports ALL filtered sales cards (not just current page) to Excel with complete customer and sales information including: Data Agendada, Cliente, Razão Social, Telefone, Endereço, Cidade, Estado, Vendedor, Status, Tipo de Recorrência, Dias da Semana, Valor da Venda, and Atendimento type
+- **Excel Export**: Implemented comprehensive export functionality that exports ALL filtered sales cards (not just current page) to Excel with complete customer and sales information including: Data Agendada, Cliente, Razão Social, CNPJ/CPF (formatted), Telefone, Endereço, Cidade, Estado, Vendedor, Status, Tipo de Recorrência, Dias da Semana, Valor da Venda, and Atendimento type
 - **Seller Name in Cards**: Sales cards now display the seller's full name (firstName + lastName) with User icon, with fallback to email if name is unavailable
 - **Geographic Coordinates**: Cards display customer's latitude and longitude when available, formatted with 6 decimal places and shown with MapPin icon in blue. Fixed API to include these fields in the response (storage.ts getSalesCardsByDayAndDate)
 - **CPF/CNPJ Display**: Cards now show customer's CNPJ (priority) or CPF when available

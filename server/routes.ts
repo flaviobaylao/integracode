@@ -1681,7 +1681,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'quarta': 'quarta', 'quarta-feira': 'quarta', 'quarta feira': 'quarta', 'qua': 'quarta',
               'quinta': 'quinta', 'quinta-feira': 'quinta', 'quinta feira': 'quinta', 'qui': 'quinta',
               'sexta': 'sexta', 'sexta-feira': 'sexta', 'sexta feira': 'sexta', 'sex': 'sexta',
-              'sábado': 'sabado', 'sabado': 'sabado', 'sábado': 'sabado', 'sab': 'sabado',
+              'sábado': 'sabado', 'sabado': 'sabado', 'sab': 'sabado',
               'domingo': 'domingo', 'dom': 'domingo'
             };
             
@@ -1690,11 +1690,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               routeDay = normalizedDay;
               console.log(`✅ Dia da rota lido da planilha: "${routeDayCol}" → "${routeDay}" para cliente ${customer.fantasyName}`);
             } else {
-              // Valor não reconhecido, usar fallback
-              const dayOfWeek = scheduledDate.getDay();
-              const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-              routeDay = weekdayNames[dayOfWeek];
-              console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando calculado: "${routeDay}" para cliente ${customer.fantasyName}`);
+              // Valor não reconhecido, usar fallback segunda-feira
+              routeDay = 'segunda';
+              console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando fallback: "segunda" para cliente ${customer.fantasyName}`);
             }
           } else {
             // Fallback: usar próxima segunda-feira
@@ -1744,9 +1742,121 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
           console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
+          // Ler OBSERVAÇÕES/IMPEDIMENTO - se preenchido, não criar card
+          const observacoesCol = row['OBSERVAÇÕES/IMPEDIMENTO'] || row['Observações/Impedimento'] || row['observações/impedimento'] || 
+                                 row['OBSERVACOES/IMPEDIMENTO'] || row['Observacoes/Impedimento'] || row['observacoes/impedimento'] ||
+                                 row['OBSERVAÇÕES'] || row['Observações'] || row['observações'] || row['OBSERVACOES'] || row['Observacoes'] || row['observacoes'] ||
+                                 row['IMPEDIMENTO'] || row['Impedimento'] || row['impedimento'];
+          
+          if (observacoesCol && observacoesCol.toString().trim().length > 0) {
+            console.log(`⚠️ Campo OBSERVAÇÕES/IMPEDIMENTO preenchido para cliente ${customer.fantasyName}. Card NÃO será criado.`);
+            results.errors.push({
+              row: i + 2,
+              customer: customer.fantasyName,
+              error: `Cliente com observação/impedimento: "${observacoesCol}". Card não criado.`
+            });
+            continue;
+          }
+
+          // Ler e atualizar LATITUDE e LONGITUDE se fornecidos
+          const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
+          const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
+          
+          if (latitudeCol || longitudeCol) {
+            const updateData: any = {};
+            
+            if (latitudeCol) {
+              const latValue = parseFloat(latitudeCol.toString().replace(',', '.'));
+              if (!isNaN(latValue)) {
+                updateData.latitude = latValue.toString();
+              }
+            }
+            
+            if (longitudeCol) {
+              const lonValue = parseFloat(longitudeCol.toString().replace(',', '.'));
+              if (!isNaN(lonValue)) {
+                updateData.longitude = lonValue.toString();
+              }
+            }
+            
+            if (Object.keys(updateData).length > 0) {
+              await storage.updateCustomer(customer.id, updateData);
+              console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude || 'não fornecida'}, Lon=${updateData.longitude || 'não fornecida'}`);
+            }
+          }
+
+          // Ler DATA INICIO - se fornecida, será usada para calcular a data do primeiro card
+          const dataInicioCol = row['DATA INICIO'] || row['Data Inicio'] || row['data inicio'] || 
+                                row['DATA INÍCIO'] || row['Data Início'] || row['data início'] ||
+                                row['DATAINICIO'] || row['DataInicio'] || row['datainicio'];
+          
+          let scheduledDateFinal = scheduledDate; // scheduledDate já calculado baseado em routeDay
+          
+          if (dataInicioCol) {
+            try {
+              // Tentar parsear a data de diferentes formatos
+              let dataInicio: Date;
+              const dataStr = dataInicioCol.toString().trim();
+              
+              // Se for um número (serial do Excel), converter
+              if (!isNaN(Number(dataStr))) {
+                // Excel serial date number (número de dias desde 1900-01-01)
+                const excelEpoch = new Date(1900, 0, 1);
+                const days = parseInt(dataStr) - 2; // -2 porque Excel conta 1900 incorretamente como ano bissexto
+                dataInicio = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+              } else if (dataStr.includes('/')) {
+                // Formato DD/MM/YYYY ou DD/MM/YY
+                const parts = dataStr.split('/');
+                if (parts.length === 3) {
+                  const day = parseInt(parts[0]);
+                  const month = parseInt(parts[1]) - 1; // Mês é 0-indexed
+                  let year = parseInt(parts[2]);
+                  if (year < 100) year += 2000; // Converter YY para YYYY
+                  dataInicio = new Date(year, month, day);
+                } else {
+                  throw new Error('Formato de data inválido');
+                }
+              } else if (dataStr.includes('-')) {
+                // Formato YYYY-MM-DD ou DD-MM-YYYY
+                dataInicio = new Date(dataStr);
+              } else {
+                throw new Error('Formato de data inválido');
+              }
+              
+              // Validar que a data foi parseada corretamente
+              if (isNaN(dataInicio.getTime())) {
+                throw new Error('Data inválida');
+              }
+              
+              // Encontrar a próxima ocorrência do routeDay APÓS a DATA INICIO
+              const targetDayNumber = routeDayToNumber[routeDay];
+              let nextVisitDate = new Date(dataInicio);
+              nextVisitDate.setHours(0, 0, 0, 0);
+              
+              // Calcular dias até o próximo routeDay
+              const currentDayNumber = nextVisitDate.getDay();
+              let daysUntilTarget = targetDayNumber - currentDayNumber;
+              
+              // Se o dia já passou ou é hoje, ir para próxima semana
+              if (daysUntilTarget <= 0) {
+                daysUntilTarget += 7;
+              }
+              
+              nextVisitDate.setDate(nextVisitDate.getDate() + daysUntilTarget);
+              scheduledDateFinal = nextVisitDate;
+              
+              console.log(`📅 DATA INICIO fornecida (${dataInicio.toLocaleDateString('pt-BR')}). Primeira visita agendada para próximo ${routeDay}: ${scheduledDateFinal.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
+            } catch (dateError) {
+              console.error(`⚠️ Erro ao processar DATA INICIO "${dataInicioCol}" para cliente ${customer.fantasyName}:`, dateError);
+              // Continuar usando scheduledDate calculado anteriormente
+            }
+          }
+
           // Ler periodicidade/recurrenceType da planilha (prioridade) ou do cliente
           let recurrenceType: string;
-          const periodicityCol = row.Periodicidade || row.periodicidade || row.PERIODICIDADE || row.Recorrencia || row.recorrencia;
+          const periodicityCol = row.FREQUENCIA || row.Frequencia || row.frequencia || 
+                                 row.Periodicidade || row.periodicidade || row.PERIODICIDADE || 
+                                 row.Recorrencia || row.recorrencia;
           
           if (periodicityCol) {
             // Normalizar periodicidade da planilha
@@ -1755,7 +1865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'semanal': 'semanal', 'semanalmente': 'semanal', '7 dias': 'semanal', '1 semana': 'semanal',
               'quinzenal': 'quinzenal', 'quinzenalmente': 'quinzenal', '15 dias': 'quinzenal', '2 semanas': 'quinzenal',
               'mensal': 'mensal', 'mensalmente': 'mensal', '30 dias': 'mensal', '1 mês': 'mensal', '1 mes': 'mensal',
-              'bimestral': 'bimestral', 'bimestralmente': 'bimestral', '60 dias': 'bimestral', '2 meses': 'bimestral', '2 meses': 'bimestral'
+              'bimestral': 'bimestral', 'bimestralmente': 'bimestral', '60 dias': 'bimestral', '2 meses': 'bimestral'
             };
             
             const normalizedPeriod = periodMap[periodStr];
@@ -1778,7 +1888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerId: customer.id,
             sellerId: user.role === 'vendedor' ? user.id : (customer.sellerId || user.id),
             status: 'pending',
-            scheduledDate,
+            scheduledDate: scheduledDateFinal,
             routeDay,
             recurrenceType,
             isRecurring: true,

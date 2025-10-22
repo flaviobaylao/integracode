@@ -10,12 +10,20 @@ Este documento descreve o formato correto para importação em massa de Sales Ca
 
 A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 
-1. **CNPJ/CPF** ou **Cliente (Nome Fantasia)**
-   - Identificação do cliente
-   - Pode ser CNPJ/CPF ou nome fantasia
-   - O sistema tentará localizar o cliente pelo documento primeiro, depois pelo nome
+1. **CNPJ/CPF**
+   - **Uso**: Chave de identificação do cliente
+   - Identificação do cliente por documento
+   - O sistema buscará o cliente pelo CNPJ/CPF cadastrado no sistema
+   - **Obrigatório**
 
-2. **ROTA** ou **Dia da Rota** ou **Dia**
+2. **Cliente (Nome Fantasia)**
+   - **Uso**: Apenas para conferência visual na planilha
+   - Nome fantasia do cliente
+   - Não é usado para busca, apenas para referência do usuário
+   - **Opcional**
+
+3. **ROTA**
+   - **Uso**: Atualiza o dia da semana do card do cliente
    - Dia da semana para a visita
    - Formatos aceitos (case-insensitive):
      - `SEGUNDA-FEIRA`, `segunda-feira`, `Segunda`, `SEG`
@@ -25,22 +33,60 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
      - `SEXTA-FEIRA`, `sexta-feira`, `Sexta`, `SEX`
      - `SÁBADO`, `SABADO`, `sábado`, `Sábado`, `SAB`
      - `DOMINGO`, `domingo`, `Domingo`, `DOM`
+   - **Obrigatório**
 
-3. **FREQUENCIA** ou **Periodicidade** ou **Recorrencia**
-   - Periodicidade da visita
+4. **FREQUENCIA**
+   - **Uso**: Atualiza a frequência de visitas do card do cliente
+   - Periodicidade da visita (semanal, quinzenal ou mensal)
    - Valores aceitos (case-insensitive):
      - `SEMANAL` ou `SEMANALMENTE`
      - `QUINZENAL` ou `QUINZENALMENTE`
      - `MENSAL` ou `MENSALMENTE`
+     - `BIMESTRAL` ou `BIMESTRALMENTE`
+   - **Obrigatório**
+
+### Colunas Opcionais
+
+5. **LATITUDE**
+   - **Uso**: Atualiza a latitude do card do cliente
+   - Coordenada geográfica (latitude)
+   - Aceita formato decimal (exemplo: -16.123456)
+   - Aceita vírgula ou ponto como separador decimal
+   - **Opcional**
+
+6. **LONGITUDE**
+   - **Uso**: Atualiza a longitude do card do cliente
+   - Coordenada geográfica (longitude)
+   - Aceita formato decimal (exemplo: -48.987654)
+   - Aceita vírgula ou ponto como separador decimal
+   - **Opcional**
+
+7. **DATA INICIO**
+   - **Uso**: Define a data de início para criação de cards do cliente
+   - O primeiro card de vendas será alocado considerando a ROTA do cliente e será criado para data imediatamente após a DATA INICIO
+   - Formatos aceitos:
+     - `DD/MM/YYYY` (exemplo: 25/10/2025)
+     - `DD/MM/YY` (exemplo: 25/10/25)
+     - `YYYY-MM-DD` (exemplo: 2025-10-25)
+     - Número serial do Excel (convertido automaticamente)
+   - Se não fornecida, o card será criado para a próxima ocorrência da ROTA
+   - **Opcional**
+
+8. **OBSERVAÇÕES/IMPEDIMENTO**
+   - **Uso**: Campo livre para observações ou impedimentos
+   - ⚠️ **IMPORTANTE**: Se este campo estiver preenchido, o card **NÃO será criado** para o cliente
+   - Use este campo para registrar clientes que não devem ter cards criados no momento
+   - Exemplo: "Cliente em férias", "Renegociação em andamento", "Aguardando pagamento"
+   - **Opcional**
 
 ### Exemplo de Planilha
 
-| CNPJ/CPF | Cliente (Nome Fantasia) | ROTA | FREQUENCIA |
-|----------|------------------------|------|------------|
-| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | QUARTA-FEIRA | SEMANAL |
-| 00.065.979/0001-86 | MERCADINHO JAO | SEGUNDA-FEIRA | SEMANAL |
-| 00.066.852/0001-81 | SUPERMERCADO RIO DAS PEDRAS | SEGUNDA-FEIRA | QUINZENAL |
-| 00.104.071/0001-34 | PANIFICADORA LAGO DAS ROSAS | TERÇA-FEIRA | MENSAL |
+| CNPJ/CPF | Cliente (Nome Fantasia) | ROTA | FREQUENCIA | LATITUDE | LONGITUDE | DATA INICIO | OBSERVAÇÕES/IMPEDIMENTO |
+|----------|------------------------|------|------------|----------|-----------|-------------|-------------------------|
+| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | QUARTA-FEIRA | SEMANAL | -16.123456 | -48.987654 | 25/10/2025 | |
+| 00.065.979/0001-86 | MERCADINHO JAO | SEGUNDA-FEIRA | SEMANAL | -16.234567 | -48.876543 | | |
+| 00.066.852/0001-81 | SUPERMERCADO RIO DAS PEDRAS | SEGUNDA-FEIRA | QUINZENAL | | | 01/11/2025 | |
+| 00.104.071/0001-34 | PANIFICADORA LAGO DAS ROSAS | TERÇA-FEIRA | MENSAL | | | | Cliente em férias |
 
 ## Como Importar
 
@@ -54,17 +100,26 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 
 ### Regras de Importação
 
-1. **Validação de Cliente**: O sistema procura o cliente por CNPJ/CPF ou nome fantasia. Se não encontrar, o card **não será criado**.
+1. **Validação de Cliente**: O sistema procura o cliente por CNPJ/CPF. Se não encontrar, o card **não será criado**.
 
 2. **Cards Existentes**: Se o cliente já tiver um card ativo (status `pending` ou `telemarketing`), um **novo card NÃO será criado** para evitar duplicatas.
 
-3. **Data Agendada**: O sistema calcula automaticamente a próxima data de visita baseada no dia da rota especificado:
-   - Se hoje é quinta-feira e a rota é "segunda", o card será agendado para a próxima segunda-feira
-   - Se a rota é "hoje" (mesmo dia), o card é criado para hoje
+3. **Data Agendada**: 
+   - Se **DATA INICIO** for fornecida: O card será criado para a próxima ocorrência da ROTA após essa data
+   - Se **DATA INICIO** não for fornecida: O card será criado para a próxima ocorrência da ROTA a partir de hoje
+   - Exemplo: Se hoje é quinta (20/10) e a ROTA é "segunda", com DATA INICIO em 25/10, o card será criado para segunda 27/10
 
-4. **Fallbacks**:
-   - Se a coluna ROTA não for encontrada ou estiver vazia → usa `segunda-feira` como padrão
-   - Se o valor da ROTA não for reconhecido → calcula baseado na data agendada
+4. **Coordenadas Geográficas**:
+   - Se LATITUDE e/ou LONGITUDE forem fornecidas, os dados do cliente serão atualizados
+   - Coordenadas são essenciais para geração de rotas otimizadas
+
+5. **Impedimentos**:
+   - Se o campo OBSERVAÇÕES/IMPEDIMENTO estiver preenchido, o card **não será criado**
+   - O sistema registrará a observação nos logs de erro
+   - Use este campo para clientes que temporariamente não devem receber visitas
+
+6. **Fallbacks**:
+   - Se o valor da ROTA não for reconhecido → usa `segunda-feira` como padrão
    - Se FREQUENCIA não for especificada → usa a periodicidade cadastrada do cliente
 
 ## Mapeamento Interno
@@ -85,44 +140,47 @@ O sistema mapeia os dias para valores internos normalizados:
 ### Periodicidade
 | Entrada na Planilha | Valor Interno |
 |---------------------|---------------|
-| SEMANAL, SEMANALMENTE | `weekly` |
-| QUINZENAL, QUINZENALMENTE | `biweekly` |
-| MENSAL, MENSALMENTE | `monthly` |
+| SEMANAL, SEMANALMENTE | `semanal` |
+| QUINZENAL, QUINZENALMENTE | `quinzenal` |
+| MENSAL, MENSALMENTE | `mensal` |
+| BIMESTRAL, BIMESTRALMENTE | `bimestral` |
 
 ## Resolução de Problemas
 
-### Problema: Todos os cards foram criados para segunda-feira
-
-**Causa**: A coluna "ROTA" não foi encontrada na planilha ou está com nome diferente.
-
-**Solução**: 
-- Verifique se a planilha tem uma coluna chamada exatamente "ROTA" (maiúsculas/minúsculas não importam)
-- Alternativas aceitas: "Dia da Rota", "Dia", "rota"
-- **Prioridade**: O sistema procura primeiro por "ROTA", depois "Dia da Rota", depois "Dia"
-
-### Problema: Cliente não foi importado
+### Problema: Card não foi criado para um cliente
 
 **Causas possíveis**:
-1. Cliente não existe no sistema
-2. CNPJ/CPF está incorreto ou não está normalizado
+1. Campo OBSERVAÇÕES/IMPEDIMENTO está preenchido
+2. Cliente não existe no sistema (CNPJ/CPF não encontrado)
 3. Cliente já possui card ativo (pending ou telemarketing)
 
 **Solução**:
+- Verifique se o campo OBSERVAÇÕES/IMPEDIMENTO está vazio
 - Verifique se o cliente existe no cadastro
 - Para CNPJ/CPF, não importa se tem pontos/traços - o sistema normaliza automaticamente
 - Verifique se há cards pendentes para este cliente antes de importar
 
-### Problema: Erro ao processar planilha
+### Problema: Data do card está incorreta
 
 **Causas possíveis**:
-1. Arquivo corrompido
-2. Formato não suportado
-3. Planilha vazia
+1. Campo DATA INICIO está em formato não reconhecido
+2. Campo ROTA está incorreto
 
 **Solução**:
-- Salve a planilha novamente em formato .xlsx
-- Verifique se há pelo menos uma linha de dados (além do cabeçalho)
-- Tente com um arquivo menor primeiro para testar
+- Use formato DD/MM/YYYY para DATA INICIO (exemplo: 25/10/2025)
+- Verifique se o dia da semana em ROTA está correto
+- O sistema sempre agenda para a próxima ocorrência do dia especificado
+
+### Problema: Coordenadas não foram atualizadas
+
+**Causas possíveis**:
+1. Formato incorreto (usar ponto ou vírgula como decimal)
+2. Valores vazios
+
+**Solução**:
+- Use formato decimal: -16.123456 ou -16,123456
+- Verifique se os valores não estão como texto
+- Ambos LATITUDE e LONGITUDE podem ser fornecidos separadamente
 
 ## Logs e Debugging
 
@@ -130,22 +188,32 @@ Durante a importação, o sistema gera logs detalhados no console do servidor:
 
 ```
 ✅ Dia da rota lido da planilha: "QUARTA-FEIRA" → "quarta" para cliente SUPERMERCADO PINTA SILGO
-⚠️ Dia da rota não encontrado na planilha, usando fallback: "segunda" para cliente MERCADINHO JAO
-📅 Card criado para próximo quarta: 23/10/2025 para cliente SUPERMERCADO PINTA SILGO
+✅ Periodicidade lida da planilha: "SEMANAL" → "semanal" para cliente SUPERMERCADO PINTA SILGO
+📍 Coordenadas atualizadas para cliente SUPERMERCADO PINTA SILGO: Lat=-16.123456, Lon=-48.987654
+📅 DATA INICIO fornecida (25/10/2025). Primeira visita agendada para próximo quarta: 29/10/2025 para cliente SUPERMERCADO PINTA SILGO
+⚠️ Campo OBSERVAÇÕES/IMPEDIMENTO preenchido para cliente PANIFICADORA LAGO DAS ROSAS. Card NÃO será criado.
 ```
 
 Estes logs ajudam a identificar:
 - Se a coluna ROTA foi lida corretamente
 - Qual dia da semana foi atribuído a cada card
-- Se algum fallback foi usado
+- Se coordenadas foram atualizadas
+- Se DATA INICIO foi processada
+- Se algum cliente foi bloqueado por OBSERVAÇÕES/IMPEDIMENTO
 
-## Histórico de Correções
+## Histórico de Atualizações
+
+### Outubro 2025 - Novos Campos
+- **Adicionado**: Suporte para LATITUDE e LONGITUDE
+- **Adicionado**: Campo DATA INICIO para controle da primeira visita
+- **Adicionado**: Campo OBSERVAÇÕES/IMPEDIMENTO para bloquear criação de cards
+- **Modificado**: FREQUENCIA agora é lido prioritariamente (antes era Periodicidade)
+- **Modificado**: Cliente (Nome Fantasia) agora é apenas para conferência
 
 ### Outubro 2025 - Correção do Bug de Alocação
 - **Problema**: Todos os cards eram alocados para segunda-feira independente do valor em ROTA
 - **Causa**: O código procurava por "Dia da Rota" mas a planilha usava "ROTA"
 - **Solução**: Adicionado "ROTA" como primeira opção de busca de coluna
-- **Arquivo modificado**: `server/routes.ts` linha 1533
 
 ## Contato
 
