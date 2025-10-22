@@ -1912,10 +1912,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`⚠️ Periodicidade não encontrada na planilha, usando do cliente: "${recurrenceType}" para cliente ${customer.fantasyName}`);
           }
 
+          // Determinar sellerId válido
+          let finalSellerId: string;
+          if (user.role === 'vendedor') {
+            finalSellerId = user.id;
+          } else {
+            // Usar sellerId do cliente ou do usuário atual
+            const candidateSellerId = customer.sellerId || user.id;
+            
+            // Verificar se o sellerId existe no sistema
+            const sellerExists = await storage.getUser(candidateSellerId);
+            
+            if (sellerExists) {
+              finalSellerId = candidateSellerId;
+            } else {
+              // Se o vendedor não existe, usar vendedor "Desconhecido"
+              finalSellerId = 'unknown-vendor';
+              console.warn(`⚠️ Vendedor "${candidateSellerId}" não encontrado para cliente ${customer.fantasyName}. Usando vendedor "Desconhecido".`);
+            }
+          }
+
           // Criar card de venda
           await storage.createSalesCard({
             customerId: customer.id,
-            sellerId: user.role === 'vendedor' ? user.id : (customer.sellerId || user.id),
+            sellerId: finalSellerId,
             status: 'pending',
             scheduledDate: scheduledDateFinal,
             routeDay,

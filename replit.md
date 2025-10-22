@@ -9,8 +9,13 @@
 
 # Recent Changes (October 22, 2025)
 
-## Sales Cards Import - Critical Bug Fix
+## Sales Cards Import - Critical Bug Fixes
 - **CPF/CNPJ Search Fix**: Fixed critical bug in bulk import where customers with CPF (Pessoa Física) were not being found. Previously, the import used `getCustomerByCnpj()` which only searched the `cnpj` field. Created new `getCustomerByDocument()` method that searches both `cpf` and `cnpj` fields using `or()` condition. This fix allows the system to correctly find and import sales cards for individuals (CPF) as well as companies (CNPJ). Impact: 164 previously "not found" customers are now correctly identified (160 CPFs + 4 CNPJs).
+- **Orphan Cards Fix**: Implemented automatic handling of sales cards with invalid seller IDs. Created "Vendedor Desconhecido" (unknown-vendor) user that automatically receives cards when their assigned seller doesn't exist in the system. This fixes the issue where 90 cards were invisible in the Agenda de Vendas due to INNER JOIN with non-existent sellers from Omie sync. The system now:
+  - Creates the "Vendedor Desconhecido" user on application startup if it doesn't exist
+  - During import, validates seller IDs and assigns cards to "Vendedor Desconhecido" if seller not found
+  - Fixed existing 90 orphan cards by reassigning them to "Vendedor Desconhecido"
+  - All 837 imported cards now appear correctly in the sales agenda
 
 ## Agenda de Vendas - Filter Improvements
 - **All Days Filter**: Added "📅 Todos os Dias" option in the day-of-week filter, allowing users to view sales cards from all weekdays within the selected date range. Uses new endpoint `/api/sales-cards/all-days` and `getSalesCardsByDateRange` storage method.

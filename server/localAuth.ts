@@ -153,6 +153,24 @@ export async function initializeDefaultAdmin(): Promise<User | null> {
       console.log('✅ Usuário admin criado com sucesso:', adminUser.email, '- Role:', adminUser.role);
     }
     
+    // Garantir que existe vendedor "Desconhecido" para cards órfãos
+    const existingUnknown = await storage.getUser('unknown-vendor');
+    if (!existingUnknown) {
+      // Usar senha aleatória impossível de adivinhar (conta não deve fazer login)
+      const randomPassword = Math.random().toString(36).slice(-16) + Math.random().toString(36).slice(-16);
+      const unknownPassword = await hashPassword(randomPassword);
+      await storage.upsertUser({
+        id: 'unknown-vendor',
+        email: 'vendedor.desconhecido@sistema.local',
+        password: unknownPassword,
+        firstName: 'Vendedor',
+        lastName: 'Desconhecido',
+        role: 'vendedor',
+        isActive: false // Inativo para login, mas permite aparecer em queries
+      });
+      console.log('✅ Vendedor "Desconhecido" criado para alocar cards órfãos');
+    }
+    
     return adminUser;
   } catch (error) {
     console.error('❌ Erro ao inicializar admin padrão:', error);
