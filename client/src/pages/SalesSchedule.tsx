@@ -329,6 +329,22 @@ export default function SalesSchedule() {
         const response = await fetch(`/api/sales-cards/critically-overdue?${params}`);
         if (!response.ok) throw new Error('Failed to fetch overdue cards');
         allCards = await response.json();
+      } else if (selectedDay === 'todos') {
+        // Se "todos" for selecionado, usar endpoint que busca todos os dias
+        const params = new URLSearchParams({
+          startDate,
+          endDate,
+          limit: '10000' // Limite alto para pegar todos os cards
+        });
+        
+        if (selectedSeller !== 'all') {
+          params.append('sellerId', selectedSeller);
+        }
+        
+        const response = await fetch(`/api/sales-cards/all-days?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch cards');
+        const data = await response.json();
+        allCards = data.cards;
       } else {
         // Buscar todos os cards sem limite de paginação
         const params = new URLSearchParams({
