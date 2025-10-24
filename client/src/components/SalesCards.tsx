@@ -174,13 +174,27 @@ export default function SalesCards() {
       setImportFile(null);
       
       let description = data.message;
+      
+      // Se houver erros, mostrar resumo detalhado
       if (data.results?.errors?.length > 0) {
-        description += `\n\nErros encontrados: ${data.results.errors.length}`;
+        description += `\n\n❌ Erros encontrados: ${data.results.errors.length}`;
+        
+        // Se houver errorSummary, exibir contagem por tipo de erro
+        if (data.results.errorSummary && Object.keys(data.results.errorSummary).length > 0) {
+          description += '\n\nDetalhamento:';
+          Object.entries(data.results.errorSummary).forEach(([errorType, count]) => {
+            description += `\n- ${errorType}: ${count}`;
+          });
+        }
+        
+        description += '\n\nConsulte o console do navegador (F12) para ver os detalhes completos.';
+        console.log('📋 Erros da importação:', data.results.errors);
       }
       
       toast({
-        title: "Importação Concluída",
+        title: data.results?.errors?.length > 0 ? "Importação Concluída com Erros" : "Importação Concluída com Sucesso",
         description,
+        variant: data.results?.errors?.length > 0 ? "default" : "default",
       });
     },
     onError: (error: any) => {
