@@ -1661,19 +1661,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Verificar se já existe card pendente para este cliente
           const existingCards = await storage.getSalesCards();
           const ACTIVE_STATUSES = ['pending', 'telemarketing'];
-          const hasActiveCard = existingCards.some(
+          const existingActiveCard = existingCards.find(
             card => card.customerId === customer.id && ACTIVE_STATUSES.includes(card.status)
           );
 
-          if (hasActiveCard) {
-            results.errors.push({
-              row: i + 2,
-              document,
-              customer: customer.fantasyName,
-              error: "Cliente já possui card ativo (pendente ou em telemarketing)"
-            });
-            continue;
-          }
+          // Se já existe card ativo, vamos atualizar as coordenadas dele mais tarde
+          // (depois de processar latitude/longitude da planilha)
+          const shouldUpdateExistingCard = !!existingActiveCard;
 
           // Ler routeDay da planilha (prioridade absoluta)
           let routeDay: string;
@@ -1987,18 +1981,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
 
-          // Criar card de venda
-          await storage.createSalesCard({
-            customerId: customer.id,
-            sellerId: finalSellerId,
-            status: 'pending',
-            scheduledDate: scheduledDateFinal,
-            routeDay,
-            recurrenceType,
-            isRecurring: true,
-            exclusiveVehicle: false,
-            vehicleTypes: ['moto', 'carro', 'caminhao']
-          });
+          // Criar ou atualizar card de venda
+          if (shouldUpdateExistingCard && existingActiveCard) {
+            // Atualizar card existente com as coordenadas atualizadas do cliente
+            const updateCardData: any = {};
+            
+            // Copiar coordenadas atualizadas do cliente para o card
+            if (updateData.latitude) {
+              updateCardData.customerLatitude = updateData.latitude;
+            }
+            if (updateData.longitude) {
+              updateCardData.customerLongitude = updateData.longitude;
+            }
+            
+            if (Object.keys(updateCardData).length > 0) {
+              await storage.updateSalesCard(existingActiveCard.id, updateCardData);
+              console.log(`🔄 Card atualizado com coordenadas para cliente ${customer.fantasyName}: LAT=${updateCardData.customerLatitude}, LON=${updateCardData.customerLongitude}`);
+            } else {
+              console.log(`🔄 Card existente para cliente ${customer.fantasyName} (sem novas coordenadas para atualizar)`);
+            }
+            
+            results.updated++;
+          } else {
+            // Criar novo card de venda
+            await storage.createSalesCard({
+              customerId: customer.id,
+              sellerId: finalSellerId,
+              status: 'pending',
+              scheduledDate: scheduledDateFinal,
+              routeDay,
+              recurrenceType,
+              isRecurring: true,
+              exclusiveVehicle: false,
+              vehicleTypes: ['moto', 'carro', 'caminhao']
+            });
+            results.created++;
+          }
 
         } catch (rowError: any) {
           console.error(`Erro ao processar linha ${i + 2}:`, rowError);
