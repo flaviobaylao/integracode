@@ -1956,10 +1956,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Gerar resumo detalhado dos erros
+      const errorSummary: Record<string, number> = {};
+      results.errors.forEach(err => {
+        const errorType = err.error || 'Erro desconhecido';
+        errorSummary[errorType] = (errorSummary[errorType] || 0) + 1;
+      });
+
+      const cardsSuccessfullyImported = results.total - results.errors.length;
+      
+      console.log(`\n📊 RESUMO DA IMPORTAÇÃO:`);
+      console.log(`   Total de linhas: ${results.total}`);
+      console.log(`   ✅ Cards importados com sucesso: ${cardsSuccessfullyImported}`);
+      console.log(`   ❌ Erros: ${results.errors.length}`);
+      
+      if (Object.keys(errorSummary).length > 0) {
+        console.log(`\n❌ DETALHAMENTO DOS ERROS:`);
+        Object.entries(errorSummary).forEach(([errorType, count]) => {
+          console.log(`   - ${errorType}: ${count} ocorrências`);
+        });
+      }
+
       res.json({
         success: true,
-        message: `Importação concluída: ${results.created} clientes criados, ${results.updated} atualizados`,
-        results
+        message: `Importação concluída: ${cardsSuccessfullyImported} cards importados, ${results.errors.length} erros`,
+        results: {
+          ...results,
+          successfulImports: cardsSuccessfullyImported,
+          errorSummary
+        }
       });
 
     } catch (error: any) {
