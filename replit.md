@@ -1,54 +1,11 @@
 # Overview
 
-"Sistema Integra" is a CRM system for Honest Sucos, a Brazilian juice company. Its main purpose is to optimize sales management by providing features for customer relationship management, product catalog administration, sales card tracking, and integrated WhatsApp communication. The system supports various user roles with role-based access control and offers extensive sales tracking and reporting capabilities to improve business operations and expand market reach.
+"Sistema Integra" is a comprehensive CRM and sales management system designed for Honest Sucos, a Brazilian juice company. Its core purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system supports various user roles with fine-grained access control and offers robust sales tracking, reporting, and route optimization features to enhance business efficiency, improve customer service, and expand market reach.
 
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
-
-# Recent Changes (October 24, 2025)
-
-## Deployment Build Fix
-- **Static Assets Fix**: Fixed critical issue where the application showed a blank white screen after deployment. The problem was caused by `attached_assets/` folder (containing favicon, icons, and images) not being included in the production build. Solution: Copied attached_assets to `client/public/attached_assets/` so Vite automatically includes them in the build output at `dist/public/attached_assets/`. This ensures all static assets are available in the deployed application.
-
-# Recent Changes (October 22, 2025)
-
-## Sales Cards Import - Critical Bug Fixes
-- **CPF/CNPJ Search Fix**: Fixed critical bug in bulk import where customers with CPF (Pessoa Física) were not being found. Previously, the import used `getCustomerByCnpj()` which only searched the `cnpj` field. Created new `getCustomerByDocument()` method that searches both `cpf` and `cnpj` fields using `or()` condition. This fix allows the system to correctly find and import sales cards for individuals (CPF) as well as companies (CNPJ). Impact: 164 previously "not found" customers are now correctly identified (160 CPFs + 4 CNPJs).
-- **Orphan Cards Fix**: Implemented automatic handling of sales cards with invalid seller IDs. Created "Vendedor Desconhecido" (unknown-vendor) user that automatically receives cards when their assigned seller doesn't exist in the system. This fixes the issue where 90 cards were invisible in the Agenda de Vendas due to INNER JOIN with non-existent sellers from Omie sync. The system now:
-  - Creates the "Vendedor Desconhecido" user on application startup if it doesn't exist
-  - During import, validates seller IDs and assigns cards to "Vendedor Desconhecido" if seller not found
-  - Fixed existing 90 orphan cards by reassigning them to "Vendedor Desconhecido"
-  - All 837 imported cards now appear correctly in the sales agenda
-- **DATA INICIO Logic Fix**: Corrected date calculation logic when DATA INICIO falls exactly on the route day. Previously, the system would skip to the next week even when DATA INICIO matched the route day. Now correctly uses DATA INICIO as the first visit date when it coincides with the route day. Changed condition from `daysUntilTarget <= 0` to `daysUntilTarget < 0` to fix the issue.
-
-## Agenda de Vendas - Filter Improvements
-- **All Days Filter**: Added "📅 Todos os Dias" option in the day-of-week filter, allowing users to view sales cards from all weekdays within the selected date range. Uses new endpoint `/api/sales-cards/all-days` and `getSalesCardsByDateRange` storage method.
-
-## Excel Import/Export Improvements
-- **Excel Export with CNPJ/CPF**: Enhanced export functionality in Agenda de Vendas now includes CNPJ/CPF field with proper formatting (CPF: 000.000.000-00, CNPJ: 00.000.000/0000-00). Automatically detects and formats based on document length (11 digits = CPF, 14 digits = CNPJ).
-- **Flexible Sales Card Import**: Completely redesigned bulk import for sales cards. Mandatory fields reduced to allow greater flexibility:
-  - **CNPJ/CPF** (OBRIGATÓRIO): Used as primary key for customer identification
-  - **Cliente (Nome Fantasia)** (OPCIONAL): For visual reference only (not used for lookups)
-  - **ROTA** (OBRIGATÓRIO): Updates the route day for the customer's card
-  - **FREQUENCIA** (OBRIGATÓRIO): Updates visit frequency (semanal, quinzenal, mensal, bimestral)
-  - **LATITUDE** (OPCIONAL): Updates customer's latitude coordinate (accepts comma or period as decimal separator). If not provided or invalid, card is created without coordinates and displays red "SEM COORDENADAS" warning in Agenda de Vendas.
-  - **LONGITUDE** (OPCIONAL): Updates customer's longitude coordinate (accepts comma or period as decimal separator). If not provided or invalid, card is created without coordinates and displays red "SEM COORDENADAS" warning in Agenda de Vendas.
-  - **DATA INICIO** (OBRIGATÓRIO): Defines start date for card creation. First card is scheduled for the next occurrence of ROTA after this date. Supports DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, and Excel serial date formats. Import fails if empty.
-  - **TIPO DE ATENDIMENTO** (OPCIONAL): Defines service type - accepts PRESENCIAL (in-person visit) or VIRTUAL (remote service). Defaults to PRESENCIAL if not provided or invalid.
-- **Synchronization Timeout Fix**: Increased timeout from 2 to 5 minutes (300000ms) for "Sincronizar Agenda" operation to prevent "aborted without reason" errors during large batch processing.
-
-## Agenda de Vendas - Previous Features (October 20, 2025)
-- **Seller Filter**: Added dropdown filter to view sales cards by specific seller or all sellers (visible only for admin/coordinator/administrative roles). Fixed to properly display seller names (firstName + lastName) with fallback to email
-- **Fantasy Name Display**: Sales cards now prominently display the fantasy name (nome fantasia) as the main title, with company name (razão social) shown as a subtitle when both exist
-- **Excel Export**: Implemented comprehensive export functionality that exports ALL filtered sales cards (not just current page) to Excel with complete customer and sales information including: Data Agendada, Cliente, Razão Social, CNPJ/CPF (formatted), Telefone, Endereço, Cidade, Estado, Vendedor, Status, Tipo de Recorrência, Dias da Semana, Valor da Venda, and Atendimento type
-- **Seller Name in Cards**: Sales cards now display the seller's full name (firstName + lastName) with User icon, with fallback to email if name is unavailable
-- **Geographic Coordinates**: Cards display customer's latitude and longitude when available, formatted with 6 decimal places and shown with MapPin icon in blue. Fixed API to include these fields in the response (storage.ts getSalesCardsByDayAndDate)
-- **CPF/CNPJ Display**: Cards now show customer's CNPJ (priority) or CPF when available
-- **Removed Pagination Limit**: Increased from 20 to 1000 records per page in the sales agenda, allowing users to view significantly more sales cards without pagination
-- **Inline Customer Edit**: Added pencil icon button next to customer name in each sales card, allowing admin/coordinator/administrative users to edit customer data directly. Opens a modal with all customer fields (name, fantasy name, CPF/CNPJ, contact info, address, coordinates). Changes are saved via PATCH /api/customers/:id endpoint with role-based access control. Cache is automatically invalidated after updates to refresh the display.
-- **Customer Inactivation**: Added "Inativar Cliente" button in sales cards (visible only to admin/coordinator/administrative users). Features comprehensive confirmation modal warning about consequences, dual permission layer (UI render check + handler validation + backend validation), automatic deletion of all future pending/in_progress sales cards (except current card), timestamp recording (inactivatedAt field), and proper cache invalidation. Inactive customers are removed from future routes and agendas while preserving historical data. **Note**: Due to Omie API limitations, customer inactivation in Omie ERP must be done manually - the API does not support programmatic inactivation. Users are notified when manual Omie inactivation is required.
 
 # System Architecture
 
@@ -58,34 +15,23 @@
 - **UI Components**: Utilizes Radix UI components, shadcn/ui, and Tailwind CSS for a modern and responsive user interface.
 
 ## Technical Implementations
-- **Frontend**: Built with React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, and React Hook Form with Zod for form handling.
-- **Backend**: Implemented with Node.js, Express.js, and TypeScript.
+- **Frontend**: React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, and React Hook Form with Zod for form handling.
+- **Backend**: Node.js, Express.js, and TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Supports Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing). Includes user management and auto-initialization for a default admin user.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports (customers, sales cards) with Excel/CSV.
-- **Sales & Financial Management**: Sales card tracking, conditional payment terms, overdue debt monitoring, credit analysis, and "Contas a Receber" view with export capabilities.
-- **Order Management**: Automatic blocking of orders based on payment terms or overdue debts, with release functionality for authorized roles.
+- **Sales & Financial Management**: Sales card tracking, conditional payment terms, overdue debt monitoring, credit analysis, and "Contas a Receber" view with export capabilities. Automatic blocking of orders based on payment terms or overdue debts, with release functionality for authorized roles.
 - **Delivery & Route Optimization**:
     - **Daily Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API for real motorcycle route distances. Includes visual mapping, checkpoint registration, performance dashboards, and manual route generation. Tracks actual distances based on check-ins and manages off-route visits.
     - **Multi-Vehicle Route Planning (VRP)**: Advanced delivery route optimization with a 4-phase algorithm for vehicle assignment, route optimization (NN+2-opt+OSRM), and persistence. Supports manual order selection, vehicle configuration, and results display with ETAs. Integrated with Omie billings for delivery management, using intelligent customer matching and supporting urgent deliveries and exclusive vehicle configurations.
-- **Automated Agenda Management**: 
-    - **Automatic Synchronization (Midnight)**: Scheduled daily task at 00:00h (UTC-3) performs comprehensive synchronization of sales cards for the next 2 months. This ensures continuous agenda accuracy by automatically fixing any inconsistencies.
-    - **Manual Synchronization**: "Sincronizar Agenda" button in Agenda de Vendas page (accessible to admin/coordinator/administrative roles) performs on-demand synchronization.
-    - **Synchronization Process** (both automatic and manual):
-      1. Calculates correct visit dates based on each customer's `visitPeriodicity` and `weekdays` configuration
-      2. Deletes cards that are scheduled on incorrect dates (don't match the customer's periodicity/weekdays)
-      3. Creates missing cards for dates that should exist according to the customer's configuration
-      4. Returns detailed statistics (processed customers, cards created, cards deleted, errors)
-      5. Uses `onConflictDoNothing()` in Drizzle ORM for duplicate prevention
-    - **Legacy Scripts**: For retroactive or near-future dates:
-      - `generate-missing-monday-cards.ts`: Created 492 cards for 20/10/2025 (segunda)
-      - `generate-missing-tuesday-cards.ts`: Created 487 cards for 21/10/2025 (terça)
-      - `generate-missing-weekday-cards.ts`: Created 500 cards for 22/10/2025 (quarta) and 478 cards for 23/10/2025 (quinta)
-      - `fix-friday-cards.ts`: Created 457 cards for 24/10/2025 (sexta)
+- **Automated Agenda Management**:
+    - **Automatic Synchronization (Midnight)**: Scheduled daily task at 00:00h (UTC-3) performs comprehensive synchronization of sales cards for the next 2 months to ensure continuous agenda accuracy.
+    - **Manual Synchronization**: "Sincronizar Agenda" button (admin/coordinator/administrative roles) performs on-demand synchronization.
+    - **Synchronization Process**: Calculates correct visit dates based on customer configuration, deletes incorrectly scheduled cards, creates missing cards, and returns detailed statistics. Uses `onConflictDoNothing()` for duplicate prevention.
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes (e.g., routeDay, paymentMethod, deliveryTimeSlots) to all future pending sales cards of a customer.
-- **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and invoices hourly. Includes product mapping, vendor resolution, and specific filters for active records and invoice dates. Features stage extraction from related orders, fallback mechanisms, and detection of cancelled orders. A dedicated endpoint for filtered billing synchronization is available, along with a batch script for correcting sales card seller assignments. **Customer table includes `omieClientCode` field** to store the Omie client code (`codigo_cliente_omie`) for bidirectional synchronization, enabling operations like customer inactivation to propagate to Omie ERP.
-- **Sync Status Tracking**: Comprehensive system to track and display the last synchronization date/time for all major sync operations (Omie clients, vendors, products, billings) via a dedicated `sync_status` table. Features `SyncStatusDisplay` component with three states (loading, empty, data), auto-refresh every 30 seconds, and automatic timestamp recording after sync completion. Integrated in Dashboard below sync button with cache invalidation support.
-- **Sales Goals Dashboard**: Individual seller metrics displayed when "All sellers" view is selected. Uses `/api/sales-metrics/multiple` endpoint to fetch metrics for multiple sellers simultaneously. The `getSalesMetrics` function uses raw SQL queries (instead of Drizzle ORM) to avoid compatibility issues with complex aggregations.
+- **Omie ERP Integration**: Synchronizes clients, vendors, products, overdue debts, and invoices hourly. Includes product mapping, vendor resolution, specific filters, stage extraction, fallback mechanisms, and detection of cancelled orders. Customer table stores `omieClientCode` for bidirectional synchronization.
+- **Sync Status Tracking**: Tracks and displays last synchronization date/time for major sync operations (Omie clients, vendors, products, billings) via a `sync_status` table, with a `SyncStatusDisplay` component, auto-refresh, and cache invalidation.
+- **Sales Goals Dashboard**: Displays individual seller metrics using raw SQL queries for complex aggregations.
 
 # External Dependencies
 
