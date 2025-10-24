@@ -1742,9 +1742,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate.setHours(0, 0, 0, 0); // Zerar horário
           console.log(`📅 Card criado para próximo ${routeDay}: ${scheduledDate.toLocaleDateString('pt-BR')} para cliente ${customer.fantasyName}`);
 
+          // DEBUG: Mostrar TODAS as colunas disponíveis nesta linha
+          console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Colunas disponíveis:`, Object.keys(row));
+          
           // Ler campos (LATITUDE, LONGITUDE e TIPO DE ATENDIMENTO agora são opcionais)
           const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
           const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
+          
+          // DEBUG: Mostrar valores BRUTOS lidos
+          console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Valores brutos:`, {
+            latitudeCol: latitudeCol,
+            latitudeType: typeof latitudeCol,
+            longitudeCol: longitudeCol,
+            longitudeType: typeof longitudeCol
+          });
           const tipoAtendimentoCol = row['TIPO DE ATENDIMENTO'] || row['Tipo de Atendimento'] || row['tipo de atendimento'] ||
                                      row['TIPO DE ATENDIMENTO '] || row['Tipo de Atendimento '] || row['tipo de atendimento '] ||
                                      row['TIPOATENDIMENTO'] || row['TipoAtendimento'] || row['tipoatendimento'];
@@ -1799,10 +1810,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Atualizar cliente (somente se houver dados para atualizar)
           if (Object.keys(updateData).length > 0) {
-            await storage.updateCustomer(customer.id, updateData);
-            if (updateData.latitude && updateData.longitude) {
-              console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
+            console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - UpdateData antes da atualização:`, updateData);
+            try {
+              await storage.updateCustomer(customer.id, updateData);
+              console.log(`✅ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Atualização concluída com sucesso!`);
+              if (updateData.latitude && updateData.longitude) {
+                console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
+              }
+            } catch (updateError) {
+              console.error(`❌ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - ERRO na atualização:`, updateError);
+              throw updateError;
             }
+          } else {
+            console.warn(`⚠️ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Nenhum dado para atualizar (updateData vazio)`);
           }
 
           // Ler e validar DATA INICIO (obrigatório)
