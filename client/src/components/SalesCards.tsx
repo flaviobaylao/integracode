@@ -175,6 +175,12 @@ export default function SalesCards() {
       
       let description = data.message;
       
+      // Se houver debugInfo, logar no console
+      if (data.results?.debugInfo?.length > 0) {
+        console.log('🔍 [DEBUG] Informações de importação de Sales Cards:', data.results.debugInfo);
+        description += '\n\n🔍 Informações de debug disponíveis no console (F12).';
+      }
+      
       // Se houver erros, mostrar resumo detalhado
       if (data.results?.errors?.length > 0) {
         description += `\n\n❌ Erros encontrados: ${data.results.errors.length}`;

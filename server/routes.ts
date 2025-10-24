@@ -977,6 +977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notFound: results.notFound,
         totalProcessed: data.length,
         errors: results.errors,
+        debugInfo: results.debugInfo,
         message: `${results.updated} clientes atualizados com sucesso. ${results.notFound} clientes não encontrados.`
       });
     } catch (error) {

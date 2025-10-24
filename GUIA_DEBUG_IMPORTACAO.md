@@ -1,29 +1,31 @@
-# 🔍 Guia de Diagnóstico - Importação de Sales Cards
+# 🔍 Guia de Diagnóstico - Importação com Debug
 
 ## Problema Relatado
-Coordenadas GPS (latitude e longitude) não estão sendo importadas corretamente em alguns cards, mesmo quando presentes na planilha de importação.
+Coordenadas GPS (latitude e longitude) não estão sendo importadas corretamente em alguns registros, mesmo quando presentes na planilha de importação.
 
 ## Nova Funcionalidade de Debug
 
-Foi adicionado um sistema de diagnóstico automático que mostra exatamente o que está acontecendo durante a importação.
+Foi adicionado um sistema de diagnóstico automático que mostra exatamente o que está acontecendo durante a importação, disponível tanto para **Clientes** quanto para **Sales Cards**.
+
+---
+
+## 📋 Importação de CLIENTES
 
 ### Como Usar
 
 1. **Acesse a página de importação:**
-   - Dashboard → Cards de Venda → Importar Planilha (botão no canto superior)
-   - OU use o botão "Importar Planilha" na página inicial
+   - Dashboard → Clientes → Importar Dados (botão no canto superior)
 
 2. **Selecione sua planilha** que contém as colunas:
-   - CNPJ/CPF
-   - ROTA
-   - FREQUENCIA
-   - DATA INICIO
-   - **LATITUDE** (coluna que deve conter coordenadas)
-   - **LONGITUDE** (coluna que deve conter coordenadas)
+   - CPF OU CNPJ (obrigatório)
+   - **LATITUDE** (opcional)
+   - **LONGITUDE** (opcional)
+   - ROTA (opcional)
+   - PERIODICIDADE (opcional)
 
 3. **Execute a importação** clicando em "Importar"
 
-4. **Verifique as Informações de Debug:**
+4. **Verifique as Informações de Debug (Interface Visual):**
    - Após a importação, uma nova seção aparecerá: **"🔍 Informações de Debug"**
    - Esta seção mostra para as primeiras 5 linhas importadas:
      - ✅ **Colunas disponíveis**: Lista TODAS as colunas encontradas na planilha
@@ -87,8 +89,48 @@ Se o problema persistir, compartilhe:
 2. **Exemplo de 2-3 linhas** da sua planilha (pode ocultar dados sensíveis, mas mantenha os cabeçalhos e estrutura)
 3. **Descrição do problema**: "X cards foram importados mas Y cards estão sem coordenadas"
 
-## Formato Esperado da Planilha
+---
 
+## 📋 Importação de SALES CARDS
+
+### Como Usar
+
+1. **Acesse a página de importação:**
+   - Dashboard → Cards de Venda → Importar Planilha (botão no canto superior)
+
+2. **Selecione sua planilha** que contém as colunas:
+   - CNPJ/CPF (obrigatório)
+   - ROTA (obrigatório)
+   - FREQUENCIA (obrigatório)
+   - DATA INICIO (obrigatório)
+   - **LATITUDE** (opcional)
+   - **LONGITUDE** (opcional)
+   - TIPO DE ATENDIMENTO (opcional)
+
+3. **Execute a importação** clicando em "Importar"
+
+4. **Verifique as Informações de Debug (Console do Navegador):**
+   - Pressione **F12** para abrir o Console do Desenvolvedor
+   - Procure por: `🔍 [DEBUG] Informações de importação de Sales Cards:`
+   - Expanda o objeto para ver as mesmas informações de debug:
+     - Colunas disponíveis na planilha
+     - Valores lidos de LATITUDE e LONGITUDE
+     - Dados que foram preparados para atualização
+     - Status de sucesso/falha da atualização
+
+---
+
+## Formato Esperado das Planilhas
+
+### Para CLIENTES:
+```
+| CPF OU CNPJ       | LATITUDE     | LONGITUDE    | ROTA         | PERIODICIDADE |
+|-------------------|--------------|--------------|--------------|---------------|
+| 12.345.678/0001-90| -16.6956423  | -49.2827381  | Segunda-feira| Semanal       |
+| 98.765.432/0001-10| -16.7234567  | -49.3012345  | Terça-feira  | Quinzenal     |
+```
+
+### Para SALES CARDS:
 ```
 | CNPJ/CPF          | LATITUDE     | LONGITUDE    | ROTA         | FREQUENCIA | DATA INICIO |
 |-------------------|--------------|--------------|--------------|------------|-------------|
