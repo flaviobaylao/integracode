@@ -2575,13 +2575,21 @@ export class OmieService {
       const pageSize = 500; // Aumentar para processar mais registros por vez
       
       while (hasMorePages) {
-        console.log(`Fetching page ${currentPage} with ${pageSize} records...`);
+        console.log(`📄 Fetching page ${currentPage} with ${pageSize} records...`);
         
         const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
           pagina: currentPage,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N'
         });
+
+        // Log da estrutura da resposta para debug
+        if (currentPage === 1) {
+          console.log('🔍 Estrutura da resposta (página 1):');
+          console.log('   - Chaves disponíveis:', Object.keys(response).join(', '));
+          console.log('   - total_de_paginas:', response.total_de_paginas);
+          console.log('   - total_de_registros:', response.total_de_registros);
+        }
 
         // Diferentes endpoints podem ter estruturas diferentes
         const contas = response.conta_receber_cadastro || 
@@ -2590,7 +2598,7 @@ export class OmieService {
                        response.lista_contas_receber || 
                        [];
 
-        console.log(`Page ${currentPage}: Found ${contas.length} accounts to process`);
+        console.log(`📊 Page ${currentPage}: Found ${contas.length} accounts to process`);
         
         // Log básico para debug
         if (currentPage <= 2) {
@@ -2599,6 +2607,8 @@ export class OmieService {
         }
 
         let contaIndex = 0;
+        let debitosEncontradosNaPagina = 0;
+        
         for (const conta of contas) {
           contaIndex++;
           totalProcessed++;
@@ -2631,9 +2641,14 @@ export class OmieService {
           // 3. status_titulo não é RECEBIDO nem CANCELADO
           const isAtrasado = diasAtraso > 0 && isStatusValido;
           
+          // Contar débitos encontrados
+          if (isAtrasado) {
+            debitosEncontradosNaPagina++;
+          }
+          
           // Log dos primeiros títulos para debug
           if (totalProcessed <= 30) {
-            console.log(`${totalProcessed}. ${conta.numero_documento} - Previsão: ${conta.data_previsao} (${diasAtraso} dias) - Valor: R$ ${valorReceber} - ${isAtrasado ? '✓ ATRASADO' : '✗ OK'}`);
+            console.log(`${totalProcessed}. ${conta.numero_documento} - Previsão: ${conta.data_previsao} (${diasAtraso} dias) - Status: ${status} - Valor: R$ ${valorReceber} - ${isAtrasado ? '✓ ATRASADO' : '✗ OK'}`);
           }
           
           if (isAtrasado) {
@@ -2726,7 +2741,7 @@ export class OmieService {
         const totalPages = response.total_de_paginas || 1;
         const totalRegistros = response.total_de_registros || 0;
         
-        console.log(`Page ${currentPage}/${totalPages} - Total records: ${totalRegistros}`);
+        console.log(`✅ Page ${currentPage}/${totalPages} - Processed: ${contas.length} records, Found: ${debitosEncontradosNaPagina} overdue debts, Total clients with debts so far: ${debtorsMap.size}`);
         
         currentPage++;
         hasMorePages = currentPage <= totalPages && contas.length === pageSize;
