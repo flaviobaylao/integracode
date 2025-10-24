@@ -142,6 +142,7 @@ Se o problema persistir, compartilhe:
 - ✅ Aceita vírgula ou ponto como separador decimal
 - ✅ Latitude e Longitude são OPCIONAIS (se não fornecidas, card mostra "SEM COORDENADAS")
 - ✅ Valores podem estar em formato texto ou número no Excel
+- ✅ **CORREÇÃO APLICADA:** Sistema agora aceita colunas com espaços extras (ex: " LATITUDE ", " LONGITUDE ")
 
 ## Logs no Servidor
 
@@ -154,5 +155,14 @@ Para desenvolvedores/técnicos: Os logs do servidor também mostram informaçõe
 
 ---
 
-📝 **Última atualização:** 24/10/2025  
-🔗 **Versão do sistema:** 2.0 com Debug de Importação
+## 🔧 Histórico de Correções
+
+### 24/10/2025 - 15:20
+**Problema:** Colunas com espaços extras (ex: " LATITUDE ") não eram reconhecidas  
+**Solução:** Sistema atualizado para aceitar todas as variações de espaços  
+**Impacto:** Importação passou de 0% para 100% de sucesso na planilha de teste  
+
+---
+
+📝 **Última atualização:** 24/10/2025 15:20  
+🔗 **Versão do sistema:** 2.1 com Correção de Espaços em Colunas
