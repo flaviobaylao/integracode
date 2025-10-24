@@ -1568,7 +1568,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         total: data.length,
         created: 0,
         updated: 0,
-        errors: [] as any[]
+        errors: [] as any[],
+        debugInfo: [] as any[] // Informações de debug para diagnóstico
       };
 
       // Processar cada linha da planilha
@@ -1750,6 +1751,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
           
           // DEBUG: Mostrar valores BRUTOS lidos
+          const debugRowInfo: any = {
+            row: i + 2,
+            customer: customer.fantasyName,
+            availableColumns: Object.keys(row),
+            latitudeCol: latitudeCol,
+            latitudeType: typeof latitudeCol,
+            longitudeCol: longitudeCol,
+            longitudeType: typeof longitudeCol,
+            updateData: {} as any
+          };
           console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Valores brutos:`, {
             latitudeCol: latitudeCol,
             latitudeType: typeof latitudeCol,
@@ -1808,22 +1819,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`🏪 Tipo de atendimento padrão (PRESENCIAL) para cliente ${customer.fantasyName}`);
           }
           
+          // Salvar debug info
+          debugRowInfo.updateData = { ...updateData };
+          
           // Atualizar cliente (somente se houver dados para atualizar)
           if (Object.keys(updateData).length > 0) {
             console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - UpdateData antes da atualização:`, updateData);
             try {
               await storage.updateCustomer(customer.id, updateData);
               console.log(`✅ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Atualização concluída com sucesso!`);
+              debugRowInfo.updateSuccess = true;
               if (updateData.latitude && updateData.longitude) {
                 console.log(`📍 Coordenadas atualizadas para cliente ${customer.fantasyName}: Lat=${updateData.latitude}, Lon=${updateData.longitude}`);
               }
             } catch (updateError) {
               console.error(`❌ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - ERRO na atualização:`, updateError);
+              debugRowInfo.updateSuccess = false;
+              debugRowInfo.updateError = String(updateError);
               throw updateError;
             }
           } else {
             console.warn(`⚠️ [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Nenhum dado para atualizar (updateData vazio)`);
+            debugRowInfo.updateSuccess = false;
+            debugRowInfo.reason = 'updateData vazio';
           }
+          
+          // Adicionar debug info aos resultados
+          results.debugInfo.push(debugRowInfo);
 
           // Ler e validar DATA INICIO (obrigatório)
           const dataInicioCol = row['DATA INICIO'] || row['Data Inicio'] || row['data inicio'] || 

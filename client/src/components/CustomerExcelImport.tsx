@@ -18,6 +18,19 @@ interface ImportResult {
   totalProcessed: number;
   errors: string[];
   message: string;
+  debugInfo?: Array<{
+    row: number;
+    customer: string;
+    availableColumns: string[];
+    latitudeCol: any;
+    latitudeType: string;
+    longitudeCol: any;
+    longitudeType: string;
+    updateData: any;
+    updateSuccess?: boolean;
+    updateError?: string;
+    reason?: string;
+  }>;
 }
 
 export default function CustomerExcelImport({ isOpen, onClose }: CustomerExcelImportProps) {
@@ -222,6 +235,34 @@ export default function CustomerExcelImport({ isOpen, onClose }: CustomerExcelIm
                           <li key={index}>• {error}</li>
                         ))}
                       </ul>
+                    </div>
+                  </div>
+                )}
+
+                {importResult.debugInfo && importResult.debugInfo.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium text-sm text-blue-700 mb-2">
+                      🔍 Informações de Debug (primeiras 5 linhas):
+                    </h4>
+                    <div className="bg-blue-50 rounded p-3 max-h-96 overflow-y-auto">
+                      {importResult.debugInfo.slice(0, 5).map((debug, index) => (
+                        <div key={index} className="mb-4 pb-4 border-b border-blue-200 last:border-0">
+                          <div className="text-xs text-blue-900 font-medium mb-2">
+                            Linha {debug.row}: {debug.customer}
+                          </div>
+                          <div className="text-xs text-blue-800 space-y-1 pl-3">
+                            <div><strong>Colunas disponíveis:</strong> {debug.availableColumns.join(', ')}</div>
+                            <div><strong>LATITUDE lida:</strong> {debug.latitudeCol !== undefined ? `"${debug.latitudeCol}" (${debug.latitudeType})` : 'NÃO ENCONTRADA'}</div>
+                            <div><strong>LONGITUDE lida:</strong> {debug.longitudeCol !== undefined ? `"${debug.longitudeCol}" (${debug.longitudeType})` : 'NÃO ENCONTRADA'}</div>
+                            <div><strong>Dados para atualizar:</strong> {JSON.stringify(debug.updateData)}</div>
+                            {debug.updateSuccess !== undefined && (
+                              <div className={debug.updateSuccess ? 'text-green-700' : 'text-red-700'}>
+                                <strong>Atualização:</strong> {debug.updateSuccess ? '✅ Sucesso' : `❌ Falhou - ${debug.reason || debug.updateError}`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
