@@ -817,8 +817,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Map Excel columns to our schema (flexible column names)
           const cpfCnpj = (row['CPF OU CNPJ'] || row['CNPJ/CPF'] || row['cpf_cnpj'] || row['cpfCnpj'] || row['documento'] || '').toString().trim();
-          const latitude = row['LATITUDE'] || row['Latitude'] || row['latitude'] || row['lat'];
-          const longitude = row['LONGITUDE'] || row['Longitude'] || row['longitude'] || row['lng'];
+          // Aceitar variações com espaços extras
+          const latitude = row['LATITUDE'] || row['Latitude'] || row['latitude'] || row['lat'] ||
+                           row[' LATITUDE '] || row[' Latitude '] || row[' latitude '] ||
+                           row['LATITUDE '] || row[' LATITUDE'] || row['Latitude '] || row[' Latitude'];
+          const longitude = row['LONGITUDE'] || row['Longitude'] || row['longitude'] || row['lng'] ||
+                            row[' LONGITUDE '] || row[' Longitude '] || row[' longitude '] ||
+                            row['LONGITUDE '] || row[' LONGITUDE'] || row['Longitude '] || row[' Longitude'];
           const rota = (row['ROTA'] || row['Rota'] || row['rota'] || '').toString().toLowerCase().trim();
           const weekdaysRaw = (row['DIAS DA SEMANA'] || row['Dias da Semana'] || row['dias_da_semana'] || row['weekdays'] || row['DIAS'] || row['Dias'] || rota || '').toString().toLowerCase().trim();
           const periodicidade = (row['PERIODICIDADE'] || row['FREQUENCIA'] || row['Periodicidade'] || row['Frequencia'] || row['periodicidade'] || row['frequencia'] || row['periodicity'] || '').toString().toLowerCase().trim();
@@ -1748,8 +1753,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`🔍 [IMPORT-DEBUG] Cliente ${customer.fantasyName} - Colunas disponíveis:`, Object.keys(row));
           
           // Ler campos (LATITUDE, LONGITUDE e TIPO DE ATENDIMENTO agora são opcionais)
-          const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'];
-          const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'];
+          // Aceitar variações com espaços extras
+          const latitudeCol = row['LATITUDE'] || row['Latitude'] || row['latitude'] ||
+                              row[' LATITUDE '] || row[' Latitude '] || row[' latitude '] ||
+                              row['LATITUDE '] || row[' LATITUDE'] || row['Latitude '] || row[' Latitude'];
+          const longitudeCol = row['LONGITUDE'] || row['Longitude'] || row['longitude'] ||
+                               row[' LONGITUDE '] || row[' Longitude '] || row[' longitude '] ||
+                               row['LONGITUDE '] || row[' LONGITUDE'] || row['Longitude '] || row[' Longitude'];
           
           // DEBUG: Mostrar valores BRUTOS lidos
           const debugRowInfo: any = {
