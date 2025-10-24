@@ -286,14 +286,24 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
       try {
         stats.processed++;
         
-        // Parsear weekdays
+        // Parsear weekdays com fallback para formato legado
         let parsedWeekdays;
         try {
-          parsedWeekdays = typeof customer.weekdays === 'string' 
-            ? JSON.parse(customer.weekdays) 
-            : customer.weekdays;
+          if (typeof customer.weekdays === 'string') {
+            // Tentar JSON.parse primeiro
+            parsedWeekdays = JSON.parse(customer.weekdays);
+          } else {
+            parsedWeekdays = customer.weekdays;
+          }
         } catch (parseError) {
-          continue;
+          // Fallback: tentar converter formato legado "segunda,terça,quarta" para array
+          if (typeof customer.weekdays === 'string' && customer.weekdays.includes(',')) {
+            parsedWeekdays = customer.weekdays.split(',').map(d => d.trim());
+            console.log(`⚠️ [SYNC-CARDS] ${customer.name}: weekdays em formato legado, convertido automaticamente`);
+          } else {
+            console.log(`❌ [SYNC-CARDS] ${customer.name}: weekdays inválido, pulando`);
+            continue;
+          }
         }
         
         if (!Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
