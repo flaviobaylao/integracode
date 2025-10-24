@@ -108,8 +108,9 @@ function findNextWeekday(baseDate: Date, targetWeekdays: number[]): Date {
 }
 
 /**
- * Encontra o dia da semana mais próximo de uma data alvo
- * Busca para frente E para trás para encontrar o dia mais próximo (menor distância)
+ * Encontra o próximo dia da semana válido a partir de uma data alvo
+ * IMPORTANTE: Procura APENAS para frente (nunca para trás) para garantir que
+ * a próxima visita sempre respeite a periodicidade configurada
  */
 function findNearestWeekday(targetDate: Date, targetWeekdays: number[]): Date {
   // Se a data alvo já é um dia válido, usar ela
@@ -119,34 +120,22 @@ function findNearestWeekday(targetDate: Date, targetWeekdays: number[]): Date {
     return result;
   }
 
-  let nearestDate: Date | null = null;
-  let minDistance = Infinity;
-
-  // Procurar para frente e para trás até 7 dias
-  for (let i = -7; i <= 7; i++) {
-    if (i === 0) continue; // já verificamos acima
-    
+  // Procurar APENAS para frente até 7 dias
+  for (let i = 1; i <= 7; i++) {
     const testDate = new Date(targetDate);
     testDate.setDate(targetDate.getDate() + i);
     
     if (targetWeekdays.includes(testDate.getDay())) {
-      const distance = Math.abs(i);
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearestDate = new Date(testDate);
-      }
+      testDate.setHours(8, 0, 0, 0);
+      return testDate;
     }
   }
 
-  if (nearestDate) {
-    nearestDate.setHours(8, 0, 0, 0);
-    return nearestDate;
-  }
-
-  // Fallback
-  const result = new Date(targetDate);
-  result.setHours(8, 0, 0, 0);
-  return result;
+  // Fallback: se não encontrar em 7 dias, usar o primeiro dia válido da próxima semana
+  const fallbackDate = new Date(targetDate);
+  fallbackDate.setDate(targetDate.getDate() + 7);
+  fallbackDate.setHours(8, 0, 0, 0);
+  return fallbackDate;
 }
 
 /**
