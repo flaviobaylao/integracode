@@ -1,20 +1,51 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v1';
+const CACHE_NAME = 'integra-v2-2025-10-24';
 const urlsToCache = [
-  '/',
   '/manifest.json'
 ];
 
+// Instalar e limpar caches antigos
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(urlsToCache))
   );
 });
 
+// Ativar e limpar caches antigos
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+  return self.clients.claim();
+});
+
+// Estratégia: Network First (sempre tenta buscar do servidor primeiro)
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request)
-      .then((response) => response || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        // Se conseguiu do servidor, salva no cache e retorna
+        if (response && response.status === 200) {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return response;
+      })
+      .catch(() => {
+        // Se falhou (offline), tenta buscar do cache
+        return caches.match(event.request);
+      })
   );
 });
