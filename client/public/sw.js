@@ -24,13 +24,17 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  return self.clients.claim();
 });
 
 // Estratégia: Network First (sempre tenta buscar do servidor primeiro)
 self.addEventListener('fetch', (event) => {
+  // Só cacheia requisições GET
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
