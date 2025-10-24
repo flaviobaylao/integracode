@@ -7,6 +7,11 @@
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
 
+# Recent Changes (October 24, 2025)
+
+## Deployment Build Fix
+- **Static Assets Fix**: Fixed critical issue where the application showed a blank white screen after deployment. The problem was caused by `attached_assets/` folder (containing favicon, icons, and images) not being included in the production build. Solution: Copied attached_assets to `client/public/attached_assets/` so Vite automatically includes them in the build output at `dist/public/attached_assets/`. This ensures all static assets are available in the deployed application.
+
 # Recent Changes (October 22, 2025)
 
 ## Sales Cards Import - Critical Bug Fixes
