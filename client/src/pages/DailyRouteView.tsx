@@ -192,10 +192,10 @@ export default function DailyRouteView() {
     : user;
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
-  const formatDistance = (km: number) => {
-    // Os valores já vêm em quilômetros do backend
-    if (km < 0.1) return `${Math.round(km * 1000)}m`; // Menos de 100m mostra em metros
-    return `${km.toFixed(1)}km`;
+  const formatDistance = (meters: number) => {
+    // Os valores vêm em METROS do backend
+    if (meters < 100) return `${Math.round(meters)}m`; // Menos de 100m mostra em metros
+    return `${(meters / 1000).toFixed(1)}km`; // Converte para km
   };
 
   const getVisitStatus = (visit: any) => {
@@ -659,7 +659,7 @@ export default function DailyRouteView() {
                             {segment.from} →
                           </span>
                           <span className="font-bold text-blue-900 dark:text-blue-100">
-                            {formatDistance(segment.distance * 1000)}
+                            {formatDistance(segment.distance)}
                           </span>
                         </div>
                       </div>
@@ -704,7 +704,7 @@ export default function DailyRouteView() {
                     {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
                   </span>
                   <span className="font-bold text-green-900 dark:text-green-100">
-                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance * 1000)}
+                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance)}
                   </span>
                 </div>
               </div>
