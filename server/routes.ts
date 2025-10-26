@@ -34,6 +34,7 @@ import * as XLSX from 'xlsx';
 import bcrypt from 'bcrypt';
 import path from 'path';
 import fs from 'fs';
+import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 
 // Configurar multer para upload de arquivos
 const upload = multer({ 
@@ -68,7 +69,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Version endpoint
   app.get('/api/version', (req, res) => {
-    const { APP_VERSION, VERSION_HISTORY } = require('../shared/version');
     res.json({
       version: APP_VERSION.full,
       buildDate: APP_VERSION.buildDate,
