@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState } from "react";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
+import { VersionDisplay } from "./VersionDisplay";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 
 interface LayoutProps {
@@ -256,6 +257,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   </li>
                 )}
               </ul>
+              
+              {/* Versão do Sistema - Rodapé do Menu Mobile */}
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="px-2">
+                  <VersionDisplay />
+                </div>
+              </div>
             </div>
           </SheetContent>
         </Sheet>
@@ -415,6 +423,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 </li>
               )}
             </ul>
+            
+            {/* Versão do Sistema - Rodapé do Sidebar Desktop */}
+            <div className="absolute bottom-4 left-0 right-0 px-4">
+              <div className="pt-4 border-t border-gray-200">
+                <VersionDisplay />
+              </div>
+            </div>
           </div>
         </nav>
 

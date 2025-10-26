@@ -66,6 +66,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // Version endpoint
+  app.get('/api/version', (req, res) => {
+    const { APP_VERSION, VERSION_HISTORY } = require('../shared/version');
+    res.json({
+      version: APP_VERSION.full,
+      buildDate: APP_VERSION.buildDate,
+      name: APP_VERSION.name,
+      history: VERSION_HISTORY.slice(0, 5) // Últimas 5 versões
+    });
+  });
+
   // Health check endpoint para diagnóstico
   app.get('/api/health', async (req, res) => {
     const health = {

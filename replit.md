@@ -2,6 +2,17 @@
 
 "Sistema Integra" is a comprehensive CRM and sales management system designed for Honest Sucos, a Brazilian juice company. Its core purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system supports various user roles with fine-grained access control and offers robust sales tracking, reporting, and route optimization features to enhance business efficiency, improve customer service, and expand market reach.
 
+## Version Control
+
+**Current Version**: 1.5.0 (Versão Estável)
+
+The system uses semantic versioning (MAJOR.MINOR.PATCH):
+- **MAJOR**: Breaking changes or major structural updates
+- **MINOR**: New features (backward compatible)
+- **PATCH**: Bug fixes and minor improvements
+
+Version information is displayed in the sidebar footer and can be accessed via `/api/version` endpoint.
+
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
