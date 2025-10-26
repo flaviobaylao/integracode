@@ -339,6 +339,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // DEBUG ENDPOINT - Comparar notas do Excel com banco de dados
+  app.get('/api/debug/compare-invoices', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log('🔍 Iniciando comparação de notas fiscais...');
+      
+      // Ler arquivo Excel
+      const excelPath = 'attached_assets/vendas_e_nf-e_743278026293467_1761522051528.xlsx';
+      if (!fs.existsSync(excelPath)) {
+        return res.status(404).json({ error: 'Arquivo Excel não encontrado' });
+      }
+      
+      const workbook = XLSX.readFile(excelPath);
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const excelData = XLSX.utils.sheet_to_json(worksheet);
+      
+      console.log(`📊 Total de registros no Excel: ${excelData.length}`);
+      console.log(`📊 Colunas disponíveis:`, Object.keys(excelData[0] || {}));
+      
+      // Extrair números de NF do Excel
+      const excelInvoiceNumbers = excelData.map((row: any) => {
+        // Tentar diferentes nomes de colunas possíveis
+        const nf = row['Número da NF'] || row['Número'] || row['nNF'] || row['NF'] || row['Nota Fiscal'] || row['número'] || row['numero'];
+        return nf ? nf.toString().trim() : null;
+      }).filter((nf: any) => nf !== null);
+      
+      console.log(`✅ Números de NF extraídos do Excel: ${excelInvoiceNumbers.length}`);
+      console.log(`📋 Primeiras 10 NFs do Excel:`, excelInvoiceNumbers.slice(0, 10));
+      
+      // Buscar notas na etapa "aguardando rota" no banco
+      const billingsQuery = await storage.getBillings();
+      const billingsInStage = billingsQuery.filter(b => 
+        b.invoiceStage?.toLowerCase() === 'aguardando rota'
+      );
+      
+      const dbInvoiceNumbers = billingsInStage.map(b => b.invoiceNumber.toString().trim());
+      
+      console.log(`✅ Notas na etapa "aguardando rota" no banco: ${dbInvoiceNumbers.length}`);
+      console.log(`📋 Primeiras 10 NFs do banco:`, dbInvoiceNumbers.slice(0, 10));
+      
+      // Encontrar notas que estão no banco mas não no Excel (as 2 extras)
+      const extraInDb = dbInvoiceNumbers.filter(nf => !excelInvoiceNumbers.includes(nf));
+      
+      // Encontrar notas que estão no Excel mas não no banco
+      const missingInDb = excelInvoiceNumbers.filter((nf: string) => !dbInvoiceNumbers.includes(nf));
+      
+      // Buscar detalhes das notas extras
+      const extraDetails = billingsInStage.filter(b => 
+        extraInDb.includes(b.invoiceNumber.toString().trim())
+      );
+      
+      console.log(`🔍 Notas EXTRAS no banco (não estão no Excel): ${extraInDb.length}`);
+      console.log(`⚠️ Notas FALTANDO no banco (estão no Excel): ${missingInDb.length}`);
+      
+      res.json({
+        summary: {
+          excelTotal: excelInvoiceNumbers.length,
+          dbTotal: dbInvoiceNumbers.length,
+          difference: dbInvoiceNumbers.length - excelInvoiceNumbers.length,
+          extraInDb: extraInDb.length,
+          missingInDb: missingInDb.length
+        },
+        extraInDb,
+        missingInDb,
+        extraDetails: extraDetails.map(b => ({
+          id: b.id,
+          invoiceNumber: b.invoiceNumber,
+          customerName: b.customerFantasyName,
+          invoiceDate: b.invoiceDate,
+          totalValue: b.totalValue,
+          invoiceStage: b.invoiceStage,
+          omieInvoiceId: b.omieInvoiceId
+        })),
+        excelColumns: Object.keys(excelData[0] || {}),
+        sampleExcelRow: excelData[0]
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao comparar notas fiscais:', error);
+      res.status(500).json({ 
+        error: 'Erro ao comparar notas fiscais',
+        details: error.message 
+      });
+    }
+  });
+
   // User routes
   app.get('/api/users', authenticateUser, async (req: any, res) => {
     try {

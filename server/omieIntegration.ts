@@ -3090,20 +3090,38 @@ export class OmieService {
                 }
               }
               
-              // Extrair etapa do pedido relacionado
+              // Extrair etapa do pedido relacionado e verificar cancelamento
               let invoiceStage = '';
+              let isCancelled = false;
               const pedidoId = invoice.compl?.nIdPedido?.toString();
               
               if (pedidoId) {
                 try {
                   const stageData = await this.fetchPedidoStage(parseInt(pedidoId));
-                  if (stageData && stageData.stageName) {
-                    invoiceStage = stageData.stageName;
-                    console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
+                  if (stageData) {
+                    if (stageData.stageName) {
+                      invoiceStage = stageData.stageName;
+                      console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
+                    }
+                    
+                    // Verificar se está cancelado
+                    if (stageData.cancelled) {
+                      isCancelled = true;
+                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - pulando sincronização`);
+                      skipped++;
+                      continue; // Pular notas canceladas
+                    }
                   }
                 } catch (error) {
                   console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
                 }
+              }
+              
+              // Verificação adicional: campo de cancelamento direto da NF
+              if (invoice.cancelamento?.cCancelado === 'S') {
+                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - pulando sincronização`);
+                skipped++;
+                continue;
               }
               
               const billingData = {
