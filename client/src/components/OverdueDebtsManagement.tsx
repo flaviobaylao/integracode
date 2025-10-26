@@ -22,6 +22,7 @@ interface OverdueDebt {
   debitos: Array<{
     numero_documento: string;
     numero_documento_fiscal?: string;
+    codigo_lancamento_omie: number;
     valor: number;
     data_vencimento: string;
     dias_atraso: number;
@@ -39,12 +40,90 @@ interface OverdueDebtsData {
   totalClients: number;
 }
 
+interface BoletoData {
+  linkBoleto?: string;
+  qrCodePix?: string;
+  linhaDigitavel?: string;
+  nomeCliente?: string;
+}
+
 export default function OverdueDebtsManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDebt, setSelectedDebt] = useState<OverdueDebt | null>(null);
   const [selectedVendor, setSelectedVendor] = useState<string>("all");
+  const [downloadingBoleto, setDownloadingBoleto] = useState<number | null>(null);
+  const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Função para copiar QR Code com fallback
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      // Fallback para navegadores sem suporte ou sem permissão
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return success;
+      } catch (e) {
+        return false;
+      }
+    }
+  };
+
+  // Função para baixar boleto
+  const handleDownloadBoleto = async (codigoLancamento: number, nomeCliente: string) => {
+    try {
+      setDownloadingBoleto(codigoLancamento);
+      
+      const response = await fetch(`/api/omie/boleto/${codigoLancamento}`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Boleto não encontrado ou não disponível');
+      }
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      if (data.linkBoleto) {
+        // Abrir boleto em nova aba
+        window.open(data.linkBoleto, '_blank');
+        toast({
+          title: "Boleto encontrado",
+          description: "O boleto foi aberto em uma nova aba",
+        });
+      } else if (data.qrCodePix) {
+        // Mostrar modal com QR Code Pix
+        setBoletoModal({
+          ...data,
+          nomeCliente
+        });
+      } else {
+        throw new Error('Nenhum boleto ou QR Code disponível para este débito');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Erro ao buscar boleto",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingBoleto(null);
+    }
+  };
 
   // Query para buscar débitos vencidos do banco (dados persistidos)
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
@@ -558,6 +637,7 @@ export default function OverdueDebtsManagement() {
                       <th className="text-right p-3 font-semibold text-sm text-gray-700">Valor</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Data Vencimento</th>
                       <th className="text-right p-3 font-semibold text-sm text-gray-700">Dias Atraso</th>
+                      <th className="text-center p-3 font-semibold text-sm text-gray-700">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -590,6 +670,23 @@ export default function OverdueDebtsManagement() {
                             >
                               {documento.dias_atraso} dias
                             </Badge>
+                          </td>
+                          <td className="p-3 text-center">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownloadBoleto(documento.codigo_lancamento_omie, debt.cliente.nome_fantasia)}
+                              disabled={downloadingBoleto === documento.codigo_lancamento_omie}
+                              data-testid={`button-download-boleto-${debtIndex}-${docIndex}`}
+                              className="flex items-center gap-2"
+                            >
+                              {downloadingBoleto === documento.codigo_lancamento_omie ? (
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                              <span className="hidden sm:inline">Boleto</span>
+                            </Button>
                           </td>
                         </tr>
                       ))
@@ -704,6 +801,93 @@ export default function OverdueDebtsManagement() {
                   </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal de QR Code Pix */}
+      {boletoModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => setBoletoModal(null)}
+          data-testid="modal-qr-code-pix"
+        >
+          <Card 
+            className="w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CardHeader className="border-b bg-gray-50">
+              <CardTitle className="flex items-center justify-between">
+                <div>
+                  <span className="text-xl">QR Code Pix</span>
+                  <p className="text-sm font-normal text-gray-600 mt-1">
+                    {boletoModal.nomeCliente}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBoletoModal(null)}
+                  data-testid="button-close-qr-modal"
+                >
+                  ×
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              {boletoModal.qrCodePix && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <p className="text-sm text-gray-700 mb-2 font-medium">
+                      Código PIX Copia e Cola:
+                    </p>
+                    <div className="bg-white border rounded p-3 text-xs font-mono break-all max-h-32 overflow-y-auto">
+                      {boletoModal.qrCodePix}
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={async () => {
+                        const success = await copyToClipboard(boletoModal.qrCodePix!);
+                        if (success) {
+                          toast({
+                            title: "Copiado!",
+                            description: "Código PIX copiado para a área de transferência",
+                          });
+                        } else {
+                          toast({
+                            title: "Erro ao copiar",
+                            description: "Por favor, copie o código manualmente acima",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      className="bg-honest-orange hover:bg-honest-orange-dark"
+                      data-testid="button-copy-pix"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Copiar Código PIX
+                    </Button>
+                    
+                    <p className="text-xs text-gray-500 text-center">
+                      Copie o código acima e cole no seu aplicativo de banco para pagar via PIX
+                    </p>
+                  </div>
+                </>
+              )}
+              
+              {boletoModal.linhaDigitavel && (
+                <div className="bg-blue-50 rounded-lg p-4 mt-4">
+                  <p className="text-sm text-gray-700 mb-2 font-medium">
+                    Linha Digitável do Boleto:
+                  </p>
+                  <div className="bg-white border rounded p-3 text-xs font-mono break-all">
+                    {boletoModal.linhaDigitavel}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
