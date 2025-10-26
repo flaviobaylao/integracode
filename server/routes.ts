@@ -5359,6 +5359,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para obter boleto ou QR code de um débito vencido
+  app.get('/api/omie/boleto/:codigoLancamento', authenticateUser, async (req: any, res) => {
+    try {
+      const { codigoLancamento } = req.params;
+      
+      if (!codigoLancamento) {
+        return res.status(400).json({ 
+          error: 'Código de lançamento é obrigatório' 
+        });
+      }
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+      
+      console.log(`🎫 Buscando boleto para lançamento ${codigoLancamento}...`);
+      const boletoData = await omieService.getBoleto(parseInt(codigoLancamento));
+      
+      if (boletoData.error) {
+        return res.status(404).json({ 
+          error: 'Boleto não encontrado ou não disponível',
+          message: boletoData.error
+        });
+      }
+      
+      res.json(boletoData);
+    } catch (error: any) {
+      console.error('Erro ao buscar boleto:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Rota TEMPORÁRIA (sem auth) para listar contas correntes do Omie
   app.get('/api/omie/bank-accounts-debug', async (req: any, res) => {
     try {
