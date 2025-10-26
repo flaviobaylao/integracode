@@ -66,12 +66,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: canAccessReports || isVendedor 
     },
     { 
-      id: 'contas-receber', 
-      label: 'Contas a Receber', 
-      icon: 'fas fa-money-bill-wave', 
-      available: canAccessReports 
-    },
-    { 
       id: 'overdue-debts', 
       label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
       icon: 'fas fa-exclamation-triangle', 
@@ -118,7 +112,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'contas-receber', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
