@@ -2820,6 +2820,39 @@ export class OmieService {
     }
   }
 
+  // Método para obter boleto via API Omie
+  async getBoleto(codigoLancamentoOmie: number): Promise<{
+    linkBoleto?: string;
+    qrCodePix?: string;
+    linhaDigitavel?: string;
+    error?: string;
+  }> {
+    try {
+      console.log(`🔍 Buscando boleto para código de lançamento ${codigoLancamentoOmie}...`);
+      
+      const response = await this.makeRequest('/financas/contareceberboleto/', 'ObterBoleto', {
+        nCodTitulo: codigoLancamentoOmie
+      });
+      
+      console.log(`✅ Boleto encontrado:`, {
+        linkBoleto: response.cLinkBoleto ? 'Presente' : 'Ausente',
+        qrCodePix: response.qr_code_pix ? 'Presente' : 'Ausente',
+        linhaDigitavel: response.linha_digitavel ? 'Presente' : 'Ausente'
+      });
+      
+      return {
+        linkBoleto: response.cLinkBoleto,
+        qrCodePix: response.qr_code_pix,
+        linhaDigitavel: response.linha_digitavel
+      };
+    } catch (error: any) {
+      console.error(`❌ Erro ao buscar boleto:`, error.message);
+      return {
+        error: error.message || 'Erro ao buscar boleto'
+      };
+    }
+  }
+
   // Função auxiliar para converter data brasileira DD/MM/YYYY para Date
   private parseBrazilianDate(dateStr: string): Date | null {
     if (!dateStr) return null;

@@ -392,6 +392,7 @@ export const overdueDebts = pgTable("overdue_debts", {
   vendedores: jsonb("vendedores").$type<number[]>(), // Array de códigos de vendedores
   debts: jsonb("debts").$type<Array<{
     numero_documento: string;
+    codigo_lancamento_omie: number;
     valor: number;
     data_vencimento: string;
     dias_atraso: number;
