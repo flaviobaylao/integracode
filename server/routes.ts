@@ -7740,17 +7740,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
       
       if (existingRoute) {
-        // Deletar rota existente antes de regenerar
-        console.log(`🔄 Deletando rota existente para regeneração: ${existingRoute.id}`);
-        await db.delete(dailyRoutes).where(eq(dailyRoutes.id, existingRoute.id));
+        // Regenerar rota atualizando os dados (preserva checkpoints existentes)
+        console.log(`🔄 Regenerando rota existente: ${existingRoute.id}`);
+        
+        // Buscar informações do vendedor
+        const seller = await storage.getUserById(targetSellerId);
+        
+        if (!seller) {
+          return res.status(404).json({ message: 'Vendedor não encontrado' });
+        }
+
+        if (!seller.homeLatitude || !seller.homeLongitude) {
+          return res.status(400).json({ message: 'Vendedor não possui coordenadas de residência cadastradas' });
+        }
+
+        // Buscar sales cards pendentes do dia
+        const startOfDay = new Date(routeDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(routeDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const salesCards = await storage.getSalesCardsByDate(startOfDay, targetSellerId);
+        const pendingCards = salesCards.filter((c: any) => c.status === 'pending');
+
+        // Converter para formato de visitas com dados do cliente
+        const visits: any[] = [];
+        for (const card of pendingCards) {
+          const customer = await storage.getCustomer(card.customerId);
+          if (customer) {
+            visits.push({
+              id: card.id,
+              customerId: customer.id,
+              customerName: customer.name,
+              customerLatitude: customer.latitude,
+              customerLongitude: customer.longitude,
+              customerAddress: customer.address,
+              isVirtual: customer.virtualService || false,
+              scheduledDate: card.scheduledDate
+            });
+          }
+        }
+
+        // Filtrar apenas visitas presenciais com coordenadas válidas
+        const validVisits = visits.filter(v => 
+          !v.isVirtual &&
+          v.customerLatitude && 
+          v.customerLongitude &&
+          !isNaN(parseFloat(v.customerLatitude as any)) &&
+          !isNaN(parseFloat(v.customerLongitude as any))
+        );
+
+        if (validVisits.length === 0) {
+          return res.json({
+            routeId: existingRoute.id,
+            message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
+            totalVisits: 0,
+            regenerated: true
+          });
+        }
+
+        // Otimizar a rota
+        const { optimizeRoute } = await import('./routeOptimizationService');
+        const routePoints = validVisits.map(v => ({
+          id: v.id,
+          latitude: parseFloat(v.customerLatitude as any),
+          longitude: parseFloat(v.customerLongitude as any),
+          customerName: v.customerName,
+          customerAddress: v.customerAddress || ''
+        }));
+
+        const optimizedRoute = await optimizeRoute(
+          parseFloat(seller.homeLatitude as any),
+          parseFloat(seller.homeLongitude as any),
+          routePoints
+        );
+
+        // Atualizar rota existente (preserva checkpoints)
+        const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
+          optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
+          totalEstimatedDistance: optimizedRoute.totalDistance.toString(),
+          totalVisits: optimizedRoute.orderedPoints.length,
+          routeStatus: existingRoute.routeStatus === 'completed' ? 'completed' : 'pending'
+        });
+
+        return res.json({
+          success: true,
+          regenerated: true,
+          routeId: updatedRoute.id,
+          totalVisits: optimizedRoute.orderedPoints.length,
+          totalEstimatedDistance: optimizedRoute.totalDistance
+        });
       }
 
-      // Gerar nova rota (ou regenerar)
+      // Gerar nova rota
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
       
       res.json({
         success: true,
-        regenerated: !!existingRoute,
+        regenerated: false,
         ...result
       });
     } catch (error: any) {
