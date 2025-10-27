@@ -7818,18 +7818,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (let i = 0; i < visits.length; i++) {
           const visit = visits[i];
           if (visit && visit.customerLatitude && visit.customerLongitude) {
-            const distance = calculateDistance(
+            const distanceKm = calculateDistance(
               prevLat, 
               prevLon,
               parseFloat(visit.customerLatitude as any),
               parseFloat(visit.customerLongitude as any)
             );
             
+            // Converter de km para metros (frontend espera metros)
+            const distanceMeters = Math.round(distanceKm * 1000);
+            
             segments.push({
               visitId: visit.id,
               from: i === 0 ? 'Casa' : visits[i-1]?.customerName,
               to: visit.customerName,
-              distance: distance
+              distance: distanceMeters
             });
             
             prevLat = parseFloat(visit.customerLatitude as any);
@@ -7841,18 +7844,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (visits.length > 0) {
           const lastVisit = visits[visits.length - 1];
           if (lastVisit?.customerLatitude && lastVisit?.customerLongitude) {
-            const returnDistance = calculateDistance(
+            const returnDistanceKm = calculateDistance(
               parseFloat(lastVisit.customerLatitude as any),
               parseFloat(lastVisit.customerLongitude as any),
               parseFloat(route.startLatitude),
               parseFloat(route.startLongitude)
             );
             
+            // Converter de km para metros (frontend espera metros)
+            const returnDistanceMeters = Math.round(returnDistanceKm * 1000);
+            
             segments.push({
               visitId: 'return',
               from: lastVisit.customerName,
               to: 'Casa',
-              distance: returnDistance
+              distance: returnDistanceMeters
             });
           }
         }
@@ -7947,18 +7953,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (let i = 0; i < visits.length; i++) {
           const visit = visits[i];
           if (visit && visit.customerLatitude && visit.customerLongitude) {
-            const distance = calculateDistance(
+            const distanceKm = calculateDistance(
               prevLat, 
               prevLon,
               parseFloat(visit.customerLatitude as any),
               parseFloat(visit.customerLongitude as any)
             );
             
+            // Converter de km para metros (frontend espera metros)
+            const distanceMeters = Math.round(distanceKm * 1000);
+            
             segments.push({
               visitId: visit.id,
               from: i === 0 ? 'Casa' : visits[i-1]?.customerName,
               to: visit.customerName,
-              distance: distance
+              distance: distanceMeters
             });
             
             prevLat = parseFloat(visit.customerLatitude as any);
@@ -7970,18 +7979,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (visits.length > 0) {
           const lastVisit = visits[visits.length - 1];
           if (lastVisit?.customerLatitude && lastVisit?.customerLongitude) {
-            const returnDistance = calculateDistance(
+            const returnDistanceKm = calculateDistance(
               parseFloat(lastVisit.customerLatitude as any),
               parseFloat(lastVisit.customerLongitude as any),
               parseFloat(route.startLatitude),
               parseFloat(route.startLongitude)
             );
             
+            // Converter de km para metros (frontend espera metros)
+            const returnDistanceMeters = Math.round(returnDistanceKm * 1000);
+            
             segments.push({
               visitId: 'return',
               from: lastVisit.customerName,
               to: 'Casa',
-              distance: returnDistance
+              distance: returnDistanceMeters
             });
           }
         }
