@@ -30,7 +30,7 @@ Version information is displayed in the sidebar footer and can be accessed via `
 - **Backend**: Node.js, Express.js, and TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Supports Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing). Includes user management and auto-initialization for a default admin user.
-- **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports (customers, sales cards) with Excel/CSV.
+- **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports (customers, sales cards) with Excel/CSV. All customer displays prioritize fantasy_name (nome fantasia) over company_name (razão social) across the entire system.
 - **Import Diagnostics**: Comprehensive debug system for Excel/CSV imports showing column detection, coordinate parsing, data type validation, and update success/failure tracking. Visual debug panel for customer imports and console logging for sales card imports.
 - **Sales & Financial Management**: Sales card tracking, conditional payment terms, overdue debt monitoring, credit analysis, and "Contas a Receber" view with export capabilities. Automatic blocking of orders based on payment terms or overdue debts, with release functionality for authorized roles.
 - **Delivery & Route Optimization**:
