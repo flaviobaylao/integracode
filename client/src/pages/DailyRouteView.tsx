@@ -18,6 +18,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
+import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import type { SalesCardWithRelations } from "@shared/schema";
 
 interface DailyRoute {
   id: string;
@@ -54,6 +56,10 @@ export default function DailyRouteView() {
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  
+  // Estado para modal de detalhes do card
+  const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
+  const [showCardModal, setShowCardModal] = useState(false);
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -197,6 +203,21 @@ export default function DailyRouteView() {
     ? (sellerData || sellers.find((s: any) => s.id === selectedSellerId))
     : user;
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
+
+  // Função para abrir detalhes do card de vendas
+  const handleOpenCardDetails = async (visitId: string) => {
+    try {
+      const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
+      setSelectedCard(response);
+      setShowCardModal(true);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao carregar card",
+        description: error.message || "Não foi possível carregar os detalhes do card.",
+      });
+    }
+  };
 
   const formatDistance = (meters: number) => {
     // Os valores vêm em METROS do backend
@@ -623,12 +644,13 @@ export default function DailyRouteView() {
               return (
                 <div 
                   key={visit.id}
-                  className={`flex items-start p-4 rounded-lg border ${
+                  onClick={() => handleOpenCardDetails(visit.id)}
+                  className={`flex items-start p-4 rounded-lg border cursor-pointer transition-all hover:shadow-md ${
                     status === 'completed' 
-                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-900/30'
                       : status === 'in_progress'
-                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
                   }`}
                   data-testid={`route-visit-${index}`}
                 >
@@ -659,7 +681,8 @@ export default function DailyRouteView() {
                             size="sm"
                             variant="outline"
                             className="bg-blue-500 hover:bg-blue-600 text-white border-blue-600"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevenir que abra o modal ao clicar no Waze
                               const wazeUrl = `https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`;
                               window.open(wazeUrl, '_blank');
                             }}
@@ -900,6 +923,16 @@ export default function DailyRouteView() {
           </CardContent>
         </Card>
       )}
+
+      {/* Modal de Detalhes do Card de Vendas */}
+      <SalesCardDetailsModal
+        isOpen={showCardModal}
+        onClose={() => {
+          setShowCardModal(false);
+          setSelectedCard(null);
+        }}
+        card={selectedCard}
+      />
     </div>
   );
 }
