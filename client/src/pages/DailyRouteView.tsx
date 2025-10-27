@@ -207,10 +207,18 @@ export default function DailyRouteView() {
   // Função para abrir detalhes do card de vendas
   const handleOpenCardDetails = async (visitId: string) => {
     try {
+      console.log('Carregando card:', visitId);
       const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
+      console.log('Card carregado:', response);
+      
+      if (!response) {
+        throw new Error('Card não encontrado');
+      }
+      
       setSelectedCard(response);
       setShowCardModal(true);
     } catch (error: any) {
+      console.error('Erro ao carregar card:', error);
       toast({
         variant: "destructive",
         title: "Erro ao carregar card",
@@ -930,6 +938,8 @@ export default function DailyRouteView() {
         onClose={() => {
           setShowCardModal(false);
           setSelectedCard(null);
+          // Recarregar rota após fechar modal
+          refetch();
         }}
         card={selectedCard}
       />
