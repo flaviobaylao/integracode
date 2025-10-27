@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2 } from "lucide-react";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
@@ -281,12 +282,12 @@ export default function SalesCards() {
     });
   };
 
-  const openWhatsApp = (phone: string, customerName: string) => {
+  const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
       `Olá! Somos da Honest Sucos. Gostaria de agendar uma visita para apresentar nossos produtos frescos e naturais. Qual o melhor horário para você?`
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    window.open(whatsappUrl, '_blank');
+    openWhatsApp(whatsappUrl);
   };
 
   const handleSendToOmie = (card: SalesCardWithRelations) => {
@@ -567,7 +568,7 @@ export default function SalesCards() {
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name);
+                          handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name);
                         }}
                       >
                         <i className="fab fa-whatsapp mr-2"></i>WhatsApp

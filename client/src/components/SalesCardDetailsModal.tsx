@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import { 
   Calendar, 
   Clock, 
@@ -237,12 +238,12 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     }
   };
 
-  const openWhatsApp = (phone: string, customerName: string) => {
+  const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
       `Olá ${customerName}! Somos da Honest Sucos. Gostaria de agendar uma visita para apresentar nossos produtos frescos e naturais. Qual o melhor horário para você?`
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    window.open(whatsappUrl, '_blank');
+    openWhatsApp(whatsappUrl);
   };
 
   const openWaze = (latitude: string, longitude: string) => {
@@ -374,7 +375,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => openWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
+                  onClick={() => handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
                   className="ml-2 text-green-600 hover:text-green-700"
                   data-testid="button-whatsapp"
                 >

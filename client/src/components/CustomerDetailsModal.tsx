@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import type { Customer, SalesCardWithRelations } from "@shared/schema";
 import { 
   User, 
@@ -140,12 +141,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     createSalesCardMutation.mutate(customer.id);
   };
 
-  const openWhatsApp = (phone: string, customerName: string) => {
+  const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
       `Olá ${customerName}! Somos da Honest Sucos. Como está tudo? Gostaria de saber se precisa de algum produto hoje.`
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    window.open(whatsappUrl, '_blank');
+    openWhatsApp(whatsappUrl);
   };
 
   const openWaze = (latitude: string, longitude: string) => {
@@ -307,7 +308,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => openWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
+                      onClick={() => handleOpenWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
                       className="text-green-600 hover:text-green-700"
                     >
                       <MessageSquare className="h-4 w-4 mr-1" />

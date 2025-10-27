@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -645,9 +646,9 @@ ${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('p
 
 O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
 
-    // Abrir WhatsApp
+    // Abrir WhatsApp (mobile ou desktop)
     const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
+    openWhatsApp(whatsappUrl);
     
     toast({
       title: "WhatsApp Aberto",

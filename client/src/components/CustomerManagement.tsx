@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import CustomerModal from "./CustomerModal";
 import CustomerDetailsModal from "./CustomerDetailsModal";
 import OmieClientImport from "./OmieClientImport";
@@ -61,12 +62,12 @@ export default function CustomerManagement() {
     },
   });
 
-  const openWhatsApp = (phone: string, customerName: string) => {
+  const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
       `Olá ${customerName}! Somos da Honest Sucos. Como está tudo? Gostaria de saber se precisa de algum produto hoje.`
     );
     const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    window.open(whatsappUrl, '_blank');
+    openWhatsApp(whatsappUrl);
   };
 
   const openWaze = (customer: any) => {
@@ -407,7 +408,7 @@ export default function CustomerManagement() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
+                            onClick={() => handleOpenWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
                             data-testid={`button-whatsapp-customer-${customer.id}`}
                           >
                             <Phone className="h-4 w-4 text-green-600" />
