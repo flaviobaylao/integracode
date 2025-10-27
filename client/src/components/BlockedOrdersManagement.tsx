@@ -85,7 +85,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
 
   const filteredOrders = blockedOrders?.filter(order => {
     const searchLower = searchTerm.toLowerCase();
-    return order.customer.name.toLowerCase().includes(searchLower) ||
+    return (order.customer.fantasyName || order.customer.name).toLowerCase().includes(searchLower) ||
            order.seller.firstName.toLowerCase().includes(searchLower) ||
            order.seller.lastName.toLowerCase().includes(searchLower) ||
            order.customer.phone.includes(searchTerm);
@@ -271,7 +271,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
                       <div className="flex-1">
                         <div className="flex items-center space-x-2 mb-2">
                           <h3 className="font-semibold text-lg text-gray-900">
-                            {order.customer.name}
+                            {order.customer.fantasyName || order.customer.name}
                           </h3>
                           {getStatusBadge(order.status)}
                           {getOperationTypeBadge(order.operationType)}

@@ -6305,7 +6305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderNumber: billingsTable.orderNumber,
         // Customer data with fallback to billing data
         customerId: sql<string>`COALESCE(${customers.id}, 'billing-' || ${billingsTable.id})`,
-        customerName: sql<string>`COALESCE(${customers.name}, ${billingsTable.customerFantasyName})`,
+        customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name}, ${billingsTable.customerFantasyName})`,
         customerAddress: sql<string>`COALESCE(${customers.address}, '')`,
         customerLatitude: sql<number>`COALESCE(${customers.latitude}, 0)`,
         customerLongitude: sql<number>`COALESCE(${customers.longitude}, 0)`,

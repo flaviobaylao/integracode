@@ -567,7 +567,7 @@ export default function SalesCards() {
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openWhatsApp(card.customer.phone, card.customer.name);
+                          openWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name);
                         }}
                       >
                         <i className="fab fa-whatsapp mr-2"></i>WhatsApp

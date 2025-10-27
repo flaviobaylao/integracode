@@ -118,7 +118,7 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
             </CardHeader>
             <CardContent>
               <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                <p className="font-semibold">{card.customer.name}</p>
+                <p className="font-semibold">{card.customer.fantasyName || card.customer.name}</p>
                 <p className="text-sm text-gray-600">{card.customer.phone}</p>
                 <p className="text-sm text-gray-600">{card.customer.address}</p>
               </div>

@@ -270,15 +270,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <p className="text-sm text-gray-600">Nome / Razão Social</p>
-                      <p className="font-semibold text-lg">{customer.name}</p>
+                      <p className="text-sm text-gray-600">Nome</p>
+                      <p className="font-semibold text-lg">{(customer as any).fantasyName || customer.name}</p>
+                      {(customer as any).fantasyName && (customer as any).companyName && (
+                        <p className="text-xs text-gray-500 mt-1">Razão Social: {(customer as any).companyName}</p>
+                      )}
                     </div>
-                    {(customer as any).fantasyName && (
-                      <div>
-                        <p className="text-sm text-gray-600">Nome Fantasia</p>
-                        <p className="font-medium">{(customer as any).fantasyName}</p>
-                      </div>
-                    )}
                     <div>
                       <p className="text-sm text-gray-600">Tipo</p>
                       <Badge variant="outline" className="capitalize">
@@ -310,7 +307,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => openWhatsApp(customer.phone, customer.name)}
+                      onClick={() => openWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
                       className="text-green-600 hover:text-green-700"
                     >
                       <MessageSquare className="h-4 w-4 mr-1" />

@@ -562,7 +562,7 @@ export default function Dashboard() {
                         ></i>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-800">{client.customer.name}</p>
+                        <p className="font-medium text-gray-800">{client.customer.fantasyName || client.customer.name}</p>
                         <p className="text-sm text-gray-600">{client.customer.address}</p>
                       </div>
                     </div>

@@ -220,7 +220,7 @@ export default function WhatsAppIntegration() {
                   <SelectContent>
                     {customers?.map((customer: CustomerWithSeller) => (
                       <SelectItem key={customer.id} value={customer.id}>
-                        {customer.name}
+                        {(customer as any).fantasyName || customer.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

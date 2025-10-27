@@ -811,7 +811,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2">
             <ShoppingCart className="h-6 w-6 text-blue-600" />
-            <span>Finalizar Venda - {card.customer.name}</span>
+            <span>Finalizar Venda - {card.customer.fantasyName || card.customer.name}</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -824,7 +824,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
             <CardContent>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="font-semibold">{card.customer.name}</p>
+                  <p className="font-semibold">{card.customer.fantasyName || card.customer.name}</p>
                   <p className="text-sm text-gray-600">{card.customer.phone}</p>
                 </div>
                 <div>
