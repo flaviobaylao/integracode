@@ -8006,8 +8006,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           progress: {
             totalVisits: route.totalVisits || 0,
             completedVisits: route.completedVisits || 0,
-            totalEstimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
-            totalActualDistance: parseFloat(route.totalActualDistance || '0'),
+            // Converter de km para metros (banco salva em km, frontend espera metros)
+            totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
+            totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete: route.totalVisits > 0 
               ? Math.round((route.completedVisits / route.totalVisits) * 100) 
               : 0
@@ -8141,8 +8142,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           progress: {
             totalVisits: route.totalVisits || 0,
             completedVisits: route.completedVisits || 0,
-            totalEstimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
-            totalActualDistance: parseFloat(route.totalActualDistance || '0'),
+            // Converter de km para metros (banco salva em km, frontend espera metros)
+            totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
+            totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete: route.totalVisits > 0 
               ? Math.round((route.completedVisits / route.totalVisits) * 100) 
               : 0

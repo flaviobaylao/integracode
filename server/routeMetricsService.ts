@@ -100,8 +100,9 @@ export async function getDailyMetrics(sellerId: string, date: Date): Promise<Dai
     totalVisits,
     completedVisits,
     completionRate: Math.round(completionRate * 100) / 100,
-    estimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
-    actualDistance: parseFloat(route.totalActualDistance || '0')
+    // Converter de km para metros (banco salva em km, service retorna metros)
+    estimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
+    actualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000)
   };
 }
 
@@ -142,8 +143,9 @@ export async function getMonthlyMetrics(sellerId: string, year: number, month: n
   routes.forEach(route => {
     totalVisits += route.totalVisits || 0;
     totalCompleted += route.completedVisits || 0;
-    totalEstimatedDistance += parseFloat(route.totalEstimatedDistance || '0');
-    totalActualDistance += parseFloat(route.totalActualDistance || '0');
+    // Converter de km para metros (banco salva em km, service retorna metros)
+    totalEstimatedDistance += parseFloat(route.totalEstimatedDistance || '0') * 1000;
+    totalActualDistance += parseFloat(route.totalActualDistance || '0') * 1000;
   });
 
   const avgCompletionRate = totalVisits > 0 ? (totalCompleted / totalVisits) * 100 : 0;
@@ -154,8 +156,8 @@ export async function getMonthlyMetrics(sellerId: string, year: number, month: n
     sellerName: `${seller?.firstName || ''} ${seller?.lastName || ''}`.trim(),
     totalWorkDays: routes.length,
     avgCompletionRate: Math.round(avgCompletionRate * 100) / 100,
-    totalEstimatedDistance,
-    totalActualDistance,
+    totalEstimatedDistance: Math.round(totalEstimatedDistance),
+    totalActualDistance: Math.round(totalActualDistance),
     avgDailyDistance: Math.round(avgDailyDistance * 100) / 100
   };
 }
@@ -246,8 +248,9 @@ export async function getTodayMetrics(): Promise<TodayMetrics> {
     const visits = route?.totalVisits || 0;
     const completed = route?.completedVisits || 0;
     const completionRate = visits > 0 ? (completed / visits) * 100 : 0;
-    const estimatedDist = parseFloat(route?.totalEstimatedDistance || '0');
-    const actualDist = parseFloat(route?.totalActualDistance || '0');
+    // Converter de km para metros (banco salva em km, service retorna metros)
+    const estimatedDist = Math.round(parseFloat(route?.totalEstimatedDistance || '0') * 1000);
+    const actualDist = Math.round(parseFloat(route?.totalActualDistance || '0') * 1000);
 
     sellerOverviews.push({
       sellerId: seller.id,
@@ -315,8 +318,9 @@ export async function getRecentRoutes(sellerId: string, limit: number = 7): Prom
       totalVisits,
       completedVisits,
       completionRate: Math.round(completionRate * 100) / 100,
-      estimatedDistance: parseFloat(route.totalEstimatedDistance || '0'),
-      actualDistance: parseFloat(route.totalActualDistance || '0')
+      // Converter de km para metros (banco salva em km, service retorna metros)
+      estimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
+      actualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000)
     };
   });
 }
