@@ -2538,6 +2538,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para buscar um card específico por ID
+  app.get('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      
+      if (!user) {
+        return res.status(401).json({ message: "User not authenticated" });
+      }
+      
+      // Buscar o card com todas as relações
+      const card = await storage.getSalesCard(id);
+      
+      if (!card) {
+        return res.status(404).json({ message: "Sales card not found" });
+      }
+      
+      // Verificar permissões: vendedor só pode ver seus próprios cards
+      if (user.role === 'vendedor' && card.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      res.json(card);
+    } catch (error) {
+      console.error("Error fetching sales card:", error);
+      res.status(500).json({ message: "Failed to fetch sales card" });
+    }
+  });
+
   // Endpoint para gerar próximo card manualmente
   app.post('/api/sales-cards/:id/generate-next', authenticateUser, async (req: any, res) => {
     try {
