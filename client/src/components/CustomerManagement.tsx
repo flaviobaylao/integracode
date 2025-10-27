@@ -407,7 +407,7 @@ export default function CustomerManagement() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openWhatsApp(customer.phone, customer.name)}
+                            onClick={() => openWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
                             data-testid={`button-whatsapp-customer-${customer.id}`}
                           >
                             <Phone className="h-4 w-4 text-green-600" />
