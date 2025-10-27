@@ -7740,8 +7740,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
       
       if (existingRoute) {
-        // Regenerar rota atualizando os dados (preserva checkpoints existentes)
+        // Regenerar rota atualizando os dados (preserva checkpoints, status, e visitas em andamento)
         console.log(`🔄 Regenerando rota existente: ${existingRoute.id}`);
+        
+        // Buscar checkpoints existentes para identificar visitas já iniciadas
+        const existingCheckpoints = await storage.getRouteCheckpoints(existingRoute.id);
+        
+        // Separar em 3 grupos:
+        // 1. Completadas (com checkout)
+        // 2. In Progress (com checkin mas sem checkout)
+        // 3. Pendentes (sem checkin)
+        const completedCheckpoints = existingCheckpoints.filter((cp: any) => cp.actualCheckOut);
+        const inProgressCheckpoints = existingCheckpoints.filter((cp: any) => cp.actualCheckIn && !cp.actualCheckOut);
+        
+        const completedCardIds = completedCheckpoints.map((cp: any) => cp.salesCardId);
+        const inProgressCardIds = inProgressCheckpoints.map((cp: any) => cp.salesCardId);
+        const allProcessedCardIds = new Set([...completedCardIds, ...inProgressCardIds]);
+        
+        console.log(`📍 Visitas completadas: ${completedCardIds.length}, Em andamento: ${inProgressCardIds.length}`);
         
         // Buscar informações do vendedor
         const seller = await storage.getUserById(targetSellerId);
@@ -7754,18 +7770,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: 'Vendedor não possui coordenadas de residência cadastradas' });
         }
 
-        // Buscar sales cards pendentes do dia
+        // Buscar sales cards do dia
         const startOfDay = new Date(routeDate);
         startOfDay.setHours(0, 0, 0, 0);
         const endOfDay = new Date(routeDate);
         endOfDay.setHours(23, 59, 59, 999);
 
         const salesCards = await storage.getSalesCardsByDate(startOfDay, targetSellerId);
-        const pendingCards = salesCards.filter((c: any) => c.status === 'pending');
+        
+        // Filtrar apenas cards que NÃO foram processados (nem completados nem in_progress)
+        const trulyPendingCards = salesCards.filter((c: any) => 
+          c.status === 'pending' && !allProcessedCardIds.has(c.id)
+        );
 
         // Converter para formato de visitas com dados do cliente
         const visits: any[] = [];
-        for (const card of pendingCards) {
+        for (const card of trulyPendingCards) {
           const customer = await storage.getCustomer(card.customerId);
           if (customer) {
             visits.push({
@@ -7790,16 +7810,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           !isNaN(parseFloat(v.customerLongitude as any))
         );
 
+        // Se não houver novas visitas pendentes, manter ordem atual
         if (validVisits.length === 0) {
+          console.log('⚠️ Nenhuma nova visita pendente, mantendo ordem atual');
           return res.json({
             routeId: existingRoute.id,
-            message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
-            totalVisits: 0,
+            message: 'Nenhuma visita pendente nova encontrada',
+            totalVisits: allProcessedCardIds.size,
+            completedVisits: completedCardIds.length,
             regenerated: true
           });
         }
 
-        // Otimizar a rota
+        // Otimizar APENAS as visitas realmente pendentes (não processadas)
         const { optimizeRoute } = await import('./routeOptimizationService');
         const routePoints = validVisits.map(v => ({
           id: v.id,
@@ -7815,19 +7838,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           routePoints
         );
 
-        // Atualizar rota existente (preserva checkpoints)
+        // Construir ordem final preservando TODAS as visitas já iniciadas
+        const finalOrder = [
+          ...completedCardIds,        // 1. Visitas completadas (mantém ordem original)
+          ...inProgressCardIds,       // 2. Visitas em andamento (mantém ordem original)
+          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes (otimizadas)
+        ];
+
+        const totalVisits = finalOrder.length;
+        const completedVisits = completedCardIds.length;
+
+        console.log(`✅ Rota atualizada: ${completedVisits} completadas + ${inProgressCardIds.length} em andamento + ${optimizedRoute.orderedPoints.length} pendentes = ${totalVisits} total`);
+
+        // Atualizar rota existente (PRESERVA routeStatus e checkpoints)
         const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
-          optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
+          optimizedOrder: finalOrder,
           totalEstimatedDistance: optimizedRoute.totalDistance.toString(),
-          totalVisits: optimizedRoute.orderedPoints.length,
-          routeStatus: existingRoute.routeStatus === 'completed' ? 'completed' : 'pending'
+          totalVisits,
+          completedVisits,
+          // PRESERVA o status atual (in_progress, paused, etc)
+          routeStatus: existingRoute.routeStatus
         });
 
         return res.json({
           success: true,
           regenerated: true,
           routeId: updatedRoute.id,
-          totalVisits: optimizedRoute.orderedPoints.length,
+          totalVisits,
+          completedVisits,
+          inProgressVisits: inProgressCardIds.length,
           totalEstimatedDistance: optimizedRoute.totalDistance
         });
       }
