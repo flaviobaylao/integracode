@@ -16,6 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import honestLogo from '@/assets/honest-logo.png';
 import { apiRequest } from "@/lib/queryClient";
+import { openWhatsApp } from "@/lib/utils";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
 
@@ -335,8 +336,8 @@ Qualquer dúvida, estou à disposição.`;
     // Criar link do WhatsApp com mensagem
     const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
     
-    // Abrir WhatsApp em nova aba
-    window.open(whatsappUrl, '_blank');
+    // Abrir WhatsApp (mobile ou desktop)
+    openWhatsApp(whatsappUrl);
     
     toast({
       title: "WhatsApp Aberto",
