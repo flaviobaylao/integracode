@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2 } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -263,6 +263,29 @@ export default function Billings() {
     }
   });
 
+  // Mutation para limpar notas canceladas
+  const cleanupCancelledMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/billings/cleanup-cancelled');
+      return response;
+    },
+    onSuccess: (result) => {
+      toast({
+        title: 'Limpeza de notas canceladas concluída',
+        description: `${result.totalChecked} notas verificadas. ${result.cancelledFound} notas canceladas removidas.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao limpar notas canceladas',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
       ...prev,
@@ -383,6 +406,21 @@ export default function Billings() {
               <RotateCw className="w-4 h-4 mr-2" />
             )}
             Atualizar Vendedores
+          </Button>
+          
+          <Button 
+            variant="destructive" 
+            onClick={() => cleanupCancelledMutation.mutate()}
+            disabled={cleanupCancelledMutation.isPending}
+            data-testid="button-cleanup-cancelled"
+            title="Remover notas fiscais canceladas do banco de dados"
+          >
+            {cleanupCancelledMutation.isPending ? (
+              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4 mr-2" />
+            )}
+            Limpar Canceladas
           </Button>
           
           <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">

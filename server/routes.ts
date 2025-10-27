@@ -4478,6 +4478,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Endpoint administrativo para limpar notas canceladas
+  app.post('/api/billings/cleanup-cancelled', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log('🧹 Iniciando limpeza de notas fiscais canceladas...');
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      // Buscar todas as billings em "Aguardando Rota"
+      const billingsToCheck = await db
+        .select()
+        .from(billingsTable)
+        .where(eq(billingsTable.invoiceStage, 'Aguardando Rota'));
+      
+      console.log(`📊 Encontradas ${billingsToCheck.length} notas em "Aguardando Rota" para verificar`);
+      
+      const cancelledInvoices: string[] = [];
+      const errors: Array<{invoice: string, error: string}> = [];
+      
+      // Verificar cada nota no Omie
+      for (const billing of billingsToCheck) {
+        try {
+          // Usar o omieOrderId da billing (se disponível)
+          if (!billing.omieOrderId) {
+            console.log(`⚠️ NF ${billing.invoiceNumber} não tem omieOrderId - pulando`);
+            continue;
+          }
+          
+          // Verificar se o pedido está cancelado no Omie
+          const stageData = await omieService['fetchPedidoStage'](billing.omieOrderId);
+          
+          if (stageData && stageData.cancelled) {
+            console.log(`🚫 NF ${billing.invoiceNumber} está CANCELADA no Omie - será removida`);
+            cancelledInvoices.push(billing.invoiceNumber);
+            
+            // Deletar do banco de dados
+            await db
+              .delete(billingsTable)
+              .where(eq(billingsTable.id, billing.id));
+          }
+        } catch (error: any) {
+          console.error(`❌ Erro ao verificar NF ${billing.invoiceNumber}:`, error.message);
+          errors.push({
+            invoice: billing.invoiceNumber,
+            error: error.message
+          });
+        }
+      }
+      
+      const result = {
+        totalChecked: billingsToCheck.length,
+        cancelledFound: cancelledInvoices.length,
+        removed: cancelledInvoices,
+        errors: errors.length > 0 ? errors : undefined
+      };
+      
+      console.log('✅ Limpeza concluída:', result);
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ Erro na limpeza de notas canceladas:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+  
   // Obter estatísticas de faturamentos
   app.get('/api/billings/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
