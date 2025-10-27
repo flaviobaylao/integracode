@@ -3944,6 +3944,16 @@ export async function createOmieOrder(orderData: {
       parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
     }
 
+    // Extrair código do vendedor do formato "omie-vendor-XXXXX"
+    let vendorCode: number | undefined;
+    if (orderData.sellerId && orderData.sellerId.startsWith('omie-vendor-')) {
+      const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
+      vendorCode = parseInt(extractedCode, 10);
+      console.log(`📝 Vendedor extraído: ${orderData.sellerId} -> código Omie: ${vendorCode}`);
+    } else {
+      console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
+    }
+
     const omieOrderPayload = {
       cabecalho: {
         numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
@@ -3951,7 +3961,8 @@ export async function createOmieOrder(orderData: {
         data_previsao: new Date().toLocaleDateString('pt-BR'),
         etapa: '50', // Pedido de venda
         codigo_parcela: parcelaCode,
-        origem_pedido: 'CRM-HonestSucos'
+        origem_pedido: 'CRM-HonestSucos',
+        ...(vendorCode && { codigo_vendedor: vendorCode }) // Adicionar vendedor se disponível
       },
       det: orderData.products.map((product, index) => ({
         ide: {
