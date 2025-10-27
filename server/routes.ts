@@ -3588,7 +3588,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const salesCardsData = await db.select({
           id: salesCards.id,
           customerId: salesCards.customerId,
-          customerName: customers.name,
+          customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
           customerLatitude: customers.latitude,
           customerLongitude: customers.longitude,
           customerAddress: customers.address,
@@ -6332,7 +6332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orders = await db.select({
         id: salesCards.id,
         customerId: salesCards.customerId,
-        customerName: customers.name,
+        customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
         customerAddress: customers.address,
         customerLatitude: customers.latitude,
         customerLongitude: customers.longitude,
@@ -7917,7 +7917,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const [card] = await db.select({
             id: salesCards.id,
             customerId: salesCards.customerId,
-            customerName: customers.name,
+            customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
             customerLatitude: customers.latitude,
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
@@ -8053,7 +8053,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const [card] = await db.select({
             id: salesCards.id,
             customerId: salesCards.customerId,
-            customerName: customers.name,
+            customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
             customerLatitude: customers.latitude,
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
@@ -8510,7 +8510,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerLongitude: salesCards.customerLongitude,
           customerId: salesCards.customerId,
           sellerId: salesCards.sellerId,
-          customerName: customers.name,
+          customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
           sellerName: sql<string>`${users.firstName} || ' ' || ${users.lastName}`,
         })
         .from(salesCards)
