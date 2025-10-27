@@ -31,6 +31,12 @@ interface DailyRoute {
   status: string;
   visits: any[];
   checkpoints: any[];
+  segments?: Array<{
+    visitId: string;
+    from: string;
+    to: string;
+    distance: number;
+  }>;
   progress: {
     totalVisits: number;
     completedVisits: number;
