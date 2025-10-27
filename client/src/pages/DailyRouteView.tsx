@@ -645,7 +645,7 @@ export default function DailyRouteView() {
 
                   <div className="flex-1">
                     <div className="flex items-start justify-between mb-1">
-                      <div>
+                      <div className="flex-1">
                         <h4 className="font-semibold text-gray-900 dark:text-white">
                           {visit.customerName}
                         </h4>
@@ -653,7 +653,24 @@ export default function DailyRouteView() {
                           {visit.customerAddress || 'Endereço não disponível'}
                         </p>
                       </div>
-                      {getStatusBadge(status)}
+                      <div className="flex items-center gap-2 ml-2">
+                        {visit.customerLatitude && visit.customerLongitude && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-blue-500 hover:bg-blue-600 text-white border-blue-600"
+                            onClick={() => {
+                              const wazeUrl = `https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`;
+                              window.open(wazeUrl, '_blank');
+                            }}
+                            data-testid={`button-waze-${index}`}
+                          >
+                            <Navigation className="h-4 w-4 mr-1" />
+                            Waze
+                          </Button>
+                        )}
+                        {getStatusBadge(status)}
+                      </div>
                     </div>
 
                     {/* Distância estimada (sempre visível) */}
