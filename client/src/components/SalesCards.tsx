@@ -340,7 +340,7 @@ export default function SalesCards() {
     // Filtro por pesquisa (nome fantasia ou CNPJ)
     if (searchQuery) {
       const query = searchQuery.toLowerCase().trim();
-      const customerName = card.customer?.name?.toLowerCase() || '';
+      const customerName = (card.customer?.fantasyName || card.customer?.name)?.toLowerCase() || '';
       const customerCnpj = card.customer?.cnpj?.replace(/\D/g, '') || '';
       const searchQueryClean = query.replace(/\D/g, '');
       
@@ -504,7 +504,7 @@ export default function SalesCards() {
                 
                 <div className="space-y-3">
                   <div>
-                    <h3 className="font-semibold text-gray-800">{card.customer?.name || 'Cliente não encontrado'}</h3>
+                    <h3 className="font-semibold text-gray-800">{card.customer?.fantasyName || card.customer?.name || 'Cliente não encontrado'}</h3>
                     <p className="text-sm text-gray-600">{card.customer?.address || ''}</p>
                   </div>
                   
