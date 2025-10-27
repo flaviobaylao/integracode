@@ -7740,18 +7740,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
       
       if (existingRoute) {
-        return res.json({
-          message: 'Rota já existe para esta data',
-          route: existingRoute,
-          alreadyExists: true
-        });
+        // Deletar rota existente antes de regenerar
+        console.log(`🔄 Deletando rota existente para regeneração: ${existingRoute.id}`);
+        await db.delete(dailyRoutes).where(eq(dailyRoutes.id, existingRoute.id));
       }
 
-      // Gerar nova rota
+      // Gerar nova rota (ou regenerar)
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
       
       res.json({
         success: true,
+        regenerated: !!existingRoute,
         ...result
       });
     } catch (error: any) {

@@ -160,10 +160,10 @@ export default function DailyRouteView() {
       return response;
     },
     onSuccess: (data) => {
-      if (data.alreadyExists) {
+      if (data.regenerated) {
         toast({
-          title: "Rota já existe",
-          description: "A rota para esta data já foi gerada anteriormente.",
+          title: "Rota atualizada com sucesso!",
+          description: `Rota regenerada com ${data.totalVisits || 0} visitas.`,
         });
       } else {
         toast({
