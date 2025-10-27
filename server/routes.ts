@@ -3561,7 +3561,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const endOfDay = new Date(visitDate);
       endOfDay.setHours(23, 59, 59, 999);
 
-      const visits = await db.select({
+      // Primeiro tentar buscar de visitAgenda
+      let visits = await db.select({
         id: visitAgenda.id,
         customerId: visitAgenda.customerId,
         customerName: visitAgenda.customerName,
@@ -3580,6 +3581,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eq(visitAgenda.visitStatus, 'pending'),
         eq(visitAgenda.isVirtual, false) // Apenas visitas presenciais
       ));
+      
+      // Se não houver visitAgenda, buscar diretamente dos sales_cards
+      if (visits.length === 0) {
+        console.log('⚠️ Nenhuma visitAgenda encontrada, buscando sales_cards...');
+        const salesCardsData = await db.select({
+          id: salesCards.id,
+          customerId: salesCards.customerId,
+          customerName: customers.name,
+          customerLatitude: customers.latitude,
+          customerLongitude: customers.longitude,
+          customerAddress: customers.address,
+          status: salesCards.status,
+          recurrenceType: salesCards.recurrenceType,
+          isVirtual: customers.virtualService,
+        })
+        .from(salesCards)
+        .leftJoin(customers, eq(salesCards.customerId, customers.id))
+        .where(and(
+          eq(salesCards.sellerId, targetSellerId),
+          gte(salesCards.scheduledDate, startOfDay),
+          lte(salesCards.scheduledDate, endOfDay),
+          eq(salesCards.status, 'pending')
+        ));
+        
+        // Converter para formato compatível com visits
+        // Filtrar apenas presenciais com coordenadas válidas
+        visits = salesCardsData
+          .filter(row => {
+            if (row.isVirtual) return false; // Excluir virtuais
+            if (!row.customerLatitude || !row.customerLongitude) return false; // Excluir sem coordenadas
+            const lat = parseFloat(row.customerLatitude);
+            const lng = parseFloat(row.customerLongitude);
+            if (isNaN(lat) || isNaN(lng)) return false; // Excluir coordenadas inválidas
+            if (lat === 0 && lng === 0) return false; // Excluir coordenadas zeradas
+            return true;
+          })
+          .map(row => ({
+            id: row.id,
+            customerId: row.customerId,
+            customerName: row.customerName || 'Cliente sem nome',
+            customerLatitude: parseFloat(row.customerLatitude!),
+            customerLongitude: parseFloat(row.customerLongitude!),
+            customerAddress: row.customerAddress || '',
+            visitStatus: row.status,
+            recurrenceType: row.recurrenceType,
+            isVirtual: false, // Já filtrado acima
+          }));
+        
+        console.log(`✅ Encontrados ${visits.length} sales_cards presenciais com coordenadas válidas`);
+      }
 
       if (visits.length === 0) {
         return res.json({
