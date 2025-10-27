@@ -48,10 +48,12 @@ export function DailyRoutesOverview() {
 
   const { sellers, totals } = todayData;
   
-  // Formatar distâncias
+  // Formatar distâncias: < 1km mostra em metros, >= 1km mostra em km
   const formatDistance = (meters: number) => {
-    const km = meters / 1000;
-    return km.toFixed(2);
+    if (meters < 1000) {
+      return `${Math.round(meters)}m`;
+    }
+    return `${(meters / 1000).toFixed(2)}km`;
   };
 
   return (
@@ -84,10 +86,10 @@ export function DailyRoutesOverview() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold" data-testid="text-today-total-distance">
-              {formatDistance(totals.totalActualDistance)} km
+              {formatDistance(totals.totalActualDistance)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Estimado: {formatDistance(totals.totalEstimatedDistance)} km
+              Estimado: {formatDistance(totals.totalEstimatedDistance)}
             </p>
           </CardContent>
         </Card>
@@ -137,7 +139,7 @@ export function DailyRoutesOverview() {
                         {seller.routeId ? (
                           <>
                             {seller.completedVisits} de {seller.totalVisits} visitas •{' '}
-                            {formatDistance(seller.actualDistance)} km
+                            {formatDistance(seller.actualDistance)}
                           </>
                         ) : (
                           'Sem rota para hoje'

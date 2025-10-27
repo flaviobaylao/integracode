@@ -229,6 +229,14 @@ export default function VisitRoutes() {
     }
   } : { visits: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 } };
 
+  // Função para formatar distâncias: < 1km mostra em metros, >= 1km mostra em km
+  const formatDistance = (meters: number) => {
+    if (meters < 1000) {
+      return `${Math.round(meters)}m`;
+    }
+    return `${(meters / 1000).toFixed(1)}km`;
+  };
+
   const generateAgenda = async () => {
     try {
       await apiRequest('POST', '/api/visit-agenda/generate');
@@ -291,7 +299,7 @@ export default function VisitRoutes() {
       if (response.optimizedRoute && response.optimizedRoute.locations.length > 0) {
         toast({
           title: "Rota otimizada!",
-          description: `${response.message}. Distância total: ${(response.optimizedRoute.totalDistance / 1000).toFixed(1)}km, tempo estimado: ${Math.round(response.optimizedRoute.estimatedTotalTime / 60)}h`,
+          description: `${response.message}. Distância total: ${formatDistance(response.optimizedRoute.totalDistance)}, tempo estimado: ${Math.round(response.optimizedRoute.estimatedTotalTime / 60)}h`,
         });
       } else {
         toast({
@@ -501,7 +509,7 @@ export default function VisitRoutes() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div className="text-center">
                 <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                  {(optimizedRoute.totalDistance / 1000).toFixed(1)}km
+                  {formatDistance(optimizedRoute.totalDistance)}
                 </div>
                 <div className="text-sm text-green-700 dark:text-green-300">Distância Total</div>
               </div>

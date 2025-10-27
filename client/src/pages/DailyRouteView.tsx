@@ -194,7 +194,7 @@ export default function DailyRouteView() {
 
   const formatDistance = (meters: number) => {
     // Os valores vêm em METROS do backend
-    if (meters < 100) return `${Math.round(meters)}m`; // Menos de 100m mostra em metros
+    if (meters < 1000) return `${Math.round(meters)}m`; // Menos de 1km mostra em metros
     return `${(meters / 1000).toFixed(1)}km`; // Converte para km
   };
 
