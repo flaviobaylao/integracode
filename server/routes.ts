@@ -7835,7 +7835,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             visits.push({
               id: card.id,
               customerId: customer.id,
-              customerName: customer.name,
+              customerName: customer.fantasyName || customer.name,
               customerLatitude: customer.latitude,
               customerLongitude: customer.longitude,
               customerAddress: customer.address,
@@ -8243,7 +8243,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .map(row => ({
           cardId: row.sales_cards.id,
           customerId: row.customers.id,
-          customerName: row.customers.name,
+          customerName: row.customers.fantasyName || row.customers.name,
           cpfCnpj: row.customers.cpf || row.customers.cnpj || '',
           address: row.customers.address,
           latitude: row.customers.latitude,

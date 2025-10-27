@@ -357,7 +357,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Nome</p>
-                  <p className="font-semibold text-lg">{card.customer.name}</p>
+                  <p className="font-semibold text-lg">{card.customer.fantasyName || card.customer.name}</p>
+                  {card.customer.fantasyName && card.customer.companyName && (
+                    <p className="text-xs text-gray-500 mt-1">Razão Social: {card.customer.companyName}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Vendedor</p>
@@ -371,7 +374,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => openWhatsApp(card.customer.phone, card.customer.name)}
+                  onClick={() => openWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
                   className="ml-2 text-green-600 hover:text-green-700"
                   data-testid="button-whatsapp"
                 >
