@@ -61,7 +61,9 @@ Version information is displayed in the sidebar footer and can be accessed via `
     - **Checkpoint Registration Fix (Oct 27, 2025)**: Sales-cards check-in/check-out endpoints (`/api/sales-cards/:id/check-in` and `:id/check-out`) now properly register checkpoints in the `route_checkpoints` table, enabling accurate tracking of km traveled and completed visits. System provides admin-only migration tools:
       - `POST /api/admin/migrate-checkpoints`: Creates retroactive checkpoints from existing check-ins (param: `daysBack` 1-90, default: 7). Idempotent - safe to run multiple times.
       - `POST /api/admin/recalculate-route-metrics`: Recalculates distance and completed visits for today's routes based on existing checkpoints. Run after migration.
+      - **CLI Migration Tool**: `npx tsx server/migrate-checkpoints-cli.ts [daysBack]` - Standalone script for checkpoint recovery without HTTP authentication.
       - **Operational Playbook**: When check-ins were missed (server offline, bugs): (1) Run migrate-checkpoints with appropriate `daysBack` value, (2) Run recalculate-route-metrics for each affected day, (3) Verify metrics in dashboard.
+      - **Oct 27, 2025 Recovery**: Server was running outdated code until ~19:24 BRT. Check-in at 10:13 BRT (vendor Gabriel R., Panificadora Sonho da Vila) was manually recovered with correct timestamp. Check-out was not GPS-tracked (coordinates missing), preventing checkpoint creation. Future check-ins will register automatically.
 - **Sync Status Tracking**: Tracks and displays last synchronization date/time for major sync operations (Omie clients, vendors, products, billings) via a `sync_status` table, with a `SyncStatusDisplay` component, auto-refresh, and cache invalidation.
 - **Sales Goals Dashboard**: Displays individual seller metrics using raw SQL queries for complex aggregations.
 
