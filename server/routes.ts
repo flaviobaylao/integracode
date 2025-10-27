@@ -3813,15 +3813,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Atualizar visita com dados de check-in
+      const checkInDate = new Date();
       await db.update(visitAgenda)
         .set({
-          actualCheckIn: new Date(),
+          actualCheckIn: checkInDate,
           checkInLatitude: latitude.toString(),
           checkInLongitude: longitude.toString(),
           distanceToCustomer: distanceToCustomer ? distanceToCustomer.toString() : null,
           visitStatus: 'in_progress'
         })
         .where(eq(visitAgenda.id, id));
+
+      // Se tiver salesCardId vinculado, atualizar também o sales_card
+      // IMPORTANTE: Sem try/catch para garantir consistência - se falhar, a transação toda falha
+      if (currentVisit.salesCardId) {
+        await db.update(salesCards)
+          .set({
+            checkInTime: checkInDate,
+            checkInLatitude: latitude.toString(),
+            checkInLongitude: longitude.toString(),
+            distanceToCustomer: distanceToCustomer ? distanceToCustomer.toString() : null,
+            status: 'in_progress'
+          })
+          .where(eq(salesCards.id, currentVisit.salesCardId));
+        console.log(`✅ Check-in salvo no sales_card ${currentVisit.salesCardId}`);
+      }
 
       // Registrar checkpoint na rota diária (se existir)
       let routeProgress = null;
@@ -3953,6 +3969,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitStatus: 'completed'
         })
         .where(eq(visitAgenda.id, id));
+
+      // Se tiver salesCardId vinculado, atualizar também o sales_card
+      // IMPORTANTE: Sem try/catch para garantir consistência - se falhar, a transação toda falha
+      // 
+      // NOTA SOBRE STATUS: 
+      // - visitAgenda.visitStatus = 'completed' → visita FÍSICA foi concluída (check-out feito)
+      // - salesCards.status = 'in_progress' → processo de VENDA ainda em andamento
+      // O sales_card só é marcado como 'completed' quando o pedido é enviado para Omie,
+      // ou 'no_sale' quando o vendedor marca explicitamente. São semânticas diferentes!
+      if (currentVisit.salesCardId) {
+        await db.update(salesCards)
+          .set({
+            checkOutTime: checkOutTime,
+            checkOutLatitude: latitude.toString(),
+            checkOutLongitude: longitude.toString(),
+            checkOutDistanceToCustomer: distanceToCustomer ? distanceToCustomer.toString() : null
+          })
+          .where(eq(salesCards.id, currentVisit.salesCardId));
+        console.log(`✅ Check-out salvo no sales_card ${currentVisit.salesCardId}`);
+      }
 
       // Registrar checkpoint na rota diária (se existir)
       let routeProgress = null;
