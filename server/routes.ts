@@ -9426,6 +9426,256 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Recalcular métricas das rotas baseado em checkpoints existentes (ADMIN ONLY)
+  app.post('/api/admin/recalculate-route-metrics', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      console.log('🔄 Recalculando métricas das rotas...');
+      
+      const today = new Date();
+      const startOfDay = new Date(today);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(today);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Buscar todas as rotas de hoje usando range (timezone-safe)
+      const routes = await db.select()
+        .from(dailyRoutes)
+        .where(and(
+          gte(dailyRoutes.routeDate, startOfDay),
+          lte(dailyRoutes.routeDate, endOfDay)
+        ));
+
+      console.log(`📊 Encontradas ${routes.length} rotas para recalcular`);
+
+      let routesUpdated = 0;
+
+      for (const route of routes) {
+        // Buscar todos os checkpoints da rota
+        const checkpoints = await storage.getRouteCheckpoints(route.id);
+        
+        if (checkpoints.length === 0) {
+          console.log(`⚠️  Rota ${route.id} sem checkpoints, pulando...`);
+          continue;
+        }
+
+        // Calcular distância total
+        const totalDistance = checkpoints.reduce((sum, cp) => {
+          return sum + parseFloat(cp.distanceFromPrevious || '0');
+        }, 0);
+
+        // Contar visitas completadas (check-outs)
+        const completedVisits = checkpoints.filter(cp => cp.checkpointType === 'check_out').length;
+
+        // Determinar status da rota
+        let routeStatus = route.routeStatus;
+        if (completedVisits > 0 && routeStatus === 'pending') {
+          routeStatus = 'in_progress';
+        }
+        if (completedVisits === route.totalVisits) {
+          routeStatus = 'completed';
+        }
+
+        // Atualizar rota
+        await storage.updateDailyRoute(route.id, {
+          totalActualDistance: totalDistance.toFixed(2),
+          completedVisits,
+          routeStatus
+        });
+
+        console.log(`✅ Rota ${route.id}: ${totalDistance.toFixed(2)} km, ${completedVisits} visitas`);
+        routesUpdated++;
+      }
+
+      console.log(`✅ Recálculo concluído: ${routesUpdated} rotas atualizadas`);
+
+      res.json({
+        success: true,
+        routesUpdated,
+        totalRoutes: routes.length
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro ao recalcular métricas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao recalcular métricas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Migração retroativa de checkpoints (ADMIN ONLY)
+  app.post('/api/admin/migrate-checkpoints', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      // Permitir especificar range de datas (padrão: últimos 7 dias até hoje)
+      let { daysBack = 7 } = req.body;
+      
+      // Validar daysBack
+      if (typeof daysBack !== 'number' || daysBack < 1 || daysBack > 90) {
+        return res.status(400).json({ 
+          message: 'daysBack deve ser um número entre 1 e 90' 
+        });
+      }
+      daysBack = Math.floor(daysBack); // Garantir inteiro
+
+      console.log(`🔄 Iniciando migração retroativa de checkpoints (últimos ${daysBack} dias)...`);
+      
+      // Buscar todos os sales_cards com check-in ou check-out no range especificado
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - daysBack);
+      startDate.setHours(0, 0, 0, 0);
+
+      const salesCardsWithCheckins = await db.select()
+        .from(salesCards)
+        .where(
+          or(
+            and(
+              gte(salesCards.checkInTime, startDate),
+              lte(salesCards.checkInTime, today)
+            ),
+            and(
+              gte(salesCards.checkOutTime, startDate),
+              lte(salesCards.checkOutTime, today)
+            )
+          )
+        )
+        .orderBy(asc(salesCards.checkInTime));
+
+      console.log(`📊 Encontrados ${salesCardsWithCheckins.length} sales cards com check-in/out no período`);
+
+      let checkpointsCreated = 0;
+      let checkpointsSkipped = 0;
+      let errors: string[] = [];
+      const routesUpdated = new Set<string>();
+
+      const { registerCheckpoint } = await import('./routeOptimizationService');
+
+      for (const card of salesCardsWithCheckins) {
+        try {
+          if (!card.sellerId || !card.customerId) {
+            errors.push(`Card ${card.id}: sem sellerId ou customerId`);
+            continue;
+          }
+
+          // Buscar rota diária do vendedor na data do check-in/check-out
+          const checkDate = card.checkInTime || card.checkOutTime;
+          if (!checkDate) {
+            errors.push(`Card ${card.id}: sem check-in ou check-out`);
+            continue;
+          }
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(card.sellerId, new Date(checkDate));
+          
+          if (!dailyRoute) {
+            errors.push(`Card ${card.id}: sem rota diária para vendedor ${card.sellerId}`);
+            continue;
+          }
+
+          // Processar check-in se existir
+          if (card.checkInTime && card.checkInLatitude && card.checkInLongitude) {
+            // Verificar se já existe checkpoint de check-in
+            const existingCheckIn = await db.select()
+              .from(routeCheckpoints)
+              .where(
+                and(
+                  eq(routeCheckpoints.visitId, card.id),
+                  eq(routeCheckpoints.checkpointType, 'check_in')
+                )
+              )
+              .limit(1);
+
+            if (existingCheckIn.length === 0) {
+              console.log(`📍 Criando checkpoint de CHECK-IN para card ${card.id}`);
+              await registerCheckpoint(
+                storage,
+                dailyRoute.id,
+                card.id,
+                card.customerId,
+                card.sellerId,
+                'check_in',
+                parseFloat(card.checkInLatitude),
+                parseFloat(card.checkInLongitude)
+              );
+              checkpointsCreated++;
+              routesUpdated.add(dailyRoute.id);
+            } else {
+              checkpointsSkipped++;
+            }
+          }
+
+          // Processar check-out se existir
+          if (card.checkOutTime && card.checkOutLatitude && card.checkOutLongitude) {
+            // Verificar se já existe checkpoint de check-out
+            const existingCheckOut = await db.select()
+              .from(routeCheckpoints)
+              .where(
+                and(
+                  eq(routeCheckpoints.visitId, card.id),
+                  eq(routeCheckpoints.checkpointType, 'check_out')
+                )
+              )
+              .limit(1);
+
+            if (existingCheckOut.length === 0) {
+              console.log(`📍 Criando checkpoint de CHECK-OUT para card ${card.id}`);
+              await registerCheckpoint(
+                storage,
+                dailyRoute.id,
+                card.id,
+                card.customerId,
+                card.sellerId,
+                'check_out',
+                parseFloat(card.checkOutLatitude),
+                parseFloat(card.checkOutLongitude)
+              );
+              checkpointsCreated++;
+              routesUpdated.add(dailyRoute.id);
+            } else {
+              checkpointsSkipped++;
+            }
+          }
+
+        } catch (error: any) {
+          console.error(`❌ Erro ao processar card ${card.id}:`, error);
+          errors.push(`Card ${card.id}: ${error.message}`);
+        }
+      }
+
+      console.log(`✅ Migração concluída: ${checkpointsCreated} checkpoints criados, ${checkpointsSkipped} já existiam`);
+
+      res.json({
+        success: true,
+        checkpointsCreated,
+        checkpointsSkipped,
+        routesUpdated: routesUpdated.size,
+        totalCardsProcessed: salesCardsWithCheckins.length,
+        errors: errors.length > 0 ? errors : undefined
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro na migração de checkpoints:', error);
+      res.status(500).json({ 
+        message: 'Erro ao migrar checkpoints',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
