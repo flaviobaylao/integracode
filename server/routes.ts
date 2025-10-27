@@ -3847,19 +3847,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
         
         if (dailyRoute) {
+          console.log(`📍 Registrando checkpoint de check-in para visita ${id} na rota ${dailyRoute.id}`);
           const { registerCheckpoint } = await import('./routeOptimizationService');
           routeProgress = await registerCheckpoint(
             storage,
             dailyRoute.id,
             id,
+            currentVisit.customerId,  // ← CORRIGIDO: era sellerId, deveria ser customerId
             currentVisit.sellerId,
             'check_in',
             latitude,
             longitude
           );
+          console.log(`✅ Checkpoint de check-in registrado com sucesso: ${JSON.stringify(routeProgress)}`);
+        } else {
+          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${today.toISOString()}`);
         }
       } catch (error) {
-        console.error('Erro ao registrar checkpoint:', error);
+        console.error('❌ Erro ao registrar checkpoint de check-in:', error);
+        // Re-lançar o erro para que o check-in falhe se o checkpoint não puder ser registrado
+        throw error;
       }
 
       res.json({
@@ -3998,19 +4005,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
         
         if (dailyRoute) {
+          console.log(`📍 Registrando checkpoint de check-out para visita ${id} na rota ${dailyRoute.id}`);
           const { registerCheckpoint } = await import('./routeOptimizationService');
           routeProgress = await registerCheckpoint(
             storage,
             dailyRoute.id,
             id,
+            currentVisit.customerId,
             currentVisit.sellerId,
             'check_out',
             latitude,
             longitude
           );
+          console.log(`✅ Checkpoint registrado com sucesso: ${JSON.stringify(routeProgress)}`);
+        } else {
+          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${today.toISOString()}`);
         }
       } catch (error) {
-        console.error('Erro ao registrar checkpoint:', error);
+        console.error('❌ Erro ao registrar checkpoint:', error);
+        // Re-lançar o erro para que o check-out falhe se o checkpoint não puder ser registrado
+        // Isso garante consistência - se o checkpoint falhar, o check-out também falha
+        throw error;
       }
 
       res.json({
@@ -4126,7 +4141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           averageTime: sql<number>`avg(case when ${visitAgenda.actualCheckIn} is not null and ${visitAgenda.actualCheckOut} is not null then extract(epoch from ${visitAgenda.actualCheckOut} - ${visitAgenda.actualCheckIn})/60 end)`
         })
         .from(visitAgenda)
-        .leftJoin(users, eq(visitAgenda.sellerId, users.id))
+        .innerJoin(users, eq(visitAgenda.sellerId, users.id))
         .where(and(...visitFilters))
         .groupBy(visitAgenda.sellerId, users.firstName, users.lastName)
         .having(sql`count(${visitAgenda.id}) > 0`);
@@ -7238,12 +7253,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.updateSalesCard(id, updateData);
       
+      // Registrar checkpoint na rota diária (se existir)
+      let routeProgress = null;
+      try {
+        if (currentCard.sellerId) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today);
+          
+          if (dailyRoute) {
+            console.log(`📍 Registrando checkpoint de check-in para sales_card ${id} na rota ${dailyRoute.id}`);
+            const { registerCheckpoint } = await import('./routeOptimizationService');
+            routeProgress = await registerCheckpoint(
+              storage,
+              dailyRoute.id,
+              id,  // visitId = sales_card ID (rotas usam sales_card IDs)
+              currentCard.customerId,
+              currentCard.sellerId,
+              'check_in',
+              parseFloat(latitude),
+              parseFloat(longitude)
+            );
+            console.log(`✅ Checkpoint de check-in registrado: ${JSON.stringify(routeProgress)}`);
+          } else {
+            console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentCard.sellerId}`);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Erro ao registrar checkpoint de check-in:', error);
+        // Não falhar o check-in se checkpoint falhar - vendedor pode estar offline ou OSRM indisponível
+      }
+      
       res.json({
         success: true,
         message: 'Check-in realizado com sucesso',
         checkInTime: updateData.checkInTime,
         distance: checkInDistance,
-        hasPhoto: !!photoUrl
+        hasPhoto: !!photoUrl,
+        routeProgress: routeProgress ? {
+          distanceFromPrevious: routeProgress.distanceFromPrevious,
+          totalDistanceSoFar: routeProgress.totalDistanceSoFar,
+          completedVisits: routeProgress.completedVisits
+        } : null
       });
     } catch (error) {
       console.error("Error during check-in:", error);
@@ -7286,11 +7337,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const salesCard = await storage.updateSalesCard(id, updateData);
       
+      // Registrar checkpoint na rota diária (se existir)
+      let routeProgress = null;
+      try {
+        if (currentCard && currentCard.sellerId) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today);
+          
+          if (dailyRoute) {
+            console.log(`📍 Registrando checkpoint de check-out para sales_card ${id} na rota ${dailyRoute.id}`);
+            const { registerCheckpoint } = await import('./routeOptimizationService');
+            routeProgress = await registerCheckpoint(
+              storage,
+              dailyRoute.id,
+              id,  // visitId = sales_card ID (rotas usam sales_card IDs)
+              currentCard.customerId,
+              currentCard.sellerId,
+              'check_out',
+              latitude,
+              longitude
+            );
+            console.log(`✅ Checkpoint de check-out registrado: ${JSON.stringify(routeProgress)}`);
+          } else {
+            console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentCard.sellerId}`);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Erro ao registrar checkpoint de check-out:', error);
+        // Não falhar o check-out se checkpoint falhar - vendedor pode estar offline ou OSRM indisponível
+      }
+      
       res.json({
         success: true,
         message: 'Check-out realizado com sucesso',
         checkOutTime: updateData.checkOutTime,
-        checkOutDistance
+        checkOutDistance,
+        routeProgress: routeProgress ? {
+          distanceFromPrevious: routeProgress.distanceFromPrevious,
+          totalDistanceSoFar: routeProgress.totalDistanceSoFar,
+          completedVisits: routeProgress.completedVisits
+        } : null
       });
     } catch (error) {
       console.error("Error during check-out:", error);
