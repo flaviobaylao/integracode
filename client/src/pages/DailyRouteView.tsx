@@ -207,18 +207,22 @@ export default function DailyRouteView() {
   // Função para abrir detalhes do card de vendas
   const handleOpenCardDetails = async (visitId: string) => {
     try {
-      console.log('Carregando card:', visitId);
+      console.log('🔍 Clicou na linha - Carregando card:', visitId);
       const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
-      console.log('Card carregado:', response);
+      console.log('✅ Card carregado com sucesso:', response);
       
       if (!response) {
+        console.error('❌ Resposta vazia do servidor');
         throw new Error('Card não encontrado');
       }
       
+      console.log('📝 Setando card no estado...');
       setSelectedCard(response);
+      console.log('🔓 Abrindo modal...');
       setShowCardModal(true);
+      console.log('✓ Estado atualizado - showCardModal=true, card=', response.id);
     } catch (error: any) {
-      console.error('Erro ao carregar card:', error);
+      console.error('❌ Erro ao carregar card:', error);
       toast({
         variant: "destructive",
         title: "Erro ao carregar card",
@@ -933,9 +937,11 @@ export default function DailyRouteView() {
       )}
 
       {/* Modal de Detalhes do Card de Vendas */}
+      {console.log('🎯 Renderizando SalesCardDetailsModal:', { showCardModal, hasCard: !!selectedCard, cardId: selectedCard?.id })}
       <SalesCardDetailsModal
         isOpen={showCardModal}
         onClose={() => {
+          console.log('🚪 Fechando modal...');
           setShowCardModal(false);
           setSelectedCard(null);
           // Recarregar rota após fechar modal
