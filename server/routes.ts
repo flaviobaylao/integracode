@@ -5487,12 +5487,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`✅ Pedido ${orderId} liberado e enviado para Omie`);
           
         } catch (error: any) {
+          const errorMessage = error.message || 'Erro desconhecido';
           console.error(`❌ Erro ao liberar pedido ${orderId}:`, {
-            message: error.message,
+            message: errorMessage,
             stack: error.stack,
-            name: error.name
+            name: error.name,
+            orderDetails: {
+              salesCardId: order?.salesCardId,
+              customerId: order?.customerId,
+              customerName: salesCard?.customer?.name,
+              productsCount: order?.products?.length
+            }
           });
-          errors.push(`Pedido ${orderId}: ${error.message || 'Erro desconhecido'}`);
+          
+          // Adicionar mensagem de erro mais descritiva para o usuário
+          const customerName = salesCard?.customer?.fantasyName || salesCard?.customer?.name || 'Cliente desconhecido';
+          errors.push(`${customerName}: ${errorMessage}`);
         }
       }
       
