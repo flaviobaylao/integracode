@@ -168,20 +168,20 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
       return;
     }
 
-    // Verificar se há pedidos liberados selecionados
+    // Verificar se há pedidos bloqueados selecionados
     const selectedOrdersData = filteredOrders.filter(order => selectedOrders.has(order.id));
-    const releasedOrders = selectedOrdersData.filter(order => order.status === 'released');
+    const blockedOrdersList = selectedOrdersData.filter(order => order.status === 'blocked');
 
-    if (releasedOrders.length === 0) {
+    if (blockedOrdersList.length === 0) {
       toast({
-        title: "Nenhum pedido liberado selecionado",
-        description: "Selecione pedidos com status 'Liberado' para rejeitar.",
+        title: "Nenhum pedido bloqueado selecionado",
+        description: "Selecione pedidos com status 'Bloqueado' para rejeitar.",
         variant: "destructive",
       });
       return;
     }
 
-    rejectOrdersMutation.mutate(releasedOrders.map(order => order.id));
+    rejectOrdersMutation.mutate(blockedOrdersList.map(order => order.id));
   };
 
   const formatCurrency = (value?: number) => {

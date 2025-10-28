@@ -5559,14 +5559,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const order = blockedOrder[0];
           
-          // Verificar se o pedido está liberado (podemos rejeitar apenas pedidos liberados)
-          if (order.status !== 'released') {
-            console.log(`⚠️ Pedido ${orderId} não está liberado (status: ${order.status})`);
-            errors.push(`Pedido ${orderId} não está liberado`);
+          // Verificar se o pedido está bloqueado (podemos rejeitar apenas pedidos bloqueados)
+          if (order.status !== 'blocked') {
+            console.log(`⚠️ Pedido ${orderId} não está bloqueado (status: ${order.status})`);
+            errors.push(`Pedido ${orderId} não está bloqueado`);
             continue;
           }
           
-          console.log(`✓ Pedido encontrado e liberado: salesCardId=${order.salesCardId}`);
+          console.log(`✓ Pedido encontrado e bloqueado: salesCardId=${order.salesCardId}`);
           
           // Deletar pedido bloqueado
           await db.delete(blockedOrders)
