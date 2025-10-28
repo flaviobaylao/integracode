@@ -5298,6 +5298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ...order,
             customer: {
               name: customer?.name || 'Cliente não encontrado',
+              fantasyName: customer?.fantasyName || null,
               phone: customer?.phone || '',
               email: customer?.email || ''
             },

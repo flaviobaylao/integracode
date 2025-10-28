@@ -34,6 +34,7 @@ interface BlockedOrder {
   releasedBy?: string;
   customer: {
     name: string;
+    fantasyName?: string | null;
     phone: string;
     email?: string;
   };
