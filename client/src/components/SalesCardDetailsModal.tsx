@@ -758,7 +758,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                           src={card.checkInPhotoUrl} 
                           alt="Foto do check-in" 
                           className="w-full max-w-sm rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
-                          onClick={() => window.open(card.checkInPhotoUrl, '_blank')}
+                          onClick={() => card.checkInPhotoUrl && window.open(card.checkInPhotoUrl, '_blank')}
                           data-testid="img-check-in-photo"
                         />
                       </div>
