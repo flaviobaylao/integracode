@@ -786,7 +786,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 data-testid="button-start-sale"
               >
                 <CircleDollarSign className="h-4 w-4 mr-2" />
-                Finalizar Venda
+                EFETUAR VENDA
               </Button>
               <Button
                 onClick={() => onStartNoSale?.(card)}

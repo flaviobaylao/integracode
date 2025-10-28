@@ -647,7 +647,7 @@ export default function SalesCards() {
       <Dialog open={actionDialog.type === 'sale'} onOpenChange={() => setActionDialog({ type: null, card: null })}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Finalizar Venda</DialogTitle>
+            <DialogTitle>EFETUAR VENDA</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(e) => {
@@ -687,7 +687,7 @@ export default function SalesCards() {
                   Cancelar
                 </Button>
                 <Button type="submit" className="bg-green-500 hover:bg-green-600">
-                  Finalizar Venda
+                  EFETUAR VENDA
                 </Button>
               </div>
             </div>

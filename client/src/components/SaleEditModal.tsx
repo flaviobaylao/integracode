@@ -812,7 +812,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2">
             <ShoppingCart className="h-6 w-6 text-blue-600" />
-            <span>Finalizar Venda - {card.customer.fantasyName || card.customer.name}</span>
+            <span>EFETUAR VENDA - {card.customer.fantasyName || card.customer.name}</span>
           </DialogTitle>
         </DialogHeader>
 

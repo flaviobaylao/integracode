@@ -690,7 +690,7 @@ Qualquer dúvida, estou à disposição.`;
           <DialogTitle className="flex items-center gap-2 text-base lg:text-lg">
             <ShoppingCart className="h-4 w-4 lg:h-5 lg:w-5" />
             <span className="truncate">
-              Finalizar Venda - {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}
+              EFETUAR VENDA - {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}
             </span>
           </DialogTitle>
         </DialogHeader>
