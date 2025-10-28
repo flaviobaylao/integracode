@@ -182,6 +182,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = req.body;
       
+      console.log(`🔐 Tentativa de login: ${email}`);
+      
       if (!email || !password) {
         return res.status(400).json({ message: "Email e senha são obrigatórios" });
       }
@@ -189,12 +191,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await validateUser(email, password);
       
       if (!user) {
+        console.log(`❌ Login falhou: usuário não encontrado ou senha inválida para ${email}`);
         return res.status(401).json({ message: "Email ou senha inválidos" });
       }
+      
+      console.log(`✅ Login bem-sucedido: ${user.email} - Role: ${user.role}`);
       
       // Criar sessão para o usuário
       const sessionData = createLocalSession(user);
       (req.session as any).user = sessionData;
+      
+      console.log(`📝 Sessão criada para ${user.email}:`, {
+        userId: user.id,
+        role: user.role,
+        sessionId: (req.session as any).id
+      });
       
       res.json({ success: true, user });
     } catch (error) {
@@ -297,41 +308,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.get('/api/auth/user', async (req: any, res) => {
     try {
+      console.log('👤 GET /api/auth/user - Verificando autenticação...');
+      
       // Check for local admin session first
       if (req.session?.user?.claims?.sub) {
         const userId = req.session.user.claims.sub;
+        console.log(`📋 Sessão local encontrada - userId: ${userId}`);
         const user = await storage.getUser(userId);
         if (user) {
+          console.log(`✅ Usuário encontrado via sessão local: ${user.email} - Role: ${user.role}`);
           return res.json(user);
         }
       }
       
       // Fall back to Replit auth
       if (!req.isAuthenticated() || !req.user?.claims?.sub) {
+        console.log('❌ Não autenticado - retornando 401');
         return res.status(401).json({ message: "Unauthorized" });
       }
       
       const userId = req.user.claims.sub;
       const userEmail = req.user.claims.email;
       
+      console.log(`🔐 Replit auth - userId: ${userId}, email: ${userEmail}`);
+      
       // First try to find user by ID
       let user = await storage.getUser(userId);
       
       // If not found by ID but we have an email, try to find by email
       if (!user && userEmail) {
+        console.log(`🔍 Usuário não encontrado por ID, buscando por email: ${userEmail}`);
         user = await storage.getUserByEmail(userEmail);
         
         // If found by email but with different ID, this means we need to update the user
         if (user && user.id !== userId) {
-          console.log(`Updating user ID from ${user.id} to ${userId} for email ${userEmail}`);
+          console.log(`⚠️ Updating user ID from ${user.id} to ${userId} for email ${userEmail}`);
           // Note: This scenario might need special handling for data consistency
         }
       }
       
       if (!user) {
+        console.log(`❌ Usuário não encontrado - userId: ${userId}, email: ${userEmail}`);
         return res.status(404).json({ message: "User not found" });
       }
       
+      console.log(`✅ Retornando usuário: ${user.email} - Role: ${user.role}`);
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
