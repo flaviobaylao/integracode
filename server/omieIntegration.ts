@@ -406,7 +406,14 @@ export class OmieService {
             };
 
             if (existingUser) {
-              // Atualizar vendedor existente
+              // CRITICAL: NÃO sobrescrever usuários admin, coordinator ou administrative
+              const protectedRoles = ['admin', 'coordinator', 'administrative'];
+              if (protectedRoles.includes(existingUser.role)) {
+                console.log(`⚠️ Pulando vendedor ${fullName}: usuário já existe com role protegida (${existingUser.role})`);
+                continue;
+              }
+              
+              // Atualizar vendedor existente (apenas se for vendedor, motorista ou telemarketing)
               await this.storage.updateUser(existingUser.id, userData);
               results.updated++;
               console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode})`);
