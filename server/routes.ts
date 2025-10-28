@@ -335,15 +335,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // First try to find user by ID
       let user = await storage.getUser(userId);
       
-      // If not found by ID but we have an email, try to find by email
+      // CRITICAL FIX: Verify that the user's email matches the Replit email
+      // If there's a mismatch, the userId is mapped to the wrong account
+      if (user && userEmail && user.email !== userEmail) {
+        console.log(`⚠️ EMAIL MISMATCH! User ID ${userId} has email ${user.email} but Replit says ${userEmail}`);
+        console.log(`🔍 Buscando usuário correto por email: ${userEmail}`);
+        
+        // Find the correct user by email
+        const correctUser = await storage.getUserByEmail(userEmail);
+        if (correctUser) {
+          console.log(`✅ Usuário correto encontrado: ${correctUser.email} - Role: ${correctUser.role} (ID: ${correctUser.id})`);
+          user = correctUser;
+        } else {
+          console.log(`❌ Nenhum usuário encontrado com email ${userEmail}`);
+          user = null;
+        }
+      }
+      
+      // If not found by ID or email didn't match, try to find by email
       if (!user && userEmail) {
         console.log(`🔍 Usuário não encontrado por ID, buscando por email: ${userEmail}`);
         user = await storage.getUserByEmail(userEmail);
         
-        // If found by email but with different ID, this means we need to update the user
-        if (user && user.id !== userId) {
-          console.log(`⚠️ Updating user ID from ${user.id} to ${userId} for email ${userEmail}`);
-          // Note: This scenario might need special handling for data consistency
+        if (user) {
+          console.log(`✅ Usuário encontrado por email: ${user.email} - Role: ${user.role} (ID: ${user.id})`);
         }
       }
       
