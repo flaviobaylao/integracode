@@ -1346,22 +1346,8 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
             </div>
           </div>
           
-          {/* Linha 2: Botões de Finalizar */}
-          <div className="flex justify-end space-x-2">
-            <Button 
-              onClick={handleFinalizeSale}
-              disabled={isSubmitting || products.length === 0}
-              className="bg-green-500 hover:bg-green-600"
-              data-testid="button-finalize-sale"
-            >
-              {isSubmitting ? (
-                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-              ) : (
-                <CheckCircle className="h-4 w-4 mr-2" />
-              )}
-              Finalizar Venda
-            </Button>
-            
+          {/* Botão de Finalizar e Enviar para Faturamento */}
+          <div className="flex justify-end">
             <Button 
               onClick={handleSendToFaturamento}
               disabled={isSubmitting || products.length === 0}
