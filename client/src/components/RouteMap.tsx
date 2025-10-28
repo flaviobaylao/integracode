@@ -171,12 +171,19 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
     }
 
     // Adicionar marcadores de checkpoints reais (se houver)
+    const checkInCoordinates: [number, number][] = [];
+    
     checkpoints.forEach((checkpoint) => {
       const lat = parseFloat(checkpoint.latitude);
       const lon = parseFloat(checkpoint.longitude);
 
       // Validar coordenadas antes de adicionar marcador
       if (isNaN(lat) || isNaN(lon)) return;
+
+      // Coletar coordenadas de check-in para desenhar rota executada
+      if (checkpoint.checkpointType === 'check_in') {
+        checkInCoordinates.push([lat, lon]);
+      }
 
       const checkpointIconHtml = renderToStaticMarkup(
         <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center"
@@ -198,6 +205,22 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
           ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}
         `);
     });
+
+    // Desenhar rota executada em vermelho (baseado em check-ins)
+    if (checkInCoordinates.length > 0) {
+      // Adicionar casa do vendedor no início
+      const executedRouteCoordinates: [number, number][] = [
+        [homeLocation.latitude, homeLocation.longitude],
+        ...checkInCoordinates
+      ];
+
+      // Desenhar linha vermelha sólida para rota executada
+      L.polyline(executedRouteCoordinates, {
+        color: '#ef4444', // Vermelho
+        weight: 4,
+        opacity: 0.8,
+      }).addTo(map);
+    }
 
   }, [homeLocation, visits, optimizedOrder, checkpoints, hasValidCoordinates]);
 
