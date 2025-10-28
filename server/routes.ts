@@ -5387,6 +5387,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       
       for (const orderId of orderIds) {
+        let order: any = null;
+        let salesCard: any = null;
+        
         try {
           console.log(`\n📦 Processando pedido ${orderId}...`);
           
@@ -5402,11 +5405,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue;
           }
           
-          const order = blockedOrder[0];
+          order = blockedOrder[0];
           console.log(`✓ Pedido encontrado: salesCardId=${order.salesCardId}, customerId=${order.customerId}`);
           
           // Buscar sales card relacionado
-          const salesCard = await storage.getSalesCard(order.salesCardId);
+          salesCard = await storage.getSalesCard(order.salesCardId);
           if (!salesCard) {
             console.log(`❌ Sales card ${order.salesCardId} não encontrado`);
             errors.push(`Sales card ${order.salesCardId} não encontrado`);
