@@ -285,6 +285,111 @@ export class OmieService {
     }
   }
 
+  // Criar novo cliente no Omie
+  async createClient(customerData: {
+    cnpj?: string | null;
+    cpf?: string | null;
+    name: string;
+    fantasyName?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zipCode?: string | null;
+  }): Promise<{ success: boolean; omieClientCode: number | null; message: string }> {
+    try {
+      const document = customerData.cnpj || customerData.cpf;
+      
+      if (!document) {
+        return {
+          success: false,
+          omieClientCode: null,
+          message: 'Cliente deve ter CPF ou CNPJ para ser cadastrado no Omie'
+        };
+      }
+
+      console.log(`📤 Criando cliente no Omie: ${customerData.name} (${document})...`);
+
+      // Verificar se cliente já existe
+      const existingClient = await this.getClientByCnpjCpf(document);
+      if (existingClient) {
+        console.log(`⚠️ Cliente já existe no Omie (código: ${existingClient.codigo_cliente_omie})`);
+        return {
+          success: true,
+          omieClientCode: existingClient.codigo_cliente_omie,
+          message: `Cliente já cadastrado no Omie (código: ${existingClient.codigo_cliente_omie})`
+        };
+      }
+
+      // Preparar payload para criação
+      const clientPayload: any = {
+        razao_social: customerData.name,
+        nome_fantasia: customerData.fantasyName || customerData.name,
+        cnpj_cpf: document
+      };
+
+      // Adicionar campos opcionais apenas se existirem
+      if (customerData.email) {
+        clientPayload.email = customerData.email;
+      }
+      if (customerData.phone) {
+        clientPayload.telefone1_numero = customerData.phone;
+      }
+      if (customerData.address) {
+        clientPayload.endereco = customerData.address;
+      }
+      if (customerData.city) {
+        clientPayload.cidade = customerData.city;
+      }
+      if (customerData.state) {
+        clientPayload.estado = customerData.state;
+      }
+      if (customerData.zipCode) {
+        clientPayload.cep = customerData.zipCode.replace(/\D/g, ''); // Remover formatação
+      }
+
+      // Criar cliente no Omie usando UpsertCliente
+      const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', clientPayload);
+
+      if (response && response.codigo_cliente_omie) {
+        console.log(`✅ Cliente criado no Omie com sucesso (código: ${response.codigo_cliente_omie})`);
+        return {
+          success: true,
+          omieClientCode: response.codigo_cliente_omie,
+          message: response.descricao_status || 'Cliente criado com sucesso no Omie'
+        };
+      } else {
+        throw new Error('Resposta inválida da API Omie ao criar cliente');
+      }
+    } catch (error: any) {
+      console.error(`❌ Erro ao criar cliente no Omie:`, error);
+      
+      // Verificar se o erro é de cliente já cadastrado
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes('já cadastrado') || errorMessage.includes('duplicado')) {
+        // Tentar buscar o cliente existente
+        const document = customerData.cnpj || customerData.cpf;
+        if (document) {
+          const existingClient = await this.getClientByCnpjCpf(document);
+          if (existingClient) {
+            return {
+              success: true,
+              omieClientCode: existingClient.codigo_cliente_omie,
+              message: `Cliente já estava cadastrado no Omie (código: ${existingClient.codigo_cliente_omie})`
+            };
+          }
+        }
+      }
+
+      return {
+        success: false,
+        omieClientCode: null,
+        message: `Erro ao criar cliente no Omie: ${errorMessage}`
+      };
+    }
+  }
+
   // ==================== MÉTODOS AUXILIARES PARA VENDEDORES E ETAPAS ====================
   
   // Cache para vendedores, etapas e clientes (para evitar múltiplas requisições)
