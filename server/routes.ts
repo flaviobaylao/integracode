@@ -799,8 +799,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Criar cliente no Integra
       const customer = await storage.createCustomer(data);
-      res.json(customer);
+      
+      // Tentar cadastrar automaticamente no Omie (se tiver CPF/CNPJ)
+      let omieMessage = '';
+      if (customer.cpf || customer.cnpj) {
+        try {
+          const omieService = getOmieService(storage);
+          if (omieService) {
+            console.log(`📤 Tentando cadastrar cliente no Omie: ${customer.name}...`);
+            const omieResult = await omieService.createClient({
+              cnpj: customer.cnpj,
+              cpf: customer.cpf,
+              name: customer.name,
+              fantasyName: customer.fantasyName,
+              email: customer.email,
+              phone: customer.phone,
+              address: customer.address,
+              city: customer.city,
+              state: customer.state,
+              zipCode: customer.zipCode
+            });
+            
+            if (omieResult.success && omieResult.omieClientCode) {
+              // Atualizar cliente com código Omie
+              await storage.updateCustomer(customer.id, {
+                omieClientCode: omieResult.omieClientCode.toString()
+              });
+              omieMessage = ` ✅ Cliente cadastrado no Omie (código: ${omieResult.omieClientCode})`;
+              console.log(`✅ Cliente ${customer.name} cadastrado no Omie com sucesso`);
+            } else {
+              omieMessage = ` ⚠️ Cliente criado no Integra, mas não foi possível cadastrar no Omie: ${omieResult.message}`;
+              console.warn(`⚠️ Não foi possível cadastrar no Omie: ${omieResult.message}`);
+            }
+          }
+        } catch (omieError: any) {
+          console.error('Erro ao cadastrar cliente no Omie:', omieError);
+          omieMessage = ` ⚠️ Cliente criado no Integra, mas houve erro ao cadastrar no Omie`;
+        }
+      }
+      
+      res.json({
+        ...customer,
+        _omieMessage: omieMessage // Mensagem informativa sobre o cadastro no Omie
+      });
     } catch (error) {
       console.error("Error creating customer:", error);
       if (error instanceof z.ZodError) {

@@ -299,7 +299,10 @@ export class OmieService {
     zipCode?: string | null;
   }): Promise<{ success: boolean; omieClientCode: number | null; message: string }> {
     try {
-      const document = customerData.cnpj || customerData.cpf;
+      // Normalizar CPF/CNPJ (apenas dígitos) para garantir detecção de duplicatas
+      const normalizeDocument = (doc: string) => doc.replace(/\D/g, '');
+      const document = customerData.cnpj ? normalizeDocument(customerData.cnpj) : 
+                      customerData.cpf ? normalizeDocument(customerData.cpf) : null;
       
       if (!document) {
         return {
@@ -311,7 +314,7 @@ export class OmieService {
 
       console.log(`📤 Criando cliente no Omie: ${customerData.name} (${document})...`);
 
-      // Verificar se cliente já existe
+      // Verificar se cliente já existe (usando documento normalizado)
       const existingClient = await this.getClientByCnpjCpf(document);
       if (existingClient) {
         console.log(`⚠️ Cliente já existe no Omie (código: ${existingClient.codigo_cliente_omie})`);
