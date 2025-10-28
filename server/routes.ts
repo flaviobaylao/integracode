@@ -5520,6 +5520,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Reject (delete) released blocked orders (only admin, coordinator, administrative)
+  app.post('/api/blocked-orders/reject', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { orderIds } = req.body;
+      const userId = req.currentUser.id;
+      
+      console.log(`🗑️ Tentativa de rejeitar pedidos bloqueados:`, {
+        orderIds,
+        count: orderIds?.length,
+        userId,
+        userEmail: req.currentUser.email
+      });
+      
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        console.log(`❌ Requisição inválida: orderIds vazio ou não é array`);
+        return res.status(400).json({ message: "Lista de IDs de pedidos é obrigatória" });
+      }
+      
+      let rejected = 0;
+      const errors = [];
+      
+      for (const orderId of orderIds) {
+        try {
+          console.log(`\n🗑️ Processando pedido ${orderId}...`);
+          
+          // Buscar pedido bloqueado
+          const blockedOrder = await db.select()
+            .from(blockedOrders)
+            .where(eq(blockedOrders.id, orderId))
+            .limit(1);
+          
+          if (blockedOrder.length === 0) {
+            console.log(`❌ Pedido ${orderId} não encontrado no banco`);
+            errors.push(`Pedido ${orderId} não encontrado`);
+            continue;
+          }
+          
+          const order = blockedOrder[0];
+          
+          // Verificar se o pedido está liberado (podemos rejeitar apenas pedidos liberados)
+          if (order.status !== 'released') {
+            console.log(`⚠️ Pedido ${orderId} não está liberado (status: ${order.status})`);
+            errors.push(`Pedido ${orderId} não está liberado`);
+            continue;
+          }
+          
+          console.log(`✓ Pedido encontrado e liberado: salesCardId=${order.salesCardId}`);
+          
+          // Deletar pedido bloqueado
+          await db.delete(blockedOrders)
+            .where(eq(blockedOrders.id, orderId));
+          
+          rejected++;
+          console.log(`✅ Pedido ${orderId} rejeitado e removido do sistema`);
+          
+        } catch (error: any) {
+          console.error(`❌ Erro ao rejeitar pedido ${orderId}:`, {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          });
+          errors.push(`Pedido ${orderId}: ${error.message || 'Erro desconhecido'}`);
+        }
+      }
+      
+      console.log(`\n📊 Resultado final da rejeição:`, {
+        rejected,
+        errorsCount: errors.length,
+        errors: errors.length > 0 ? errors : 'Nenhum erro'
+      });
+      
+      res.json({
+        rejected,
+        errors,
+        message: `${rejected} pedido(s) rejeitado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}`
+      });
+      
+    } catch (error: any) {
+      console.error("❌ ERRO CRÍTICO ao rejeitar pedidos bloqueados:", {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      res.status(500).json({ 
+        message: `Erro ao processar rejeição: ${error.message || 'Erro desconhecido'}` 
+      });
+    }
+  });
+
   // Rota para sincronizar todos os vendedores do Omie
   app.post('/api/omie/sync-vendors', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {

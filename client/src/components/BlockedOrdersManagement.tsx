@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Search, Unlock, Ban, AlertTriangle } from "lucide-react";
+import { Search, Unlock, Ban, AlertTriangle, Trash2 } from "lucide-react";
 import type { User } from "@shared/schema";
 
 interface BlockedOrder {
@@ -84,6 +84,28 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
     },
   });
 
+  // Mutation para rejeitar (deletar) pedidos liberados
+  const rejectOrdersMutation = useMutation({
+    mutationFn: async (orderIds: string[]) => {
+      return await apiRequest('POST', '/api/blocked-orders/reject', { orderIds });
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      setSelectedOrders(new Set());
+      toast({
+        title: "Pedidos rejeitados",
+        description: `${data.rejected} pedido(s) removido(s) do sistema.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao rejeitar pedidos",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const filteredOrders = blockedOrders?.filter(order => {
     const searchLower = searchTerm.toLowerCase();
     return (order.customer.fantasyName || order.customer.name).toLowerCase().includes(searchLower) ||
@@ -120,7 +142,46 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
       return;
     }
 
-    releaseOrdersMutation.mutate(Array.from(selectedOrders));
+    // Filtrar apenas pedidos com status 'blocked'
+    const selectedOrdersData = filteredOrders.filter(order => selectedOrders.has(order.id));
+    const blockedOrders = selectedOrdersData.filter(order => order.status === 'blocked');
+
+    if (blockedOrders.length === 0) {
+      toast({
+        title: "Nenhum pedido bloqueado selecionado",
+        description: "Selecione pedidos com status 'Bloqueado' para liberar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    releaseOrdersMutation.mutate(blockedOrders.map(order => order.id));
+  };
+
+  const handleRejectSelected = () => {
+    if (selectedOrders.size === 0) {
+      toast({
+        title: "Nenhum pedido selecionado",
+        description: "Selecione pelo menos um pedido para rejeitar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Verificar se há pedidos liberados selecionados
+    const selectedOrdersData = filteredOrders.filter(order => selectedOrders.has(order.id));
+    const releasedOrders = selectedOrdersData.filter(order => order.status === 'released');
+
+    if (releasedOrders.length === 0) {
+      toast({
+        title: "Nenhum pedido liberado selecionado",
+        description: "Selecione pedidos com status 'Liberado' para rejeitar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    rejectOrdersMutation.mutate(releasedOrders.map(order => order.id));
   };
 
   const formatCurrency = (value?: number) => {
@@ -181,18 +242,32 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
           </p>
         </div>
         {canReleaseOrders && (
-          <Button 
-            onClick={handleReleaseSelected}
-            disabled={selectedOrders.size === 0 || releaseOrdersMutation.isPending}
-            className="bg-green-600 hover:bg-green-700"
-            data-testid="button-release-orders"
-          >
-            <Unlock className="h-4 w-4 mr-2" />
-            {releaseOrdersMutation.isPending 
-              ? 'Liberando...' 
-              : `Liberar ${selectedOrders.size} Pedido(s)`
-            }
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button 
+              onClick={handleReleaseSelected}
+              disabled={selectedOrders.size === 0 || releaseOrdersMutation.isPending}
+              className="bg-green-600 hover:bg-green-700"
+              data-testid="button-release-orders"
+            >
+              <Unlock className="h-4 w-4 mr-2" />
+              {releaseOrdersMutation.isPending 
+                ? 'Liberando...' 
+                : `Liberar ${selectedOrders.size} Pedido(s)`
+              }
+            </Button>
+            <Button 
+              onClick={handleRejectSelected}
+              disabled={selectedOrders.size === 0 || rejectOrdersMutation.isPending}
+              variant="destructive"
+              data-testid="button-reject-orders"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {rejectOrdersMutation.isPending 
+                ? 'Rejeitando...' 
+                : `Rejeitar ${selectedOrders.size} Pedido(s)`
+              }
+            </Button>
+          </div>
         )}
       </div>
 
@@ -265,7 +340,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
                         <Checkbox
                           checked={selectedOrders.has(order.id)}
                           onCheckedChange={(checked) => handleSelectOrder(order.id, checked as boolean)}
-                          disabled={order.status !== 'blocked'}
+                          disabled={order.status === 'sent_to_omie'}
                           data-testid={`checkbox-order-${order.id}`}
                         />
                       )}
