@@ -242,7 +242,16 @@ export class OmieService {
 
       console.log(`Nenhum cliente encontrado no Omie com CNPJ/CPF: ${cnpjCpf}`);
       return null;
-    } catch (error) {
+    } catch (error: any) {
+      // Tratar erro específico do Omie quando não há registros na paginação
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes('Não existem registros') || 
+          errorMessage.includes('N\\u00e3o existem registros') ||
+          errorMessage.includes('página')) {
+        console.warn(`⚠️ Cliente não encontrado no Omie (CNPJ/CPF: ${cnpjCpf}) - Erro de paginação vazia`);
+        return null;
+      }
+      
       console.error('Erro ao buscar cliente no Omie:', error);
       throw error;
     }
