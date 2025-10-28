@@ -291,6 +291,7 @@ export class OmieService {
   private sellersCache: Map<string, any> = new Map();
   private stagesCache: Map<string, any> = new Map();
   private clientsCache: Map<string, any> = new Map();
+  private vendorsCache: Map<string, any> = new Map(); // Cache para vendedores
   private stageNamesCache: Map<string, string> = new Map(); // Cache para nomes das etapas
   private paymentMethodsCache: Map<string, string> = new Map(); // Cache para formas de pagamento
 
@@ -299,6 +300,7 @@ export class OmieService {
     this.sellersCache.clear();
     this.stagesCache.clear();
     this.clientsCache.clear();
+    this.vendorsCache.clear();
     this.stageNamesCache.clear();
     this.paymentMethodsCache.clear();
     console.log('🧹 Cache limpo!');
@@ -3106,7 +3108,7 @@ export class OmieService {
               
               if (pedidoId) {
                 try {
-                  const stageData = await this.fetchPedidoStage(parseInt(pedidoId));
+                  const stageData = await this.fetchPedidoStage(pedidoId);
                   if (stageData) {
                     if (stageData.stageName) {
                       invoiceStage = stageData.stageName;
