@@ -5324,7 +5324,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { orderIds } = req.body;
       const userId = req.currentUser.id;
       
+      console.log(`🔓 Tentativa de liberar pedidos bloqueados:`, {
+        orderIds,
+        count: orderIds?.length,
+        userId,
+        userEmail: req.currentUser.email
+      });
+      
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        console.log(`❌ Requisição inválida: orderIds vazio ou não é array`);
         return res.status(400).json({ message: "Lista de IDs de pedidos é obrigatória" });
       }
       
@@ -5335,11 +5343,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const omieService = getOmieService(storage);
       if (!omieService) {
+        console.log(`❌ Omie service não configurado`);
         return res.status(503).json({ message: 'Integração Omie não configurada' });
       }
       
+      console.log(`✅ Omie service configurado, iniciando processamento de ${orderIds.length} pedido(s)`);
+      
+      
       for (const orderId of orderIds) {
         try {
+          console.log(`\n📦 Processando pedido ${orderId}...`);
+          
           // Buscar pedido bloqueado
           const blockedOrder = await db.select()
             .from(blockedOrders)
@@ -5347,20 +5361,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .limit(1);
           
           if (blockedOrder.length === 0) {
+            console.log(`❌ Pedido ${orderId} não encontrado no banco`);
             errors.push(`Pedido ${orderId} não encontrado`);
             continue;
           }
           
           const order = blockedOrder[0];
+          console.log(`✓ Pedido encontrado: salesCardId=${order.salesCardId}, customerId=${order.customerId}`);
           
           // Buscar sales card relacionado
           const salesCard = await storage.getSalesCard(order.salesCardId);
           if (!salesCard) {
+            console.log(`❌ Sales card ${order.salesCardId} não encontrado`);
             errors.push(`Sales card ${order.salesCardId} não encontrado`);
+            continue;
+          }
+          console.log(`✓ Sales card encontrado: cliente=${salesCard.customer?.name}`);
+          
+          if (!salesCard.customer) {
+            console.log(`❌ Sales card ${order.salesCardId} sem dados de cliente`);
+            errors.push(`Sales card ${order.salesCardId} sem dados de cliente`);
             continue;
           }
           
           // Buscar dados completos dos produtos
+          console.log(`✓ Buscando produtos do pedido...`);
           let products = [];
           if (order.products && Array.isArray(order.products) && order.products.length > 0) {
             const productPromises = order.products.map(async (cardProduct: any) => {
@@ -5379,9 +5404,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
               };
             });
             products = await Promise.all(productPromises);
+            console.log(`✓ ${products.length} produto(s) encontrado(s)`);
+          } else {
+            console.log(`⚠️ Nenhum produto no pedido`);
           }
           
           // Enviar para Omie
+          console.log(`📤 Enviando pedido para Omie...`, {
+            paymentMethod: order.paymentMethod || 'a_vista',
+            operationType: order.operationType || 'venda',
+            sellerId: order.sellerId,
+            productsCount: products.length
+          });
+          
           const omieResponse = await omieService.createSalesOrder(
             salesCard,
             salesCard.customer,
@@ -5390,6 +5425,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             order.operationType || 'venda',
             order.sellerId
           );
+          
+          console.log(`✅ Resposta do Omie recebida:`, {
+            codigo_pedido: omieResponse.codigo_pedido,
+            numero_pedido: omieResponse.numero_pedido
+          });
           
           // Atualizar sales card com ID do Omie
           await storage.updateSalesCard(order.salesCardId, {
@@ -5411,10 +5451,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`✅ Pedido ${orderId} liberado e enviado para Omie`);
           
         } catch (error: any) {
-          console.error(`❌ Erro ao liberar pedido ${orderId}:`, error);
-          errors.push(`Pedido ${orderId}: ${error.message}`);
+          console.error(`❌ Erro ao liberar pedido ${orderId}:`, {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          });
+          errors.push(`Pedido ${orderId}: ${error.message || 'Erro desconhecido'}`);
         }
       }
+      
+      console.log(`\n📊 Resultado final da liberação:`, {
+        released,
+        errorsCount: errors.length,
+        errors: errors.length > 0 ? errors : 'Nenhum erro'
+      });
       
       res.json({
         released,
@@ -5422,9 +5472,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: `${released} pedido(s) liberado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}`
       });
       
-    } catch (error) {
-      console.error("Error releasing blocked orders:", error);
-      res.status(500).json({ message: "Failed to release blocked orders" });
+    } catch (error: any) {
+      console.error("❌ ERRO CRÍTICO ao liberar pedidos bloqueados:", {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      res.status(500).json({ 
+        message: `Erro ao processar liberação: ${error.message || 'Erro desconhecido'}` 
+      });
     }
   });
 
