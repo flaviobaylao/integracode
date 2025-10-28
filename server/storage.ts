@@ -3502,10 +3502,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
     
-    // Transformar resultado para incluir customerName
+    // Transformar resultado para incluir customerName (prioriza fantasy_name)
     return results.map(row => ({
       ...row.route_checkpoints,
-      customerName: row.customers?.name || null
+      customerName: row.customers?.fantasyName || row.customers?.name || null
     }));
   }
 
