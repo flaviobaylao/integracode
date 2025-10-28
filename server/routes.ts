@@ -7302,6 +7302,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para listar fotos de check-in
+  app.get('/api/check-in-photos', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, startDate, endDate, limit = '100' } = req.query;
+
+      // Construir query base
+      let query = db
+        .select({
+          id: salesCards.id,
+          customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+          sellerName: sql<string>`${users.firstName} || ' ' || COALESCE(${users.lastName}, '')`,
+          checkInTime: salesCards.checkInTime,
+          checkInPhotoUrl: salesCards.checkInPhotoUrl,
+          checkInLatitude: salesCards.checkInLatitude,
+          checkInLongitude: salesCards.checkInLongitude,
+          distanceToCustomer: salesCards.distanceToCustomer
+        })
+        .from(salesCards)
+        .leftJoin(customers, eq(salesCards.customerId, customers.id))
+        .leftJoin(users, eq(salesCards.sellerId, users.id))
+        .where(and(
+          isNotNull(salesCards.checkInPhotoUrl),
+          isNotNull(salesCards.checkInTime)
+        ))
+        .$dynamic();
+
+      // Filtro por vendedor (se fornecido e usuário tem permissão)
+      if (sellerId && sellerId !== 'all') {
+        if (user.role === 'vendedor' && sellerId !== user.id) {
+          return res.status(403).json({ message: 'Acesso negado' });
+        }
+        query = query.where(eq(salesCards.sellerId, sellerId));
+      } else if (user.role === 'vendedor') {
+        // Vendedor só pode ver suas próprias fotos
+        query = query.where(eq(salesCards.sellerId, user.id));
+      }
+
+      // Filtros de data (se fornecidos)
+      if (startDate) {
+        query = query.where(gte(salesCards.checkInTime, new Date(startDate as string)));
+      }
+      if (endDate) {
+        query = query.where(lte(salesCards.checkInTime, new Date(endDate as string)));
+      }
+
+      // Ordenar por data mais recente primeiro
+      const photos = await query
+        .orderBy(sql`${salesCards.checkInTime} DESC`)
+        .limit(parseInt(limit as string));
+
+      res.json({
+        photos,
+        total: photos.length
+      });
+    } catch (error) {
+      console.error('Erro ao buscar fotos de check-in:', error);
+      res.status(500).json({ message: 'Falha ao buscar fotos de check-in' });
+    }
+  });
+
   // Route for check-out
   app.post('/api/sales-cards/:id/check-out', authenticateUser, async (req: any, res) => {
     try {

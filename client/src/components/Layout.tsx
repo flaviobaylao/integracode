@@ -45,6 +45,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'routes-management', label: 'Gerenciar Rotas', icon: 'fas fa-map-marked-alt', available: canAccessReports },
     { 
+      id: 'check-in-photos', 
+      label: isVendedor ? 'Minhas Fotos de Check-in' : 'Fotos de Check-in', 
+      icon: 'fas fa-camera', 
+      available: true 
+    },
+    { 
       id: 'customers', 
       label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes',
       icon: 'fas fa-users', 
@@ -112,7 +118,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

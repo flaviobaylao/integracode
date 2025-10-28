@@ -27,6 +27,7 @@ import BankAccountsDebug from "@/pages/BankAccountsDebug";
 import ContasReceber from "@/pages/ContasReceber";
 import OverdueDebtsPage from "@/pages/OverdueDebts";
 import SalesGoalsPage from "@/pages/SalesGoals";
+import CheckInPhotos from "@/pages/CheckInPhotos";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -137,6 +138,7 @@ function Router() {
           <Route path="/visit-routes" component={VisitRoutes} />
           <Route path="/daily-route" component={DailyRouteView} />
           <Route path="/routes-management" component={RoutesManagement} />
+          <Route path="/check-in-photos" component={CheckInPhotos} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
