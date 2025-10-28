@@ -751,6 +751,18 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                         Distância até o cliente: {parseFloat(card.distanceToCustomer).toFixed(0)}m
                       </div>
                     )}
+                    {card.checkInPhotoUrl && card.checkInPhotoUrl.length > 100 && (
+                      <div className="mt-3">
+                        <span className="text-xs text-gray-600 mb-1 block">Foto do check-in:</span>
+                        <img 
+                          src={card.checkInPhotoUrl} 
+                          alt="Foto do check-in" 
+                          className="w-full max-w-sm rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                          onClick={() => window.open(card.checkInPhotoUrl, '_blank')}
+                          data-testid="img-check-in-photo"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
                 
