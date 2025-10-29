@@ -9,9 +9,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
-  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -60,6 +61,15 @@ export default function DailyRouteView() {
   // Estado para modal de detalhes do card
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const [showCardModal, setShowCardModal] = useState(false);
+  
+  // Estado para modal de foto
+  const [selectedPhoto, setSelectedPhoto] = useState<{
+    url: string;
+    customerName: string;
+    checkInTime: string;
+    latitude: string;
+    longitude: string;
+  } | null>(null);
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -223,6 +233,27 @@ export default function DailyRouteView() {
         description: error.message || "Não foi possível carregar os detalhes do card.",
       });
     }
+  };
+
+  // Função para abrir modal de foto
+  const handleOpenPhoto = (visit: any) => {
+    if (!visit.checkInPhotoUrl) return;
+    
+    setSelectedPhoto({
+      url: visit.checkInPhotoUrl,
+      customerName: visit.customerName,
+      checkInTime: visit.actualCheckIn,
+      latitude: visit.checkInLatitude,
+      longitude: visit.checkInLongitude
+    });
+  };
+
+  // Função para baixar foto
+  const downloadPhoto = (photoUrl: string, customerName: string, checkInTime: string) => {
+    const link = document.createElement('a');
+    link.href = photoUrl;
+    link.download = `checkin-${customerName}-${format(new Date(checkInTime), 'yyyy-MM-dd-HHmm')}.jpg`;
+    link.click();
   };
 
   const formatDistance = (meters: number) => {
@@ -682,6 +713,21 @@ export default function DailyRouteView() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 ml-2">
+                        {visit.checkInPhotoUrl && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-purple-500 hover:bg-purple-600 text-white border-purple-600"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevenir que abra o modal ao clicar
+                              handleOpenPhoto(visit);
+                            }}
+                            data-testid={`button-photo-${index}`}
+                          >
+                            <Camera className="h-4 w-4 mr-1" />
+                            Foto
+                          </Button>
+                        )}
                         {visit.customerLatitude && visit.customerLongitude && (
                           <Button
                             size="sm"
@@ -941,6 +987,77 @@ export default function DailyRouteView() {
         }}
         card={selectedCard}
       />
+
+      {/* Modal de Visualização de Foto */}
+      <Dialog open={!!selectedPhoto} onOpenChange={() => setSelectedPhoto(null)}>
+        <DialogContent className="max-w-4xl p-0">
+          {selectedPhoto && (
+            <div className="relative">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="absolute top-2 right-2 z-10 bg-white/90 hover:bg-white"
+                onClick={() => setSelectedPhoto(null)}
+                data-testid="button-close-photo-modal"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              
+              {selectedPhoto.url && selectedPhoto.url.length > 100 ? (
+                <img 
+                  src={selectedPhoto.url} 
+                  alt={`Check-in ${selectedPhoto.customerName}`}
+                  className="w-full max-h-[80vh] object-contain bg-black"
+                />
+              ) : (
+                <div className="w-full h-96 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+                  <div className="text-center">
+                    <Camera className="h-16 w-16 mx-auto text-gray-400 mb-4" />
+                    <p className="text-gray-500 dark:text-gray-400">Foto indisponível</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="p-6 bg-white dark:bg-gray-800">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Camera className="h-5 w-5 text-honest-blue" />
+                  Check-in: {selectedPhoto.customerName}
+                </h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-gray-500" />
+                    <span>{format(new Date(selectedPhoto.checkInTime), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-gray-500" />
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      {selectedPhoto.latitude}, {selectedPhoto.longitude}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    onClick={() => downloadPhoto(selectedPhoto.url, selectedPhoto.customerName, selectedPhoto.checkInTime)}
+                    className="flex-1"
+                    data-testid="button-download-photo"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Baixar Foto
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => window.open(`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`, '_blank')}
+                    data-testid="button-view-location"
+                  >
+                    <MapPin className="mr-2 h-4 w-4" />
+                    Ver Localização
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
