@@ -644,6 +644,7 @@ export default function DailyRouteView() {
               visits={route.visits || []}
               optimizedOrder={route.optimizedOrder || []}
               checkpoints={route.checkpoints || []}
+              onPhotoClick={(photoData) => setSelectedPhoto(photoData)}
             />
           )}
         </CardContent>

@@ -13,6 +13,9 @@ interface RouteMapProps {
     customerLongitude: string | null;
     actualCheckIn?: string | null;
     actualCheckOut?: string | null;
+    checkInPhotoUrl?: string | null;
+    checkInLatitude?: string | null;
+    checkInLongitude?: string | null;
   }>;
   optimizedOrder: string[];
   checkpoints?: Array<{
@@ -22,9 +25,16 @@ interface RouteMapProps {
     timestamp: string;
     checkpointType: string;
   }>;
+  onPhotoClick?: (photoData: {
+    url: string;
+    customerName: string;
+    checkInTime: string;
+    latitude: string;
+    longitude: string;
+  }) => void;
 }
 
-export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [] }: RouteMapProps) {
+export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
@@ -185,7 +195,21 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
         checkInCoordinates.push([lat, lon]);
       }
 
-      const checkpointIconHtml = renderToStaticMarkup(
+      // Encontrar a visita correspondente para verificar se tem foto
+      const correspondingVisit = visits.find(v => v.id === checkpoint.visitId);
+      const hasPhoto = correspondingVisit?.checkInPhotoUrl && checkpoint.checkpointType === 'check_in';
+
+      // Ícone diferente se tiver foto (camera icon)
+      const checkpointIconHtml = hasPhoto ? renderToStaticMarkup(
+        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center cursor-pointer hover:bg-purple-700"
+             style={{ width: '20px', height: '20px' }}
+             title="Clique para ver a foto">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+            <circle cx="12" cy="13" r="3"/>
+          </svg>
+        </div>
+      ) : renderToStaticMarkup(
         <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center"
              style={{ width: '12px', height: '12px' }}>
         </div>
@@ -193,17 +217,35 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
 
       const checkpointIcon = L.divIcon({
         html: checkpointIconHtml,
-        className: '',
-        iconSize: [12, 12],
-        iconAnchor: [6, 6],
+        className: hasPhoto ? 'checkpoint-with-photo' : '',
+        iconSize: hasPhoto ? [20, 20] : [12, 12],
+        iconAnchor: hasPhoto ? [10, 10] : [6, 6],
       });
 
-      L.marker([lat, lon], { icon: checkpointIcon })
-        .addTo(map)
-        .bindPopup(`
-          <strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-          ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}
-        `);
+      const marker = L.marker([lat, lon], { icon: checkpointIcon }).addTo(map);
+
+      // Se tiver foto e callback, adicionar evento de clique
+      if (hasPhoto && onPhotoClick && correspondingVisit) {
+        marker.on('click', () => {
+          onPhotoClick({
+            url: correspondingVisit.checkInPhotoUrl!,
+            customerName: correspondingVisit.customerName,
+            checkInTime: correspondingVisit.actualCheckIn!,
+            latitude: correspondingVisit.checkInLatitude || checkpoint.latitude,
+            longitude: correspondingVisit.checkInLongitude || checkpoint.longitude
+          });
+        });
+      }
+
+      // Popup com informações
+      const popupContent = hasPhoto 
+        ? `<strong>📸 ${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
+           ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}<br>
+           <em style="color: #9333ea;">Clique no ícone para ver a foto</em>`
+        : `<strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
+           ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}`;
+
+      marker.bindPopup(popupContent);
     });
 
     // Desenhar rota executada em vermelho (baseado em check-ins)
