@@ -85,6 +85,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
+    { id: 'rh', label: 'RH', icon: 'fas fa-briefcase', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
@@ -118,7 +119,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'rh'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

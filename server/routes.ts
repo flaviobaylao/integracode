@@ -9977,6 +9977,256 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // RH: Buscar quilometragem mensal por vendedor
+  app.get('/api/hr/monthly-mileage', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { month, year } = req.query;
+      
+      if (!month || !year) {
+        return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
+      }
+
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+
+      // Calcular início e fim do mês
+      const startDate = new Date(yearNum, monthNum - 1, 1);
+      const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
+
+      // Buscar todos os vendedores
+      const sellers = await db.select({
+        id: users.id,
+        name: users.name,
+        email: users.email
+      })
+      .from(users)
+      .where(eq(users.role, 'vendedor'));
+
+      // Para cada vendedor, buscar rotas do mês
+      const mileageData = await Promise.all(sellers.map(async (seller) => {
+        const routes = await db.select({
+          id: dailyRoutes.id,
+          routeDate: dailyRoutes.routeDate,
+          totalActualDistance: dailyRoutes.totalActualDistance,
+          completedVisits: dailyRoutes.completedVisits
+        })
+        .from(dailyRoutes)
+        .where(
+          and(
+            eq(dailyRoutes.sellerId, seller.id),
+            gte(dailyRoutes.routeDate, startDate),
+            lte(dailyRoutes.routeDate, endDate)
+          )
+        )
+        .orderBy(asc(dailyRoutes.routeDate));
+
+        // Agrupar por dia
+        const dailyData = routes.map(route => ({
+          date: route.routeDate,
+          distance: parseFloat(route.totalActualDistance || '0'),
+          visits: route.completedVisits || 0
+        }));
+
+        // Calcular total do mês
+        const totalDistance = dailyData.reduce((sum, day) => sum + day.distance, 0);
+
+        return {
+          sellerId: seller.id,
+          sellerName: seller.name,
+          sellerEmail: seller.email,
+          dailyData,
+          totalDistance
+        };
+      }));
+
+      res.json(mileageData);
+
+    } catch (error: any) {
+      console.error('Erro ao buscar quilometragem mensal:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar quilometragem mensal',
+        error: error.message 
+      });
+    }
+  });
+
+  // RH: Buscar carga horária mensal por vendedor
+  app.get('/api/hr/monthly-hours', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { month, year } = req.query;
+      
+      if (!month || !year) {
+        return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
+      }
+
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+
+      // Calcular início e fim do mês
+      const startDate = new Date(yearNum, monthNum - 1, 1);
+      const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
+
+      // Buscar todos os vendedores
+      const sellers = await db.select({
+        id: users.id,
+        name: users.name,
+        email: users.email
+      })
+      .from(users)
+      .where(eq(users.role, 'vendedor'));
+
+      // Para cada vendedor, buscar check-ins e check-outs do mês
+      const hoursData = await Promise.all(sellers.map(async (seller) => {
+        // Buscar todos os sales cards do mês com check-in
+        const cards = await db.select({
+          id: salesCards.id,
+          scheduledDate: salesCards.scheduledDate,
+          actualCheckIn: salesCards.actualCheckIn,
+          actualCheckOut: salesCards.actualCheckOut
+        })
+        .from(salesCards)
+        .where(
+          and(
+            eq(salesCards.sellerId, seller.id),
+            gte(salesCards.scheduledDate, startDate),
+            lte(salesCards.scheduledDate, endDate),
+            isNotNull(salesCards.actualCheckIn)
+          )
+        )
+        .orderBy(asc(salesCards.scheduledDate));
+
+        // Agrupar por dia e calcular horas trabalhadas
+        const dayMap = new Map<string, { 
+          date: Date, 
+          firstCheckIn: Date | null, 
+          lastCheckOut: Date | null,
+          checkIns: number,
+          checkOuts: number
+        }>();
+
+        cards.forEach(card => {
+          const dateKey = card.scheduledDate.toISOString().split('T')[0];
+          
+          if (!dayMap.has(dateKey)) {
+            dayMap.set(dateKey, {
+              date: card.scheduledDate,
+              firstCheckIn: null,
+              lastCheckOut: null,
+              checkIns: 0,
+              checkOuts: 0
+            });
+          }
+
+          const dayData = dayMap.get(dateKey)!;
+
+          if (card.actualCheckIn) {
+            const checkInTime = new Date(card.actualCheckIn);
+            if (!dayData.firstCheckIn || checkInTime < dayData.firstCheckIn) {
+              dayData.firstCheckIn = checkInTime;
+            }
+            dayData.checkIns++;
+          }
+
+          if (card.actualCheckOut) {
+            const checkOutTime = new Date(card.actualCheckOut);
+            if (!dayData.lastCheckOut || checkOutTime > dayData.lastCheckOut) {
+              dayData.lastCheckOut = checkOutTime;
+            }
+            dayData.checkOuts++;
+          }
+        });
+
+        // Calcular horas trabalhadas por dia
+        const dailyData = Array.from(dayMap.values()).map(day => {
+          let hoursWorked = 0;
+          let expectedHours = 0;
+
+          // Determinar horas esperadas baseado no dia da semana
+          const dayOfWeek = day.date.getDay(); // 0 = domingo, 1 = segunda, ..., 5 = sexta, 6 = sábado
+          if (dayOfWeek >= 1 && dayOfWeek <= 4) {
+            // Segunda a quinta: 9 horas
+            expectedHours = 9;
+          } else if (dayOfWeek === 5) {
+            // Sexta: 8 horas
+            expectedHours = 8;
+          }
+          // Sábado e domingo: 0 horas (não são dias úteis)
+
+          // Calcular horas trabalhadas
+          if (day.firstCheckIn && day.lastCheckOut) {
+            const diffMs = day.lastCheckOut.getTime() - day.firstCheckIn.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            // Descontar 1.5 horas de almoço
+            hoursWorked = Math.max(0, diffHours - 1.5);
+          }
+
+          return {
+            date: day.date,
+            dayOfWeek: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][dayOfWeek],
+            firstCheckIn: day.firstCheckIn,
+            lastCheckOut: day.lastCheckOut,
+            hoursWorked: parseFloat(hoursWorked.toFixed(2)),
+            expectedHours,
+            difference: parseFloat((hoursWorked - expectedHours).toFixed(2)),
+            checkIns: day.checkIns,
+            checkOuts: day.checkOuts
+          };
+        });
+
+        // Calcular totais semanais e mensais
+        const weeklyTotals: Array<{ weekNumber: number; hoursWorked: number; expectedHours: number }> = [];
+        let currentWeek: { weekNumber: number; hoursWorked: number; expectedHours: number } | null = null;
+
+        dailyData.forEach(day => {
+          const weekNumber = Math.ceil(day.date.getDate() / 7);
+          
+          if (!currentWeek || currentWeek.weekNumber !== weekNumber) {
+            if (currentWeek) {
+              weeklyTotals.push(currentWeek);
+            }
+            currentWeek = { weekNumber, hoursWorked: 0, expectedHours: 0 };
+          }
+
+          currentWeek.hoursWorked += day.hoursWorked;
+          currentWeek.expectedHours += day.expectedHours;
+        });
+
+        if (currentWeek) {
+          weeklyTotals.push(currentWeek);
+        }
+
+        // Total mensal
+        const totalMonthlyHours = dailyData.reduce((sum, day) => sum + day.hoursWorked, 0);
+        const totalExpectedHours = dailyData.reduce((sum, day) => sum + day.expectedHours, 0);
+
+        return {
+          sellerId: seller.id,
+          sellerName: seller.name,
+          sellerEmail: seller.email,
+          dailyData,
+          weeklyTotals: weeklyTotals.map(week => ({
+            ...week,
+            hoursWorked: parseFloat(week.hoursWorked.toFixed(2)),
+            expectedHours: parseFloat(week.expectedHours.toFixed(2)),
+            difference: parseFloat((week.hoursWorked - week.expectedHours).toFixed(2))
+          })),
+          totalMonthlyHours: parseFloat(totalMonthlyHours.toFixed(2)),
+          totalExpectedHours: parseFloat(totalExpectedHours.toFixed(2)),
+          totalDifference: parseFloat((totalMonthlyHours - totalExpectedHours).toFixed(2))
+        };
+      }));
+
+      res.json(hoursData);
+
+    } catch (error: any) {
+      console.error('Erro ao buscar carga horária mensal:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar carga horária mensal',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
