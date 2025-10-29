@@ -921,11 +921,32 @@ export default function DailyRouteView() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Check-in */}
                         <div className="bg-white dark:bg-gray-900 p-3 rounded-md border border-gray-200 dark:border-gray-700">
-                          <div className="flex items-center gap-2 mb-2">
-                            <MapPin className="h-4 w-4 text-green-600" />
-                            <p className="font-semibold text-sm text-gray-900 dark:text-white">
-                              Check-in
-                            </p>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-4 w-4 text-green-600" />
+                              <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                                Check-in
+                              </p>
+                            </div>
+                            {/* Botão de ver foto */}
+                            {checkIn.photoUrl && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setSelectedPhoto({
+                                  url: checkIn.photoUrl,
+                                  customerName: checkIn.customerName || 'Cliente',
+                                  checkInTime: checkIn.checkpointTime || checkIn.timestamp,
+                                  latitude: checkIn.latitude || '',
+                                  longitude: checkIn.longitude || ''
+                                })}
+                                data-testid={`button-view-photo-${checkIn.id}`}
+                              >
+                                <Camera className="h-3 w-3 mr-1" />
+                                Ver Foto
+                              </Button>
+                            )}
                           </div>
                           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                             <Clock className="h-3 w-3 inline mr-1" />
