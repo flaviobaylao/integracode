@@ -4102,8 +4102,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${today.toISOString()}`);
         }
-      } catch (error) {
-        console.error('❌ Erro ao registrar checkpoint:', error);
+      } catch (error: any) {
+        console.error('❌ Erro ao registrar checkpoint de check-out:', error);
+        console.error('❌ Stack trace:', error.stack);
+        console.error('❌ Detalhes - Seller:', currentVisit.sellerId, 'Visit ID:', id);
         // Re-lançar o erro para que o check-out falhe se o checkpoint não puder ser registrado
         // Isso garante consistência - se o checkpoint falhar, o check-out também falha
         throw error;
@@ -7519,8 +7521,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentCard.sellerId}`);
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('❌ Erro ao registrar checkpoint de check-in:', error);
+        console.error('❌ Stack trace:', error.stack);
+        console.error('❌ Detalhes - Seller:', currentCard.sellerId, 'Card ID:', id);
         // Não falhar o check-in se checkpoint falhar - vendedor pode estar offline ou OSRM indisponível
       }
       
