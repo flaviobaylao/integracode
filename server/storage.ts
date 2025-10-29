@@ -3503,12 +3503,30 @@ export class DatabaseStorage implements IStorage {
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
     
-    // Transformar resultado para incluir customerName e photoUrl
-    return results.map(row => ({
-      ...row.route_checkpoints,
-      customerName: row.customers?.fantasyName || row.customers?.name || null,
-      photoUrl: row.sales_cards?.checkInPhotoUrl || null
-    }));
+    // Transformar resultado para camelCase compatível com RouteMap
+    return results.map(row => {
+      const cp = row.route_checkpoints;
+      return {
+        id: cp.id,
+        visitId: cp.visitId,
+        checkpointLatitude: cp.checkpointLatitude,
+        checkpointLongitude: cp.checkpointLongitude,
+        checkpointTime: cp.checkpointTime,
+        checkpointType: cp.checkpointType,
+        sequenceNumber: cp.sequenceNumber,
+        distanceFromPrevious: cp.distanceFromPrevious,
+        totalDistanceSoFar: cp.totalDistanceSoFar,
+        isOffRoute: cp.isOffRoute,
+        validationStatus: cp.validationStatus,
+        validatedBy: cp.validatedBy,
+        validatedAt: cp.validatedAt,
+        dailyRouteId: cp.dailyRouteId,
+        customerId: cp.customerId,
+        sellerId: cp.sellerId,
+        customerName: row.customers?.fantasyName || row.customers?.name || null,
+        photoUrl: row.sales_cards?.checkInPhotoUrl || null
+      };
+    });
   }
 
   async createRouteCheckpoint(data: any): Promise<any> {

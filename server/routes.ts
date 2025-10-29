@@ -8723,6 +8723,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints
       const checkpoints = await storage.getRouteCheckpoints(route.id);
+      
+      // DEBUG: Verificar estrutura dos checkpoints
+      if (checkpoints.length > 0) {
+        console.log(`📍 DEBUG: Total checkpoints encontrados: ${checkpoints.length}`);
+        console.log(`📍 DEBUG: Primeiro checkpoint:`, JSON.stringify(checkpoints[0], null, 2));
+        console.log(`📍 DEBUG: Campos do primeiro checkpoint:`, Object.keys(checkpoints[0]));
+      }
 
       res.json({
         route: {
