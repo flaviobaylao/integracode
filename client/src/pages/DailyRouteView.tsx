@@ -242,9 +242,9 @@ export default function DailyRouteView() {
     setSelectedPhoto({
       url: visit.checkInPhotoUrl,
       customerName: visit.customerName,
-      checkInTime: visit.actualCheckIn,
-      latitude: visit.checkInLatitude,
-      longitude: visit.checkInLongitude
+      checkInTime: visit.actualCheckIn || new Date().toISOString(), // Fallback para timestamp atual
+      latitude: visit.checkInLatitude || '',
+      longitude: visit.checkInLongitude || ''
     });
   };
 
