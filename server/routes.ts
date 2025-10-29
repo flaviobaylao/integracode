@@ -8599,6 +8599,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
+      
+      // DEBUG: Verificar estrutura dos checkpoints
+      console.log(`📍 DEBUG [by date]: Route ID: ${route.id}, Seller: ${sellerId}, Date: ${date}`);
+      console.log(`📍 DEBUG [by date]: Total checkpoints: ${checkpoints.length}`);
+      if (checkpoints.length > 0) {
+        console.log(`📍 DEBUG [by date]: Primeiro checkpoint:`, JSON.stringify(checkpoints[0], null, 2));
+        console.log(`📍 DEBUG [by date]: Campos:`, Object.keys(checkpoints[0]));
+      } else {
+        console.log(`📍 DEBUG [by date]: ⚠️  NENHUM checkpoint encontrado!`);
+      }
 
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
