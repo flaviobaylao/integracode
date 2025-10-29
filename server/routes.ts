@@ -25,9 +25,11 @@ import {
   customers,
   billings as billingsTable,
   syncStates,
+  dailyRoutes,
+  routeCheckpoints,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull } from "drizzle-orm";
+import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull, asc } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
