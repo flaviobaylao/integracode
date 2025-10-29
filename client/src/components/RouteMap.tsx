@@ -20,9 +20,9 @@ interface RouteMapProps {
   optimizedOrder: string[];
   checkpoints?: Array<{
     visitId: string;
-    latitude: string;
-    longitude: string;
-    timestamp: string;
+    checkpointLatitude: string;
+    checkpointLongitude: string;
+    checkpointTime: string;
     checkpointType: string;
   }>;
   onPhotoClick?: (photoData: {
@@ -184,8 +184,8 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
     const checkInCoordinates: [number, number][] = [];
     
     checkpoints.forEach((checkpoint) => {
-      const lat = parseFloat(checkpoint.latitude);
-      const lon = parseFloat(checkpoint.longitude);
+      const lat = parseFloat(checkpoint.checkpointLatitude);
+      const lon = parseFloat(checkpoint.checkpointLongitude);
 
       // Validar coordenadas antes de adicionar marcador
       if (isNaN(lat) || isNaN(lon)) return;
@@ -231,8 +231,8 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
             url: correspondingVisit.checkInPhotoUrl!,
             customerName: correspondingVisit.customerName,
             checkInTime: correspondingVisit.actualCheckIn!,
-            latitude: correspondingVisit.checkInLatitude || checkpoint.latitude,
-            longitude: correspondingVisit.checkInLongitude || checkpoint.longitude
+            latitude: correspondingVisit.checkInLatitude || checkpoint.checkpointLatitude,
+            longitude: correspondingVisit.checkInLongitude || checkpoint.checkpointLongitude
           });
         });
       }
@@ -240,10 +240,10 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       // Popup com informações
       const popupContent = hasPhoto 
         ? `<strong>📸 ${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}<br>
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}<br>
            <em style="color: #9333ea;">Clique no ícone para ver a foto</em>`
         : `<strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.timestamp).toLocaleString('pt-BR')}`;
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
 
       marker.bindPopup(popupContent);
     });
