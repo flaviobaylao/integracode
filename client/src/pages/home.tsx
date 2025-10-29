@@ -22,6 +22,7 @@ import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
 import DailyRouteView from "@/pages/DailyRouteView";
 import UserManagement from "@/components/UserManagement";
+import HRManagement from "@/pages/HRManagement";
 import { useState } from "react";
 
 export default function Home() {
@@ -90,6 +91,8 @@ export default function Home() {
         return <DeliveryReports />;
       case 'users':
         return <UserManagement />;
+      case 'rh':
+        return <HRManagement />;
       default:
         return <Dashboard />;
     }
