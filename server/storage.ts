@@ -3499,13 +3499,15 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(routeCheckpoints)
       .leftJoin(customers, eq(routeCheckpoints.customerId, customers.id))
+      .leftJoin(salesCards, eq(routeCheckpoints.visitId, salesCards.id))
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
     
-    // Transformar resultado para incluir customerName (prioriza fantasy_name)
+    // Transformar resultado para incluir customerName e photoUrl
     return results.map(row => ({
       ...row.route_checkpoints,
-      customerName: row.customers?.fantasyName || row.customers?.name || null
+      customerName: row.customers?.fantasyName || row.customers?.name || null,
+      photoUrl: row.sales_cards?.checkInPhotoUrl || null
     }));
   }
 
