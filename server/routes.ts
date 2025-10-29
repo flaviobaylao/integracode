@@ -9996,7 +9996,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar todos os vendedores
       const sellers = await db.select({
         id: users.id,
-        name: users.name,
+        firstName: users.firstName,
+        lastName: users.lastName,
         email: users.email
       })
       .from(users)
@@ -10032,7 +10033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         return {
           sellerId: seller.id,
-          sellerName: seller.name,
+          sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
           sellerEmail: seller.email,
           dailyData,
           totalDistance
@@ -10069,7 +10070,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar todos os vendedores
       const sellers = await db.select({
         id: users.id,
-        name: users.name,
+        firstName: users.firstName,
+        lastName: users.lastName,
         email: users.email
       })
       .from(users)
@@ -10077,23 +10079,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Para cada vendedor, buscar check-ins e check-outs do mês
       const hoursData = await Promise.all(sellers.map(async (seller) => {
-        // Buscar todos os sales cards do mês com check-in
-        const cards = await db.select({
-          id: salesCards.id,
-          scheduledDate: salesCards.scheduledDate,
-          actualCheckIn: salesCards.actualCheckIn,
-          actualCheckOut: salesCards.actualCheckOut
+        // Buscar todos os checkpoints do mês do vendedor
+        const checkpoints = await db.select({
+          id: routeCheckpoints.id,
+          checkpointType: routeCheckpoints.checkpointType,
+          checkpointTime: routeCheckpoints.checkpointTime
         })
-        .from(salesCards)
+        .from(routeCheckpoints)
         .where(
           and(
-            eq(salesCards.sellerId, seller.id),
-            gte(salesCards.scheduledDate, startDate),
-            lte(salesCards.scheduledDate, endDate),
-            isNotNull(salesCards.actualCheckIn)
+            eq(routeCheckpoints.sellerId, seller.id),
+            gte(routeCheckpoints.checkpointTime, startDate),
+            lte(routeCheckpoints.checkpointTime, endDate)
           )
         )
-        .orderBy(asc(salesCards.scheduledDate));
+        .orderBy(asc(routeCheckpoints.checkpointTime));
 
         // Agrupar por dia e calcular horas trabalhadas
         const dayMap = new Map<string, { 
@@ -10104,12 +10104,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkOuts: number
         }>();
 
-        cards.forEach(card => {
-          const dateKey = card.scheduledDate.toISOString().split('T')[0];
+        checkpoints.forEach(checkpoint => {
+          const checkpointDate = new Date(checkpoint.checkpointTime);
+          const dateKey = checkpointDate.toISOString().split('T')[0];
           
           if (!dayMap.has(dateKey)) {
             dayMap.set(dateKey, {
-              date: card.scheduledDate,
+              date: new Date(checkpointDate.getFullYear(), checkpointDate.getMonth(), checkpointDate.getDate()),
               firstCheckIn: null,
               lastCheckOut: null,
               checkIns: 0,
@@ -10119,18 +10120,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           const dayData = dayMap.get(dateKey)!;
 
-          if (card.actualCheckIn) {
-            const checkInTime = new Date(card.actualCheckIn);
-            if (!dayData.firstCheckIn || checkInTime < dayData.firstCheckIn) {
-              dayData.firstCheckIn = checkInTime;
+          if (checkpoint.checkpointType === 'check_in') {
+            if (!dayData.firstCheckIn || checkpointDate < dayData.firstCheckIn) {
+              dayData.firstCheckIn = checkpointDate;
             }
             dayData.checkIns++;
           }
 
-          if (card.actualCheckOut) {
-            const checkOutTime = new Date(card.actualCheckOut);
-            if (!dayData.lastCheckOut || checkOutTime > dayData.lastCheckOut) {
-              dayData.lastCheckOut = checkOutTime;
+          if (checkpoint.checkpointType === 'check_out') {
+            if (!dayData.lastCheckOut || checkpointDate > dayData.lastCheckOut) {
+              dayData.lastCheckOut = checkpointDate;
             }
             dayData.checkOuts++;
           }
@@ -10201,7 +10200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         return {
           sellerId: seller.id,
-          sellerName: seller.name,
+          sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
           sellerEmail: seller.email,
           dailyData,
           weeklyTotals: weeklyTotals.map(week => ({
