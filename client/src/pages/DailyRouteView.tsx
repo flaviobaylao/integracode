@@ -116,7 +116,7 @@ export default function DailyRouteView() {
     },
     enabled: !!selectedSellerId && !!selectedDate,
     staleTime: 0, // Sempre considerar dados como stale para forçar refetch
-    cacheTime: 0, // Não cachear no React Query
+    gcTime: 0, // Não cachear no React Query (TanStack Query v5)
   });
 
   const route: DailyRoute | null = routeData?.route || null;
@@ -803,7 +803,7 @@ export default function DailyRouteView() {
                     {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
                   </span>
                   <span className="font-bold text-green-900 dark:text-green-100">
-                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance)}
+                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance || 0)}
                   </span>
                 </div>
               </div>
