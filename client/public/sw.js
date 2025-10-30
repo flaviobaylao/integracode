@@ -1,54 +1,69 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v5-2025-10-30-audit';
+const CACHE_NAME = 'integra-v6-2025-10-30-nocache';
 const urlsToCache = [
   '/manifest.json'
 ];
 
-// Instalar e limpar caches antigos
+// Instalar e FORÇAR atualização imediata
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  console.log('[SW] Instalando nova versão:', CACHE_NAME);
+  self.skipWaiting(); // Força ativação imediata
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(urlsToCache))
   );
 });
 
-// Ativar e limpar caches antigos
+// Ativar e APAGAR TODOS os caches antigos
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Ativando e limpando caches antigos');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
+            console.log('[SW] Deletando cache antigo:', cacheName);
             return caches.delete(cacheName);
           }
         })
       );
-    }).then(() => self.clients.claim())
+    }).then(() => {
+      console.log('[SW] Assumindo controle de todas as páginas');
+      return self.clients.claim(); // Força controle imediato
+    })
   );
 });
 
-// Estratégia: Network First (sempre tenta buscar do servidor primeiro)
+// Estratégia: Network First - NUNCA cacheia HTML
 self.addEventListener('fetch', (event) => {
   // NÃO INTERFERIR com requisições que não são GET
-  // Deixa passar direto para o servidor sem cache
   if (event.request.method !== 'GET') {
-    // Não faz nada, deixa a requisição passar normalmente
     return;
   }
 
-  // Não cacheia requisições de API (para evitar dados desatualizados)
-  if (event.request.url.includes('/api/')) {
-    // Sempre busca do servidor, sem cache
-    event.respondWith(fetch(event.request));
+  // NUNCA cacheia: API, HTML, ou JavaScript
+  const url = event.request.url;
+  if (url.includes('/api/') || 
+      url.endsWith('.html') || 
+      url.endsWith('/') ||
+      url.includes('/assets/') && url.endsWith('.js')) {
+    // Sempre busca do servidor, SEM CACHE
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        // Se offline, retorna erro ao invés de cache
+        return new Response('Offline - Recarregue quando online', { 
+          status: 503,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      })
+    );
     return;
   }
 
-  // Para outras requisições GET (assets estáticos), usa Network First
+  // Para CSS, imagens, fontes: usa Network First com cache
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Se conseguiu do servidor, salva no cache e retorna
         if (response && response.status === 200) {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -57,9 +72,6 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => {
-        // Se falhou (offline), tenta buscar do cache
-        return caches.match(event.request);
-      })
+      .catch(() => caches.match(event.request))
   );
 });

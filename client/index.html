@@ -24,6 +24,38 @@
   </head>
   <body>
     <div id="root"></div>
+    
+    <!-- Script para FORÇAR atualização do Service Worker -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').then((registration) => {
+          console.log('✅ Service Worker registrado');
+          
+          // Verifica por atualizações a cada 3 segundos
+          setInterval(() => {
+            registration.update();
+          }, 3000);
+          
+          // Quando encontra uma atualização, RECARREGA IMEDIATAMENTE
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated') {
+                console.log('🔄 Nova versão detectada - Recarregando...');
+                window.location.reload();
+              }
+            });
+          });
+        });
+        
+        // Escuta mensagens do Service Worker
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          console.log('🔄 Service Worker atualizado - Recarregando...');
+          window.location.reload();
+        });
+      }
+    </script>
+    
     <script type="module" src="/src/main.tsx"></script>
     <!-- This is a replit script which adds a banner on the top of the page when opened in development mode outside the replit environment -->
     <script type="text/javascript" src="https://replit.com/public/js/replit-dev-banner.js"></script>
