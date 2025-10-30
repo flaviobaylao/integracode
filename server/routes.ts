@@ -8496,6 +8496,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // DEBUG: Endpoint de teste com checkpoints mockados
+  app.get('/api/daily-routes/:sellerId/date/:date/debug', authenticateUser, async (req: any, res) => {
+    const mockCheckpoints = [
+      {
+        id: 'mock-1',
+        visitId: 'visit-1',
+        checkpointLatitude: '-16.6869',
+        checkpointLongitude: '-49.2648',
+        checkpointTime: new Date().toISOString(),
+        checkpointType: 'check_in',
+        customerName: 'Cliente Teste 1'
+      },
+      {
+        id: 'mock-2',
+        visitId: 'visit-1',
+        checkpointLatitude: '-16.6870',
+        checkpointLongitude: '-49.2650',
+        checkpointTime: new Date().toISOString(),
+        checkpointType: 'check_out',
+        customerName: 'Cliente Teste 1'
+      }
+    ];
+    
+    console.log('🧪 DEBUG ENDPOINT: Retornando checkpoints mockados:', mockCheckpoints);
+    
+    res.json({
+      route: {
+        id: 'debug-route',
+        optimizedOrder: [],
+        visits: [],
+        checkpoints: mockCheckpoints,
+        progress: {
+          totalVisits: 0,
+          completedVisits: 0,
+          totalEstimatedDistance: 0,
+          totalActualDistance: 0,
+          percentComplete: 0
+        }
+      }
+    });
+  });
+
   // Buscar rota de uma data específica para um vendedor
   app.get('/api/daily-routes/:sellerId/date/:date', authenticateUser, async (req: any, res) => {
     try {
