@@ -49,6 +49,19 @@ interface DailyRoute {
   };
 }
 
+// Função para calcular distância entre duas coordenadas usando Haversine
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // Raio da Terra em metros
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c; // Distância em metros
+}
+
 export default function DailyRouteView() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -963,6 +976,22 @@ export default function DailyRouteView() {
                               {isCancelled ? '(não contada)' : 'do anterior'}
                             </span>
                           </p>
+                          {/* Distância do local cadastrado */}
+                          {checkIn.customerRegisteredLatitude && checkIn.customerRegisteredLongitude && 
+                           checkIn.checkpointLatitude && checkIn.checkpointLongitude && (
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                              <MapPin className="h-3 w-3 inline mr-1" />
+                              {(() => {
+                                const distance = calculateDistance(
+                                  parseFloat(checkIn.checkpointLatitude),
+                                  parseFloat(checkIn.checkpointLongitude),
+                                  parseFloat(checkIn.customerRegisteredLatitude),
+                                  parseFloat(checkIn.customerRegisteredLongitude)
+                                );
+                                return formatDistance(distance / 1000); // converter metros para km
+                              })()} do local cadastrado
+                            </p>
+                          )}
                         </div>
 
                         {/* Check-out */}
@@ -986,6 +1015,22 @@ export default function DailyRouteView() {
                                 return `${minutes} min`;
                               })()}
                             </p>
+                            {/* Distância do local cadastrado */}
+                            {checkOut.customerRegisteredLatitude && checkOut.customerRegisteredLongitude && 
+                             checkOut.checkpointLatitude && checkOut.checkpointLongitude && (
+                              <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                <MapPin className="h-3 w-3 inline mr-1" />
+                                {(() => {
+                                  const distance = calculateDistance(
+                                    parseFloat(checkOut.checkpointLatitude),
+                                    parseFloat(checkOut.checkpointLongitude),
+                                    parseFloat(checkOut.customerRegisteredLatitude),
+                                    parseFloat(checkOut.customerRegisteredLongitude)
+                                  );
+                                  return formatDistance(distance / 1000); // converter metros para km
+                                })()} do local cadastrado
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>

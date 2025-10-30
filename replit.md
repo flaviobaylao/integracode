@@ -29,6 +29,7 @@
     - **Route Optimization Fallback**: Optimizes routes using `visitAgenda` or, if empty, falls back to `sales_cards` filtered for physical visits with valid coordinates.
     - **Automatic Check-out**: Sellers are automatically checked out upon successful order submission to Omie or marking a visit as "Não Venda", if an active check-in exists.
     - **Check-in/Check-out Architecture**: Supports both `visitAgenda` and `sales_cards` flows for check-in/check-out. `daily_routes` store `sales_card IDs`. All check-in/check-out events register checkpoints in `route_checkpoints` to track actual distance and completed visits. Timestamps, coordinates, and distance data are synchronized across relevant tables.
+    - **Checkpoint Distance Tracking**: Displays distance between checkpoint location (check-in/check-out) and registered customer location using Haversine formula, helping identify location discrepancies.
     - **Fantasy Name Display Priority**: `fantasy_name` is consistently displayed as the primary customer identifier across all interfaces.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links directly on mobile or in a new tab on desktop.
 - **Automated Agenda Management**: Scheduled daily (midnight UTC-3) and on-demand synchronization of sales cards for the next two months, calculating correct visit dates, managing cards, and providing statistics.

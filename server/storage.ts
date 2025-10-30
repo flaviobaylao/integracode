@@ -3503,11 +3503,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
     
-    // Drizzle retorna campos em camelCase automaticamente, apenas adicionar customerName e photoUrl
+    // Drizzle retorna campos em camelCase automaticamente, adicionar customerName, photoUrl e coordenadas cadastradas
     return results.map(row => ({
       ...row.route_checkpoints,
       customerName: row.customers?.fantasyName || row.customers?.name || null,
-      photoUrl: row.sales_cards?.checkInPhotoUrl || null
+      photoUrl: row.sales_cards?.checkInPhotoUrl || null,
+      customerRegisteredLatitude: row.customers?.latitude || null,
+      customerRegisteredLongitude: row.customers?.longitude || null
     }));
   }
 
