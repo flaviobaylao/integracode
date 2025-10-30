@@ -43,13 +43,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-map-marked-alt', 
       available: isVendedor || canAccessReports 
     },
-    { id: 'routes-management', label: 'Gerenciar Rotas', icon: 'fas fa-map-marked-alt', available: canAccessReports },
-    { 
-      id: 'check-in-photos', 
-      label: isVendedor ? 'Minhas Fotos de Check-in' : 'Fotos de Check-in', 
-      icon: 'fas fa-camera', 
-      available: true 
-    },
     { 
       id: 'customers', 
       label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes',
