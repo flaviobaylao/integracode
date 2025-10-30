@@ -30,6 +30,7 @@ import SalesGoalsPage from "@/pages/SalesGoals";
 import CheckInPhotos from "@/pages/CheckInPhotos";
 import HRManagement from "@/pages/HRManagement";
 import CheckInAudit from "@/pages/CheckInAudit";
+import ClearCache from "@/pages/ClearCache";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -117,6 +118,7 @@ function Router() {
 
   return (
     <Switch>
+      <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
       <Route path="/admin-login" component={AdminLogin} />
