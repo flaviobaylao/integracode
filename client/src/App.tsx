@@ -141,7 +141,7 @@ function Router() {
           <Route path="/daily-route" component={DailyRouteView} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
-          <Route path="/check-in-audit" component={CheckInAudit} />
+          <Route path="/auditoria-checkins" component={CheckInAudit} />
           <Route path="/rh" component={HRManagement} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />

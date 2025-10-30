@@ -77,7 +77,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: canAccessReports || isVendedor 
     },
     { 
-      id: 'check-in-audit', 
+      id: 'auditoria-checkins', 
       label: isVendedor ? 'Meus Check-ins' : 'Auditoria de Check-ins', 
       icon: 'fas fa-clipboard-check', 
       available: true 
@@ -117,7 +117,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'auditoria-checkins'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
