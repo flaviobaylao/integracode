@@ -8464,6 +8464,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
 
+      // Calcular completedVisits dinamicamente a partir dos checkpoints
+      // Cada check-out representa uma visita completada
+      const completedVisits = checkpoints.filter(cp => cp.checkpointType === 'check_out').length;
+      const totalVisits = route.totalVisits || 0;
+      const percentComplete = totalVisits > 0 
+        ? Math.round((completedVisits / totalVisits) * 100) 
+        : 0;
+
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.setHeader('Pragma', 'no-cache');
@@ -8476,14 +8484,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkpoints,
           segments,
           progress: {
-            totalVisits: route.totalVisits || 0,
-            completedVisits: route.completedVisits || 0,
+            totalVisits,
+            completedVisits,
             // Converter de km para metros (banco salva em km, frontend espera metros)
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
-            percentComplete: route.totalVisits > 0 
-              ? Math.round((route.completedVisits / route.totalVisits) * 100) 
-              : 0
+            percentComplete
           }
         }
       });
@@ -8494,48 +8500,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: error.message 
       });
     }
-  });
-
-  // DEBUG: Endpoint de teste com checkpoints mockados
-  app.get('/api/daily-routes/:sellerId/date/:date/debug', authenticateUser, async (req: any, res) => {
-    const mockCheckpoints = [
-      {
-        id: 'mock-1',
-        visitId: 'visit-1',
-        checkpointLatitude: '-16.6869',
-        checkpointLongitude: '-49.2648',
-        checkpointTime: new Date().toISOString(),
-        checkpointType: 'check_in',
-        customerName: 'Cliente Teste 1'
-      },
-      {
-        id: 'mock-2',
-        visitId: 'visit-1',
-        checkpointLatitude: '-16.6870',
-        checkpointLongitude: '-49.2650',
-        checkpointTime: new Date().toISOString(),
-        checkpointType: 'check_out',
-        customerName: 'Cliente Teste 1'
-      }
-    ];
-    
-    console.log('🧪 DEBUG ENDPOINT: Retornando checkpoints mockados:', mockCheckpoints);
-    
-    res.json({
-      route: {
-        id: 'debug-route',
-        optimizedOrder: [],
-        visits: [],
-        checkpoints: mockCheckpoints,
-        progress: {
-          totalVisits: 0,
-          completedVisits: 0,
-          totalEstimatedDistance: 0,
-          totalActualDistance: 0,
-          percentComplete: 0
-        }
-      }
-    });
   });
 
   // Buscar rota de uma data específica para um vendedor
@@ -8641,21 +8605,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
-      
-      // DEBUG: Verificar estrutura dos checkpoints - FORÇAR LOG SEMPRE
-      const debugInfo = {
-        routeId: route.id,
-        sellerId,
-        date,
-        checkpointsCount: checkpoints.length,
-        firstCheckpoint: checkpoints[0] || null,
-        checkpointKeys: checkpoints[0] ? Object.keys(checkpoints[0]) : []
-      };
-      
-      console.log('========================================');
-      console.log('📍 DEBUG [by date] - ROUTE CHECKPOINTS:');
-      console.log(JSON.stringify(debugInfo, null, 2));
-      console.log('========================================');
+
+      // Calcular completedVisits dinamicamente a partir dos checkpoints
+      // Cada check-out representa uma visita completada
+      const completedVisits = checkpoints.filter(cp => cp.checkpointType === 'check_out').length;
+      const totalVisits = route.totalVisits || 0;
+      const percentComplete = totalVisits > 0 
+        ? Math.round((completedVisits / totalVisits) * 100) 
+        : 0;
 
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -8669,14 +8626,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkpoints,
           segments,
           progress: {
-            totalVisits: route.totalVisits || 0,
-            completedVisits: route.completedVisits || 0,
+            totalVisits,
+            completedVisits,
             // Converter de km para metros (banco salva em km, frontend espera metros)
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
-            percentComplete: route.totalVisits > 0 
-              ? Math.round((route.completedVisits / route.totalVisits) * 100) 
-              : 0
+            percentComplete
           }
         }
       });

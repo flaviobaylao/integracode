@@ -38,14 +38,6 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
-  // DEBUG: Log checkpoints received by RouteMap
-  console.log('🗺️ RouteMap: Checkpoints received:', checkpoints);
-  console.log('🗺️ RouteMap: Checkpoints count:', checkpoints?.length || 0);
-  if (checkpoints && checkpoints.length > 0) {
-    console.log('🗺️ RouteMap: First checkpoint structure:', checkpoints[0]);
-    console.log('🗺️ RouteMap: First checkpoint keys:', Object.keys(checkpoints[0]));
-  }
-
   // Validar coordenadas antes de renderizar
   const hasValidCoordinates = 
     homeLocation && 

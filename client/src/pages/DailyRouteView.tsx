@@ -120,18 +120,6 @@ export default function DailyRouteView() {
   });
 
   const route: DailyRoute | null = routeData?.route || null;
-  
-  // DEBUG: Log checkpoints data
-  useEffect(() => {
-    if (route) {
-      console.log('🔍 DEBUG FRONTEND: Route loaded');
-      console.log('🔍 DEBUG FRONTEND: Checkpoints count:', route.checkpoints?.length || 0);
-      if (route.checkpoints?.length > 0) {
-        console.log('🔍 DEBUG FRONTEND: First checkpoint:', route.checkpoints[0]);
-        console.log('🔍 DEBUG FRONTEND: Checkpoint keys:', Object.keys(route.checkpoints[0]));
-      }
-    }
-  }, [route]);
 
   // Buscar clientes sem coordenadas para a data selecionada
   const { data: missingCoordsData } = useQuery({
