@@ -46,7 +46,7 @@ export default function CheckInAudit() {
   const [endDate, setEndDate] = useState('');
 
   // Buscar vendedores (apenas admin)
-  const { data: sellersData } = useQuery({
+  const { data: sellersData } = useQuery<{ users: any[] }>({
     queryKey: ['/api/users'],
     enabled: isAdmin
   });
@@ -54,7 +54,7 @@ export default function CheckInAudit() {
   const sellers = sellersData?.users?.filter((u: any) => u.role === 'vendedor') || [];
 
   // Buscar auditoria de check-ins
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, refetch } = useQuery<{ checkIns: CheckInRecord[], stats: any }>({
     queryKey: ['/api/check-ins/audit', {
       sellerId: isAdmin ? selectedSeller : user?.id,
       startDate,
@@ -274,14 +274,14 @@ export default function CheckInAudit() {
                     </div>
                     <div className="flex gap-2">
                       {checkIn.tem_checkpoint ? (
-                        <CheckCircle className="h-5 w-5 text-green-600" title="Com checkpoint" />
+                        <CheckCircle className="h-5 w-5 text-green-600" />
                       ) : (
-                        <XCircle className="h-5 w-5 text-red-600" title="SEM checkpoint" />
+                        <XCircle className="h-5 w-5 text-red-600" />
                       )}
                       {checkIn.tem_rota_diaria ? (
-                        <Route className="h-5 w-5 text-blue-600" title="Com rota diária" />
+                        <Route className="h-5 w-5 text-blue-600" />
                       ) : (
-                        <Route className="h-5 w-5 text-gray-400" title="Sem rota diária" />
+                        <Route className="h-5 w-5 text-gray-400" />
                       )}
                     </div>
                   </div>
