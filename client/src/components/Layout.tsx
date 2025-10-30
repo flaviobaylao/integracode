@@ -77,7 +77,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: canAccessReports || isVendedor 
     },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
-    { id: 'reports', label: 'Relatórios', icon: 'fas fa-chart-bar', available: canAccessReports },
     { id: 'rh', label: 'RH', icon: 'fas fa-briefcase', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
