@@ -76,6 +76,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-ban', 
       available: canAccessReports || isVendedor 
     },
+    { 
+      id: 'check-in-audit', 
+      label: isVendedor ? 'Meus Check-ins' : 'Auditoria de Check-ins', 
+      icon: 'fas fa-clipboard-check', 
+      available: true 
+    },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
     { id: 'rh', label: 'RH', icon: 'fas fa-briefcase', available: canAccessReports },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
@@ -111,7 +117,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

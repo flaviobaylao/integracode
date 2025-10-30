@@ -29,6 +29,7 @@ import OverdueDebtsPage from "@/pages/OverdueDebts";
 import SalesGoalsPage from "@/pages/SalesGoals";
 import CheckInPhotos from "@/pages/CheckInPhotos";
 import HRManagement from "@/pages/HRManagement";
+import CheckInAudit from "@/pages/CheckInAudit";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -140,6 +141,7 @@ function Router() {
           <Route path="/daily-route" component={DailyRouteView} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
+          <Route path="/check-in-audit" component={CheckInAudit} />
           <Route path="/rh" component={HRManagement} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />

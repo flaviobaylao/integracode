@@ -7607,6 +7607,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AUDITORIA COMPLETA DE CHECK-INS - TODOS OS REGISTROS
+  app.get('/api/check-ins/audit', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, startDate, endDate, limit = '500' } = req.query;
+
+      // Query para TODOS os check-ins de sales_cards E visit_agenda
+      const checkIns = await db.execute(sql`
+        SELECT 
+          'sales_card' as origem,
+          sc.id,
+          sc.seller_id,
+          u.first_name || ' ' || COALESCE(u.last_name, '') as vendedor,
+          COALESCE(c.fantasy_name, c.name) as cliente,
+          c.cpf_cnpj as documento_cliente,
+          sc.check_in_time as timestamp,
+          sc.check_in_latitude as latitude,
+          sc.check_in_longitude as longitude,
+          sc.distance_to_customer as distancia_cliente,
+          sc.check_in_photo_url as foto_url,
+          sc.check_out_time,
+          -- Verificar se tem checkpoint
+          CASE WHEN rc.id IS NOT NULL THEN true ELSE false END as tem_checkpoint,
+          rc.id as checkpoint_id,
+          rc.checkpoint_time,
+          rc.validation_status,
+          rc.is_off_route,
+          -- Verificar se tem rota diária
+          CASE WHEN dr.id IS NOT NULL THEN true ELSE false END as tem_rota_diaria,
+          dr.id as rota_id
+        FROM sales_cards sc
+        LEFT JOIN users u ON sc.seller_id = u.id
+        LEFT JOIN customers c ON sc.customer_id = c.id
+        LEFT JOIN route_checkpoints rc ON sc.id = rc.visit_id AND rc.checkpoint_type = 'check_in'
+        LEFT JOIN daily_routes dr ON u.id = dr.seller_id AND DATE(sc.check_in_time) = dr.route_date
+        WHERE sc.check_in_time IS NOT NULL
+          ${sellerId && sellerId !== 'all' ? sql`AND sc.seller_id = ${sellerId}` : sql``}
+          ${user.role === 'vendedor' ? sql`AND sc.seller_id = ${user.id}` : sql``}
+          ${startDate ? sql`AND sc.check_in_time >= ${new Date(startDate as string)}` : sql``}
+          ${endDate ? sql`AND sc.check_in_time <= ${new Date(endDate as string)}` : sql``}
+        
+        UNION ALL
+        
+        SELECT 
+          'visit_agenda' as origem,
+          va.id,
+          va.seller_id,
+          u.first_name || ' ' || COALESCE(u.last_name, '') as vendedor,
+          COALESCE(c.fantasy_name, c.name) as cliente,
+          c.cpf_cnpj as documento_cliente,
+          va.actual_check_in as timestamp,
+          va.check_in_latitude as latitude,
+          va.check_in_longitude as longitude,
+          va.distance_to_customer as distancia_cliente,
+          NULL as foto_url,
+          va.actual_check_out as check_out_time,
+          CASE WHEN rc.id IS NOT NULL THEN true ELSE false END as tem_checkpoint,
+          rc.id as checkpoint_id,
+          rc.checkpoint_time,
+          rc.validation_status,
+          rc.is_off_route,
+          CASE WHEN dr.id IS NOT NULL THEN true ELSE false END as tem_rota_diaria,
+          dr.id as rota_id
+        FROM visit_agenda va
+        LEFT JOIN users u ON va.seller_id = u.id
+        LEFT JOIN customers c ON va.customer_id = c.id
+        LEFT JOIN route_checkpoints rc ON va.id = rc.visit_id AND rc.checkpoint_type = 'check_in'
+        LEFT JOIN daily_routes dr ON u.id = dr.seller_id AND DATE(va.actual_check_in) = dr.route_date
+        WHERE va.actual_check_in IS NOT NULL
+          ${sellerId && sellerId !== 'all' ? sql`AND va.seller_id = ${sellerId}` : sql``}
+          ${user.role === 'vendedor' ? sql`AND va.seller_id = ${user.id}` : sql``}
+          ${startDate ? sql`AND va.actual_check_in >= ${new Date(startDate as string)}` : sql``}
+          ${endDate ? sql`AND va.actual_check_in <= ${new Date(endDate as string)}` : sql``}
+        
+        ORDER BY timestamp DESC
+        LIMIT ${parseInt(limit as string)}
+      `);
+
+      // Estatísticas
+      const stats = {
+        total: checkIns.rows.length,
+        comCheckpoint: checkIns.rows.filter((r: any) => r.tem_checkpoint).length,
+        semCheckpoint: checkIns.rows.filter((r: any) => !r.tem_checkpoint).length,
+        comRota: checkIns.rows.filter((r: any) => r.tem_rota_diaria).length,
+        semRota: checkIns.rows.filter((r: any) => !r.tem_rota_diaria).length,
+        comFoto: checkIns.rows.filter((r: any) => r.foto_url).length,
+        foraRota: checkIns.rows.filter((r: any) => r.is_off_route).length,
+        porOrigem: {
+          salesCards: checkIns.rows.filter((r: any) => r.origem === 'sales_card').length,
+          visitAgenda: checkIns.rows.filter((r: any) => r.origem === 'visit_agenda').length
+        }
+      };
+
+      res.json({
+        checkIns: checkIns.rows,
+        stats
+      });
+
+    } catch (error) {
+      console.error('❌ Erro ao buscar auditoria de check-ins:', error);
+      res.status(500).json({ message: 'Falha ao buscar auditoria de check-ins' });
+    }
+  });
+
   // Route for check-out
   app.post('/api/sales-cards/:id/check-out', authenticateUser, async (req: any, res) => {
     try {
