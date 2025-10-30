@@ -1,5 +1,5 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v7-2025-10-30-newroute';
+const CACHE_NAME = 'integra-v8-2025-10-30-navigate-fix';
 const urlsToCache = [
   '/manifest.json'
 ];
@@ -34,24 +34,40 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Estratégia: Network First - NUNCA cacheia HTML
+// Estratégia: Network First - NUNCA cacheia navegação ou HTML/JS
 self.addEventListener('fetch', (event) => {
   // NÃO INTERFERIR com requisições que não são GET
   if (event.request.method !== 'GET') {
     return;
   }
 
-  // NUNCA cacheia: API, HTML, ou JavaScript
   const url = event.request.url;
-  if (url.includes('/api/') || 
+  const isNavigationRequest = event.request.mode === 'navigate';
+  const isHTMLRequest = event.request.headers.get('accept')?.includes('text/html');
+  
+  // NUNCA cacheia: Navegação, API, HTML, ou JavaScript
+  if (isNavigationRequest || 
+      isHTMLRequest ||
+      url.includes('/api/') || 
       url.endsWith('.html') || 
-      url.endsWith('/') ||
-      url.includes('/assets/') && url.endsWith('.js')) {
+      (url.includes('/assets/') && url.endsWith('.js'))) {
+    
+    console.log('[SW] Bypass cache para:', url);
+    
     // Sempre busca do servidor, SEM CACHE
     event.respondWith(
-      fetch(event.request).catch(() => {
-        // Se offline, retorna erro ao invés de cache
-        return new Response('Offline - Recarregue quando online', { 
+      fetch(event.request, { cache: 'no-store' }).catch(() => {
+        // Se offline e for navegação, retorna index.html do cache
+        if (isNavigationRequest || isHTMLRequest) {
+          return caches.match('/index.html').then(response => {
+            return response || new Response('Offline - Recarregue quando online', { 
+              status: 503,
+              headers: { 'Content-Type': 'text/html' }
+            });
+          });
+        }
+        // Para outros, retorna erro
+        return new Response('Offline', { 
           status: 503,
           headers: { 'Content-Type': 'text/plain' }
         });
