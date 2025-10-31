@@ -114,6 +114,7 @@ export default function SalesSchedule() {
   const [isCustomerEditModalOpen, setIsCustomerEditModalOpen] = useState(false);
   const [isCustomerInactivateModalOpen, setIsCustomerInactivateModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Buscar lista de vendedores (apenas para admin/coordinator/administrative)
   const { data: sellers } = useQuery({
@@ -204,8 +205,19 @@ export default function SalesSchedule() {
     retry: false
   });
 
-  const cards = cardsData?.cards || [];
+  const allCards = cardsData?.cards || [];
   const pagination = cardsData?.pagination || { hasMore: false };
+
+  // Filtrar cards por nome fantasia do cliente
+  const cards = allCards.filter((card: SalesCardWithRelations) => {
+    if (!searchTerm) return true;
+    
+    const fantasyName = card.customer.fantasyName?.toLowerCase() || '';
+    const companyName = card.customer.name?.toLowerCase() || '';
+    const search = searchTerm.toLowerCase();
+    
+    return fantasyName.includes(search) || companyName.includes(search);
+  });
 
   // Reset page when filters change
   useEffect(() => {
@@ -489,22 +501,41 @@ export default function SalesSchedule() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="space-y-4">
+            {/* Campo de pesquisa por nome fantasia */}
             <div>
-              <Label>Dia da Semana</Label>
-              <Select value={selectedDay} onValueChange={setSelectedDay}>
-                <SelectTrigger data-testid="select-day">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DAYS_OF_WEEK.map(day => (
-                    <SelectItem key={day.value} value={day.value}>
-                      {day.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Pesquisar Cliente</Label>
+              <Input
+                type="text"
+                placeholder="Digite o nome fantasia do cliente..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                data-testid="input-search-customer"
+                className="w-full"
+              />
+              {searchTerm && (
+                <p className="text-sm text-gray-500 mt-1">
+                  {cards.length} resultado(s) encontrado(s) de {allCards.length} total
+                </p>
+              )}
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <Label>Dia da Semana</Label>
+                <Select value={selectedDay} onValueChange={setSelectedDay}>
+                  <SelectTrigger data-testid="select-day">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DAYS_OF_WEEK.map(day => (
+                      <SelectItem key={day.value} value={day.value}>
+                        {day.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             
             {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
               <div>
@@ -545,14 +576,15 @@ export default function SalesSchedule() {
               />
             </div>
 
-            <div className="flex items-end">
-              <Button 
-                onClick={() => refetch()}
-                className="w-full"
-                data-testid="button-apply-filters"
-              >
-                Aplicar Filtros
-              </Button>
+              <div className="flex items-end">
+                <Button 
+                  onClick={() => refetch()}
+                  className="w-full"
+                  data-testid="button-apply-filters"
+                >
+                  Aplicar Filtros
+                </Button>
+              </div>
             </div>
           </div>
         </CardContent>

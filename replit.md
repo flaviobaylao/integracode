@@ -35,6 +35,7 @@
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links directly on mobile or in a new tab on desktop.
 - **Automated Agenda Management**: Scheduled daily (midnight UTC-3) and on-demand synchronization of sales cards for the next two months, calculating correct visit dates, managing cards, and providing statistics.
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes to all future pending sales cards of a customer.
+- **Sales Schedule Filtering**: Client-side search filter on Sales Schedule page (`/sales-schedule`) allows real-time filtering by customer fantasy name or company name with results counter display.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices. Features product mapping, vendor resolution, filtering, stage extraction, and automatic filtering of cancelled invoices.
     - **Automatic Customer Registration**: New customers created in Integra with CPF/CNPJ are automatically registered in Omie ERP, updating Integra with the `omieClientCode`.
     - **Vendor Assignment**: Correctly extracts and includes vendor codes from `sellerId` in `cabecalho.codigo_vendedor` when sending orders to Omie.
