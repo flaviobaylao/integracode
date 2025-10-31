@@ -125,6 +125,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       setIsCheckingOut(false);
       toast({
         title: "Check-out Realizado",
@@ -147,6 +148,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       toast({
         title: "Sucesso",
         description: "Pedido enviado para Omie com sucesso!",
@@ -171,6 +173,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
       setLocalVirtualService(variables.virtualService);
       
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
       toast({
         title: "Sucesso",
@@ -830,7 +833,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           customerLongitude={card.customerLongitude}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-            queryClient.refetchQueries({ queryKey: ['/api/sales-cards'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
+            queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
             setShowCheckInModal(false);
             toast({
               title: "Sucesso",
