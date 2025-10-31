@@ -656,9 +656,55 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
     });
   };
 
+  // Função para salvar produtos sem finalizar a venda
+  const handleSaveProducts = async () => {
+    if (!card?.id) return;
+
+    try {
+      const totalValue = calculateTotal();
+      
+      // Salvar produtos no card sem alterar status para 'completed'
+      await apiRequest('PUT', `/api/sales-cards/${card.id}`, {
+        products: products,
+        saleValue: totalValue.toFixed(2),
+        paymentMethod: paymentMethod,
+        operationType: operationType,
+        notes: notes,
+        deliveryWeekdays: deliveryWeekdays,
+        deliveryTimeSlots: deliveryTimeSlots,
+        customerLatitude: customerLatitude || null,
+        customerLongitude: customerLongitude || null,
+        boletoDays: boletoDays
+        // NÃO enviamos 'status' aqui, então o card mantém status atual (in_progress)
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      
+      return true;
+    } catch (error: any) {
+      toast({
+        title: "Erro ao Salvar Produtos",
+        description: error.message,
+        variant: "destructive"
+      });
+      return false;
+    }
+  };
+
   // Função para fazer check-out na visita
   const handleCheckOut = async () => {
     if (!card?.id) return;
+
+    // Salvar produtos antes de fazer check-out
+    if (products.length > 0) {
+      const saved = await handleSaveProducts();
+      if (!saved) return; // Se falhou ao salvar, não continuar com check-out
+      
+      toast({
+        title: "Produtos Salvos",
+        description: "Os produtos foram salvos com sucesso. Você pode voltar depois para finalizar a venda.",
+      });
+    }
 
     try {
       // Buscar visita relacionada ao card
@@ -1333,34 +1379,47 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 <MessageCircle className="h-4 w-4 mr-2" />
                 Enviar WhatsApp
               </Button>
-              
-              <Button 
-                variant="outline" 
-                onClick={handleCheckOut}
-                className="bg-purple-50 hover:bg-purple-100"
-                data-testid="button-checkout"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Check-out
-              </Button>
             </div>
           </div>
           
-          {/* Botão de Finalizar e Enviar para Faturamento */}
-          <div className="flex justify-end">
-            <Button 
-              onClick={handleSendToFaturamento}
-              disabled={isSubmitting || products.length === 0}
-              className="bg-orange-500 hover:bg-orange-600"
-              data-testid="button-finalize-billing"
-            >
-              {isSubmitting ? (
-                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-              ) : (
-                <DollarSign className="h-4 w-4 mr-2" />
-              )}
-              Finalizar e Enviar p/ Faturamento
-            </Button>
+          {/* Botões de Ação - Salvar e Finalizar */}
+          <div className="border-t pt-4 space-y-3">
+            {/* Botão Salvar e Sair (sem finalizar) */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <p className="text-sm text-yellow-800 mb-2">
+                💡 <strong>Salvar e Sair:</strong> Os produtos serão salvos para finalizar depois. Você pode fazer check-out e voltar mais tarde.
+              </p>
+              <Button 
+                variant="outline" 
+                onClick={handleCheckOut}
+                disabled={products.length === 0}
+                className="w-full bg-yellow-100 hover:bg-yellow-200 border-yellow-300 text-yellow-800"
+                data-testid="button-save-and-checkout"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Salvar Produtos e Fazer Check-out
+              </Button>
+            </div>
+
+            {/* Botão de Finalizar e Enviar para Faturamento */}
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+              <p className="text-sm text-orange-800 mb-2">
+                ✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.
+              </p>
+              <Button 
+                onClick={handleSendToFaturamento}
+                disabled={isSubmitting || products.length === 0}
+                className="w-full bg-orange-500 hover:bg-orange-600"
+                data-testid="button-finalize-billing"
+              >
+                {isSubmitting ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                ) : (
+                  <DollarSign className="h-4 w-4 mr-2" />
+                )}
+                Finalizar e Enviar p/ Faturamento
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
