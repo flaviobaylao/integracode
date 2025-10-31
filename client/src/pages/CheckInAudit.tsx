@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   MapPin, CheckCircle, XCircle, Camera, Clock, AlertTriangle, 
-  Route, FileText, RefreshCw, Download
+  Route, FileText, RefreshCw, Download, Home
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -106,6 +106,19 @@ export default function CheckInAudit() {
 
   return (
     <div className="p-6">
+      <div className="mb-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.href = '/'}
+          className="flex items-center gap-2"
+          data-testid="button-back-dashboard"
+        >
+          <Home className="h-4 w-4" />
+          Voltar ao Dashboard
+        </Button>
+      </div>
+      
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">

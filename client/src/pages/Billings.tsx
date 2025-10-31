@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2 } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -374,6 +374,20 @@ export default function Billings() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Back Button */}
+      <div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.href = '/'}
+          className="flex items-center gap-2"
+          data-testid="button-back-dashboard"
+        >
+          <Home className="h-4 w-4" />
+          Voltar ao Dashboard
+        </Button>
+      </div>
+      
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

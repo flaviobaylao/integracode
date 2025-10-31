@@ -4,18 +4,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Users, Route, Clock, TrendingUp, Calendar } from 'lucide-react';
+import { Users, Route, Clock, TrendingUp, Calendar, Home } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function HRManagement() {
   console.log('✅ HRManagement component rendered!');
   
+  const { user } = useAuth();
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState((currentDate.getMonth() + 1).toString());
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear().toString());
 
-  // Buscar dados de quilometragem
+  const isVendedor = user?.role === 'vendedor';
+
+  // Buscar dados de quilometragem (backend agora filtra por vendedor)
   const { data: mileageData, isLoading: isLoadingMileage } = useQuery({
     queryKey: ['/api/hr/monthly-mileage', selectedMonth, selectedYear],
     queryFn: async () => {
@@ -26,7 +31,7 @@ export default function HRManagement() {
     enabled: !!selectedMonth && !!selectedYear
   });
 
-  // Buscar dados de carga horária
+  // Buscar dados de carga horária (backend agora filtra por vendedor)
   const { data: hoursData, isLoading: isLoadingHours } = useQuery({
     queryKey: ['/api/hr/monthly-hours', selectedMonth, selectedYear],
     queryFn: async () => {
@@ -59,14 +64,29 @@ export default function HRManagement() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      <div className="mb-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.href = '/'}
+          className="flex items-center gap-2"
+          data-testid="button-back-dashboard"
+        >
+          <Home className="h-4 w-4" />
+          Voltar ao Dashboard
+        </Button>
+      </div>
+      
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2" data-testid="title-rh">
             <Users className="h-8 w-8 text-honest-blue" />
-            Recursos Humanos
+            {isVendedor ? 'Minhas Métricas' : 'Recursos Humanos'}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Controle de quilometragem e carga horária dos vendedores
+            {isVendedor 
+              ? 'Acompanhe sua quilometragem e carga horária'
+              : 'Controle de quilometragem e carga horária dos vendedores'}
           </p>
         </div>
 

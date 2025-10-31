@@ -83,7 +83,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: true 
     },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
-    { id: 'rh', label: 'RH', icon: 'fas fa-briefcase', available: canAccessReports },
+    { 
+      id: 'rh', 
+      label: isVendedor ? 'Minhas Métricas' : 'RH', 
+      icon: 'fas fa-briefcase', 
+      available: true 
+    },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
@@ -119,7 +124,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     console.log('🖱️ Menu item clicado:', itemId);
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

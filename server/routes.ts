@@ -10105,9 +10105,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // RH: Buscar quilometragem mensal por vendedor
-  app.get('/api/hr/monthly-mileage', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.get('/api/hr/monthly-mileage', authenticateUser, async (req: any, res) => {
     try {
       const { month, year } = req.query;
+      const user = req.user;
       
       if (!month || !year) {
         return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
@@ -10120,7 +10121,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startDate = new Date(yearNum, monthNum - 1, 1);
       const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
 
-      // Buscar todos os vendedores
+      // Se for vendedor, retornar apenas seus próprios dados
+      const isVendedor = user.role === 'vendedor';
+      
+      // Buscar vendedores (todos ou apenas o usuário logado se for vendedor)
       const sellers = await db.select({
         id: users.id,
         firstName: users.firstName,
@@ -10128,7 +10132,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: users.email
       })
       .from(users)
-      .where(eq(users.role, 'vendedor'));
+      .where(
+        isVendedor 
+          ? and(eq(users.role, 'vendedor'), eq(users.id, user.id))
+          : eq(users.role, 'vendedor')
+      );
 
       // Para cada vendedor, buscar rotas do mês
       const mileageData = await Promise.all(sellers.map(async (seller) => {
@@ -10179,9 +10187,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // RH: Buscar carga horária mensal por vendedor
-  app.get('/api/hr/monthly-hours', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.get('/api/hr/monthly-hours', authenticateUser, async (req: any, res) => {
     try {
       const { month, year } = req.query;
+      const user = req.user;
       
       if (!month || !year) {
         return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
@@ -10194,7 +10203,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startDate = new Date(yearNum, monthNum - 1, 1);
       const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
 
-      // Buscar todos os vendedores
+      // Se for vendedor, retornar apenas seus próprios dados
+      const isVendedor = user.role === 'vendedor';
+      
+      // Buscar vendedores (todos ou apenas o usuário logado se for vendedor)
       const sellers = await db.select({
         id: users.id,
         firstName: users.firstName,
@@ -10202,7 +10214,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: users.email
       })
       .from(users)
-      .where(eq(users.role, 'vendedor'));
+      .where(
+        isVendedor 
+          ? and(eq(users.role, 'vendedor'), eq(users.id, user.id))
+          : eq(users.role, 'vendedor')
+      );
 
       // Para cada vendedor, buscar check-ins e check-outs do mês
       const hoursData = await Promise.all(sellers.map(async (seller) => {
