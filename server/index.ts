@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
+import path from "path";
 import "./scheduler";
 
 const app = express();
@@ -52,6 +53,13 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Servir hotsite em /loja
+  const hotsitePath = path.resolve(import.meta.dirname, "public-hotsite");
+  app.use('/loja', express.static(hotsitePath));
+  app.get('/loja/*', (_req, res) => {
+    res.sendFile(path.resolve(hotsitePath, "index.html"));
+  });
+
   const server = await registerRoutes(app);
 
   // Inicializar admin padrão se não existir (importante para primeira execução em produção)
