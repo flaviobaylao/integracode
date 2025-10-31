@@ -10371,6 +10371,225 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // ROTAS PÚBLICAS PARA HOTSITE/E-COMMERCE
+  // ============================================================================
+  
+  // Listar produtos ativos disponíveis para venda
+  app.get('/api/public/products', async (req, res) => {
+    try {
+      const { customerType } = req.query;
+      
+      const productsData = await storage.getProducts();
+      const activeProducts = productsData.filter(p => p.isActive);
+      
+      // Formatar produtos para o hotsite
+      const formattedProducts = activeProducts.map(product => ({
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        price: parseFloat(product.price),
+        imageUrl: product.imageUrl || '/placeholder-product.jpg',
+        stock: product.stock
+      }));
+      
+      res.json(formattedProducts);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar produtos públicos:', error);
+      res.status(500).json({ 
+        message: 'Erro ao carregar produtos',
+        error: error.message 
+      });
+    }
+  });
+  
+  // Detalhes de um produto específico
+  app.get('/api/public/products/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const product = await storage.getProduct(id);
+      
+      if (!product) {
+        return res.status(404).json({ message: 'Produto não encontrado' });
+      }
+      
+      if (!product.isActive) {
+        return res.status(404).json({ message: 'Produto indisponível' });
+      }
+      
+      res.json({
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        price: parseFloat(product.price),
+        imageUrl: product.imageUrl || '/placeholder-product.jpg',
+        stock: product.stock
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar produto:', error);
+      res.status(500).json({ 
+        message: 'Erro ao carregar produto',
+        error: error.message 
+      });
+    }
+  });
+  
+  // Verificar se cliente já existe (por email ou telefone)
+  app.post('/api/public/customers/check', async (req, res) => {
+    try {
+      const { email, phone } = req.body;
+      
+      if (!email && !phone) {
+        return res.status(400).json({ 
+          message: 'Email ou telefone são obrigatórios' 
+        });
+      }
+      
+      const customersData = await storage.getCustomers();
+      
+      const existingCustomer = customersData.find(c => 
+        (email && c.email?.toLowerCase() === email.toLowerCase()) ||
+        (phone && c.phone === phone)
+      );
+      
+      if (existingCustomer) {
+        res.json({
+          exists: true,
+          customerType: existingCustomer.customerType || 'pessoa_fisica',
+          id: existingCustomer.id,
+          name: existingCustomer.fantasyName || existingCustomer.companyName || existingCustomer.name
+        });
+      } else {
+        res.json({
+          exists: false
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao verificar cliente:', error);
+      res.status(500).json({ 
+        message: 'Erro ao verificar cliente',
+        error: error.message 
+      });
+    }
+  });
+  
+  // Criar pedido público (do hotsite)
+  app.post('/api/public/orders', async (req, res) => {
+    try {
+      const orderSchema = z.object({
+        customer: z.object({
+          name: z.string().min(1, 'Nome é obrigatório'),
+          email: z.string().email('Email inválido').optional().nullable(),
+          phone: z.string().min(10, 'Telefone inválido'),
+          address: z.string().min(1, 'Endereço é obrigatório'),
+          cpfCnpj: z.string().optional().nullable(),
+          customerType: z.enum(['pessoa_fisica', 'pessoa_juridica']).default('pessoa_fisica')
+        }),
+        items: z.array(z.object({
+          productId: z.string(),
+          productName: z.string(),
+          quantity: z.number().min(1),
+          unitPrice: z.number().min(0)
+        })).min(1, 'Adicione pelo menos um produto'),
+        totalAmount: z.number().min(0),
+        paymentMethod: z.enum(['pix', 'card', 'boleto']).default('pix'),
+        source: z.enum(['hotsite', 'website']).default('hotsite')
+      });
+      
+      const validatedData = orderSchema.parse(req.body);
+      
+      // Verificar se cliente já existe ou criar novo
+      let customerId: string;
+      const customersData = await storage.getCustomers();
+      const existingCustomer = customersData.find(c => 
+        (validatedData.customer.email && c.email?.toLowerCase() === validatedData.customer.email.toLowerCase()) ||
+        (validatedData.customer.phone && c.phone === validatedData.customer.phone)
+      );
+      
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+        
+        // Atualizar informações se necessário
+        await storage.updateCustomer(customerId, {
+          address: validatedData.customer.address,
+          name: validatedData.customer.name
+        });
+        
+      } else {
+        // Criar novo cliente
+        const newCustomer = await storage.createCustomer({
+          name: validatedData.customer.name,
+          email: validatedData.customer.email,
+          phone: validatedData.customer.phone,
+          address: validatedData.customer.address,
+          customerType: validatedData.customer.customerType,
+          cpfCnpj: validatedData.customer.cpfCnpj,
+          companyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
+          fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
+          route: 'GOIÂNIA', // Padrão para clientes do hotsite
+          isActive: true
+        });
+        
+        customerId = newCustomer.id;
+      }
+      
+      // Gerar número de pedido único
+      const orderNumber = `WEB-${Date.now()}`;
+      
+      // Criar registro do pedido (usando sales_cards temporariamente)
+      // TODO: Criar tabela específica para pedidos web quando houver necessidade
+      const orderData = {
+        customerId,
+        sellerId: null, // Vendas online não têm vendedor atribuído
+        recurrenceType: 'unica',
+        status: 'pendente',
+        visitWeek: null,
+        visitDate: null,
+        visitType: 'presencial',
+        paymentMethod: validatedData.paymentMethod,
+        operationType: 'venda',
+        products: validatedData.items,
+        observations: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
+        isVirtual: true,
+        deliveryWeekdays: [],
+        deliveryTimeSlots: [],
+        deliverySaturdayTimeSlots: [],
+        boletoDays: validatedData.paymentMethod === 'boleto' ? 7 : null
+      };
+      
+      const salesCard = await storage.createSalesCard(orderData);
+      
+      res.status(201).json({
+        success: true,
+        orderId: salesCard.id,
+        orderNumber,
+        message: 'Pedido criado com sucesso!',
+        customerId,
+        totalAmount: validatedData.totalAmount,
+        paymentMethod: validatedData.paymentMethod
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao criar pedido público:', error);
+      
+      if (error.name === 'ZodError') {
+        return res.status(400).json({
+          message: 'Dados inválidos',
+          errors: error.errors
+        });
+      }
+      
+      res.status(500).json({ 
+        message: 'Erro ao criar pedido',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
