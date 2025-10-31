@@ -658,13 +658,23 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
 
   // Função para salvar produtos sem finalizar a venda
   const handleSaveProducts = async () => {
-    if (!card?.id) return;
+    if (!card?.id) {
+      console.error('handleSaveProducts: card ou card.id não está definido');
+      return false;
+    }
 
     try {
       const totalValue = calculateTotal();
       
+      console.log('🔄 Salvando produtos sem finalizar...', {
+        cardId: card.id,
+        productsCount: products.length,
+        totalValue: totalValue.toFixed(2),
+        products: products
+      });
+      
       // Salvar produtos no card sem alterar status para 'completed'
-      await apiRequest('PUT', `/api/sales-cards/${card.id}`, {
+      const response = await apiRequest('PUT', `/api/sales-cards/${card.id}`, {
         products: products,
         saleValue: totalValue.toFixed(2),
         paymentMethod: paymentMethod,
@@ -678,10 +688,12 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         // NÃO enviamos 'status' aqui, então o card mantém status atual (in_progress)
       });
 
+      console.log('✅ Produtos salvos com sucesso:', response);
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       
       return true;
     } catch (error: any) {
+      console.error('❌ Erro ao salvar produtos:', error);
       toast({
         title: "Erro ao Salvar Produtos",
         description: error.message,
@@ -783,6 +795,10 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
       });
 
       queryClient.invalidateQueries({ queryKey: ['/api/visit-agenda'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      
+      // Fechar o modal após sucesso
+      onClose();
       
     } catch (error: any) {
       toast({
