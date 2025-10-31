@@ -87,15 +87,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     }
   }, [displayCard]);
   
-  // Log para debug
-  console.log('SalesCardDetailsModal opened:', { 
-    isOpen, 
-    propCardStatus: card?.status, 
-    freshCardStatus: displayCard?.status,
-    propCheckIn: card?.checkInTime,
-    freshCheckIn: displayCard?.checkInTime,
-    cardId: card?.id 
-  });
 
   // Função para calcular distância entre duas coordenadas (fórmula de Haversine)
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -856,20 +847,12 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           customerLatitude={card.customerLatitude}
           customerLongitude={card.customerLongitude}
           onSuccess={async () => {
-            console.log('[CHECK-IN SUCCESS] Starting cache invalidation and refetch');
-            
             await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-            console.log('[CHECK-IN SUCCESS] Invalidated /api/sales-cards');
-            
             await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
-            console.log('[CHECK-IN SUCCESS] Invalidated /api/sales-cards/by-day');
             
-            // IMPORTANTE: Refetch da query do modal para atualizar displayCard
+            // Refetch da query do modal para atualizar displayCard imediatamente
             await queryClient.refetchQueries({ queryKey: ['/api/sales-cards', card?.id] });
-            console.log('[CHECK-IN SUCCESS] Refetched modal card data');
-            
-            const refetchResult = await queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
-            console.log('[CHECK-IN SUCCESS] Refetch completed', { refetchResult });
+            await queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
             
             setShowCheckInModal(false);
             toast({
