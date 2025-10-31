@@ -716,7 +716,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               
               <Button
                 onClick={handleCheckOut}
-                disabled={isCheckingOut || !card.checkInTime || !!card.checkOutTime}
+                disabled={isCheckingOut || !card.checkInTime}
                 variant="outline"
                 className="border-purple-600 text-purple-600 hover:bg-purple-50"
                 data-testid="button-check-out"
@@ -726,7 +726,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 ) : (
                   <LogOut className="h-4 w-4 mr-2" />
                 )}
-                {card.checkOutTime ? 'Check-out Realizado' : 'Check-out'}
+                Check-out
               </Button>
             </div>
 
