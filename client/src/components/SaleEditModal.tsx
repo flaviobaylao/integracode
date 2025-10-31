@@ -158,6 +158,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
   }, [customerVisitPeriodicity]);
 
+  // Mutation para atualizar e FINALIZAR a venda (fecha modal)
   const updateCardMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
       await apiRequest('PUT', `/api/sales-cards/${id}`, data);
@@ -176,6 +177,22 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         description: error.message,
         variant: "destructive",
       });
+    },
+  });
+
+  // Mutation dedicada para SALVAR produtos sem finalizar (mantém modal aberto)
+  const saveProductsMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      return await apiRequest('PUT', `/api/sales-cards/${id}`, data);
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      // NÃO fecha o modal - permite continuar editando
+      console.log('✅ Produtos salvos (modal permanece aberto):', data);
+    },
+    onError: (error) => {
+      console.error('❌ Erro ao salvar produtos:', error);
+      // Error will be caught and handled in handleSaveProducts
     },
   });
 
@@ -663,6 +680,16 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
       return false;
     }
 
+    // Validação: não permitir salvar lista vazia
+    if (products.length === 0) {
+      toast({
+        title: "Nenhum Produto",
+        description: "Adicione pelo menos um produto antes de salvar.",
+        variant: "destructive"
+      });
+      return false;
+    }
+
     try {
       const totalValue = calculateTotal();
       
@@ -673,23 +700,32 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         products: products
       });
       
-      // Salvar produtos no card sem alterar status para 'completed'
-      const response = await apiRequest('PUT', `/api/sales-cards/${card.id}`, {
-        products: products,
-        saleValue: totalValue.toFixed(2),
-        paymentMethod: paymentMethod,
-        operationType: operationType,
-        notes: notes,
-        deliveryWeekdays: deliveryWeekdays,
-        deliveryTimeSlots: deliveryTimeSlots,
-        customerLatitude: customerLatitude || null,
-        customerLongitude: customerLongitude || null,
-        boletoDays: boletoDays
-        // NÃO enviamos 'status' aqui, então o card mantém status atual (in_progress)
+      // Usar mutation dedicada que não fecha o modal
+      await saveProductsMutation.mutateAsync({
+        id: card.id,
+        data: {
+          products: products,
+          saleValue: totalValue.toFixed(2),
+          paymentMethod: paymentMethod,
+          operationType: operationType,
+          notes: notes,
+          deliveryWeekdays: deliveryWeekdays,
+          deliveryTimeSlots: deliveryTimeSlots,
+          customerLatitude: customerLatitude || null,
+          customerLongitude: customerLongitude || null,
+          boletoDays: boletoDays
+          // NÃO enviamos 'status' aqui, então o card mantém status atual (in_progress)
+        }
       });
 
-      console.log('✅ Produtos salvos com sucesso:', response);
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      console.log('✅ Produtos salvos com sucesso (modal permanece aberto)');
+      
+      // Mostrar feedback de sucesso ao usuário
+      toast({
+        title: "✅ Produtos Salvos!",
+        description: `${products.length} produto(s) salvos. Você pode continuar editando ou voltar depois para finalizar.`,
+        duration: 4000,
+      });
       
       return true;
     } catch (error: any) {
@@ -711,10 +747,12 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
     if (products.length > 0) {
       const saved = await handleSaveProducts();
       if (!saved) return; // Se falhou ao salvar, não continuar com check-out
-      
+      // Toast de sucesso já foi mostrado no handleSaveProducts, não duplicar aqui
+    } else {
       toast({
-        title: "Produtos Salvos",
-        description: "Os produtos foram salvos com sucesso. Você pode voltar depois para finalizar a venda.",
+        title: "Atenção",
+        description: "Nenhum produto foi adicionado. Fazendo apenas check-out.",
+        duration: 3000,
       });
     }
 
