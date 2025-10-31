@@ -4,6 +4,7 @@ export interface Product {
   description: string | null;
   price: number;
   imageUrl: string | null;
+  images?: string[] | null; // Array de URLs de imagens para galeria
   stock: number;
 }
 

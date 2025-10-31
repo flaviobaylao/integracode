@@ -10410,6 +10410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: product.description,
         price: parseFloat(product.price),
         imageUrl: product.imageUrl || '/placeholder-product.jpg',
+        images: product.images || (product.imageUrl ? [product.imageUrl] : []), // Retornar array de imagens
         stock: product.stock
       }));
       
@@ -10445,6 +10446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: product.description,
         price: parseFloat(product.price),
         imageUrl: product.imageUrl || '/placeholder-product.jpg',
+        images: product.images || (product.imageUrl ? [product.imageUrl] : []), // Retornar array de imagens
         stock: product.stock
       });
       
