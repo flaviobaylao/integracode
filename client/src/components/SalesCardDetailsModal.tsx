@@ -830,7 +830,12 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           customerLongitude={card.customerLongitude}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+            queryClient.refetchQueries({ queryKey: ['/api/sales-cards'] });
             setShowCheckInModal(false);
+            toast({
+              title: "Sucesso",
+              description: "Check-in realizado! Você já pode fazer check-out.",
+            });
           }}
         />
       )}
