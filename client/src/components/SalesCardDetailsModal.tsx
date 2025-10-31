@@ -60,18 +60,42 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     retry: false,
   });
 
+  // Buscar dados atualizados do card diretamente do backend
+  const { data: freshCard } = useQuery({
+    queryKey: ['/api/sales-cards', card?.id],
+    queryFn: async () => {
+      if (!card?.id) return null;
+      const response = await fetch(`/api/sales-cards/${card.id}`);
+      if (!response.ok) return card; // Fallback para card prop se falhar
+      return response.json();
+    },
+    enabled: !!card?.id && isOpen,
+    refetchInterval: false,
+    staleTime: 0, // Sempre buscar dados frescos
+  });
+
+  // Usar freshCard se disponível, senão usar card da prop
+  const displayCard = freshCard || card;
+
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
   
   // Sincronizar estado local com o card quando ele mudar
   useEffect(() => {
-    if (card?.customer) {
-      setLocalVirtualService((card.customer as any).virtualService || false);
+    if (displayCard?.customer) {
+      setLocalVirtualService((displayCard.customer as any).virtualService || false);
     }
-  }, [card]);
+  }, [displayCard]);
   
   // Log para debug
-  console.log('SalesCardDetailsModal opened:', { isOpen, cardStatus: card?.status, cardId: card?.id });
+  console.log('SalesCardDetailsModal opened:', { 
+    isOpen, 
+    propCardStatus: card?.status, 
+    freshCardStatus: displayCard?.status,
+    propCheckIn: card?.checkInTime,
+    freshCheckIn: displayCard?.checkInTime,
+    cardId: card?.id 
+  });
 
   // Função para calcular distância entre duas coordenadas (fórmula de Haversine)
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -704,7 +728,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             <div className="flex flex-wrap justify-center gap-3">
               <Button
                 onClick={handleCheckIn}
-                disabled={isCheckingIn || !!card.checkInTime}
+                disabled={isCheckingIn || !!displayCard?.checkInTime}
                 variant="outline"
                 className="border-blue-600 text-blue-600 hover:bg-blue-50"
                 data-testid="button-check-in"
@@ -714,12 +738,12 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 ) : (
                   <LogIn className="h-4 w-4 mr-2" />
                 )}
-                {card.checkInTime ? 'Check-in Realizado' : 'Check-in'}
+                {displayCard?.checkInTime ? 'Check-in Realizado' : 'Check-in'}
               </Button>
               
               <Button
                 onClick={handleCheckOut}
-                disabled={isCheckingOut || !card.checkInTime}
+                disabled={isCheckingOut || !displayCard?.checkInTime}
                 variant="outline"
                 className="border-purple-600 text-purple-600 hover:bg-purple-50"
                 data-testid="button-check-out"
@@ -839,6 +863,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             
             await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
             console.log('[CHECK-IN SUCCESS] Invalidated /api/sales-cards/by-day');
+            
+            // IMPORTANTE: Refetch da query do modal para atualizar displayCard
+            await queryClient.refetchQueries({ queryKey: ['/api/sales-cards', card?.id] });
+            console.log('[CHECK-IN SUCCESS] Refetched modal card data');
             
             const refetchResult = await queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
             console.log('[CHECK-IN SUCCESS] Refetch completed', { refetchResult });
