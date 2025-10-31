@@ -18,7 +18,8 @@ export default function HRManagement() {
   const [selectedMonth, setSelectedMonth] = useState((currentDate.getMonth() + 1).toString());
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear().toString());
 
-  const isVendedor = user?.role === 'vendedor';
+  // Apenas roles administrativos veem todos os dados
+  const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
 
   // Buscar dados de quilometragem (backend agora filtra por vendedor)
   const { data: mileageData, isLoading: isLoadingMileage } = useQuery({
@@ -81,10 +82,10 @@ export default function HRManagement() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2" data-testid="title-rh">
             <Users className="h-8 w-8 text-honest-blue" />
-            {isVendedor ? 'Minhas Métricas' : 'Recursos Humanos'}
+            {!isAdmin ? 'Minhas Métricas' : 'Recursos Humanos'}
           </h1>
           <p className="text-muted-foreground mt-1">
-            {isVendedor 
+            {!isAdmin 
               ? 'Acompanhe sua quilometragem e carga horária'
               : 'Controle de quilometragem e carga horária dos vendedores'}
           </p>

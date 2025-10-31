@@ -10121,22 +10121,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startDate = new Date(yearNum, monthNum - 1, 1);
       const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
 
-      // Se for vendedor, retornar apenas seus próprios dados
-      const isVendedor = user.role === 'vendedor';
+      // Apenas usuários administrativos veem todos os dados
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
       
-      // Buscar vendedores (todos ou apenas o usuário logado se for vendedor)
-      const sellers = await db.select({
+      // Buscar usuários: todos (se admin) ou apenas o próprio usuário logado
+      const usersQuery = db.select({
         id: users.id,
         firstName: users.firstName,
         lastName: users.lastName,
         email: users.email
       })
-      .from(users)
-      .where(
-        isVendedor 
-          ? and(eq(users.role, 'vendedor'), eq(users.id, user.id))
-          : eq(users.role, 'vendedor')
-      );
+      .from(users);
+      
+      const sellers = isAdmin 
+        ? await usersQuery
+        : await usersQuery.where(eq(users.id, user.id));
 
       // Para cada vendedor, buscar rotas do mês
       const mileageData = await Promise.all(sellers.map(async (seller) => {
@@ -10203,22 +10202,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startDate = new Date(yearNum, monthNum - 1, 1);
       const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
 
-      // Se for vendedor, retornar apenas seus próprios dados
-      const isVendedor = user.role === 'vendedor';
+      // Apenas usuários administrativos veem todos os dados
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
       
-      // Buscar vendedores (todos ou apenas o usuário logado se for vendedor)
-      const sellers = await db.select({
+      // Buscar usuários: todos (se admin) ou apenas o próprio usuário logado
+      const usersQuery = db.select({
         id: users.id,
         firstName: users.firstName,
         lastName: users.lastName,
         email: users.email
       })
-      .from(users)
-      .where(
-        isVendedor 
-          ? and(eq(users.role, 'vendedor'), eq(users.id, user.id))
-          : eq(users.role, 'vendedor')
-      );
+      .from(users);
+      
+      const sellers = isAdmin 
+        ? await usersQuery
+        : await usersQuery.where(eq(users.id, user.id));
 
       // Para cada vendedor, buscar check-ins e check-outs do mês
       const hoursData = await Promise.all(sellers.map(async (seller) => {
