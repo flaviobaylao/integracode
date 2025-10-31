@@ -229,10 +229,16 @@ export default function SalesSchedule() {
     if (selectedCard && cardsData?.cards) {
       const updatedCard = cardsData.cards.find((c: SalesCardWithRelations) => c.id === selectedCard.id);
       if (updatedCard) {
+        console.log('[SYNC] Updating selectedCard after data change', {
+          oldStatus: selectedCard.status,
+          newStatus: updatedCard.status,
+          oldCheckIn: selectedCard.checkInTime,
+          newCheckIn: updatedCard.checkInTime
+        });
         setSelectedCard(updatedCard);
       }
     }
-  }, [cardsData]);
+  }, [cardsData, selectedCard?.id]);
 
   const handleCardClick = (card: SalesCardWithRelations) => {
     setSelectedCard(card);
