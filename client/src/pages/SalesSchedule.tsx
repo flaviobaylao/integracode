@@ -224,6 +224,16 @@ export default function SalesSchedule() {
     setCurrentPage(1);
   }, [selectedDay, selectedSeller, startDate, endDate]);
 
+  // Update selectedCard when data changes (e.g., after check-in)
+  useEffect(() => {
+    if (selectedCard && cardsData?.cards) {
+      const updatedCard = cardsData.cards.find((c: SalesCardWithRelations) => c.id === selectedCard.id);
+      if (updatedCard) {
+        setSelectedCard(updatedCard);
+      }
+    }
+  }, [cardsData]);
+
   const handleCardClick = (card: SalesCardWithRelations) => {
     setSelectedCard(card);
     setIsDetailsModalOpen(true);
