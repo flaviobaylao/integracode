@@ -10662,6 +10662,180 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // PRODUCT REVIEWS - Endpoints públicos e administrativos
+  // ============================================================================
+
+  // Criar nova review (pública - pendente de aprovação)
+  app.post('/api/public/reviews', async (req, res) => {
+    try {
+      const reviewData = insertProductReviewSchema.parse(req.body);
+      
+      const newReview = await storage.createProductReview({
+        ...reviewData,
+        isApproved: false, // Todas as reviews começam pendentes
+      });
+      
+      res.status(201).json({
+        success: true,
+        reviewId: newReview.id,
+        message: 'Avaliação enviada com sucesso! Ela será publicada após moderação.'
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao criar review:', error);
+      
+      if (error.name === 'ZodError') {
+        return res.status(400).json({
+          message: 'Dados inválidos',
+          errors: error.errors
+        });
+      }
+      
+      res.status(500).json({ 
+        message: 'Erro ao criar avaliação',
+        error: error.message 
+      });
+    }
+  });
+
+  // Listar reviews aprovadas de um produto
+  app.get('/api/public/products/:id/reviews', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const reviews = await storage.getProductReviews(id);
+      
+      // Retornar apenas reviews aprovadas, ordenadas da mais recente para a mais antiga
+      const approvedReviews = reviews
+        .filter(r => r.isApproved)
+        .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+      
+      res.json(approvedReviews);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar reviews:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar avaliações',
+        error: error.message 
+      });
+    }
+  });
+
+  // Estatísticas de reviews de um produto
+  app.get('/api/public/products/:id/review-stats', async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const reviews = await storage.getProductReviews(id);
+      const approvedReviews = reviews.filter(r => r.isApproved);
+      
+      if (approvedReviews.length === 0) {
+        return res.json({
+          averageRating: 0,
+          totalReviews: 0,
+          ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+        });
+      }
+      
+      const totalRating = approvedReviews.reduce((sum, r) => sum + r.rating, 0);
+      const averageRating = totalRating / approvedReviews.length;
+      
+      const ratingDistribution = approvedReviews.reduce((acc, r) => {
+        acc[r.rating] = (acc[r.rating] || 0) + 1;
+        return acc;
+      }, {} as Record<number, number>);
+      
+      res.json({
+        averageRating: Math.round(averageRating * 10) / 10, // 1 casa decimal
+        totalReviews: approvedReviews.length,
+        ratingDistribution: {
+          1: ratingDistribution[1] || 0,
+          2: ratingDistribution[2] || 0,
+          3: ratingDistribution[3] || 0,
+          4: ratingDistribution[4] || 0,
+          5: ratingDistribution[5] || 0
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar estatísticas de reviews:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar estatísticas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Listar todas as reviews (admin - com pendentes)
+  app.get('/api/product-reviews', isAuthenticated, async (req, res) => {
+    try {
+      const allReviews = await storage.getAllProductReviews();
+      
+      // Ordenar por data de criação (mais recentes primeiro)
+      const sortedReviews = allReviews.sort((a, b) => 
+        new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime()
+      );
+      
+      res.json(sortedReviews);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar todas as reviews:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar avaliações',
+        error: error.message 
+      });
+    }
+  });
+
+  // Aprovar/desaprovar review
+  app.patch('/api/product-reviews/:id/approve', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isApproved } = req.body;
+      
+      if (typeof isApproved !== 'boolean') {
+        return res.status(400).json({ message: 'isApproved deve ser boolean' });
+      }
+      
+      const updatedReview = await storage.updateProductReview(id, { isApproved });
+      
+      res.json({
+        success: true,
+        review: updatedReview,
+        message: isApproved ? 'Review aprovada!' : 'Review desaprovada!'
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao atualizar review:', error);
+      res.status(500).json({ 
+        message: 'Erro ao atualizar avaliação',
+        error: error.message 
+      });
+    }
+  });
+
+  // Deletar review
+  app.delete('/api/product-reviews/:id', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      await storage.deleteProductReview(id);
+      
+      res.json({
+        success: true,
+        message: 'Review deletada com sucesso!'
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao deletar review:', error);
+      res.status(500).json({ 
+        message: 'Erro ao deletar avaliação',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

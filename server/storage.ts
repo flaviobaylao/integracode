@@ -89,6 +89,13 @@ export interface IStorage {
   updateProduct(id: string, product: Partial<InsertProduct>): Promise<Product>;
   deleteProduct(id: string): Promise<void>;
   
+  // Product review operations
+  createProductReview(review: InsertProductReview): Promise<ProductReview>;
+  getProductReviews(productId: string): Promise<ProductReview[]>;
+  getAllProductReviews(): Promise<ProductReview[]>;
+  updateProductReview(id: string, data: Partial<InsertProductReview>): Promise<ProductReview>;
+  deleteProductReview(id: string): Promise<void>;
+  
   // Sales card operations
   getSalesCards(sellerId?: string, filters?: { routeDay?: string; status?: string }): Promise<SalesCardWithRelations[]>;
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
@@ -637,6 +644,33 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProduct(id: string): Promise<void> {
     await db.update(products).set({ isActive: false }).where(eq(products.id, id));
+  }
+
+  // Product review operations
+  async createProductReview(review: InsertProductReview): Promise<ProductReview> {
+    const [newReview] = await db.insert(productReviews).values(review).returning();
+    return newReview;
+  }
+
+  async getProductReviews(productId: string): Promise<ProductReview[]> {
+    return db.select().from(productReviews).where(eq(productReviews.productId, productId));
+  }
+
+  async getAllProductReviews(): Promise<ProductReview[]> {
+    return db.select().from(productReviews);
+  }
+
+  async updateProductReview(id: string, data: Partial<InsertProductReview>): Promise<ProductReview> {
+    const [updatedReview] = await db
+      .update(productReviews)
+      .set(data)
+      .where(eq(productReviews.id, id))
+      .returning();
+    return updatedReview;
+  }
+
+  async deleteProductReview(id: string): Promise<void> {
+    await db.delete(productReviews).where(eq(productReviews.id, id));
   }
 
   // Sales card operations
