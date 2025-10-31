@@ -346,7 +346,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                           ? 'text-honest-blue bg-blue-50'
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
-                      onClick={() => setActiveView(item.id)}
+                      onClick={() => handleMenuItemClick(item.id)}
+                      data-testid={`menu-${item.id}`}
                     >
                       <i className={item.icon}></i>
                       <span className="font-medium">{item.label}</span>
@@ -380,7 +381,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                               ? 'text-honest-blue bg-blue-50'
                               : 'text-gray-600 hover:bg-gray-50'
                           }`}
-                          onClick={() => setActiveView(item.id)}
+                          onClick={() => handleMenuItemClick(item.id)}
+                          data-testid={`menu-${item.id}`}
                         >
                           <i className={item.icon}></i>
                           <span>{item.label}</span>
@@ -415,7 +417,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                               ? 'text-honest-blue bg-blue-50'
                               : 'text-gray-600 hover:bg-gray-50'
                           }`}
-                          onClick={() => setActiveView(item.id)}
+                          onClick={() => handleMenuItemClick(item.id)}
+                          data-testid={`menu-${item.id}`}
                         >
                           <i className={item.icon}></i>
                           <span>{item.label}</span>
