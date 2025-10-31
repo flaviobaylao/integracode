@@ -10110,6 +10110,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { month, year } = req.query;
       const user = req.user;
       
+      if (!user) {
+        return res.status(401).json({ message: 'Usuário não autenticado' });
+      }
+      
       if (!month || !year) {
         return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
       }
