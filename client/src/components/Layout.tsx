@@ -116,14 +116,18 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   };
 
   const handleMenuItemClick = (itemId: string) => {
+    console.log('🖱️ Menu item clicado:', itemId);
+    
     // Rotas que têm páginas próprias devem navegar diretamente
     const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'auditoria-checkins'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
       const route = '/' + itemId.replace(/_/g, '-');
+      console.log('🔗 Navegando para rota:', route);
       window.location.href = route;
     } else {
+      console.log('📋 Mudando activeView para:', itemId);
       setActiveView(itemId);
     }
     setMobileMenuOpen(false);
