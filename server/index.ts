@@ -5,6 +5,19 @@ import { initializeDefaultAdmin } from "./localAuth";
 import "./scheduler";
 
 const app = express();
+
+// MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas
+app.use((req, res, next) => {
+  // Para HTML e JavaScript, NUNCA fazer cache
+  if (req.path.endsWith('.html') || req.path.endsWith('.js') || req.path === '/' || !req.path.includes('.')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
