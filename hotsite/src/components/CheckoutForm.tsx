@@ -61,8 +61,16 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     const email = formData.email?.trim();
     const phone = formData.phone.replace(/\D/g, '');
 
+    // Resetar estado se ambos os campos estiverem vazios
+    if (!email && !phone) {
+      setCustomerFound(false);
+      setIsCheckingCustomer(false);
+      return;
+    }
+
     // Só verificar se tiver email válido OU telefone com pelo menos 10 dígitos
     if ((!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) && phone.length < 10) {
+      setCustomerFound(false);
       return;
     }
 

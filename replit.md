@@ -44,6 +44,14 @@
     - **Monthly Mileage Tracking**: Aggregates daily route distances per seller.
     - **Work Hours Management**: Calculates daily work hours, deducting lunch, and compares against expected hours.
     - **Access Control**: Restricted to admin, coordinator, and administrative roles.
+- **E-commerce Platform (Hotsite Instagram)**:
+    - **Public API Routes**: Separate public endpoints for external sales channels (`/api/public/products`, `/api/public/orders`, `/api/public/customers/check`).
+    - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic.
+    - **Intelligent Pricing**: Automatic customer type detection (retail vs wholesale) with automatic upgrade to wholesale pricing when cart exceeds R$200 (10% discount).
+    - **Customer Recognition**: Automatic customer verification during checkout with auto-fill of returning customer data.
+    - **Security**: Server-side price validation, stock verification, and total recalculation to prevent client-side manipulation.
+    - **Integration**: Orders created via hotsite are automatically registered in Sistema Integra as sales_cards with `source: 'hotsite'` marker.
+    - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto (payment processing integration pending).
 
 # External Dependencies
 
