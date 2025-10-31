@@ -2298,13 +2298,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Se o status mudou para completed, no_sale ou failed, usar função helper para fechar e reagendar
       let salesCard;
       if (data.status && ['completed', 'no_sale', 'failed'].includes(data.status)) {
-        // CHECK-OUT AUTOMÁTICO: Se tem check-in ativo e mudou para no_sale, fazer check-out
-        const currentCard = await storage.getSalesCard(id);
-        if (currentCard && currentCard.checkInTime && !currentCard.checkOutTime && data.status === 'no_sale') {
-          data.checkOutTime = new Date();
-          console.log('✅ Check-out automático realizado ao marcar como "Não Venda"');
-        }
-        
         const result = await storage.closeCardAndScheduleNext(id, data.status as any, data);
         salesCard = result.closedCard;
         
@@ -7064,12 +7057,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}`,
         notes: (card.notes || '') + `\n\nEnviado para Omie: ${new Date().toLocaleString('pt-BR')}`
       };
-      
-      // CHECK-OUT AUTOMÁTICO: Se tem check-in ativo, fazer check-out
-      if (card.checkInTime && !card.checkOutTime) {
-        updateData.checkOutTime = new Date();
-        console.log('✅ Check-out automático realizado após envio para Omie');
-      }
       
       await storage.updateSalesCard(cardId, updateData);
       
