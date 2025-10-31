@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, type TouchEvent } from 'react';
 import { ChevronLeft, ChevronRight, X, ZoomIn } from 'lucide-react';
 
 interface ImageGalleryProps {
@@ -9,6 +9,50 @@ interface ImageGalleryProps {
 export default function ImageGallery({ images, productName }: ImageGalleryProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isZoomed, setIsZoomed] = useState(false);
+  
+  // Touch swipe handlers for mobile navigation
+  const touchStartX = useRef<number>(0);
+  const touchEndX = useRef<number>(0);
+  const isSingleTouch = useRef<boolean>(false);
+  
+  const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    // Only handle single-touch gestures (not pinch-to-zoom)
+    if (e.touches.length === 1) {
+      touchStartX.current = e.touches[0].clientX;
+      touchEndX.current = e.touches[0].clientX; // Reset to avoid stale values
+      isSingleTouch.current = true;
+    } else {
+      isSingleTouch.current = false;
+    }
+  };
+  
+  const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
+    // Only track movement for single-touch gestures
+    if (e.touches.length === 1 && isSingleTouch.current) {
+      touchEndX.current = e.touches[0].clientX;
+    }
+  };
+  
+  const handleTouchEnd = () => {
+    // Only swipe if this was a single-touch gesture
+    if (!isSingleTouch.current) return;
+    
+    const swipeThreshold = 50; // Minimum distance for swipe
+    const diff = touchStartX.current - touchEndX.current;
+    
+    if (Math.abs(diff) > swipeThreshold) {
+      if (diff > 0) {
+        // Swiped left - next image
+        goToNext();
+      } else {
+        // Swiped right - previous image
+        goToPrevious();
+      }
+    }
+    
+    // Reset flags
+    isSingleTouch.current = false;
+  };
 
   if (!images || images.length === 0) {
     return (
@@ -46,6 +90,9 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
         <div 
           className="relative bg-white rounded-xl overflow-hidden aspect-square cursor-zoom-in"
           onClick={openZoom}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           data-testid="gallery-main-image"
         >
           <img
@@ -128,7 +175,13 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
           </button>
 
           {/* Imagem em tamanho grande */}
-          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
+          <div 
+            className="relative max-w-4xl max-h-full" 
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
             <img
               src={images[currentIndex]}
               alt={`${productName} - Imagem ${currentIndex + 1} (ampliada)`}
