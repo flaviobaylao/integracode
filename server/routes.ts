@@ -6868,6 +6868,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // VERIFICAR BLOQUEIO POR TIPO DE OPERAÇÃO (AMOSTRA/TROCA)
+      const operationType = card.operationType || 'venda';
+      if (operationType === 'amostra' || operationType === 'troca') {
+        console.log(`⚠️ BLOQUEANDO PEDIDO: Tipo de operação ${operationType} requer aprovação manual`);
+        
+        // Criar registro de pedido bloqueado
+        const blockedOrderData = {
+          salesCardId: card.id,
+          customerId: card.customerId,
+          sellerId: card.sellerId,
+          blockReason: 'operation_type',
+          blockDetails: operationType === 'troca' 
+            ? 'Pedido de troca requer aprovação manual antes de enviar ao faturamento.'
+            : 'Pedido de amostra requer aprovação manual antes de enviar ao faturamento.',
+          operationType: operationType,
+          paymentMethod: card.paymentMethod || 'a_vista',
+          boletoDays: card.boletoDays || null,
+          totalAmount: parseFloat(card.saleValue),
+          products: card.products || []
+        };
+        
+        await db.insert(blockedOrders).values(blockedOrderData);
+        
+        return res.status(403).json({ 
+          blocked: true,
+          message: operationType === 'troca' 
+            ? 'Pedido bloqueado: Trocas requerem aprovação manual antes de enviar ao faturamento.'
+            : 'Pedido bloqueado: Amostras requerem aprovação manual antes de enviar ao faturamento.',
+          blockReason: 'operation_type',
+          operationType: operationType
+        });
+      }
+      
       // VERIFICAR BLOQUEIO POR DÉBITO VENCIDO
       try {
         const clientDocument = card.customer.cnpj || card.customer.cpf || '';
