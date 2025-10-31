@@ -156,6 +156,7 @@ export default function SalesSchedule() {
   const { data: cardsData, isLoading, refetch } = useQuery({
     queryKey: ['/api/sales-cards/by-day', selectedDay, selectedSeller, startDate, endDate, currentPage],
     queryFn: async () => {
+      console.log('[QUERY] Fetching sales cards by day', { selectedDay, selectedSeller, startDate, endDate, currentPage });
       // Se "atrasados" for selecionado, usar endpoint específico
       if (selectedDay === 'atrasados') {
         const params = new URLSearchParams();

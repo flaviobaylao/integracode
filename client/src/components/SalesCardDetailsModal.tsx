@@ -831,10 +831,18 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           cardId={card.id}
           customerLatitude={card.customerLatitude}
           customerLongitude={card.customerLongitude}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
-            queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
+          onSuccess={async () => {
+            console.log('[CHECK-IN SUCCESS] Starting cache invalidation and refetch');
+            
+            await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+            console.log('[CHECK-IN SUCCESS] Invalidated /api/sales-cards');
+            
+            await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
+            console.log('[CHECK-IN SUCCESS] Invalidated /api/sales-cards/by-day');
+            
+            const refetchResult = await queryClient.refetchQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
+            console.log('[CHECK-IN SUCCESS] Refetch completed', { refetchResult });
+            
             setShowCheckInModal(false);
             toast({
               title: "Sucesso",
