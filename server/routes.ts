@@ -10502,6 +10502,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const validatedData = orderSchema.parse(req.body);
       
+      // ✅ VALIDAÇÃO SERVER-SIDE DE PREÇOS E TOTAIS
+      // Buscar preços reais dos produtos no banco de dados
+      let serverSubtotal = 0;
+      for (const item of validatedData.items) {
+        const product = await storage.getProduct(item.productId);
+        
+        if (!product) {
+          return res.status(400).json({
+            message: `Produto ${item.productName} não encontrado`,
+            productId: item.productId
+          });
+        }
+        
+        if (!product.isActive) {
+          return res.status(400).json({
+            message: `Produto ${product.name} não está mais disponível`,
+            productId: item.productId
+          });
+        }
+        
+        if (product.stock < item.quantity) {
+          return res.status(400).json({
+            message: `Estoque insuficiente para ${product.name}. Disponível: ${product.stock}`,
+            productId: item.productId,
+            availableStock: product.stock
+          });
+        }
+        
+        // Usar preço do banco de dados, não do cliente
+        serverSubtotal += product.price * item.quantity;
+      }
+      
+      // Aplicar desconto de 10% se subtotal >= R$ 200
+      const hasDiscount = serverSubtotal >= 200;
+      const discount = hasDiscount ? serverSubtotal * 0.1 : 0;
+      const serverTotal = serverSubtotal - discount;
+      
+      // Validar se o total enviado está correto (margem de 1 centavo para arredondamento)
+      const totalDifference = Math.abs(serverTotal - validatedData.totalAmount);
+      if (totalDifference > 0.01) {
+        console.warn(`⚠️ Divergência de preço detectada! Cliente enviou: R$ ${validatedData.totalAmount.toFixed(2)}, Servidor calculou: R$ ${serverTotal.toFixed(2)}`);
+        return res.status(400).json({
+          message: 'O total do pedido não corresponde aos preços atuais dos produtos',
+          clientTotal: validatedData.totalAmount,
+          serverTotal: serverTotal,
+          difference: totalDifference
+        });
+      }
+      
+      // Atualizar totalAmount com valor validado pelo servidor
+      validatedData.totalAmount = serverTotal;
+      
       // Verificar se cliente já existe ou criar novo
       let customerId: string;
       const customersData = await storage.getCustomers();

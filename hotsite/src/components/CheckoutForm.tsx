@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../utils/api';
 import type { Customer, CartItem } from '../types';
 
 interface CheckoutFormProps {
@@ -21,6 +22,8 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
+  const [customerFound, setCustomerFound] = useState(false);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -52,6 +55,48 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     }
     return numbers.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3');
   };
+
+  // Verificar se cliente já existe quando email ou telefone for preenchido
+  const checkExistingCustomer = useCallback(async () => {
+    const email = formData.email?.trim();
+    const phone = formData.phone.replace(/\D/g, '');
+
+    // Só verificar se tiver email válido OU telefone com pelo menos 10 dígitos
+    if ((!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) && phone.length < 10) {
+      return;
+    }
+
+    try {
+      setIsCheckingCustomer(true);
+      const result = await api.checkCustomer(email, phone);
+
+      if (result.exists && result.name) {
+        // Cliente encontrado! Preencher dados automaticamente
+        setCustomerFound(true);
+        setFormData(prev => ({
+          ...prev,
+          name: result.name || prev.name,
+          customerType: (result.customerType as 'pessoa_fisica' | 'pessoa_juridica') || prev.customerType
+        }));
+      } else {
+        setCustomerFound(false);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar cliente:', error);
+      setCustomerFound(false);
+    } finally {
+      setIsCheckingCustomer(false);
+    }
+  }, [formData.email, formData.phone]);
+
+  // Verificar cliente quando email ou telefone mudar (com debounce)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      checkExistingCustomer();
+    }, 800);
+
+    return () => clearTimeout(timeoutId);
+  }, [checkExistingCustomer]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -108,11 +153,25 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: formatPhone(e.target.value) })}
-                  className={`input-field ${errors.phone ? 'border-red-500' : ''}`}
+                  className={`input-field ${errors.phone ? 'border-red-500' : customerFound ? 'border-honest-green' : ''}`}
                   placeholder="(62) 99999-9999"
                   data-testid="input-phone"
                 />
                 {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone}</p>}
+                {isCheckingCustomer && (
+                  <p className="text-gray-500 text-sm mt-1 flex items-center gap-1">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Verificando...
+                  </p>
+                )}
+                {customerFound && !isCheckingCustomer && (
+                  <p className="text-honest-green text-sm mt-1 flex items-center gap-1" data-testid="customer-found-message">
+                    ✅ Cliente reconhecido! Bem-vindo de volta.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -121,7 +180,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className={`input-field ${errors.email ? 'border-red-500' : ''}`}
+                  className={`input-field ${errors.email ? 'border-red-500' : customerFound ? 'border-honest-green' : ''}`}
                   placeholder="seuemail@exemplo.com"
                   data-testid="input-email"
                 />
