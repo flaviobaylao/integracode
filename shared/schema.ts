@@ -136,10 +136,23 @@ export const products = pgTable("products", {
   description: text("description"),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   stock: integer("stock").notNull().default(0),
-  imageUrl: varchar("image_url"),
+  imageUrl: varchar("image_url"), // Imagem principal (mantido para compatibilidade)
+  images: text("images").array(), // Array de URLs de imagens (galeria)
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Product reviews table - Avaliações de produtos no hotsite
+export const productReviews = pgTable("product_reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productId: varchar("product_id").notNull(),
+  customerName: varchar("customer_name").notNull(),
+  customerEmail: varchar("customer_email"),
+  rating: integer("rating").notNull(), // 1-5 estrelas
+  comment: text("comment"),
+  isApproved: boolean("is_approved").notNull().default(false), // Reviews precisam aprovação antes de aparecer
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Sales cards status enum
@@ -792,6 +805,13 @@ export const insertProductSchema = createInsertSchema(products).omit({
   updatedAt: true,
 });
 
+export const insertProductReviewSchema = createInsertSchema(productReviews).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  rating: z.number().min(1).max(5),
+});
+
 export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   id: true,
   createdAt: true,
@@ -911,6 +931,8 @@ export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Customer = typeof customers.$inferSelect;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type Product = typeof products.$inferSelect;
+export type InsertProductReview = z.infer<typeof insertProductReviewSchema>;
+export type ProductReview = typeof productReviews.$inferSelect;
 export type InsertSalesCard = z.infer<typeof insertSalesCardSchema>;
 export type SalesCard = typeof salesCards.$inferSelect;
 export type InsertMessageTemplate = z.infer<typeof insertMessageTemplateSchema>;
