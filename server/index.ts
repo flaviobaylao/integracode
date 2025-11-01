@@ -53,19 +53,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Configurar hotsite ANTES de todas as rotas para evitar interceptação do Vite
+  const isDevelopment = app.get("env") === "development";
+  
+  if (!isDevelopment) {
+    // PRODUÇÃO: Servir arquivos estáticos pré-compilados
+    const distHotsitePath = path.join(process.cwd(), "server", "public-hotsite");
+    log("🏪 Modo produção: Servindo hotsite de " + distHotsitePath);
+    
+    // Servir arquivos estáticos do hotsite com fallthrough disabled
+    app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
+    
+    // Catch-all para servir index.html em rotas do hotsite
+    app.all('/shop*', (_req, res) => {
+      res.sendFile(path.join(distHotsitePath, "index.html"));
+    });
+  }
+  
   const server = await registerRoutes(app);
-  
-  // Servir hotsite em /shop (rota única para e-commerce)
-  const hotsitePath = path.resolve(import.meta.dirname, "public-hotsite");
-  
-  // Servir arquivos estáticos do hotsite
-  app.use('/shop', express.static(hotsitePath));
-  
-  // Catch-all para servir index.html em rotas do hotsite
-  app.all('/shop*', (req, res) => {
-    console.log('🛒 Serving hotsite for:', req.url);
-    res.sendFile(path.resolve(hotsitePath, "index.html"));
-  });
 
   // Inicializar admin padrão se não existir (importante para primeira execução em produção)
   await initializeDefaultAdmin();

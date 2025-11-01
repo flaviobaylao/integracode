@@ -48,9 +48,10 @@
     - **Work Hours Management**: Calculates daily work hours, deducting lunch, and compares against expected hours.
     - **Access Control**: Restricted to admin, coordinator, and administrative roles.
 - **E-commerce Platform (Hotsite Instagram)**:
-    - **Access URL**: Available at `/shop` path (e.g., `https://integrahonest.replit.app/shop`). Hotsite is served in production mode only due to Vite development server limitations.
+    - **Access URL**: Available at `/shop` path (e.g., `https://integrahonest.replit.app/shop`). 
+    - **Important**: Hotsite is ONLY available in PRODUCTION mode. Does not work in development due to Vite dev server limitations. To test: publish the project and access the deployed URL at `/shop`.
     - **Public API Routes**: Separate public endpoints for external sales channels (`/api/public/products`, `/api/public/orders`, `/api/public/customers/check`, `/api/public/reviews`).
-    - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic. Builds to `server/public-hotsite`.
+    - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic. Builds to `server/public-hotsite`. Build command: `cd hotsite && npm run build && cp -r dist/* ../server/public-hotsite/`.
     - **Intelligent Pricing**: Automatic customer type detection (retail vs wholesale) with automatic upgrade to wholesale pricing when cart exceeds R$200 (10% discount).
     - **Customer Recognition**: Automatic customer verification during checkout with auto-fill of returning customer data.
     - **Security**: Server-side price validation, stock verification, and total recalculation to prevent client-side manipulation.
