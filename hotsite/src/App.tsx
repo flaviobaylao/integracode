@@ -2,12 +2,16 @@ import { useState, useEffect } from 'react';
 import ProductCard from './components/ProductCard';
 import Cart from './components/Cart';
 import CheckoutForm from './components/CheckoutForm';
+import { CustomerTypeSelector } from './components/CustomerTypeSelector';
+import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
+import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
 import type { Product, CartItem, Customer } from './types';
 
 type View = 'catalog' | 'checkout' | 'success';
 
-export default function App() {
+function HotsiteContent() {
+  const { isSelectionComplete, priceTable, reset } = useCustomerType();
   const [view, setView] = useState<View>('catalog');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -51,6 +55,8 @@ export default function App() {
   };
 
   const addToCart = (product: Product) => {
+    const correctPrice = getProductPrice(product, priceTable);
+    
     const existingItem = cart.find(item => item.id === product.id);
     
     if (existingItem) {
@@ -60,7 +66,8 @@ export default function App() {
           : item
       ));
     } else {
-      setCart([...cart, { ...product, quantity: 1 }]);
+      // Adicionar ao carrinho com o preço correto baseado na tabela selecionada
+      setCart([...cart, { ...product, price: correctPrice, quantity: 1 }]);
     }
     
     // Feedback visual
@@ -126,6 +133,11 @@ export default function App() {
 
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Se a seleção de tipo de cliente não estiver completa, mostrar seletor
+  if (!isSelectionComplete) {
+    return <CustomerTypeSelector />;
+  }
+
   // View: Sucesso
   if (view === 'success') {
     return (
@@ -189,10 +201,18 @@ export default function App() {
       <header className="bg-gradient-to-r from-honest-green to-green-600 text-white sticky top-0 z-40 shadow-lg">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="flex-1">
               <h1 className="text-2xl font-bold">🍊 Honest Sucos</h1>
               <p className="text-sm opacity-90">100% Naturais</p>
             </div>
+            
+            <button
+              onClick={reset}
+              className="text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-2 rounded-lg mr-3 transition-all"
+              data-testid="btn-change-customer-type"
+            >
+              Alterar Tipo
+            </button>
             
             <button
               onClick={() => setIsCartOpen(true)}
@@ -279,5 +299,13 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <CustomerTypeProvider>
+      <HotsiteContent />
+    </CustomerTypeProvider>
   );
 }

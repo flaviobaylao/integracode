@@ -10398,19 +10398,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Listar produtos ativos disponíveis para venda
   app.get('/api/public/products', async (req, res) => {
     try {
-      const { customerType } = req.query;
-      
       const productsData = await storage.getProducts();
       const activeProducts = productsData.filter(p => p.isActive);
       
-      // Formatar produtos para o hotsite
+      // Formatar produtos para o hotsite com todas as tabelas de preço
       const formattedProducts = activeProducts.map(product => ({
         id: product.id,
         name: product.name,
         description: product.description,
-        price: parseFloat(product.price),
+        price: parseFloat(product.price), // Preço base (compatibilidade)
+        retailPrice: product.retailPrice ? parseFloat(product.retailPrice) : null,
+        wholesalePrice: product.wholesalePrice ? parseFloat(product.wholesalePrice) : null,
+        resaleGoianiaPrice: product.resaleGoianiaPrice ? parseFloat(product.resaleGoianiaPrice) : null,
+        resaleInteriorPrice: product.resaleInteriorPrice ? parseFloat(product.resaleInteriorPrice) : null,
+        resaleBrasiliaPrice: product.resaleBrasiliaPrice ? parseFloat(product.resaleBrasiliaPrice) : null,
         imageUrl: product.imageUrl || '/placeholder-product.jpg',
-        images: product.images || (product.imageUrl ? [product.imageUrl] : []), // Retornar array de imagens
+        images: product.images || (product.imageUrl ? [product.imageUrl] : []),
         stock: product.stock
       }));
       

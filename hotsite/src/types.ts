@@ -2,7 +2,12 @@ export interface Product {
   id: string;
   name: string;
   description: string | null;
-  price: number;
+  price: number; // Mantido para compatibilidade
+  retailPrice: number | null;
+  wholesalePrice: number | null;
+  resaleGoianiaPrice: number | null;
+  resaleInteriorPrice: number | null;
+  resaleBrasiliaPrice: number | null;
   imageUrl: string | null;
   images?: string[] | null; // Array de URLs de imagens para galeria
   stock: number;

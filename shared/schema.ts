@@ -134,7 +134,15 @@ export const products = pgTable("products", {
   omieCodigoProduto: varchar("omie_codigo_produto"), // ID numérico do produto no Omie como string (ex: "2425693571")
   name: varchar("name").notNull(),
   description: text("description"),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  price: decimal("price", { precision: 10, scale: 2 }).notNull(), // Mantido para compatibilidade (equivalente ao retail_price)
+  
+  // Tabelas de preço para diferentes tipos de cliente
+  retailPrice: decimal("retail_price", { precision: 10, scale: 2 }), // Varejo (consumidor < R$200)
+  wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }), // Atacado (consumidor >= R$200)
+  resaleGoianiaPrice: decimal("resale_goiania_price", { precision: 10, scale: 2 }), // Revenda Goiânia
+  resaleInteriorPrice: decimal("resale_interior_price", { precision: 10, scale: 2 }), // Revenda Interior Goiás
+  resaleBrasiliaPrice: decimal("resale_brasilia_price", { precision: 10, scale: 2 }), // Revenda Brasília/Entorno
+  
   stock: integer("stock").notNull().default(0),
   imageUrl: varchar("image_url"), // Imagem principal (mantido para compatibilidade)
   images: text("images").array(), // Array de URLs de imagens (galeria)

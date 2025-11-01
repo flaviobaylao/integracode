@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { Product } from '../types';
 import ImageGallery from './ImageGallery';
 import ProductReviews from './ProductReviews';
+import { useCustomerType } from '../contexts/CustomerTypeContext';
+import { getProductPrice } from '../utils/pricing';
 import { X } from 'lucide-react';
 
 interface ProductCardProps {
@@ -11,10 +13,13 @@ interface ProductCardProps {
 
 export default function ProductCard({ product, onAddToCart }: ProductCardProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const { priceTable } = useCustomerType();
   
   const images = product.images && product.images.length > 0 
     ? product.images 
     : (product.imageUrl ? [product.imageUrl] : []);
+  
+  const displayPrice = getProductPrice(product, priceTable);
 
   return (
     <>
@@ -53,7 +58,7 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-2xl font-bold text-honest-green" data-testid={`product-price-${product.id}`}>
-              R$ {product.price.toFixed(2)}
+              R$ {displayPrice.toFixed(2)}
             </span>
             {product.stock > 0 && product.stock <= 10 && (
               <p className="text-xs text-honest-orange">
@@ -115,7 +120,7 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-bold text-honest-green">
-                    R$ {product.price.toFixed(2)}
+                    R$ {displayPrice.toFixed(2)}
                   </div>
                   {product.stock > 0 && product.stock <= 10 && (
                     <p className="text-sm text-honest-orange mt-1">
