@@ -48,15 +48,16 @@
     - **Work Hours Management**: Calculates daily work hours, deducting lunch, and compares against expected hours.
     - **Access Control**: Restricted to admin, coordinator, and administrative roles.
 - **E-commerce Platform (Hotsite Instagram)**:
+    - **Access URL**: Available at `/shop` path (e.g., `https://integrahonest.replit.app/shop`). Hotsite is served in production mode only due to Vite development server limitations.
     - **Public API Routes**: Separate public endpoints for external sales channels (`/api/public/products`, `/api/public/orders`, `/api/public/customers/check`, `/api/public/reviews`).
-    - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic.
+    - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic. Builds to `server/public-hotsite`.
     - **Intelligent Pricing**: Automatic customer type detection (retail vs wholesale) with automatic upgrade to wholesale pricing when cart exceeds R$200 (10% discount).
     - **Customer Recognition**: Automatic customer verification during checkout with auto-fill of returning customer data.
     - **Security**: Server-side price validation, stock verification, and total recalculation to prevent client-side manipulation.
     - **Integration**: Orders created via hotsite are automatically registered in Sistema Integra as sales_cards with `source: 'hotsite'` marker.
     - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto (payment processing integration pending).
-    - **Product Gallery System**: Multiple images per product with touch-swipe navigation, zoom functionality, and responsive image viewer in product details modal.
-    - **Review System**: Customer product reviews with 1-5 star ratings, comments, and admin approval workflow. Reviews displayed with average rating and individual feedback; pending reviews require admin approval before public display.
+    - **Product Gallery System**: Multiple images per product with touch-swipe navigation (50px threshold), zoom functionality, and responsive image viewer in product details modal. Single-touch swipe detection prevents conflicts with pinch-to-zoom.
+    - **Review System**: Customer product reviews with 1-5 star ratings, comments, and admin approval workflow. Reviews displayed with average rating and individual feedback; pending reviews require admin approval before public display. Admin can approve/reject reviews via Sistema Integra.
 
 # External Dependencies
 
