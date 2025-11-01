@@ -53,14 +53,19 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Servir hotsite em /loja
+  const server = await registerRoutes(app);
+  
+  // Servir hotsite em /shop (rota única para e-commerce)
   const hotsitePath = path.resolve(import.meta.dirname, "public-hotsite");
-  app.use('/loja', express.static(hotsitePath));
-  app.get('/loja/*', (_req, res) => {
+  
+  // Servir arquivos estáticos do hotsite
+  app.use('/shop', express.static(hotsitePath));
+  
+  // Catch-all para servir index.html em rotas do hotsite
+  app.all('/shop*', (req, res) => {
+    console.log('🛒 Serving hotsite for:', req.url);
     res.sendFile(path.resolve(hotsitePath, "index.html"));
   });
-
-  const server = await registerRoutes(app);
 
   // Inicializar admin padrão se não existir (importante para primeira execução em produção)
   await initializeDefaultAdmin();
