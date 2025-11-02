@@ -36,15 +36,24 @@ export const api = {
     orderNumber: string;
     message: string;
   }> {
+    console.log('📤 api.createOrder chamado');
+    console.log('📤 Order data:', order);
+    console.log('📤 URL:', `${API_BASE}/orders`);
+    
     const response = await fetch(`${API_BASE}/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order),
     });
     
+    console.log('📥 Response status:', response.status);
+    console.log('📥 Response ok:', response.ok);
+    
     const data = await response.json();
+    console.log('📥 Response data:', data);
     
     if (!response.ok) {
+      console.error('❌ Request failed:', data);
       throw new Error(data.message || 'Erro ao criar pedido');
     }
     

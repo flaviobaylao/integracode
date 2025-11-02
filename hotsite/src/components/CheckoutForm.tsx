@@ -44,8 +44,18 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (validate()) {
+    console.log('🟢 Form submitted');
+    console.log('🟢 Form data:', formData);
+    console.log('🟢 Payment method:', paymentMethod);
+    
+    const isValid = validate();
+    console.log('🟢 Validation result:', isValid);
+    
+    if (isValid) {
+      console.log('🟢 Calling onSubmit...');
       onSubmit(formData, paymentMethod);
+    } else {
+      console.log('❌ Validation failed, errors:', errors);
     }
   };
 

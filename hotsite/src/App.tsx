@@ -102,6 +102,11 @@ function HotsiteContent() {
 
   const handleCheckout = async (customer: Customer, paymentMethod: 'pix' | 'card' | 'boleto') => {
     try {
+      console.log('🔵 handleCheckout iniciado');
+      console.log('🔵 Customer:', customer);
+      console.log('🔵 Payment Method:', paymentMethod);
+      console.log('🔵 Cart:', cart);
+      
       setIsProcessing(true);
       setError(null);
 
@@ -118,13 +123,21 @@ function HotsiteContent() {
         source: 'hotsite' as const,
       };
 
+      console.log('🔵 Order objeto criado:', order);
+      console.log('🔵 Chamando api.createOrder...');
+      
       const response = await api.createOrder(order);
+      
+      console.log('✅ Resposta recebida:', response);
       
       setOrderNumber(response.orderNumber);
       setCart([]);
       localStorage.removeItem('honest-cart');
       setView('success');
     } catch (err: any) {
+      console.error('❌ Erro capturado:', err);
+      console.error('❌ Erro mensagem:', err.message);
+      console.error('❌ Erro stack:', err.stack);
       setError(err.message || 'Erro ao criar pedido. Tente novamente.');
       console.error(err);
     } finally {
