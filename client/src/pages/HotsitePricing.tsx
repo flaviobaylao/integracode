@@ -101,7 +101,7 @@ export default function HotsitePricing() {
                 <p className="font-semibold text-blue-900 mb-1">👤 Para Consumidores:</p>
                 <ul className="ml-4 space-y-1 text-blue-800">
                   <li>• <strong>Varejo</strong> - Compras até R$ 200</li>
-                  <li>• <strong>Atacado</strong> - Compras acima de R$ 200 (10% desconto)</li>
+                  <li>• <strong>Atacado</strong> - Compras acima de R$ 200</li>
                 </ul>
               </div>
               <div>
