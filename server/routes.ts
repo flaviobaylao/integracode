@@ -10727,6 +10727,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
+    console.log('🛒 ========================================');
+    console.log('🛒 NOVA REQUISIÇÃO: POST /api/public/orders');
+    console.log('🛒 Body recebido:', JSON.stringify(req.body, null, 2));
+    console.log('🛒 ========================================');
+    
     try {
       const orderSchema = z.object({
         customer: z.object({
@@ -10906,6 +10911,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const salesCard = await storage.createSalesCard(orderData);
+      
+      console.log('✅ PEDIDO CRIADO COM SUCESSO!');
+      console.log('✅ Sales Card ID:', salesCard.id);
+      console.log('✅ Order Number:', orderNumber);
+      console.log('✅ Customer ID:', customerId);
+      console.log('✅ Source:', validatedData.source);
+      console.log('🛒 ========================================');
       
       res.status(201).json({
         success: true,
