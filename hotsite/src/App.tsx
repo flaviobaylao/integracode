@@ -110,8 +110,15 @@ function HotsiteContent() {
       setIsProcessing(true);
       setError(null);
 
+      // ✅ CORREÇÃO: Converter campos vazios para null para passar validação Zod
+      const cleanCustomer = {
+        ...customer,
+        email: customer.email?.trim() || null,
+        cpfCnpj: customer.cpfCnpj?.trim() || null,
+      };
+
       const order = {
-        customer,
+        customer: cleanCustomer,
         items: cart.map(item => ({
           productId: item.id,
           productName: item.name,

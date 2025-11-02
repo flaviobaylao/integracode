@@ -19,10 +19,10 @@ export interface CartItem extends Product {
 
 export interface Customer {
   name: string;
-  email?: string;
+  email?: string | null;
   phone: string;
   address: string;
-  cpfCnpj?: string;
+  cpfCnpj?: string | null;
   customerType: 'pessoa_fisica' | 'pessoa_juridica';
 }
 
