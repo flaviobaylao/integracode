@@ -172,7 +172,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayRetail)}
+                      value={formatPrice(displayRetail) as any}
                       onChange={(e) => handlePriceChange(product.id, 'retailPrice', e.target.value)}
                       data-testid={`input-retail-${product.id}`}
                       className="text-right"
@@ -191,7 +191,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayWholesale)}
+                      value={formatPrice(displayWholesale) as any}
                       onChange={(e) => handlePriceChange(product.id, 'wholesalePrice', e.target.value)}
                       data-testid={`input-wholesale-${product.id}`}
                       className="text-right"
@@ -210,7 +210,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayGoiania)}
+                      value={formatPrice(displayGoiania) as any}
                       onChange={(e) => handlePriceChange(product.id, 'resaleGoianiaPrice', e.target.value)}
                       data-testid={`input-goiania-${product.id}`}
                       className="text-right"
@@ -229,7 +229,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayInterior)}
+                      value={formatPrice(displayInterior) as any}
                       onChange={(e) => handlePriceChange(product.id, 'resaleInteriorPrice', e.target.value)}
                       data-testid={`input-interior-${product.id}`}
                       className="text-right"
@@ -248,7 +248,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayBrasilia)}
+                      value={formatPrice(displayBrasilia) as any}
                       onChange={(e) => handlePriceChange(product.id, 'resaleBrasiliaPrice', e.target.value)}
                       data-testid={`input-brasilia-${product.id}`}
                       className="text-right"
