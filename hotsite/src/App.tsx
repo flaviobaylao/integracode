@@ -106,6 +106,7 @@ function HotsiteContent() {
       console.log('🔵 Customer:', customer);
       console.log('🔵 Payment Method:', paymentMethod);
       console.log('🔵 Cart:', cart);
+      console.log('🔵 Price Table:', priceTable);
       
       setIsProcessing(true);
       setError(null);
@@ -115,6 +116,12 @@ function HotsiteContent() {
         ...customer,
         email: customer.email?.trim() || null,
         cpfCnpj: customer.cpfCnpj?.trim() || null,
+      };
+
+      // ✅ Converter formato da priceTable: 'retail_price' → 'retail'
+      const convertPriceTable = (table: string | null): 'retail' | 'wholesale' | 'goiania' | 'interior' | 'brasilia' | undefined => {
+        if (!table) return undefined;
+        return table.replace('_price', '').replace('resale_', '').replace('goiania', 'goiania').replace('interior', 'interior').replace('brasilia', 'brasilia') as any;
       };
 
       const order = {
@@ -128,6 +135,7 @@ function HotsiteContent() {
         totalAmount: calculateTotal(),
         paymentMethod,
         source: 'hotsite' as const,
+        priceTable: convertPriceTable(priceTable), // ✅ Adicionar tabela de preço
       };
 
       console.log('🔵 Order objeto criado:', order);

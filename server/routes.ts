@@ -10745,13 +10745,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })).min(1, 'Adicione pelo menos um produto'),
         totalAmount: z.number().min(0),
         paymentMethod: z.enum(['pix', 'card', 'boleto']).default('pix'),
-        source: z.enum(['hotsite', 'website']).default('hotsite')
+        source: z.enum(['hotsite', 'website']).default('hotsite'),
+        // Tabela de preço selecionada pelo cliente no hotsite
+        priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional()
       });
       
       const validatedData = orderSchema.parse(req.body);
       
       // ✅ VALIDAÇÃO SERVER-SIDE DE PREÇOS E TOTAIS
-      // Buscar preços reais dos produtos no banco de dados
+      // O hotsite usa 5 tabelas de preço: retail, wholesale, goiania, interior, brasília
+      // Validação baseada na tabela de preço selecionada pelo cliente
       let serverSubtotal = 0;
       for (const item of validatedData.items) {
         const product = await storage.getProduct(item.productId);
@@ -10770,8 +10773,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        // Usar preço do banco de dados, não do cliente
-        serverSubtotal += product.price * item.quantity;
+        // Selecionar preço correto baseado na tabela do cliente
+        let correctPrice: number;
+        if (validatedData.priceTable) {
+          switch (validatedData.priceTable) {
+            case 'retail':
+              correctPrice = product.retailPrice ?? product.price;
+              break;
+            case 'wholesale':
+              correctPrice = product.wholesalePrice ?? product.price;
+              break;
+            case 'goiania':
+              correctPrice = product.resaleGoianiaPrice ?? product.price;
+              break;
+            case 'interior':
+              correctPrice = product.resaleInteriorPrice ?? product.price;
+              break;
+            case 'brasilia':
+              correctPrice = product.resaleBrasiliaPrice ?? product.price;
+              break;
+            default:
+              correctPrice = product.price;
+          }
+        } else {
+          // Fallback para preço padrão se priceTable não for enviada
+          correctPrice = product.price;
+        }
+        
+        serverSubtotal += correctPrice * item.quantity;
       }
       
       // Aplicar desconto de 10% se subtotal >= R$ 200
@@ -10782,12 +10811,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validar se o total enviado está correto (margem de 1 centavo para arredondamento)
       const totalDifference = Math.abs(serverTotal - validatedData.totalAmount);
       if (totalDifference > 0.01) {
-        console.warn(`⚠️ Divergência de preço detectada! Cliente enviou: R$ ${validatedData.totalAmount.toFixed(2)}, Servidor calculou: R$ ${serverTotal.toFixed(2)}`);
+        console.warn(`⚠️ Divergência de preço detectada! Cliente enviou: R$ ${validatedData.totalAmount.toFixed(2)}, Servidor calculou: R$ ${serverTotal.toFixed(2)} (tabela: ${validatedData.priceTable || 'padrão'})`);
         return res.status(400).json({
           message: 'O total do pedido não corresponde aos preços atuais dos produtos',
           clientTotal: validatedData.totalAmount,
           serverTotal: serverTotal,
-          difference: totalDifference
+          difference: totalDifference,
+          priceTable: validatedData.priceTable
         });
       }
       
