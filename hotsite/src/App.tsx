@@ -121,7 +121,17 @@ function HotsiteContent() {
       // ✅ Converter formato da priceTable: 'retail_price' → 'retail'
       const convertPriceTable = (table: string | null): 'retail' | 'wholesale' | 'goiania' | 'interior' | 'brasilia' | undefined => {
         if (!table) return undefined;
-        return table.replace('_price', '').replace('resale_', '').replace('goiania', 'goiania').replace('interior', 'interior').replace('brasilia', 'brasilia') as any;
+        
+        // Mapeamento direto das tabelas de preço
+        const tableMap: Record<string, 'retail' | 'wholesale' | 'goiania' | 'interior' | 'brasilia'> = {
+          'retail_price': 'retail',
+          'wholesale_price': 'wholesale',
+          'resale_goiania_price': 'goiania',
+          'resale_interior_price': 'interior',
+          'resale_brasilia_price': 'brasilia',
+        };
+        
+        return tableMap[table];
       };
 
       const order = {
