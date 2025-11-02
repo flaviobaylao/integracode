@@ -1,11 +1,17 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { RefreshCw } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { RefreshCw, Images, X, Upload } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
 
 export default function ProductManagement() {
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
     retry: false,
@@ -45,6 +51,67 @@ export default function ProductManagement() {
       });
     },
   });
+
+  // Mutation para deletar imagem
+  const deleteImageMutation = useMutation({
+    mutationFn: async ({ productId, imageIndex }: { productId: string; imageIndex: number }) => {
+      const response = await fetch(`/api/products/${productId}/images/${imageIndex}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('Erro ao remover imagem');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({
+        title: "Sucesso!",
+        description: "Imagem removida com sucesso.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao remover",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleImageUpload = async (productId: string, files: FileList) => {
+    if (files.length === 0) return;
+
+    setUploadingImages(true);
+    const formData = new FormData();
+    Array.from(files).forEach(file => {
+      formData.append('images', file);
+    });
+
+    try {
+      const response = await fetch(`/api/products/${productId}/upload-images`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Erro ao fazer upload das imagens');
+      }
+
+      await response.json();
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({
+        title: "Sucesso!",
+        description: "Imagens enviadas com sucesso.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro no upload",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingImages(false);
+    }
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -115,10 +182,10 @@ export default function ProductManagement() {
           products.map((product: Product) => (
             <Card key={product.id} className="overflow-hidden">
               {/* Product Image */}
-              <div className="h-48 bg-gradient-to-br from-honest-orange to-honest-blue flex items-center justify-center">
-                {product.imageUrl ? (
+              <div className="h-48 bg-gradient-to-br from-honest-orange to-honest-blue flex items-center justify-center relative">
+                {product.imageUrl || (product.images && product.images.length > 0) ? (
                   <img
-                    src={product.imageUrl}
+                    src={product.imageUrl || product.images?.[0]}
                     alt={product.name}
                     className="w-full h-full object-cover"
                   />
@@ -128,6 +195,11 @@ export default function ProductManagement() {
                     <p className="text-sm">Honest Sucos</p>
                   </div>
                 )}
+                {product.images && product.images.length > 1 && (
+                  <div className="absolute top-2 right-2 bg-black/70 text-white px-2 py-1 rounded-full text-xs">
+                    {product.images.length} fotos
+                  </div>
+                )}
               </div>
               
               <CardContent className="p-6">
@@ -135,7 +207,7 @@ export default function ProductManagement() {
                   <div>
                     <h3 className="font-semibold text-gray-800">{product.name}</h3>
                     {product.description && (
-                      <p className="text-sm text-gray-600">{product.description}</p>
+                      <p className="text-sm text-gray-600 line-clamp-2">{product.description}</p>
                     )}
                   </div>
                   
@@ -156,7 +228,7 @@ export default function ProductManagement() {
                     <div className="flex items-center justify-between">
                       <div className="text-xs text-gray-500 flex items-center">
                         <i className="fas fa-check-circle text-green-500 mr-1"></i>
-                        <span>
+                        <span className="truncate">
                           {product.omieCodigo && `Código: ${product.omieCodigo}`}
                           {product.omieCodigo && product.omieCodigoProduto && ' | '}
                           {product.omieCodigoProduto && `ID: ${product.omieCodigoProduto}`}
@@ -164,6 +236,113 @@ export default function ProductManagement() {
                       </div>
                     </div>
                   )}
+
+                  {/* Botão de gerenciar imagens */}
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        className="w-full"
+                        onClick={() => setSelectedProduct(product)}
+                        data-testid={`button-manage-images-${product.id}`}
+                      >
+                        <Images className="mr-2 h-4 w-4" />
+                        Gerenciar Imagens
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-3xl">
+                      <DialogHeader>
+                        <DialogTitle>Gerenciar Imagens - {product.name}</DialogTitle>
+                      </DialogHeader>
+                      
+                      <div className="space-y-4">
+                        {/* Upload Area */}
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(e) => {
+                              if (e.target.files) {
+                                handleImageUpload(product.id, e.target.files);
+                              }
+                            }}
+                            className="hidden"
+                            id={`image-upload-${product.id}`}
+                            disabled={uploadingImages}
+                          />
+                          <label
+                            htmlFor={`image-upload-${product.id}`}
+                            className="cursor-pointer"
+                          >
+                            {uploadingImages ? (
+                              <div className="flex flex-col items-center">
+                                <RefreshCw className="h-12 w-12 text-gray-400 animate-spin mb-2" />
+                                <p className="text-sm text-gray-600">Enviando imagens...</p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center">
+                                <Upload className="h-12 w-12 text-gray-400 mb-2" />
+                                <p className="text-sm text-gray-600">
+                                  Clique para adicionar imagens (máx. 10)
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  PNG, JPG, JPEG até 10MB cada
+                                </p>
+                              </div>
+                            )}
+                          </label>
+                        </div>
+
+                        {/* Galeria de Imagens */}
+                        <div>
+                          <h4 className="font-medium mb-3">
+                            Imagens do Produto ({product.images?.length || 0}/10)
+                          </h4>
+                          {product.images && product.images.length > 0 ? (
+                            <div className="grid grid-cols-3 gap-4">
+                              {product.images.map((imageUrl, index) => (
+                                <div key={index} className="relative group">
+                                  <img
+                                    src={imageUrl}
+                                    alt={`${product.name} - ${index + 1}`}
+                                    className="w-full h-32 object-cover rounded-lg"
+                                  />
+                                  <button
+                                    onClick={() => deleteImageMutation.mutate({
+                                      productId: product.id,
+                                      imageIndex: index
+                                    })}
+                                    className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                    data-testid={`button-delete-image-${index}`}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                  {index === 0 && (
+                                    <div className="absolute bottom-2 left-2 bg-blue-500 text-white px-2 py-1 rounded text-xs">
+                                      Principal
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-gray-500">
+                              <Images className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Nenhuma imagem adicionada</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <p className="text-xs text-blue-700">
+                            <strong>Dica:</strong> A primeira imagem será usada como imagem principal do produto no hotsite.
+                            As demais aparecerão na galeria de fotos.
+                          </p>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </CardContent>
             </Card>
@@ -182,6 +361,7 @@ export default function ProductManagement() {
           <p className="text-sm text-blue-700">
             <strong>Importante:</strong> Todos os produtos são importados automaticamente do Omie ERP. 
             Para adicionar novos produtos, cadastre-os primeiro no sistema Omie e depois use a função de importação.
+            As imagens devem ser adicionadas aqui no Sistema Integra para aparecerem no hotsite.
           </p>
         </div>
       </div>
