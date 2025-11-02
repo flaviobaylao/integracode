@@ -10832,11 +10832,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Gerar número de pedido único
       const orderNumber = `WEB-${Date.now()}`;
       
+      // Definir data agendada (data atual) e dia da semana
+      const scheduledDate = new Date();
+      const dayOfWeek = scheduledDate.getDay();
+      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const routeDay = weekdayNames[dayOfWeek];
+      
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
         customerId,
         sellerId: null, // Vendas online não têm vendedor atribuído
+        scheduledDate,
+        routeDay,
         recurrenceType: 'unica',
         status: 'pendente',
         visitWeek: null,
