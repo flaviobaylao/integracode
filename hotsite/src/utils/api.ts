@@ -50,4 +50,57 @@ export const api = {
     
     return data;
   },
+
+  async checkCustomerByCNPJ(cnpj: string): Promise<{
+    exists: boolean;
+    customer?: {
+      id: string;
+      name: string;
+      companyName: string;
+      fantasyName: string;
+      cnpj: string;
+      email?: string;
+      phone?: string;
+      address?: string;
+      city?: string;
+      state?: string;
+      zipCode?: string;
+    };
+  }> {
+    const response = await fetch(`${API_BASE}/customers/check-cnpj`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnpj }),
+    });
+    if (!response.ok) throw new Error('Erro ao verificar CNPJ');
+    return response.json();
+  },
+
+  async consultarCNPJ(cnpj: string): Promise<{
+    cnpj: string;
+    razaoSocial: string;
+    nomeFantasia: string;
+    endereco: string;
+    cidade: string;
+    estado: string;
+    cep: string;
+    telefone?: string;
+    email?: string;
+    situacao: string;
+    atividadePrincipal?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/receita/cnpj`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnpj }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Erro ao consultar CNPJ');
+    }
+    
+    return data;
+  },
 };
