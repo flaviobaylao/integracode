@@ -37,11 +37,6 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
             <span className="text-white text-6xl">🍊</span>
           </div>
         )}
-        {product.stock <= 0 && (
-          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-            <span className="text-white font-bold text-lg">Esgotado</span>
-          </div>
-        )}
       </div>
       
       <div className="p-4">
@@ -60,11 +55,6 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
             <span className="text-2xl font-bold text-honest-green" data-testid={`product-price-${product.id}`}>
               R$ {displayPrice.toFixed(2)}
             </span>
-            {product.stock > 0 && product.stock <= 10 && (
-              <p className="text-xs text-honest-orange">
-                Restam apenas {product.stock}
-              </p>
-            )}
           </div>
           
           <div className="flex gap-2">
@@ -77,11 +67,10 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
             </button>
             <button
               onClick={() => onAddToCart(product)}
-              disabled={product.stock <= 0}
               className="flex-1 btn-primary text-sm py-2 px-3"
               data-testid={`btn-add-cart-${product.id}`}
             >
-              {product.stock <= 0 ? 'Esgotado' : 'Adicionar'}
+              Adicionar
             </button>
           </div>
         </div>
@@ -122,21 +111,15 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
                   <div className="text-3xl font-bold text-honest-green">
                     R$ {displayPrice.toFixed(2)}
                   </div>
-                  {product.stock > 0 && product.stock <= 10 && (
-                    <p className="text-sm text-honest-orange mt-1">
-                      Restam apenas {product.stock}
-                    </p>
-                  )}
                 </div>
               </div>
 
               <button
                 onClick={() => { onAddToCart(product); setShowDetails(false); }}
-                disabled={product.stock <= 0}
-                className="w-full btn-primary py-3 text-lg disabled:opacity-50"
+                className="w-full btn-primary py-3 text-lg"
                 data-testid={`btn-add-cart-modal-${product.id}`}
               >
-                {product.stock <= 0 ? '❌ Esgotado' : '🛒 Adicionar ao Carrinho'}
+                🛒 Adicionar ao Carrinho
               </button>
             </div>
 

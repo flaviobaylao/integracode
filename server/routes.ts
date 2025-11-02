@@ -10746,14 +10746,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        if (product.stock < item.quantity) {
-          return res.status(400).json({
-            message: `Estoque insuficiente para ${product.name}. Disponível: ${product.stock}`,
-            productId: item.productId,
-            availableStock: product.stock
-          });
-        }
-        
         // Usar preço do banco de dados, não do cliente
         serverSubtotal += product.price * item.quantity;
       }
