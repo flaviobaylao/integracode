@@ -16,7 +16,7 @@ export function HonestLogo({ className = '', size = 'md' }: HonestLogoProps) {
   return (
     <div className={`flex items-center ${className}`}>
       <img
-        src="/honest-logo.png"
+        src="/shop/honest-logo.png"
         alt="Honest Sucos - Sucos e Bebidas Naturais"
         className={`${currentSize} w-auto object-contain`}
       />

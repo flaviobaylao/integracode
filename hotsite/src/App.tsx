@@ -237,8 +237,8 @@ function HotsiteContent() {
 
       {/* Banner */}
       <div className="bg-gradient-to-r from-honest-orange to-yellow-500 text-white text-center py-6 px-4">
-        <h2 className="text-xl font-bold mb-1">🎉 Promoção Especial!</h2>
-        <p className="text-sm">Compras acima de R$ 200 ganham 10% de desconto</p>
+        <h2 className="text-xl font-bold mb-1">🍊 Sucos 100% Naturais!</h2>
+        <p className="text-sm">Entregamos em Goiânia e região metropolitana</p>
       </div>
 
       {/* Conteúdo Principal */}

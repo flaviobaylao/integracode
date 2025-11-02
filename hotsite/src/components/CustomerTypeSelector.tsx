@@ -133,7 +133,7 @@ export function CustomerTypeSelector() {
                   Compras acima de R$ 200,00
                 </p>
                 <div className="text-sm text-purple-600 font-semibold">
-                  Desconto de 10%
+                  Preços especiais
                 </div>
               </div>
             </button>
