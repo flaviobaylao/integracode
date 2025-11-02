@@ -10824,6 +10824,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar totalAmount com valor validado pelo servidor
       validatedData.totalAmount = serverTotal;
       
+      // Buscar vendedor padrão para pedidos do hotsite
+      const users = await storage.getUsers();
+      const defaultSeller = users.find(u => u.role === 'vendedor' && u.isActive) 
+        || users.find(u => u.role === 'admin');
+      
+      if (!defaultSeller) {
+        return res.status(500).json({
+          message: 'Sistema não configurado: nenhum vendedor disponível para processar pedidos'
+        });
+      }
+      
       // Verificar se cliente já existe ou criar novo
       let customerId: string;
       const customersData = await storage.getCustomers();
@@ -10843,18 +10854,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
       } else {
         // Criar novo cliente
-        // Para clientes do hotsite, precisamos de um vendedor padrão
-        // Vamos buscar o primeiro vendedor ativo ou admin
-        const users = await storage.getUsers();
-        const defaultSeller = users.find(u => u.role === 'vendedor' && u.isActive) 
-          || users.find(u => u.role === 'admin');
-        
-        if (!defaultSeller) {
-          return res.status(500).json({
-            message: 'Sistema não configurado: nenhum vendedor disponível para atribuir ao cliente'
-          });
-        }
-        
         const newCustomer = await storage.createCustomer({
           name: validatedData.customer.name,
           email: validatedData.customer.email,
@@ -10886,7 +10885,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
         customerId,
-        sellerId: null, // Vendas online não têm vendedor atribuído
+        sellerId: defaultSeller.id, // ✅ Usar vendedor padrão para pedidos online
         scheduledDate,
         routeDay,
         recurrenceType: 'unica',
