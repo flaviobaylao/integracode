@@ -66,6 +66,34 @@ async function saveSyncStatus(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // 🔍 LOG TODAS AS REQUISIÇÕES /api/public/* PARA DEBUG
+  app.use('/api/public/*', (req, res, next) => {
+    console.log(`🌐 [PUBLIC API] ${req.method} ${req.url}`);
+    console.log(`🌐 Headers:`, req.headers);
+    console.log(`🌐 Body:`, req.body);
+    next();
+  });
+
+  // 🐛 ENDPOINT DEBUG TEMPORÁRIO - Listar pedidos do hotsite (SEM AUTENTICAÇÃO)
+  app.get('/api/debug/hotsite-orders', async (req, res) => {
+    try {
+      const cards = await storage.getSalesCards();
+      const hotsiteOrders = cards.filter(c => c.source === 'hotsite');
+      res.json({
+        total: hotsiteOrders.length,
+        orders: hotsiteOrders.slice(0, 10).map(o => ({
+          id: o.id,
+          customerId: o.customerId,
+          source: o.source,
+          status: o.status,
+          createdAt: o.createdAt
+        }))
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Auth middleware
   await setupAuth(app);
 
