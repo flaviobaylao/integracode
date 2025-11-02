@@ -33,7 +33,7 @@ interface CustomerTypeContextValue {
   
   setCategory: (category: CustomerCategory) => void;
   setConsumerTier: (tier: ConsumerTier) => void;
-  setResellerLocation: (location: ResellerLocation) => void;
+  setResellerLocation: (location: ResellerLocation | null) => void;
   setCompanyData: (data: CompanyData | null) => void;
   reset: () => void;
   

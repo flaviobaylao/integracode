@@ -54,7 +54,13 @@
     - **Hotsite Structure**: Standalone React SPA in `/hotsite` folder with own package.json, mobile-first design optimized for Instagram traffic. Builds to `server/public-hotsite`. Build command: `cd hotsite && npm run build && cp -r dist/* ../server/public-hotsite/`.
     - **Customer Type Selection Flow**: Interactive selection system at entry determines pricing table:
         - **Consumer Path**: Choose between Retail (< R$200) or Wholesale (≥ R$200) pricing
-        - **Reseller Path**: Location-based pricing (Goiânia, Interior Goiás, Brasília/Entorno)
+        - **Reseller Path**: Location-based pricing (Goiânia, Interior Goiás, Brasília/Entorno) with CNPJ verification
+    - **Reseller CNPJ Verification**: After region selection, resellers must provide CNPJ for automatic data retrieval:
+        - Checks if customer already exists in system
+        - If new, queries Receita Federal API for company data
+        - Displays company information for confirmation/editing
+        - Validates CNPJ format and active status
+        - Allows address editing before proceeding to catalog
     - **5 Price Tables**: Products support multiple pricing strategies:
         - `retail_price`: Retail pricing for consumers
         - `wholesale_price`: Wholesale pricing for larger consumer orders

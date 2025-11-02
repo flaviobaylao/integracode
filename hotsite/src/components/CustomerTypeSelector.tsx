@@ -369,7 +369,13 @@ export function CustomerTypeSelector() {
       <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
         <div className="max-w-md w-full">
           <button
-            onClick={() => setResellerLocation(null)}
+            onClick={() => {
+              setResellerLocation(null);
+              setCompanyData(null);
+              setEditableData(null);
+              setCnpjInput('');
+              setCnpjError('');
+            }}
             className="mb-6 text-green-700 hover:text-green-900 font-medium"
             data-testid="button-back-cnpj"
           >
@@ -462,7 +468,9 @@ export function CustomerTypeSelector() {
           <button
             onClick={() => {
               setEditableData(null);
+              setCompanyData(null);
               setCnpjInput('');
+              setCnpjError('');
             }}
             className="mb-6 text-green-700 hover:text-green-900 font-medium"
             data-testid="button-back-edit"
