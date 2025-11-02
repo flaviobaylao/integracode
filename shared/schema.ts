@@ -288,6 +288,9 @@ export const salesCards = pgTable("sales_cards", {
   vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos: ["caminhao", "carro", "moto"] - max 2
   isUrgent: boolean("is_urgent").notNull().default(false), // Marcador de entrega urgente
   
+  // Origem do pedido
+  source: varchar("source").default('integra'), // Origem: 'integra', 'hotsite', 'telemarketing', etc
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
