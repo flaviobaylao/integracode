@@ -1,10 +1,9 @@
 interface HonestLogoProps {
   className?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
-  showText?: boolean;
 }
 
-export function HonestLogo({ className = '', size = 'md', showText = true }: HonestLogoProps) {
+export function HonestLogo({ className = '', size = 'md' }: HonestLogoProps) {
   const sizes = {
     sm: 'h-10',
     md: 'h-14',
