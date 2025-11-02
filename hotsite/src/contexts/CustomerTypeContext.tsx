@@ -11,15 +11,30 @@ export type PriceTable =
   | 'resale_interior_price'
   | 'resale_brasilia_price';
 
+export interface CompanyData {
+  cnpj: string;
+  razaoSocial: string;
+  nomeFantasia: string;
+  endereco: string;
+  cidade: string;
+  estado: string;
+  cep: string;
+  telefone?: string;
+  email?: string;
+  existingCustomerId?: string; // Se já for cliente cadastrado
+}
+
 interface CustomerTypeContextValue {
   category: CustomerCategory | null;
   consumerTier: ConsumerTier | null;
   resellerLocation: ResellerLocation | null;
+  companyData: CompanyData | null;
   priceTable: PriceTable | null;
   
   setCategory: (category: CustomerCategory) => void;
   setConsumerTier: (tier: ConsumerTier) => void;
   setResellerLocation: (location: ResellerLocation) => void;
+  setCompanyData: (data: CompanyData | null) => void;
   reset: () => void;
   
   isSelectionComplete: boolean;
@@ -31,6 +46,7 @@ export function CustomerTypeProvider({ children }: { children: ReactNode }) {
   const [category, setCategory] = useState<CustomerCategory | null>(null);
   const [consumerTier, setConsumerTier] = useState<ConsumerTier | null>(null);
   const [resellerLocation, setResellerLocation] = useState<ResellerLocation | null>(null);
+  const [companyData, setCompanyData] = useState<CompanyData | null>(null);
 
   const getPriceTable = (): PriceTable | null => {
     if (category === 'consumer' && consumerTier) {
@@ -53,17 +69,19 @@ export function CustomerTypeProvider({ children }: { children: ReactNode }) {
     setCategory(newCategory);
     setConsumerTier(null);
     setResellerLocation(null);
+    setCompanyData(null);
   };
 
   const reset = () => {
     setCategory(null);
     setConsumerTier(null);
     setResellerLocation(null);
+    setCompanyData(null);
   };
 
   const isSelectionComplete = 
     (category === 'consumer' && consumerTier !== null) ||
-    (category === 'reseller' && resellerLocation !== null);
+    (category === 'reseller' && resellerLocation !== null && companyData !== null);
 
   return (
     <CustomerTypeContext.Provider
@@ -71,10 +89,12 @@ export function CustomerTypeProvider({ children }: { children: ReactNode }) {
         category,
         consumerTier,
         resellerLocation,
+        companyData,
         priceTable: getPriceTable(),
         setCategory: handleSetCategory,
         setConsumerTier,
         setResellerLocation,
+        setCompanyData,
         reset,
         isSelectionComplete,
       }}
