@@ -10850,7 +10850,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveryWeekdays: [],
         deliveryTimeSlots: [],
         deliverySaturdayTimeSlots: [],
-        boletoDays: validatedData.paymentMethod === 'boleto' ? 7 : null
+        boletoDays: validatedData.paymentMethod === 'boleto' ? 7 : null,
+        source: validatedData.source
       };
       
       const salesCard = await storage.createSalesCard(orderData);
