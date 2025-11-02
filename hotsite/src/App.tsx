@@ -3,6 +3,7 @@ import ProductCard from './components/ProductCard';
 import Cart from './components/Cart';
 import CheckoutForm from './components/CheckoutForm';
 import { CustomerTypeSelector } from './components/CustomerTypeSelector';
+import { HonestLogo } from './components/HonestLogo';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
 import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
@@ -143,6 +144,9 @@ function HotsiteContent() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-honest-green to-honest-orange flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="flex justify-center mb-6">
+            <HonestLogo size="lg" showText={true} className="text-honest-green" />
+          </div>
           <div className="text-7xl mb-4">✅</div>
           <h1 className="text-3xl font-bold text-honest-green mb-4">Pedido Confirmado!</h1>
           <p className="text-gray-600 mb-2">Número do pedido:</p>
@@ -202,8 +206,7 @@ function HotsiteContent() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex-1">
-              <h1 className="text-2xl font-bold">🍊 Honest Sucos</h1>
-              <p className="text-sm opacity-90">100% Naturais</p>
+              <HonestLogo size="md" showText={true} className="text-white" />
             </div>
             
             <button
