@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { HonestLogo } from './HonestLogo';
 import { api } from '../utils/api';
 import type { Customer, CartItem } from '../types';
 
@@ -109,12 +110,15 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-honest-green text-white p-4 sticky top-0 z-10">
-        <button onClick={onBack} className="flex items-center gap-2 mb-2" data-testid="btn-back">
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Voltar
-        </button>
+        <div className="flex items-center justify-between mb-3">
+          <button onClick={onBack} className="flex items-center gap-2" data-testid="btn-back">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Voltar
+          </button>
+          <HonestLogo size="sm" showText={false} className="text-white" />
+        </div>
         <h1 className="text-2xl font-bold">Finalizar Pedido</h1>
       </div>
 
