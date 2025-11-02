@@ -10598,6 +10598,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // Verificar se cliente já existe por CNPJ (hotsite - revendedores)
+  app.post('/api/public/customers/check-cnpj', async (req, res) => {
+    try {
+      const { cnpj } = req.body;
+      
+      if (!cnpj) {
+        return res.status(400).json({ 
+          message: 'CNPJ é obrigatório' 
+        });
+      }
+      
+      // Remove formatação do CNPJ
+      const cnpjLimpo = cnpj.replace(/\D/g, '');
+      
+      const customersData = await storage.getCustomers();
+      
+      const existingCustomer = customersData.find(c => 
+        c.cnpj && c.cnpj.replace(/\D/g, '') === cnpjLimpo
+      );
+      
+      if (existingCustomer) {
+        res.json({
+          exists: true,
+          customer: {
+            id: existingCustomer.id,
+            name: existingCustomer.fantasyName || existingCustomer.companyName || existingCustomer.name,
+            companyName: existingCustomer.companyName || existingCustomer.name,
+            fantasyName: existingCustomer.fantasyName,
+            cnpj: existingCustomer.cnpj,
+            email: existingCustomer.email,
+            phone: existingCustomer.phone,
+            address: existingCustomer.address,
+            city: existingCustomer.city,
+            state: existingCustomer.state,
+            zipCode: existingCustomer.zipCode
+          }
+        });
+      } else {
+        res.json({
+          exists: false
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao verificar cliente por CNPJ:', error);
+      res.status(500).json({ 
+        message: 'Erro ao verificar cliente',
+        error: error.message 
+      });
+    }
+  });
+
+  // Consultar CNPJ na Receita Federal (rota pública para hotsite)
+  app.post('/api/public/receita/cnpj', async (req, res) => {
+    try {
+      const { cnpj } = req.body;
+      
+      if (!cnpj) {
+        return res.status(400).json({ 
+          message: "CNPJ é obrigatório" 
+        });
+      }
+
+      // Valida formato do CNPJ
+      if (!receitaService.validarCNPJ(cnpj)) {
+        return res.status(400).json({ 
+          message: "CNPJ inválido" 
+        });
+      }
+
+      const dadosCNPJ = await receitaService.consultarCNPJ(cnpj);
+      
+      if (!dadosCNPJ) {
+        return res.status(404).json({ 
+          message: "CNPJ não encontrado" 
+        });
+      }
+
+      // Formatar dados para retorno
+      const dadosFormatados = {
+        cnpj: receitaService.formatarCNPJ(dadosCNPJ.cnpj),
+        razaoSocial: dadosCNPJ.nome,
+        nomeFantasia: dadosCNPJ.fantasia || '',
+        endereco: receitaService.formatarEndereco(dadosCNPJ),
+        cidade: dadosCNPJ.municipio,
+        estado: dadosCNPJ.uf,
+        cep: dadosCNPJ.cep,
+        telefone: dadosCNPJ.telefone || '',
+        email: dadosCNPJ.email || '',
+        situacao: dadosCNPJ.situacao,
+        atividadePrincipal: dadosCNPJ.atividade_principal?.[0]?.text || ''
+      };
+
+      res.json(dadosFormatados);
+    } catch (error) {
+      console.error("Error fetching CNPJ from Receita Federal:", error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : "Erro ao consultar CNPJ",
+      });
+    }
+  });
   
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
