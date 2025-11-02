@@ -33,7 +33,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     if (!formData.phone.trim()) newErrors.phone = 'Telefone é obrigatório';
     if (formData.phone.replace(/\D/g, '').length < 10) newErrors.phone = 'Telefone inválido';
     if (!formData.address.trim()) newErrors.address = 'Endereço é obrigatório';
-    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    if (formData.email && formData.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       newErrors.email = 'Email inválido';
     }
 
