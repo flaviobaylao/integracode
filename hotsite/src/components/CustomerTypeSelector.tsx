@@ -1,4 +1,5 @@
 import { useCustomerType } from '../contexts/CustomerTypeContext';
+import { HonestLogo } from './HonestLogo';
 import { ShoppingCart, Store, MapPin } from 'lucide-react';
 
 export function CustomerTypeSelector() {
@@ -17,8 +18,11 @@ export function CustomerTypeSelector() {
       <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
         <div className="max-w-2xl w-full">
           <div className="text-center mb-12">
+            <div className="flex justify-center mb-6">
+              <HonestLogo size="xl" showText={true} />
+            </div>
             <h1 className="text-4xl font-bold text-green-800 mb-3">
-              Bem-vindo à Honest Sucos! 🌿
+              Bem-vindo! 🌿
             </h1>
             <p className="text-lg text-gray-700">
               Selecione como deseja comprar nossos produtos
@@ -80,6 +84,9 @@ export function CustomerTypeSelector() {
           </button>
 
           <div className="text-center mb-12">
+            <div className="flex justify-center mb-6">
+              <HonestLogo size="lg" showText={true} />
+            </div>
             <h1 className="text-4xl font-bold text-green-800 mb-3">
               Como deseja comprar?
             </h1>
@@ -149,6 +156,9 @@ export function CustomerTypeSelector() {
           </button>
 
           <div className="text-center mb-12">
+            <div className="flex justify-center mb-6">
+              <HonestLogo size="lg" showText={true} />
+            </div>
             <h1 className="text-4xl font-bold text-green-800 mb-3">
               Onde sua revenda está localizada?
             </h1>
