@@ -1239,6 +1239,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Upload de imagens para produtos
+  app.post('/api/products/:id/upload-images', authenticateUser, upload.array('images', 10), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      // Verificar se o produto existe
+      const product = await storage.getProduct(id);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      // Processar as imagens enviadas
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No images provided" });
+      }
+
+      // Converter imagens para base64 e criar data URLs
+      const imageUrls = files.map(file => {
+        const base64Image = file.buffer.toString('base64');
+        return `data:${file.mimetype};base64,${base64Image}`;
+      });
+
+      // Combinar com imagens existentes (se houver)
+      const existingImages = product.images || [];
+      const allImages = [...existingImages, ...imageUrls];
+
+      // Limitar a 10 imagens no total
+      const finalImages = allImages.slice(0, 10);
+
+      // Atualizar produto com as novas imagens
+      await storage.updateProduct(id, {
+        images: finalImages,
+        imageUrl: finalImages[0] || product.imageUrl // Usar a primeira imagem como imageUrl principal
+      });
+
+      res.json({
+        message: "Images uploaded successfully",
+        uploadedCount: imageUrls.length,
+        totalImages: finalImages.length,
+        images: finalImages
+      });
+    } catch (error) {
+      console.error("Error uploading product images:", error);
+      res.status(500).json({ message: "Failed to upload images" });
+    }
+  });
+
+  // Remover imagem específica do produto
+  app.delete('/api/products/:id/images/:imageIndex', authenticateUser, async (req: any, res) => {
+    try {
+      const { id, imageIndex } = req.params;
+      const userId = req.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!['admin', 'coordinator'].includes(user?.role || '')) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const product = await storage.getProduct(id);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      const images = product.images || [];
+      const index = parseInt(imageIndex);
+
+      if (index < 0 || index >= images.length) {
+        return res.status(400).json({ message: "Invalid image index" });
+      }
+
+      // Remover a imagem do array
+      images.splice(index, 1);
+
+      // Atualizar produto
+      await storage.updateProduct(id, {
+        images: images,
+        imageUrl: images[0] || null // Atualizar imageUrl para a primeira imagem restante
+      });
+
+      res.json({
+        message: "Image removed successfully",
+        remainingImages: images.length,
+        images: images
+      });
+    } catch (error) {
+      console.error("Error removing product image:", error);
+      res.status(500).json({ message: "Failed to remove image" });
+    }
+  });
+
   // Sales Goals routes
   app.get('/api/sales-goals', authenticateUser, async (req: any, res) => {
     try {
