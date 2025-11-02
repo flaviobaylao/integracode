@@ -75,6 +75,8 @@
     - **Product Gallery System**: Multiple images per product with touch-swipe navigation (50px threshold), zoom functionality, and responsive image viewer in product details modal. Single-touch swipe detection prevents conflicts with pinch-to-zoom.
     - **Product Image Management**: Admin interface in ProductManagement component allows uploading multiple product images (max 10 per product) via drag-and-drop modal. Images stored as base64 data URLs in `imageUrl` (main) and `images` (array) fields. First image automatically set as product's primary image displayed in hotsite and catalog.
     - **Review System**: Customer product reviews with 1-5 star ratings, comments, and admin approval workflow. Reviews displayed with average rating and individual feedback; pending reviews require admin approval before public display. Admin can approve/reject reviews via Sistema Integra.
+    - **Stock Management**: Hotsite accepts orders without stock verification. All orders are accepted regardless of inventory levels, allowing flexible order processing.
+    - **Hotsite Orders Management**: Dedicated "Pedidos do Site" page accessible at `/hotsite-orders` for admin, coordinator, and administrative users to view and manage all orders placed through the hotsite. Shows order details, customer info, products, payment method, and status with filtering capabilities.
 
 # External Dependencies
 

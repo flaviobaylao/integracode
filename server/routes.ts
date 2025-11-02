@@ -29,7 +29,7 @@ import {
   routeCheckpoints,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull, asc } from "drizzle-orm";
+import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -1756,6 +1756,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching sales cards:", error);
       res.status(500).json({ message: "Failed to fetch sales cards" });
+    }
+  });
+
+  // Hotsite orders route - busca pedidos do site
+  app.get('/api/hotsite-orders', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin, coordinator e administrative podem ver pedidos do hotsite
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const db = storage['db'];
+      const hotsiteOrders = await db
+        .select()
+        .from(salesCards)
+        .where(eq(salesCards.source, 'hotsite'))
+        .orderBy(desc(salesCards.scheduledDate));
+      
+      res.json(hotsiteOrders);
+    } catch (error) {
+      console.error("Error fetching hotsite orders:", error);
+      res.status(500).json({ message: "Failed to fetch hotsite orders" });
     }
   });
 
