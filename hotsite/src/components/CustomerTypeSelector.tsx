@@ -85,7 +85,7 @@ export function CustomerTypeSelector() {
 
           <div className="text-center mb-12">
             <div className="flex justify-center mb-6">
-              <HonestLogo size="lg" />
+              <HonestLogo size="xl" />
             </div>
             <h1 className="text-4xl font-bold text-green-800 mb-3">
               Como deseja comprar?
@@ -157,7 +157,7 @@ export function CustomerTypeSelector() {
 
           <div className="text-center mb-12">
             <div className="flex justify-center mb-6">
-              <HonestLogo size="lg" />
+              <HonestLogo size="xl" />
             </div>
             <h1 className="text-4xl font-bold text-green-800 mb-3">
               Onde sua revenda está localizada?

@@ -117,7 +117,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
             </svg>
             Voltar
           </button>
-          <HonestLogo size="sm" className="text-white" />
+          <HonestLogo size="xl" className="text-white" />
         </div>
         <h1 className="text-2xl font-bold">Finalizar Pedido</h1>
       </div>

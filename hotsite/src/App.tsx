@@ -145,7 +145,7 @@ function HotsiteContent() {
       <div className="min-h-screen bg-gradient-to-br from-honest-green to-honest-orange flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="flex justify-center mb-6">
-            <HonestLogo size="lg" className="text-honest-green" />
+            <HonestLogo size="xl" className="text-honest-green" />
           </div>
           <div className="text-7xl mb-4">✅</div>
           <h1 className="text-3xl font-bold text-honest-green mb-4">Pedido Confirmado!</h1>
@@ -206,7 +206,7 @@ function HotsiteContent() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex-1">
-              <HonestLogo size="md" className="text-white" />
+              <HonestLogo size="xl" className="text-white" />
             </div>
             
             <button
