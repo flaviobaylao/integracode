@@ -200,7 +200,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <label className="block text-sm font-medium mb-1">Email (opcional)</label>
                 <input
                   type="email"
-                  value={formData.email}
+                  value={formData.email || ''}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className={`input-field ${errors.email ? 'border-red-500' : customerFound ? 'border-honest-green' : ''}`}
                   placeholder="seuemail@exemplo.com"
