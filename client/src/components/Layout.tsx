@@ -58,6 +58,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
+    { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports },
     { 
       id: 'billings', 
       label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', 
@@ -124,7 +125,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     console.log('🖱️ Menu item clicado:', itemId);
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
