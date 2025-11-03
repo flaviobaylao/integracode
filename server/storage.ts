@@ -2439,6 +2439,7 @@ export class DatabaseStorage implements IStorage {
 
       // Buscar faturamentos do mês usando SQL raw para evitar problemas do Drizzle
       console.log(`  Buscando faturamentos para:`, { numericSellerId, startOfMonth, endOfMonth });
+      console.log(`  Tipo de numericSellerId:`, typeof numericSellerId, 'Valor:', numericSellerId);
       
       const monthBillings = await db.execute(sql`
         SELECT id, customer_document, cfop, total_value, seller_id
