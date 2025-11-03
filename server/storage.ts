@@ -2441,7 +2441,7 @@ export class DatabaseStorage implements IStorage {
       console.log(`  Buscando faturamentos para:`, { numericSellerId, startOfMonth, endOfMonth });
       
       const monthBillings = await db.execute(sql`
-        SELECT id, customer_document, cfop, total_value
+        SELECT id, customer_document, cfop, total_value, seller_id
         FROM billings
         WHERE invoice_date >= ${startOfMonth}
           AND invoice_date <= ${endOfMonth}
@@ -2449,6 +2449,13 @@ export class DatabaseStorage implements IStorage {
       `);
       
       console.log(`  ✅ Faturamentos encontrados: ${monthBillings.rows.length}`);
+      if (monthBillings.rows.length > 0) {
+        console.log(`    Amostra (3 primeiros):`, monthBillings.rows.slice(0, 3).map((r: any) => ({
+          seller_id: r.seller_id,
+          total_value: r.total_value,
+          cfop: r.cfop
+        })));
+      }
 
       // Clientes únicos positivados (que tiveram venda)
       const uniqueCustomers = new Set(monthBillings.rows.map((b: any) => b.customer_document));
@@ -2492,6 +2499,13 @@ export class DatabaseStorage implements IStorage {
 
       const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
       const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
+      
+      console.log(`  💰 FATURAMENTO:`, {
+        totalRevenue: totalRevenue.toFixed(2),
+        validBillings: validBillings.length,
+        dailyAverage: dailyAverageRevenue.toFixed(2),
+        projection: revenueProjection.toFixed(2)
+      });
 
       // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Vendas da carteira ===
       let overdueDebtRatio = 0;
@@ -2522,6 +2536,13 @@ export class DatabaseStorage implements IStorage {
           }, 0);
 
           overdueDebtRatio = (totalOverdueDebt / totalRevenue) * 100;
+          
+          console.log(`  📉 DÉBITO VENCIDO:`, {
+            totalOverdueDebt: totalOverdueDebt.toFixed(2),
+            totalRevenue: totalRevenue.toFixed(2),
+            overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
+            overdueDebtsCount: overdueDebtsResult.rows.length
+          });
         }
       }
 
@@ -2572,6 +2593,15 @@ export class DatabaseStorage implements IStorage {
       const serviceRate = dailyServiceRates.length > 0
         ? dailyServiceRates.reduce((sum, rate) => sum + rate, 0) / dailyServiceRates.length
         : 0;
+
+      console.log(`  📊 RESUMO FINAL:`, {
+        sellerId: prefixedSellerId,
+        positivationRate: positivationRate.toFixed(2) + '%',
+        totalRevenue: totalRevenue.toFixed(2),
+        revenueProjection: revenueProjection.toFixed(2),
+        overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
+        serviceRate: serviceRate.toFixed(2) + '%'
+      });
 
       return {
         positivationRate,
