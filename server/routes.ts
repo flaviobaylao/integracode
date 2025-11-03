@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
-import { authenticateUser, requireRole, checkSellerAccess } from "./authMiddleware";
+import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
@@ -127,8 +127,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(health);
   });
 
-  // Endpoint público para inicializar admin padrão (útil para primeira configuração)
-  app.post('/api/setup-admin', async (req, res) => {
+  // Endpoint protegido para inicializar admin padrão (requer autenticação de admin)
+  app.post('/api/setup-admin', authenticateAdmin, async (req, res) => {
     try {
       const adminUser = await initializeDefaultAdmin();
       
