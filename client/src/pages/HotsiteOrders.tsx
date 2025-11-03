@@ -45,9 +45,21 @@ export default function HotsiteOrders() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
   // Buscar pedidos do hotsite
-  const { data: orders, isLoading: isLoadingOrders } = useQuery<HotsiteOrder[]>({
+  const { data: hotsiteData, isLoading: isLoadingOrders } = useQuery<{
+    orders: HotsiteOrder[];
+    debug: {
+      totalOrders: number;
+      ordersWithSource: number;
+      hotsiteOrders: number;
+      sourceExamples: Array<{ id: string; source: string; status: string; date: string }>;
+      timestamp: string;
+    };
+  }>({
     queryKey: ['/api/hotsite-orders'],
   });
+
+  const orders = hotsiteData?.orders || [];
+  const debugInfo = hotsiteData?.debug;
 
   // Buscar clientes para exibir nomes
   const { data: customers } = useQuery<Customer[]>({
@@ -127,6 +139,53 @@ export default function HotsiteOrders() {
             </div>
           </div>
         </div>
+
+        {/* Debug Info (Temporário) */}
+        {debugInfo && (
+          <Card className="mb-6 bg-yellow-50 border-yellow-200">
+            <CardHeader>
+              <CardTitle className="text-sm">🔍 Informações de Debug</CardTitle>
+              <CardDescription className="text-xs">Dados do banco de dados em produção</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <p className="font-semibold">Total de Cards:</p>
+                  <p className="text-2xl font-bold">{debugInfo.totalOrders}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Com campo source:</p>
+                  <p className="text-2xl font-bold">{debugInfo.ordersWithSource}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Source = "hotsite":</p>
+                  <p className="text-2xl font-bold text-orange-600">{debugInfo.hotsiteOrders}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Timestamp:</p>
+                  <p className="text-xs">{new Date(debugInfo.timestamp).toLocaleString('pt-BR')}</p>
+                </div>
+              </div>
+              {debugInfo.sourceExamples && debugInfo.sourceExamples.length > 0 && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2 text-xs">Exemplos de source (primeiros 10 registros):</p>
+                  <div className="bg-white rounded p-2 text-xs font-mono overflow-x-auto">
+                    {debugInfo.sourceExamples.map((ex, i) => (
+                      <div key={i} className="flex gap-2 py-1 border-b last:border-0">
+                        <span className="text-gray-500">#{i + 1}</span>
+                        <span className="font-semibold">{ex.id}...</span>
+                        <span className={ex.source === 'hotsite' ? 'text-orange-600 font-bold' : 'text-gray-600'}>
+                          source: {ex.source || 'null'}
+                        </span>
+                        <span className="text-gray-500">status: {ex.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">

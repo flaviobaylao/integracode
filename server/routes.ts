@@ -1749,6 +1749,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const hotsiteCount = allOrders.filter(o => o.source === 'hotsite');
       console.log('📊 [HOTSITE-ORDERS] Sales_cards com source="hotsite":', hotsiteCount.length);
       
+      // Debug: pegar exemplos de diferentes sources
+      const sourceExamples = allOrders.slice(0, 10).map(o => ({
+        id: o.id.substring(0, 8),
+        source: o.source,
+        status: o.status,
+        date: o.scheduledDate
+      }));
+      
       const hotsiteOrders = await db
         .select()
         .from(salesCards)
@@ -1756,7 +1764,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .orderBy(desc(salesCards.scheduledDate));
       
       console.log('✅ [HOTSITE-ORDERS] Retornando', hotsiteOrders.length, 'pedidos');
-      res.json(hotsiteOrders);
+      
+      // Adicionar informações de debug na resposta
+      res.json({
+        orders: hotsiteOrders,
+        debug: {
+          totalOrders: allOrders.length,
+          ordersWithSource: ordersWithSource.length,
+          hotsiteOrders: hotsiteCount.length,
+          sourceExamples: sourceExamples,
+          timestamp: new Date().toISOString()
+        }
+      });
     } catch (error) {
       console.error("❌ [HOTSITE-ORDERS] Error fetching hotsite orders:", error);
       res.status(500).json({ message: "Failed to fetch hotsite orders" });
