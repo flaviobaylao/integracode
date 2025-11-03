@@ -83,6 +83,13 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     retry: false,
   });
 
+  // Buscar todos os vendedores (apenas para usuários administrativos)
+  const { data: allSellers } = useQuery({
+    queryKey: ['/api/users'],
+    retry: false,
+    enabled: ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role),
+  });
+
   useEffect(() => {
     if (editingCard) {
       const scheduledDate = new Date(editingCard.scheduledDate);
@@ -389,15 +396,28 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
               <Select 
                 value={formData.sellerId} 
                 onValueChange={(value) => setFormData(prev => ({ ...prev, sellerId: value }))}
+                data-testid="select-seller"
               >
-                <SelectTrigger className={errors.sellerId ? "border-red-500" : ""}>
+                <SelectTrigger className={errors.sellerId ? "border-red-500" : ""} data-testid="trigger-seller">
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(currentUser as any)?.id && (
-                    <SelectItem value={(currentUser as any)?.id}>
-                      {(currentUser as any)?.firstName} {(currentUser as any)?.lastName}
-                    </SelectItem>
+                  {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && allSellers ? (
+                    // Mostrar todos os vendedores para administrativos (filtrar apenas role='vendedor')
+                    allSellers
+                      .filter((seller: any) => seller.role === 'vendedor')
+                      .map((seller: any) => (
+                        <SelectItem key={seller.id} value={seller.id} data-testid={`option-seller-${seller.id}`}>
+                          {seller.firstName} {seller.lastName} ({seller.email})
+                        </SelectItem>
+                      ))
+                  ) : (
+                    // Mostrar apenas o usuário atual para não-administrativos
+                    (currentUser as any)?.id && (
+                      <SelectItem value={(currentUser as any)?.id} data-testid="option-seller-current">
+                        {(currentUser as any)?.firstName} {(currentUser as any)?.lastName}
+                      </SelectItem>
+                    )
                   )}
                 </SelectContent>
               </Select>

@@ -1765,9 +1765,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
     try {
+      const user = req.currentUser;
+      const isAdministrative = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      
+      // Se o usuário não é administrativo e está tentando criar um card para outro vendedor, bloquear
+      if (!isAdministrative && req.body.sellerId && req.body.sellerId !== user.id) {
+        return res.status(403).json({ 
+          message: "Você não tem permissão para criar cards de vendas para outros vendedores" 
+        });
+      }
+      
+      // Se o usuário não é administrativo, forçar o sellerId para o ID do próprio usuário
+      const sellerId = isAdministrative ? req.body.sellerId : user.id;
+      
+      // Validar que o sellerId existe no banco de dados e é um vendedor
+      if (sellerId) {
+        const seller = await storage.getUserById(sellerId);
+        if (!seller) {
+          return res.status(400).json({ 
+            message: "Vendedor não encontrado. Por favor, selecione um vendedor válido." 
+          });
+        }
+        // Verificar se o usuário selecionado é realmente um vendedor
+        if (seller.role !== 'vendedor') {
+          return res.status(400).json({ 
+            message: "O usuário selecionado não é um vendedor. Por favor, selecione um vendedor válido." 
+          });
+        }
+      }
+      
       // Processar a data corretamente
       const processedData = {
         ...req.body,
+        sellerId, // Usar o sellerId validado
         scheduledDate: new Date(req.body.scheduledDate),
         status: req.body.status || 'pending',
         isRecurring: req.body.isRecurring || true,

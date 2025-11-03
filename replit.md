@@ -22,6 +22,7 @@
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports (customers, sales cards) with Excel/CSV. Customer displays prioritize `fantasy_name` over `company_name`.
 - **Import Diagnostics**: Debug system for Excel/CSV imports showing column detection, coordinate parsing, data type validation, and update tracking.
 - **Sales & Financial Management**: Sales card tracking with source field ('integra', 'hotsite', etc) for order origin tracking, conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view with export. Automatic order blocking based on payment terms/debts, with release functionality.
+    - **Administrative Card Creation**: Users with administrative roles (admin, coordinator, administrative) can create sales cards on behalf of any seller. Regular sellers can only create cards for themselves.
 - **Delivery & Route Optimization**:
     - **Daily Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API. Features visual mapping, checkpoint registration, performance dashboards, and manual generation. Handles route regeneration intelligently by preserving completed/in-progress visits and optimizing only new pending ones.
     - **Multi-Vehicle Route Planning (VRP)**: 4-phase algorithm for vehicle assignment, route optimization (NN+2-opt+OSRM), and persistence. Supports manual order selection, vehicle configuration, and results display with ETAs. Integrates with Omie billings.
