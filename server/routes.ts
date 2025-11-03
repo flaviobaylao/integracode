@@ -10846,7 +10846,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
         products: validatedData.items,
-        observations: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
+        notes: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
         isVirtual: true,
         deliveryWeekdays: [],
         deliveryTimeSlots: [],
@@ -10855,7 +10855,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         source: validatedData.source
       };
       
+      console.log('💾 Salvando pedido com source:', validatedData.source);
       const salesCard = await storage.createSalesCard(orderData);
+      console.log('✅ Pedido salvo com ID:', salesCard.id, 'Source:', salesCard.source);
       
       res.status(201).json({
         success: true,
