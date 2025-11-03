@@ -1727,22 +1727,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/hotsite-orders', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
+      console.log('🔍 [HOTSITE-ORDERS] User requesting:', user.email, 'Role:', user.role);
       
       // Apenas admin, coordinator e administrative podem ver pedidos do hotsite
       if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        console.log('⛔ [HOTSITE-ORDERS] Access denied for role:', user.role);
         return res.status(403).json({ message: "Access denied" });
       }
       
       const db = storage['db'];
+      
+      // Debug: buscar TODOS os pedidos para ver se há algum
+      const allOrders = await db.select().from(salesCards);
+      console.log('📊 [HOTSITE-ORDERS] Total de sales_cards no banco:', allOrders.length);
+      
+      // Debug: verificar quantos têm source definido
+      const ordersWithSource = allOrders.filter(o => o.source);
+      console.log('📊 [HOTSITE-ORDERS] Sales_cards com source definido:', ordersWithSource.length);
+      
+      // Debug: verificar quantos têm source='hotsite'
+      const hotsiteCount = allOrders.filter(o => o.source === 'hotsite');
+      console.log('📊 [HOTSITE-ORDERS] Sales_cards com source="hotsite":', hotsiteCount.length);
+      
       const hotsiteOrders = await db
         .select()
         .from(salesCards)
         .where(eq(salesCards.source, 'hotsite'))
         .orderBy(desc(salesCards.scheduledDate));
       
+      console.log('✅ [HOTSITE-ORDERS] Retornando', hotsiteOrders.length, 'pedidos');
       res.json(hotsiteOrders);
     } catch (error) {
-      console.error("Error fetching hotsite orders:", error);
+      console.error("❌ [HOTSITE-ORDERS] Error fetching hotsite orders:", error);
       res.status(500).json({ message: "Failed to fetch hotsite orders" });
     }
   });
