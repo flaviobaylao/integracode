@@ -28,13 +28,11 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     // Se não encontrou por ID e temos email, buscar por email (para vendedores com email do Omie)
     if (!user && userEmail) {
       user = await storage.getUserByEmail(userEmail);
-      console.log(`User not found by ID ${userId}, searching by email ${userEmail}:`, user ? 'found' : 'not found');
     }
     
     if (!user || !user.isActive) {
       return res.status(401).json({ 
-        message: "User not found or inactive",
-        details: `Searched by ID: ${userId}${userEmail ? `, email: ${userEmail}` : ''}` 
+        message: "User not found or inactive"
       });
     }
     

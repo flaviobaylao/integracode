@@ -88,31 +88,18 @@ function updateUserSession(
 async function upsertUser(
   claims: any,
 ) {
-  console.log('🔍 Claims recebidos no upsertUser:', claims);
-  console.log(`📧 Verificando usuário existente com email: ${claims["email"]}`);
-  
   // Verificar se já existe um usuário com este email
   const existingUser = await storage.getUserByEmail(claims["email"]);
   
   if (existingUser) {
-    console.log(`✅ Usuário encontrado: ${existingUser.email} - Role: ${existingUser.role} (ID: ${existingUser.id})`);
-    
     // Se o ID for diferente, temos um problema de mapeamento
     if (existingUser.id !== claims["sub"]) {
-      console.log(`⚠️ ID MISMATCH DETECTADO!`);
-      console.log(`   Email: ${claims["email"]}`);
-      console.log(`   ID no banco: ${existingUser.id}`);
-      console.log(`   ID do Replit: ${claims["sub"]}`);
-      console.log(`   Role no banco: ${existingUser.role}`);
-      console.log(`🔧 Usando dados do usuário existente (${existingUser.id}) ao invés de criar novo`);
-      
       // CRITICAL FIX: Não sobrescrever o usuário existente com ID diferente
       // Isso causaria o problema de aparecer como vendedor
       return;
     }
   }
   
-  console.log(`💾 Upserting usuário com ID: ${claims["sub"]}, Email: ${claims["email"]}, Role: ${claims["role"] || 'undefined'}`);
   await storage.upsertUser({
     id: claims["sub"],
     email: claims["email"],

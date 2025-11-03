@@ -148,9 +148,9 @@ export async function initializeDefaultAdmin(): Promise<User | null> {
     });
     
     if (existingAdmin) {
-      console.log('✅ Usuário admin atualizado com sucesso:', adminUser.email, '- Role:', adminUser.role);
+      console.log('✅ Usuário admin atualizado com sucesso');
     } else {
-      console.log('✅ Usuário admin criado com sucesso:', adminUser.email, '- Role:', adminUser.role);
+      console.log('✅ Usuário admin criado com sucesso');
     }
     
     // Garantir que existe vendedor "Desconhecido" para cards órfãos

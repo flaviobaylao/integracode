@@ -66,34 +66,6 @@ async function saveSyncStatus(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // 🔍 LOG TODAS AS REQUISIÇÕES /api/public/* PARA DEBUG
-  app.use('/api/public/*', (req, res, next) => {
-    console.log(`🌐 [PUBLIC API] ${req.method} ${req.url}`);
-    console.log(`🌐 Headers:`, req.headers);
-    console.log(`🌐 Body:`, req.body);
-    next();
-  });
-
-  // 🐛 ENDPOINT DEBUG TEMPORÁRIO - Listar pedidos do hotsite (SEM AUTENTICAÇÃO)
-  app.get('/api/debug/hotsite-orders', async (req, res) => {
-    try {
-      const cards = await storage.getSalesCards();
-      const hotsiteOrders = cards.filter(c => c.source === 'hotsite');
-      res.json({
-        total: hotsiteOrders.length,
-        orders: hotsiteOrders.slice(0, 10).map(o => ({
-          id: o.id,
-          customerId: o.customerId,
-          source: o.source,
-          status: o.status,
-          createdAt: o.createdAt
-        }))
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // Auth middleware
   await setupAuth(app);
 
@@ -212,8 +184,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = req.body;
       
-      console.log(`🔐 Tentativa de login: ${email}`);
-      
       if (!email || !password) {
         return res.status(400).json({ message: "Email e senha são obrigatórios" });
       }
@@ -221,21 +191,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await validateUser(email, password);
       
       if (!user) {
-        console.log(`❌ Login falhou: usuário não encontrado ou senha inválida para ${email}`);
         return res.status(401).json({ message: "Email ou senha inválidos" });
       }
-      
-      console.log(`✅ Login bem-sucedido: ${user.email} - Role: ${user.role}`);
       
       // Criar sessão para o usuário
       const sessionData = createLocalSession(user);
       (req.session as any).user = sessionData;
-      
-      console.log(`📝 Sessão criada para ${user.email}:`, {
-        userId: user.id,
-        role: user.role,
-        sessionId: (req.session as any).id
-      });
       
       res.json({ success: true, user });
     } catch (error) {
@@ -343,24 +304,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check for local admin session first
       if (req.session?.user?.claims?.sub) {
         const userId = req.session.user.claims.sub;
-        console.log(`📋 Sessão local encontrada - userId: ${userId}`);
         const user = await storage.getUser(userId);
         if (user) {
-          console.log(`✅ Usuário encontrado via sessão local: ${user.email} - Role: ${user.role}`);
           return res.json(user);
         }
       }
       
       // Fall back to Replit auth
       if (!req.isAuthenticated() || !req.user?.claims?.sub) {
-        console.log('❌ Não autenticado - retornando 401');
         return res.status(401).json({ message: "Unauthorized" });
       }
       
       const userId = req.user.claims.sub;
       const userEmail = req.user.claims.email;
-      
-      console.log(`🔐 Replit auth - userId: ${userId}, email: ${userEmail}`);
       
       // First try to find user by ID
       let user = await storage.getUser(userId);
@@ -368,36 +324,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // CRITICAL FIX: Verify that the user's email matches the Replit email
       // If there's a mismatch, the userId is mapped to the wrong account
       if (user && userEmail && user.email !== userEmail) {
-        console.log(`⚠️ EMAIL MISMATCH! User ID ${userId} has email ${user.email} but Replit says ${userEmail}`);
-        console.log(`🔍 Buscando usuário correto por email: ${userEmail}`);
-        
         // Find the correct user by email
         const correctUser = await storage.getUserByEmail(userEmail);
         if (correctUser) {
-          console.log(`✅ Usuário correto encontrado: ${correctUser.email} - Role: ${correctUser.role} (ID: ${correctUser.id})`);
           user = correctUser;
         } else {
-          console.log(`❌ Nenhum usuário encontrado com email ${userEmail}`);
           user = null;
         }
       }
       
       // If not found by ID or email didn't match, try to find by email
       if (!user && userEmail) {
-        console.log(`🔍 Usuário não encontrado por ID, buscando por email: ${userEmail}`);
         user = await storage.getUserByEmail(userEmail);
-        
-        if (user) {
-          console.log(`✅ Usuário encontrado por email: ${user.email} - Role: ${user.role} (ID: ${user.id})`);
-        }
       }
       
       if (!user) {
-        console.log(`❌ Usuário não encontrado - userId: ${userId}, email: ${userEmail}`);
         return res.status(404).json({ message: "User not found" });
       }
       
-      console.log(`✅ Retornando usuário: ${user.email} - Role: ${user.role}`);
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
@@ -652,10 +596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Customer routes
   app.get('/api/customers', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const user = req.currentUser;
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
-      
-      console.log(`Fetching customers for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
       
       const customers = await storage.getCustomers(sellerId);
       res.json(customers);
@@ -714,8 +655,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           cleanedData[key] = value;
         }
       });
-      
-      console.log('📝 Dados recebidos para atualização:', JSON.stringify(cleanedData, null, 2));
       
       // Update customer
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
@@ -1769,12 +1708,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sales card routes
   app.get('/api/sales-cards', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const user = req.currentUser;
       const sellerId = req.sellerId;
       const routeDay = req.query.route_day; // Filter by route day (segunda, terca, etc)
       const status = req.query.status; // Filter by status
-      
-      console.log(`Fetching sales cards for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
       
       const salesCards = await storage.getSalesCards(sellerId, {
         routeDay,
@@ -1813,8 +1749,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
     try {
-      console.log('POST /api/sales-cards - Request body:', req.body);
-      
       // Processar a data corretamente
       const processedData = {
         ...req.body,
@@ -1822,8 +1756,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: req.body.status || 'pending',
         isRecurring: req.body.isRecurring || true,
       };
-      
-      console.log('POST /api/sales-cards - Processed data:', processedData);
       
       // Validar apenas os campos obrigatórios
       const requiredFields = ['customerId', 'sellerId', 'scheduledDate'];
@@ -1860,7 +1792,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             latitude: req.body.customerLatitude,
             longitude: req.body.customerLongitude
           });
-          console.log(`Coordenadas GPS atualizadas para cliente ${processedData.customerId}: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
         } catch (coordError) {
           console.error('Erro ao atualizar coordenadas do cliente:', coordError);
           // Não falhar a criação da venda se a atualização de coordenadas falhar
@@ -2413,11 +2344,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      console.log('PUT /api/sales-cards/:id - Request body:', req.body);
-      console.log('PUT /api/sales-cards/:id - User ID:', req.userId);
       
       const data = insertSalesCardSchema.partial().parse(req.body);
-      console.log('PUT /api/sales-cards/:id - Parsed data:', data);
       
       // Check permissions for reassigning sales cards
       const userId = req.userId;
@@ -2538,10 +2466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const user = req.currentUser;
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
-      
-      console.log(`Fetching dashboard stats for user ${user.email} (role: ${user.role}, sellerId: ${sellerId})`);
       
       const stats = await storage.getDashboardStats(sellerId);
       res.json(stats);
@@ -5506,8 +5431,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const sellerId = user?.role === 'vendedor' ? user.id : undefined;
       
-      console.log(`Fetching blocked orders for user ${user.email} (role: ${user.role})`);
-      
       // Buscar pedidos bloqueados do banco de dados
       const blockedOrdersData = await db.select()
         .from(blockedOrders)
@@ -8088,7 +8011,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               latitude: req.body.customerLatitude,
               longitude: req.body.customerLongitude
             });
-            console.log(`Coordenadas GPS atualizadas para cliente ${card.customerId} após venda finalizada: ${req.body.customerLatitude}, ${req.body.customerLongitude}`);
           }
         } catch (coordError) {
           console.error('Erro ao atualizar coordenadas do cliente após venda:', coordError);
@@ -10755,11 +10677,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
-    console.log('🛒 ========================================');
-    console.log('🛒 NOVA REQUISIÇÃO: POST /api/public/orders');
-    console.log('🛒 Body recebido:', JSON.stringify(req.body, null, 2));
-    console.log('🛒 ========================================');
-    
     try {
       const orderSchema = z.object({
         customer: z.object({
@@ -10939,13 +10856,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const salesCard = await storage.createSalesCard(orderData);
-      
-      console.log('✅ PEDIDO CRIADO COM SUCESSO!');
-      console.log('✅ Sales Card ID:', salesCard.id);
-      console.log('✅ Order Number:', orderNumber);
-      console.log('✅ Customer ID:', customerId);
-      console.log('✅ Source:', validatedData.source);
-      console.log('🛒 ========================================');
       
       res.status(201).json({
         success: true,
