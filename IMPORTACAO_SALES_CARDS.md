@@ -25,14 +25,16 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 3. **ROTA**
    - **Uso**: Define o dia da semana de visita do cliente
    - Dia da semana para a visita
-   - Formatos aceitos (case-insensitive):
-     - `SEGUNDA-FEIRA`, `segunda-feira`, `Segunda`, `SEG`
-     - `TERÇA-FEIRA`, `TERCA-FEIRA`, `terça-feira`, `Terça`, `TER`
-     - `QUARTA-FEIRA`, `quarta-feira`, `Quarta`, `QUA`
-     - `QUINTA-FEIRA`, `quinta-feira`, `Quinta`, `QUI`
-     - `SEXTA-FEIRA`, `sexta-feira`, `Sexta`, `SEX`
-     - `SÁBADO`, `SABADO`, `sábado`, `Sábado`, `SAB`
-     - `DOMINGO`, `domingo`, `Domingo`, `DOM`
+   - **Formato recomendado** (abreviado): `Seg`, `Ter`, `Qua`, `Qui`, `Sex`, `Sab`, `Dom`
+   - Formatos aceitos (todos são convertidos automaticamente para formato abreviado):
+     - `SEGUNDA-FEIRA`, `segunda-feira`, `Segunda`, `SEG` → `Seg`
+     - `TERÇA-FEIRA`, `TERCA-FEIRA`, `terça-feira`, `Terça`, `TER` → `Ter`
+     - `QUARTA-FEIRA`, `quarta-feira`, `Quarta`, `QUA` → `Qua`
+     - `QUINTA-FEIRA`, `quinta-feira`, `Quinta`, `QUI` → `Qui`
+     - `SEXTA-FEIRA`, `sexta-feira`, `Sexta`, `SEX` → `Sex`
+     - `SÁBADO`, `SABADO`, `sábado`, `Sábado`, `SAB` → `Sab`
+     - `DOMINGO`, `domingo`, `Domingo`, `DOM` → `Dom`
+   - ℹ️ O sistema sempre armazena os dias no formato abreviado padronizado (primeira letra maiúscula)
    - **Obrigatório**
 
 4. **FREQUENCIA**
@@ -81,8 +83,8 @@ A planilha deve conter as seguintes colunas (os nomes não são case-sensitive):
 
 | CNPJ/CPF | Cliente (Nome Fantasia) | ROTA | FREQUENCIA | LATITUDE | LONGITUDE | DATA INICIO | TIPO DE ATENDIMENTO |
 |----------|------------------------|------|------------|----------|-----------|-------------|---------------------|
-| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | QUARTA-FEIRA | SEMANAL | -16.6542229 | -49.2728202 | 25/10/2025 | PRESENCIAL |
-| 00.065.979/0001-86 | MERCADINHO JAO | SEGUNDA-FEIRA | QUINZENAL | -16.234567 | -48.876543 | 28/10/2025 | VIRTUAL |
+| 00.058.238/0001-78 | SUPERMERCADO PINTA SILGO | Qua | SEMANAL | -16.6542229 | -49.2728202 | 25/10/2025 | PRESENCIAL |
+| 00.065.979/0001-86 | MERCADINHO JAO | Seg | QUINZENAL | -16.234567 | -48.876543 | 28/10/2025 | VIRTUAL |
 | 00.066.852/0001-81 | SUPERMERCADO RIO DAS PEDRAS | TERÇA-FEIRA | MENSAL | | | 01/11/2025 | PRESENCIAL |
 
 ## Como Importar
