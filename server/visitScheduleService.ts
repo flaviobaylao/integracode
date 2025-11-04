@@ -86,6 +86,86 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
     return 0;
   }
   
+  // Importar calculateNextVisitDate do módulo compartilhado
+  const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+  
+  // Parse weekdays (pode vir como JSON string ou array)
+  let weekdays = [];
+  try {
+    weekdays = typeof customer.weekdays === 'string' 
+      ? JSON.parse(customer.weekdays) 
+      : customer.weekdays || [];
+  } catch (e) {
+    console.warn(`⚠️ Cliente ${customer.id} tem weekdays inválido, usando lógica antiga`);
+    weekdays = [];
+  }
+  
+  // Se não tem weekdays configurados, usar lógica antiga de soma fixa
+  if (!weekdays || weekdays.length === 0) {
+    return generateVisitsForCustomerLegacy(customer);
+  }
+  
+  // Calcular a data base para gerar próximas visitas
+  let baseDate = customer.serviceStartDate ? normalizeToBrazilDate(new Date(customer.serviceStartDate)) : today;
+  
+  // Usar calculateNextVisitDate para encontrar a próxima data válida
+  const firstVisitResult = calculateNextVisitDate({
+    weekdays,
+    periodicity: customer.visitPeriodicity || 'semanal',
+    referenceDate: baseDate > today ? baseDate : today
+  });
+  
+  // Gerar a primeira visita
+  await db.insert(visitAgenda).values({
+    customerId: customer.id,
+    sellerId: customer.sellerId,
+    scheduledDate: firstVisitResult.nextDate,
+    routeDay: getRouteDay(firstVisitResult.nextDate),
+    recurrenceType: customer.visitPeriodicity || 'semanal',
+    isVirtual: customer.virtualService || false,
+    visitStatus: 'pending',
+    customerName: customer.name,
+    customerLatitude: customer.latitude || null,
+    customerLongitude: customer.longitude || null,
+    customerAddress: customer.address || null,
+  }).onConflictDoNothing();
+  generatedCount++;
+  
+  // Gerar as próximas 3 visitas usando calculateNextVisitDate
+  let lastDate = firstVisitResult.nextDate;
+  for (let i = 0; i < 3; i++) {
+    const nextVisitResult = calculateNextVisitDate({
+      weekdays,
+      periodicity: customer.visitPeriodicity || 'semanal',
+      lastCompletedDate: lastDate
+    });
+    
+    await db.insert(visitAgenda).values({
+      customerId: customer.id,
+      sellerId: customer.sellerId,
+      scheduledDate: nextVisitResult.nextDate,
+      routeDay: getRouteDay(nextVisitResult.nextDate),
+      recurrenceType: customer.visitPeriodicity || 'semanal',
+      isVirtual: customer.virtualService || false,
+      visitStatus: 'pending',
+      customerName: customer.name,
+      customerLatitude: customer.latitude || null,
+      customerLongitude: customer.longitude || null,
+      customerAddress: customer.address || null,
+    }).onConflictDoNothing();
+    generatedCount++;
+    
+    lastDate = nextVisitResult.nextDate;
+  }
+  
+  return generatedCount;
+}
+
+// Função LEGACY para gerar visitas (apenas para clientes sem weekdays configurados)
+async function generateVisitsForCustomerLegacy(customer: any): Promise<number> {
+  let generatedCount = 0;
+  const today = getBrazilToday();
+  
   // Calcular a data base para gerar próximas visitas
   let baseDate = customer.serviceStartDate ? normalizeToBrazilDate(new Date(customer.serviceStartDate)) : today;
   
