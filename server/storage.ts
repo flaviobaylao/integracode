@@ -2443,17 +2443,17 @@ export class DatabaseStorage implements IStorage {
         '2026-12-25'
       ]);
       
-      // Calcular dias úteis do mês (segunda a sábado, excluindo domingos e feriados)
+      // Calcular dias úteis do mês (segunda a sexta, excluindo sábados, domingos e feriados)
       const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
       const workingDays = [];
       
       for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(targetYear, targetMonth - 1, day);
-        const dayOfWeek = date.getDay(); // 0=domingo, 6=sábado
+        const dayOfWeek = date.getDay(); // 0=domingo, 1=segunda, ..., 6=sábado
         const dateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         
-        // Incluir segunda (1) a sábado (6), excluindo domingos (0) e feriados
-        if (dayOfWeek !== 0 && !nationalHolidays.has(dateStr)) {
+        // Incluir apenas segunda (1) a sexta (5), excluindo sábados (6), domingos (0) e feriados
+        if (dayOfWeek >= 1 && dayOfWeek <= 5 && !nationalHolidays.has(dateStr)) {
           workingDays.push(date);
         }
       }
