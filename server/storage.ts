@@ -2395,9 +2395,15 @@ export class DatabaseStorage implements IStorage {
         keys: billings ? Object.keys(billings).slice(0, 5) : 'undefined'
       });
       
-      const currentDate = new Date();
+      // Usar timezone de Brasília (UTC-3)
+      const now = new Date();
+      const brasiliaOffset = -3 * 60; // UTC-3 em minutos
+      const currentDate = new Date(now.getTime() + (now.getTimezoneOffset() + brasiliaOffset) * 60000);
+      
       const targetMonth = month || (currentDate.getMonth() + 1);
       const targetYear = year || currentDate.getFullYear();
+      
+      console.log(`  📅 Data atual (Brasília):`, currentDate.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
       
       // Normalizar sellerId: billings usa ID numérico, mas customers/users usam prefixo "omie-vendor-"
       const numericSellerId = sellerId ? sellerId.replace('omie-vendor-', '') : undefined;
@@ -2405,19 +2411,62 @@ export class DatabaseStorage implements IStorage {
       
       console.log(`  IDs normalizados:`, { numericSellerId, prefixedSellerId });
       
-      // Calcular dias úteis do mês (excluindo domingos)
+      // Feriados nacionais brasileiros (formato: 'YYYY-MM-DD')
+      const nationalHolidays = new Set([
+        // 2025
+        '2025-01-01', // Ano Novo
+        '2025-02-24', // Carnaval (segunda)
+        '2025-02-25', // Carnaval (terça)
+        '2025-04-18', // Paixão de Cristo
+        '2025-04-21', // Tiradentes
+        '2025-05-01', // Dia do Trabalho
+        '2025-06-19', // Corpus Christi
+        '2025-09-07', // Independência
+        '2025-10-12', // Nossa Senhora Aparecida
+        '2025-11-02', // Finados
+        '2025-11-15', // Proclamação da República
+        '2025-11-20', // Consciência Negra
+        '2025-12-25', // Natal
+        // 2026 (adicionar conforme necessário)
+        '2026-01-01',
+        '2026-02-16',
+        '2026-02-17',
+        '2026-04-03',
+        '2026-04-21',
+        '2026-05-01',
+        '2026-06-04',
+        '2026-09-07',
+        '2026-10-12',
+        '2026-11-02',
+        '2026-11-15',
+        '2026-11-20',
+        '2026-12-25'
+      ]);
+      
+      // Calcular dias úteis do mês (segunda a sábado, excluindo domingos e feriados)
       const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
       const workingDays = [];
       
       for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(targetYear, targetMonth - 1, day);
-        if (date.getDay() !== 0) { // 0 = Sunday
+        const dayOfWeek = date.getDay(); // 0=domingo, 6=sábado
+        const dateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        
+        // Incluir segunda (1) a sábado (6), excluindo domingos (0) e feriados
+        if (dayOfWeek !== 0 && !nationalHolidays.has(dateStr)) {
           workingDays.push(date);
         }
       }
       
       const workingDaysInMonth = workingDays.length;
       const workingDaysElapsed = workingDays.filter(date => date <= currentDate).length;
+      
+      console.log(`  📆 DIAS ÚTEIS:`, {
+        mes: `${targetMonth}/${targetYear}`,
+        totalDiasUteis: workingDaysInMonth,
+        diasDecorridos: workingDaysElapsed,
+        diaAtual: currentDate.getDate()
+      });
       
       // Data range for the month
       const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
