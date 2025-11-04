@@ -2576,23 +2576,30 @@ export class DatabaseStorage implements IStorage {
       let overdueDebtRatio = 0;
       
       if (prefixedSellerId && revenueProjection > 0) {
-        // Buscar débitos vencidos da carteira do vendedor usando SQL raw
+        // Buscar CPFs e CNPJs da carteira do vendedor (sem formatação)
         const customerDocsResult = await db.execute(sql`
-          SELECT document FROM customers
+          SELECT cpf, cnpj FROM customers
           WHERE seller_id = ${prefixedSellerId}
             AND omie_status = 'ativo'
         `);
 
         const sellerCustomerDocs = customerDocsResult.rows
-          .map((c: any) => c.document)
+          .map((c: any) => {
+            // Retornar CPF ou CNPJ sem formatação
+            const doc = c.cpf || c.cnpj;
+            if (!doc) return null;
+            // Remover pontos, traços e barras para comparação
+            return doc.replace(/[.\-/]/g, '');
+          })
           .filter(Boolean);
 
         if (sellerCustomerDocs.length > 0) {
           // Buscar débitos vencidos dos clientes da carteira
+          // Comparar com client_document após remover formatação
           const overdueDebtsResult = await db.execute(sql`
             SELECT id, client_document, total_amount
             FROM overdue_debts
-            WHERE client_document = ANY(${sellerCustomerDocs})
+            WHERE REPLACE(REPLACE(REPLACE(client_document, '.', ''), '-', ''), '/', '') = ANY(${sellerCustomerDocs})
           `);
 
           const totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -2607,6 +2614,7 @@ export class DatabaseStorage implements IStorage {
             revenueProjection: revenueProjection.toFixed(2),
             overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
             overdueDebtsCount: overdueDebtsResult.rows.length,
+            customersInRoute: sellerCustomerDocs.length,
             formula: `${totalOverdueDebt.toFixed(2)} / ${revenueProjection.toFixed(2)} * 100`
           });
         }
