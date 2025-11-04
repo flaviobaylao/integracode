@@ -7,17 +7,24 @@ const BRAZIL_TIMEZONE = 'America/Sao_Paulo';
 
 // Helper function to get current date normalized to Brazil timezone
 function getBrazilToday(): Date {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: BRAZIL_TIMEZONE }));
+  // CORREÇÃO: Usar offset UTC-3 diretamente para evitar conversão problemática
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brazilTime = new Date(utc + (3600000 * -3)); // UTC-3
+  return brazilTime;
 }
 
 // Helper function to normalize any date to Brazil timezone
+// NOTA: Esta função foi corrigida para evitar desvio de datas
 function normalizeToBrazilDate(date: Date): Date {
-  return new Date(date.toLocaleString('en-US', { timeZone: BRAZIL_TIMEZONE }));
+  // Simplesmente retornar uma cópia da data sem conversão problemática
+  // As datas já vêm do banco no formato correto (ISO UTC)
+  return new Date(date);
 }
 
 // Helper function to get start of day in Brazil timezone
 function getStartOfDayBrazil(date: Date): Date {
-  const normalized = normalizeToBrazilDate(date);
+  const normalized = new Date(date);
   normalized.setHours(0, 0, 0, 0);
   return normalized;
 }
@@ -66,8 +73,9 @@ async function hasUpcomingVisits(customerId: string): Promise<boolean> {
 // Função para calcular o dia da semana em português
 function getRouteDay(date: Date): string {
   const days = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-  const brazilDate = normalizeToBrazilDate(date);
-  return days[brazilDate.getDay()];
+  // CORREÇÃO: Usar diretamente getDay() sem conversão problemática de timezone
+  // A conversão via toLocaleString causava desvio de -1 dia
+  return days[date.getDay()];
 }
 
 // Função para gerar visitas para um cliente específico

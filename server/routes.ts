@@ -11167,6 +11167,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sincronização manual completa da agenda (recalcula e corrige todos os cards)
+  app.post('/api/admin/sync-agenda', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar sincronizações manuais
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Admin only." });
+      }
+      
+      console.log('🔄 Iniciando sincronização manual completa da agenda...');
+      
+      const { syncFutureSalesCards } = await import('./visitScheduleService');
+      const result = await syncFutureSalesCards(2);
+      
+      console.log('✅ Sincronização manual concluída!');
+      console.log('   Clientes processados:', result.processed);
+      console.log('   Cards criados:', result.created);
+      console.log('   Cards deletados:', result.deleted);
+      console.log('   Erros:', result.errors);
+      
+      res.json({
+        success: true,
+        message: 'Sincronização da agenda concluída com sucesso!',
+        ...result
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização manual:', error);
+      res.status(500).json({ 
+        message: 'Erro ao sincronizar agenda',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
