@@ -8,6 +8,7 @@
 
 export type VisitPeriodicity = 'semanal' | 'quinzenal' | 'mensal' | 'bimestral';
 export type Weekday = 'domingo' | 'segunda' | 'terca' | 'quarta' | 'quinta' | 'sexta' | 'sabado';
+export type WeekdayAbbr = 'Dom' | 'Seg' | 'Ter' | 'Qua' | 'Qui' | 'Sex' | 'Sab';
 
 const WEEKDAY_MAP: { [key in Weekday]: number } = {
   domingo: 0,
@@ -19,6 +20,51 @@ const WEEKDAY_MAP: { [key in Weekday]: number } = {
   sabado: 6
 };
 
+const WEEKDAY_ABBR_MAP: { [key in WeekdayAbbr]: number } = {
+  Dom: 0,
+  Seg: 1,
+  Ter: 2,
+  Qua: 3,
+  Qui: 4,
+  Sex: 5,
+  Sab: 6
+};
+
+/**
+ * Normaliza dias da semana de qualquer formato para o número do dia
+ * Aceita formatos completos (domingo, segunda, terca) e abreviados (Dom, Seg, Ter)
+ */
+function normalizeWeekday(day: string): number | null {
+  // Formato abreviado
+  if (day in WEEKDAY_ABBR_MAP) {
+    return WEEKDAY_ABBR_MAP[day as WeekdayAbbr];
+  }
+  
+  // Formato completo
+  if (day in WEEKDAY_MAP) {
+    return WEEKDAY_MAP[day as Weekday];
+  }
+  
+  // Formatos alternativos com acento ou hífen
+  const alternativeMap: { [key: string]: number } = {
+    'terça': 2,
+    'sábado': 6,
+    'segunda-feira': 1,
+    'terça-feira': 2,
+    'quarta-feira': 3,
+    'quinta-feira': 4,
+    'sexta-feira': 5,
+    'sábado': 6
+  };
+  
+  if (day in alternativeMap) {
+    return alternativeMap[day];
+  }
+  
+  console.warn(`⚠️ Dia da semana não reconhecido: "${day}"`);
+  return null;
+}
+
 const PERIODICITY_DAYS: { [key in VisitPeriodicity]: number } = {
   semanal: 7,
   quinzenal: 14,
@@ -27,7 +73,7 @@ const PERIODICITY_DAYS: { [key in VisitPeriodicity]: number } = {
 };
 
 export interface ScheduleInput {
-  weekdays: Weekday[];
+  weekdays: (Weekday | WeekdayAbbr | string)[];
   periodicity: VisitPeriodicity;
   lastCompletedDate?: Date;
   referenceDate?: Date;
@@ -49,7 +95,14 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     throw new Error('Cliente deve ter pelo menos um dia da semana configurado');
   }
 
-  const targetWeekdays = weekdays.map(day => WEEKDAY_MAP[day]);
+  const targetWeekdays = weekdays
+    .map(day => normalizeWeekday(day as string))
+    .filter((num): num is number => num !== null);
+  
+  if (targetWeekdays.length === 0) {
+    throw new Error('Nenhum dia da semana válido encontrado');
+  }
+
   const baseDate = referenceDate || new Date();
   const intervalDays = PERIODICITY_DAYS[periodicity];
 
@@ -143,9 +196,11 @@ function findNearestWeekday(targetDate: Date, targetWeekdays: number[]): Date {
  */
 export function isValidScheduledDate(
   scheduledDate: Date, 
-  weekdays: Weekday[]
+  weekdays: (Weekday | WeekdayAbbr | string)[]
 ): boolean {
-  const targetWeekdays = weekdays.map(day => WEEKDAY_MAP[day]);
+  const targetWeekdays = weekdays
+    .map(day => normalizeWeekday(day as string))
+    .filter((num): num is number => num !== null);
   return targetWeekdays.includes(scheduledDate.getDay());
 }
 
