@@ -87,8 +87,7 @@ export interface ScheduleResult {
 
 /**
  * Calcula a próxima data de visita baseada nas configurações do cliente
- * 
- * REGRA ESPECIAL: Clientes com MÚLTIPLOS dias configurados devem ser alocados para DOMINGO
+ * Suporta múltiplos dias da semana - escolhe o dia mais próximo disponível
  */
 export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   const { weekdays, periodicity, lastCompletedDate, referenceDate } = input;
@@ -105,19 +104,16 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     throw new Error('Nenhum dia da semana válido encontrado');
   }
 
-  // ⚠️ REGRA ESPECIAL: Clientes com múltiplos dias devem ser alocados para Domingo
-  const finalTargetWeekdays = targetWeekdays.length > 1 ? [0] : targetWeekdays; // 0 = Domingo
-
   const baseDate = referenceDate || new Date();
   const intervalDays = PERIODICITY_DAYS[periodicity];
 
   // Se não há última visita, encontrar o próximo dia válido da semana
   if (!lastCompletedDate) {
-    const nextDate = findNextWeekday(baseDate, finalTargetWeekdays);
+    const nextDate = findNextWeekday(baseDate, targetWeekdays);
     return {
       nextDate,
       interval: intervalDays,
-      reason: targetWeekdays.length > 1 ? 'override' : 'next_weekday'
+      reason: 'next_weekday'
     };
   }
 
@@ -126,12 +122,12 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   targetDate.setDate(targetDate.getDate() + intervalDays);
 
   // Ajustar para o dia da semana mais próximo
-  const adjustedDate = findNearestWeekday(targetDate, finalTargetWeekdays);
+  const adjustedDate = findNearestWeekday(targetDate, targetWeekdays);
 
   return {
     nextDate: adjustedDate,
     interval: intervalDays,
-    reason: targetWeekdays.length > 1 ? 'override' : 'periodicity_applied'
+    reason: 'periodicity_applied'
   };
 }
 
@@ -198,8 +194,7 @@ function findNearestWeekday(targetDate: Date, targetWeekdays: number[]): Date {
 
 /**
  * Valida se uma data agendada está alinhada com os dias da semana do cliente
- * 
- * REGRA ESPECIAL: Clientes com MÚLTIPLOS dias configurados devem ter visitas em DOMINGO
+ * Aceita múltiplos dias configurados - valida se a data está em qualquer um deles
  */
 export function isValidScheduledDate(
   scheduledDate: Date, 
@@ -208,11 +203,6 @@ export function isValidScheduledDate(
   const targetWeekdays = weekdays
     .map(day => normalizeWeekday(day as string))
     .filter((num): num is number => num !== null);
-  
-  // ⚠️ REGRA ESPECIAL: Clientes com múltiplos dias devem estar em Domingo
-  if (targetWeekdays.length > 1) {
-    return scheduledDate.getDay() === 0; // 0 = Domingo
-  }
   
   return targetWeekdays.includes(scheduledDate.getDay());
 }
