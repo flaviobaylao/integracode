@@ -10903,7 +10903,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId: defaultSeller.id, // ✅ Usar vendedor padrão para pedidos online
         scheduledDate,
         routeDay,
-        recurrenceType: 'unica',
+        recurrenceType: 'semanal', // ✅ Usar valor válido do enum
+        isRecurring: false, // ✅ Desabilitar recorrência para pedidos hotsite
         status: 'pending',
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
