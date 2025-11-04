@@ -70,11 +70,9 @@ async function hasUpcomingVisits(customerId: string): Promise<boolean> {
   return upcomingVisits.length > 0;
 }
 
-// Função para calcular o dia da semana em português
+// Função para calcular o dia da semana em português (formato abreviado)
 function getRouteDay(date: Date): string {
-  const days = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-  // CORREÇÃO: Usar diretamente getDay() sem conversão problemática de timezone
-  // A conversão via toLocaleString causava desvio de -1 dia
+  const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
   return days[date.getDay()];
 }
 

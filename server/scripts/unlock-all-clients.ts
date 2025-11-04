@@ -70,7 +70,7 @@ async function unlockAllClients() {
 
         const nextDate = result.nextDate;
         const dayOfWeek = nextDate.getDay();
-        const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+        const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
         const derivedRouteDay = weekdayNames[dayOfWeek];
 
         // Inserir próximo card

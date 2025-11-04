@@ -10870,7 +10870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Definir data agendada (data atual) e dia da semana
       const scheduledDate = new Date();
       const dayOfWeek = scheduledDate.getDay();
-      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
       const routeDay = weekdayNames[dayOfWeek];
       
       // Criar registro do pedido (usando sales_cards temporariamente)
@@ -11103,7 +11103,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ADMIN - Correção de dados
   // ============================================================================
   
-  // Corrigir dias da semana abreviados
+  // Converter TODOS os dias da semana para formato abreviado
   app.post('/api/admin/fix-weekday-names', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
@@ -11113,55 +11113,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
       
-      console.log('🔧 Iniciando correção de dias da semana abreviados...');
+      console.log('🔧 Convertendo TODOS os dias da semana para formato abreviado...');
       
-      // Corrigir sales_cards
+      // Converter sales_cards para formato abreviado
       const salesCardsResult = await db.execute(sql`
         UPDATE sales_cards
         SET route_day = CASE
-          WHEN route_day = 'Seg' THEN 'segunda'
-          WHEN route_day = 'Ter' THEN 'terca'
-          WHEN route_day = 'Qua' THEN 'quarta'
-          WHEN route_day = 'Qui' THEN 'quinta'
-          WHEN route_day = 'Sex' THEN 'sexta'
-          WHEN route_day = 'Sab' THEN 'sabado'
-          WHEN route_day = 'Dom' THEN 'domingo'
+          -- Dias completos em português
+          WHEN route_day = 'domingo' THEN 'Dom'
+          WHEN route_day = 'segunda' THEN 'Seg'
+          WHEN route_day = 'terca' THEN 'Ter'
+          WHEN route_day = 'quarta' THEN 'Qua'
+          WHEN route_day = 'quinta' THEN 'Qui'
+          WHEN route_day = 'sexta' THEN 'Sex'
+          WHEN route_day = 'sabado' THEN 'Sab'
+          -- Dias com hífen
+          WHEN route_day = 'segunda-feira' THEN 'Seg'
+          WHEN route_day = 'terça-feira' THEN 'Ter'
+          WHEN route_day = 'quarta-feira' THEN 'Qua'
+          WHEN route_day = 'quinta-feira' THEN 'Qui'
+          WHEN route_day = 'sexta-feira' THEN 'Sex'
+          WHEN route_day = 'sábado' THEN 'Sab'
+          -- Caso especial mencionado: múltiplos dias separados por vírgula → domingo
+          WHEN route_day LIKE '%,%' THEN 'Dom'
+          -- Já está no formato abreviado correto (manter)
+          WHEN route_day IN ('Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab') THEN route_day
+          -- Fallback: se não reconhecer, manter o valor original
           ELSE route_day
         END
-        WHERE route_day IN ('Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom')
+        WHERE route_day NOT IN ('Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab')
+           OR route_day IS NULL
       `);
       
-      // Corrigir visit_agenda
+      // Converter visit_agenda para formato abreviado
       const visitAgendaResult = await db.execute(sql`
         UPDATE visit_agenda
         SET route_day = CASE
-          WHEN route_day = 'Seg' THEN 'segunda'
-          WHEN route_day = 'Ter' THEN 'terca'
-          WHEN route_day = 'Qua' THEN 'quarta'
-          WHEN route_day = 'Qui' THEN 'quinta'
-          WHEN route_day = 'Sex' THEN 'sexta'
-          WHEN route_day = 'Sab' THEN 'sabado'
-          WHEN route_day = 'Dom' THEN 'domingo'
+          -- Dias completos em português
+          WHEN route_day = 'domingo' THEN 'Dom'
+          WHEN route_day = 'segunda' THEN 'Seg'
+          WHEN route_day = 'terca' THEN 'Ter'
+          WHEN route_day = 'quarta' THEN 'Qua'
+          WHEN route_day = 'quinta' THEN 'Qui'
+          WHEN route_day = 'sexta' THEN 'Sex'
+          WHEN route_day = 'sabado' THEN 'Sab'
+          -- Dias com hífen
+          WHEN route_day = 'segunda-feira' THEN 'Seg'
+          WHEN route_day = 'terça-feira' THEN 'Ter'
+          WHEN route_day = 'quarta-feira' THEN 'Qua'
+          WHEN route_day = 'quinta-feira' THEN 'Qui'
+          WHEN route_day = 'sexta-feira' THEN 'Sex'
+          WHEN route_day = 'sábado' THEN 'Sab'
+          -- Caso especial: múltiplos dias → domingo
+          WHEN route_day LIKE '%,%' THEN 'Dom'
+          -- Já está no formato abreviado correto (manter)
+          WHEN route_day IN ('Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab') THEN route_day
+          -- Fallback
           ELSE route_day
         END
-        WHERE route_day IN ('Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom')
+        WHERE route_day NOT IN ('Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab')
+           OR route_day IS NULL
       `);
       
-      console.log('✅ Correção concluída!');
-      console.log('   Sales Cards corrigidos:', salesCardsResult.rowCount);
-      console.log('   Visit Agenda corrigidos:', visitAgendaResult.rowCount);
+      console.log('✅ Conversão concluída!');
+      console.log('   Sales Cards convertidos:', salesCardsResult.rowCount);
+      console.log('   Visit Agenda convertidos:', visitAgendaResult.rowCount);
       
       res.json({
         success: true,
-        message: 'Dias da semana corrigidos com sucesso!',
+        message: 'Todos os dias da semana foram convertidos para formato abreviado!',
         salesCardsFixed: salesCardsResult.rowCount || 0,
         visitAgendaFixed: visitAgendaResult.rowCount || 0
       });
       
     } catch (error: any) {
-      console.error('❌ Erro ao corrigir dias da semana:', error);
+      console.error('❌ Erro ao converter dias da semana:', error);
       res.status(500).json({ 
-        message: 'Erro ao corrigir dias da semana',
+        message: 'Erro ao converter dias da semana',
         error: error.message 
       });
     }

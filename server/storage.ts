@@ -732,7 +732,7 @@ export class DatabaseStorage implements IStorage {
     if (!processedSalesCard.routeDay && processedSalesCard.scheduledDate) {
       const scheduledDate = new Date(processedSalesCard.scheduledDate);
       const dayOfWeek = scheduledDate.getDay();
-      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
       processedSalesCard.routeDay = weekdayNames[dayOfWeek];
     }
     
@@ -990,7 +990,7 @@ export class DatabaseStorage implements IStorage {
 
       // Derivar routeDay do scheduledDate
       const dayOfWeek = nextDate.getDay();
-      const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
       const derivedRouteDay = weekdayNames[dayOfWeek];
       
       // Verificar se já existe um card para este cliente nesta data (prevenir duplicatas)
@@ -3889,7 +3889,7 @@ export class DatabaseStorage implements IStorage {
 
           // Derivar routeDay da nova data
           const dayOfWeek = newScheduledDate.getDay();
-          const weekdayNames = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+          const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
           const derivedRouteDay = weekdayNames[dayOfWeek];
 
           // Atualizar card apenas se a data mudou
