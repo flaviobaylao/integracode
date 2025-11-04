@@ -87,6 +87,8 @@ export interface ScheduleResult {
 
 /**
  * Calcula a próxima data de visita baseada nas configurações do cliente
+ * 
+ * REGRA ESPECIAL: Clientes com MÚLTIPLOS dias configurados devem ser alocados para DOMINGO
  */
 export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   const { weekdays, periodicity, lastCompletedDate, referenceDate } = input;
@@ -103,16 +105,19 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     throw new Error('Nenhum dia da semana válido encontrado');
   }
 
+  // ⚠️ REGRA ESPECIAL: Clientes com múltiplos dias devem ser alocados para Domingo
+  const finalTargetWeekdays = targetWeekdays.length > 1 ? [0] : targetWeekdays; // 0 = Domingo
+
   const baseDate = referenceDate || new Date();
   const intervalDays = PERIODICITY_DAYS[periodicity];
 
   // Se não há última visita, encontrar o próximo dia válido da semana
   if (!lastCompletedDate) {
-    const nextDate = findNextWeekday(baseDate, targetWeekdays);
+    const nextDate = findNextWeekday(baseDate, finalTargetWeekdays);
     return {
       nextDate,
       interval: intervalDays,
-      reason: 'next_weekday'
+      reason: targetWeekdays.length > 1 ? 'override' : 'next_weekday'
     };
   }
 
@@ -121,12 +126,12 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   targetDate.setDate(targetDate.getDate() + intervalDays);
 
   // Ajustar para o dia da semana mais próximo
-  const adjustedDate = findNearestWeekday(targetDate, targetWeekdays);
+  const adjustedDate = findNearestWeekday(targetDate, finalTargetWeekdays);
 
   return {
     nextDate: adjustedDate,
     interval: intervalDays,
-    reason: 'periodicity_applied'
+    reason: targetWeekdays.length > 1 ? 'override' : 'periodicity_applied'
   };
 }
 
