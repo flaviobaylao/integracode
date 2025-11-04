@@ -198,6 +198,8 @@ function findNearestWeekday(targetDate: Date, targetWeekdays: number[]): Date {
 
 /**
  * Valida se uma data agendada está alinhada com os dias da semana do cliente
+ * 
+ * REGRA ESPECIAL: Clientes com MÚLTIPLOS dias configurados devem ter visitas em DOMINGO
  */
 export function isValidScheduledDate(
   scheduledDate: Date, 
@@ -206,6 +208,12 @@ export function isValidScheduledDate(
   const targetWeekdays = weekdays
     .map(day => normalizeWeekday(day as string))
     .filter((num): num is number => num !== null);
+  
+  // ⚠️ REGRA ESPECIAL: Clientes com múltiplos dias devem estar em Domingo
+  if (targetWeekdays.length > 1) {
+    return scheduledDate.getDay() === 0; // 0 = Domingo
+  }
+  
   return targetWeekdays.includes(scheduledDate.getDay());
 }
 
