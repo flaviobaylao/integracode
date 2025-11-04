@@ -11099,6 +11099,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // ADMIN - Correção de dados
+  // ============================================================================
+  
+  // Corrigir dias da semana abreviados
+  app.post('/api/admin/fix-weekday-names', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar correções de dados
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Admin only." });
+      }
+      
+      console.log('🔧 Iniciando correção de dias da semana abreviados...');
+      
+      // Corrigir sales_cards
+      const salesCardsResult = await db.execute(sql`
+        UPDATE sales_cards
+        SET route_day = CASE
+          WHEN route_day = 'Seg' THEN 'segunda'
+          WHEN route_day = 'Ter' THEN 'terca'
+          WHEN route_day = 'Qua' THEN 'quarta'
+          WHEN route_day = 'Qui' THEN 'quinta'
+          WHEN route_day = 'Sex' THEN 'sexta'
+          WHEN route_day = 'Sab' THEN 'sabado'
+          WHEN route_day = 'Dom' THEN 'domingo'
+          ELSE route_day
+        END
+        WHERE route_day IN ('Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom')
+      `);
+      
+      // Corrigir visit_agenda
+      const visitAgendaResult = await db.execute(sql`
+        UPDATE visit_agenda
+        SET route_day = CASE
+          WHEN route_day = 'Seg' THEN 'segunda'
+          WHEN route_day = 'Ter' THEN 'terca'
+          WHEN route_day = 'Qua' THEN 'quarta'
+          WHEN route_day = 'Qui' THEN 'quinta'
+          WHEN route_day = 'Sex' THEN 'sexta'
+          WHEN route_day = 'Sab' THEN 'sabado'
+          WHEN route_day = 'Dom' THEN 'domingo'
+          ELSE route_day
+        END
+        WHERE route_day IN ('Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom')
+      `);
+      
+      console.log('✅ Correção concluída!');
+      console.log('   Sales Cards corrigidos:', salesCardsResult.rowCount);
+      console.log('   Visit Agenda corrigidos:', visitAgendaResult.rowCount);
+      
+      res.json({
+        success: true,
+        message: 'Dias da semana corrigidos com sucesso!',
+        salesCardsFixed: salesCardsResult.rowCount || 0,
+        visitAgendaFixed: visitAgendaResult.rowCount || 0
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao corrigir dias da semana:', error);
+      res.status(500).json({ 
+        message: 'Erro ao corrigir dias da semana',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
