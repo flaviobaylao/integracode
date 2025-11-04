@@ -1917,11 +1917,63 @@ export class DatabaseStorage implements IStorage {
 
   // Criar próximo card de venda baseado na recorrência
   async createNextRecurringCard(parentCard: SalesCard): Promise<SalesCard> {
-    const nextDate = this.calculateNextScheduledDate(
-      parentCard.scheduledDate,
-      parentCard.routeDay,
-      parentCard.recurrenceType
-    );
+    // Buscar dados do cliente para usar weekdays e visitPeriodicity
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, parentCard.customerId));
+
+    if (!customer) {
+      throw new Error('Cliente não encontrado');
+    }
+
+    let nextDate: Date;
+    let derivedRouteDay: string;
+
+    // Usar o módulo de agendamento centralizado se cliente tiver weekdays e visitPeriodicity
+    if (customer.weekdays && customer.visitPeriodicity) {
+      const { calculateNextVisitDate } = await import('@shared/visitSchedule');
+      
+      let parsedWeekdays: string[] = [];
+      try {
+        parsedWeekdays = typeof customer.weekdays === 'string' 
+          ? JSON.parse(customer.weekdays) 
+          : customer.weekdays;
+      } catch (e) {
+        console.error('Erro ao parsear weekdays:', e);
+        parsedWeekdays = [];
+      }
+
+      if (parsedWeekdays.length > 0) {
+        const result = calculateNextVisitDate({
+          weekdays: parsedWeekdays as any[],
+          periodicity: customer.visitPeriodicity as any,
+          lastCompletedDate: parentCard.completedDate || parentCard.scheduledDate
+        });
+        nextDate = result.nextDate;
+        
+        // Derivar routeDay da data calculada
+        const dayOfWeek = nextDate.getDay();
+        const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+        derivedRouteDay = weekdayNames[dayOfWeek];
+      } else {
+        // Fallback para lógica antiga se weekdays não estiver configurado
+        nextDate = this.calculateNextScheduledDate(
+          parentCard.scheduledDate,
+          parentCard.routeDay,
+          parentCard.recurrenceType
+        );
+        derivedRouteDay = parentCard.routeDay;
+      }
+    } else {
+      // Fallback para lógica antiga se cliente não tiver novos campos
+      nextDate = this.calculateNextScheduledDate(
+        parentCard.scheduledDate,
+        parentCard.routeDay,
+        parentCard.recurrenceType
+      );
+      derivedRouteDay = parentCard.routeDay;
+    }
 
     const nextCard = {
       customerId: parentCard.customerId,
@@ -1929,7 +1981,7 @@ export class DatabaseStorage implements IStorage {
       scheduledDate: nextDate,
       status: 'pending' as const,
       products: parentCard.products,
-      routeDay: parentCard.routeDay,
+      routeDay: derivedRouteDay,
       recurrenceType: parentCard.recurrenceType,
       isRecurring: parentCard.isRecurring,
       parentCardId: parentCard.id,

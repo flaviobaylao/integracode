@@ -11175,40 +11175,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
            OR route_day IS NULL
       `);
       
-      // Converter customers.weekdays (JSON array) para formato abreviado
+      // Converter customers.weekdays (JSON array) para formato abreviado usando REPLACE
       const customersResult = await db.execute(sql`
         UPDATE customers
-        SET weekdays = (
-          SELECT json_agg(
-            CASE value::text
-              WHEN '"domingo"' THEN '"Dom"'
-              WHEN '"segunda"' THEN '"Seg"'
-              WHEN '"terca"' THEN '"Ter"'
-              WHEN '"terça"' THEN '"Ter"'
-              WHEN '"quarta"' THEN '"Qua"'
-              WHEN '"quinta"' THEN '"Qui"'
-              WHEN '"sexta"' THEN '"Sex"'
-              WHEN '"sabado"' THEN '"Sab"'
-              WHEN '"sábado"' THEN '"Sab"'
-              WHEN '"segunda-feira"' THEN '"Seg"'
-              WHEN '"terça-feira"' THEN '"Ter"'
-              WHEN '"quarta-feira"' THEN '"Qua"'
-              WHEN '"quinta-feira"' THEN '"Qui"'
-              WHEN '"sexta-feira"' THEN '"Sex"'
-              WHEN '"sábado"' THEN '"Sab"'
-              ELSE value::text
-            END
+        SET weekdays = 
+          REPLACE(
+            REPLACE(
+              REPLACE(
+                REPLACE(
+                  REPLACE(
+                    REPLACE(
+                      REPLACE(
+                        REPLACE(
+                          REPLACE(
+                            REPLACE(
+                              REPLACE(
+                                REPLACE(
+                                  REPLACE(
+                                    REPLACE(weekdays::text, 
+                                      '"domingo"', '"Dom"'),
+                                    '"segunda-feira"', '"Seg"'),
+                                  '"terça-feira"', '"Ter"'),
+                                '"quarta-feira"', '"Qua"'),
+                              '"quinta-feira"', '"Qui"'),
+                            '"sexta-feira"', '"Sex"'),
+                          '"sábado"', '"Sab"'),
+                        '"segunda"', '"Seg"'),
+                      '"terca"', '"Ter"'),
+                    '"terça"', '"Ter"'),
+                  '"quarta"', '"Qua"'),
+                '"quinta"', '"Qui"'),
+              '"sexta"', '"Sex"'),
+            '"sabado"', '"Sab"'
           )::jsonb
-          FROM jsonb_array_elements(weekdays::jsonb)
-        )
         WHERE weekdays IS NOT NULL
-          AND weekdays::text NOT LIKE '%"Dom"%'
-          AND weekdays::text NOT LIKE '%"Seg"%'
-          AND weekdays::text NOT LIKE '%"Ter"%'
-          AND weekdays::text NOT LIKE '%"Qua"%'
-          AND weekdays::text NOT LIKE '%"Qui"%'
-          AND weekdays::text NOT LIKE '%"Sex"%'
-          AND weekdays::text NOT LIKE '%"Sab"%'
+          AND (
+            weekdays::text LIKE '%"domingo"%' OR
+            weekdays::text LIKE '%"segunda"%' OR
+            weekdays::text LIKE '%"terca"%' OR
+            weekdays::text LIKE '%"terça"%' OR
+            weekdays::text LIKE '%"quarta"%' OR
+            weekdays::text LIKE '%"quinta"%' OR
+            weekdays::text LIKE '%"sexta"%' OR
+            weekdays::text LIKE '%"sabado"%' OR
+            weekdays::text LIKE '%"sábado"%' OR
+            weekdays::text LIKE '%"-feira"%'
+          )
       `);
       
       console.log('✅ Conversão concluída!');
