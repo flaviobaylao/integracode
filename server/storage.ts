@@ -2576,48 +2576,36 @@ export class DatabaseStorage implements IStorage {
       let overdueDebtRatio = 0;
       
       if (prefixedSellerId && revenueProjection > 0) {
-        // Buscar CPFs e CNPJs da carteira do vendedor (sem formatação)
-        const customerDocsResult = await db.execute(sql`
-          SELECT cpf, cnpj FROM customers
-          WHERE seller_id = ${prefixedSellerId}
-            AND omie_status = 'ativo'
+        // Buscar débitos vencidos da carteira usando JOIN
+        const overdueDebtsResult = await db.execute(sql`
+          SELECT 
+            od.client_document,
+            od.total_amount
+          FROM overdue_debts od
+          INNER JOIN customers c ON (
+            REPLACE(REPLACE(REPLACE(od.client_document, '.', ''), '-', ''), '/', '') = 
+            COALESCE(c.cpf, c.cnpj)
+          )
+          WHERE c.seller_id = ${prefixedSellerId}
+            AND c.omie_status = 'ativo'
         `);
 
-        const sellerCustomerDocs = customerDocsResult.rows
-          .map((c: any) => {
-            // Retornar CPF ou CNPJ sem formatação
-            const doc = c.cpf || c.cnpj;
-            if (!doc) return null;
-            // Remover pontos, traços e barras para comparação
-            return doc.replace(/[.\-/]/g, '');
-          })
-          .filter(Boolean);
+        const totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
+          const value = parseFloat(debt.total_amount?.toString() || '0');
+          return sum + (isNaN(value) ? 0 : value);
+        }, 0);
 
-        if (sellerCustomerDocs.length > 0) {
-          // Buscar débitos vencidos dos clientes da carteira
-          // Comparar com client_document após remover formatação
-          const overdueDebtsResult = await db.execute(sql`
-            SELECT id, client_document, total_amount
-            FROM overdue_debts
-            WHERE REPLACE(REPLACE(REPLACE(client_document, '.', ''), '-', ''), '/', '') = ANY(${sellerCustomerDocs})
-          `);
-
-          const totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
-            const value = parseFloat(debt.total_amount?.toString() || '0');
-            return sum + (isNaN(value) ? 0 : value);
-          }, 0);
-
+        if (totalOverdueDebt > 0) {
           overdueDebtRatio = (totalOverdueDebt / revenueProjection) * 100;
-          
-          console.log(`  📉 DÉBITO VENCIDO:`, {
-            totalOverdueDebt: totalOverdueDebt.toFixed(2),
-            revenueProjection: revenueProjection.toFixed(2),
-            overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
-            overdueDebtsCount: overdueDebtsResult.rows.length,
-            customersInRoute: sellerCustomerDocs.length,
-            formula: `${totalOverdueDebt.toFixed(2)} / ${revenueProjection.toFixed(2)} * 100`
-          });
         }
+        
+        console.log(`  📉 DÉBITO VENCIDO:`, {
+          totalOverdueDebt: totalOverdueDebt.toFixed(2),
+          revenueProjection: revenueProjection.toFixed(2),
+          overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
+          overdueDebtsCount: overdueDebtsResult.rows.length,
+          formula: `${totalOverdueDebt.toFixed(2)} / ${revenueProjection.toFixed(2)} * 100`
+        });
       }
 
       // === 4. META DE ATENDIMENTO: Média do percentual de visitas efetuadas dia a dia ===
