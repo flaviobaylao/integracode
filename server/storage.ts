@@ -2495,6 +2495,8 @@ export class DatabaseStorage implements IStorage {
         FROM billings
         WHERE invoice_date >= ${startOfMonth}
           AND invoice_date <= ${endOfMonth}
+          AND invoice_status = '100'
+          AND is_cancelled = false
           ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
       `);
       
