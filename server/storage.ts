@@ -2529,23 +2529,19 @@ export class DatabaseStorage implements IStorage {
         ? (positivatedCustomers / totalCustomersInRoute) * 100 
         : 0;
 
-      // === 2. VENDAS: Somar faturamentos EXCLUINDO trocas, amostras e bonificações ===
-      // CFOPs a excluir:
-      // - Trocas: 5.949, 6.949
-      // - Amostras: 5.911, 6.911
-      // - Bonificações: 5.910, 6.910, 5.915
-      const excludedCFOPs = [
-        '5.949', '5949', '6.949', '6949',  // Trocas
-        '5.911', '5911', '6.911', '6911',  // Amostras
-        '5.910', '5910', '6.910', '6910', '5.915', '5915'  // Bonificações
+      // === 2. VENDAS: Somar faturamentos INCLUINDO apenas CFOPs de venda ===
+      // CFOPs a INCLUIR (mesma lógica do Omie):
+      // - 5.101 / 5101: Venda de Producao do Estabelecimento
+      // - 1.201 / 1201: Devolucao de Venda de Producao do Estabelecimento
+      const includedCFOPs = [
+        '5.101', '5101',  // Venda de produção
+        '1.201', '1201'   // Devolução de venda
       ];
 
       const validBillings = monthBillings.rows.filter((billing: any) => {
-        // Se cfop é NULL/vazio, INCLUIR o billing (não excluir)
-        // Se cfop está preenchido, verificar se NÃO está na lista de exclusão
         const cfop = (billing.cfop ?? '').toString().trim();
-        if (cfop === '') return true; // Se vazio, incluir
-        return !excludedCFOPs.includes(cfop); // Se preenchido, verificar se não é exclusão
+        // Incluir apenas se o CFOP estiver na lista permitida
+        return cfop !== '' && includedCFOPs.includes(cfop);
       });
       
       console.log(`  🔍 FILTRO CFOP:`, {
