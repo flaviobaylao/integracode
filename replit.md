@@ -44,6 +44,7 @@
     - **Vendor Assignment**: Correctly extracts and includes vendor codes from `sellerId` in `cabecalho.codigo_vendedor` when sending orders to Omie.
 - **Sync Status Tracking**: Tracks and displays last synchronization date/time for major sync operations via a `sync_status` table, with a dedicated display component.
 - **Sales Goals Dashboard**: Displays individual seller metrics using aggregated SQL queries.
+    - **CFOP Filtering Logic (Fixed Nov 2025)**: Revenue calculation previously excluded ALL billings with `cfop = NULL` (checking `billing.cfop && !excludedCFOPs.includes(billing.cfop)`). Fixed to include NULL/empty CFOP billings by default, only excluding specific CFOPs when present (trocas: 5.949/6.949, amostras: 5.911/6.911, bonificações: 5.910/6.910/5.915). This resolved zero revenue metrics despite confirmed billing data in database.
 - **HR Management (RH)**: HR tracking system for seller performance, accessible at `/rh`.
     - **Monthly Mileage Tracking**: Aggregates daily route distances per seller.
     - **Work Hours Management**: Calculates daily work hours, deducting lunch, and compares against expected hours.

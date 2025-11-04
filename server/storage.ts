@@ -2489,9 +2489,24 @@ export class DatabaseStorage implements IStorage {
         '5.910', '5910', '6.910', '6910', '5.915', '5915'  // Bonificações
       ];
 
-      const validBillings = monthBillings.rows.filter((billing: any) => 
-        billing.cfop && !excludedCFOPs.includes(billing.cfop)
-      );
+      const validBillings = monthBillings.rows.filter((billing: any) => {
+        // Se cfop é NULL/vazio, INCLUIR o billing (não excluir)
+        // Se cfop está preenchido, verificar se NÃO está na lista de exclusão
+        const cfop = (billing.cfop ?? '').toString().trim();
+        if (cfop === '') return true; // Se vazio, incluir
+        return !excludedCFOPs.includes(cfop); // Se preenchido, verificar se não é exclusão
+      });
+      
+      console.log(`  🔍 FILTRO CFOP:`, {
+        total: monthBillings.rows.length,
+        afterFilter: validBillings.length,
+        excluded: monthBillings.rows.length - validBillings.length,
+        nullCfops: monthBillings.rows.filter((b: any) => !b.cfop).length,
+        sample: monthBillings.rows.slice(0, 2).map((b: any) => ({
+          cfop: b.cfop,
+          isEmpty: !b.cfop || b.cfop.trim() === ''
+        }))
+      });
 
       const totalRevenue = validBillings.reduce((sum: number, billing: any) => {
         const value = parseFloat(billing.total_value?.toString() || '0');
