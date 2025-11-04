@@ -11316,6 +11316,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Diagnóstico e correção automática de cards com datas inconsistentes
+  app.post('/api/admin/validate-cards', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Admin only." });
+      }
+
+      const { autoFix = false } = req.body;
+
+      console.log('🔍 Iniciando diagnóstico de cards...');
+
+      // Buscar todos os cards futuros
+      const allCards = await db
+        .select()
+        .from(salesCards)
+        .leftJoin(customers, eq(salesCards.customerId, customers.id))
+        .where(gte(salesCards.scheduledDate, new Date()))
+        .orderBy(salesCards.scheduledDate);
+
+      const inconsistencies: any[] = [];
+      const corrections: any[] = [];
+
+      for (const row of allCards) {
+        const card = row.sales_cards;
+        const customer = row.customers;
+
+        if (!customer || !customer.weekdays) continue;
+
+        let customerWeekdays: string[] = [];
+        try {
+          customerWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays || [];
+        } catch (e) {
+          continue;
+        }
+
+        if (customerWeekdays.length === 0) continue;
+
+        // Verificar se o dia do card está alinhado com os weekdays do cliente
+        const scheduledDate = new Date(card.scheduledDate);
+        const scheduledDayOfWeek = scheduledDate.getDay();
+        const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+        const scheduledDayName = weekdayNames[scheduledDayOfWeek];
+
+        if (!customerWeekdays.includes(scheduledDayName)) {
+          const inconsistency = {
+            cardId: card.id,
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            scheduledDate: card.scheduledDate,
+            scheduledDay: scheduledDayName,
+            expectedDays: customerWeekdays.join(', '),
+            routeDay: card.routeDay,
+            status: card.status
+          };
+
+          inconsistencies.push(inconsistency);
+
+          // Se autoFix = true, corrigir a data
+          if (autoFix) {
+            // Importar calculateNextVisitDate (apenas uma vez fora do loop seria melhor, mas funciona)
+            const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+
+            // CRÍTICO: Usar a própria scheduledDate do card como referência para manter o período correto
+            // Isso garante que cards de dezembro continuem em dezembro, não sejam puxados para hoje
+            const correctedResult = calculateNextVisitDate({
+              weekdays: customerWeekdays,
+              periodicity: (card.recurrenceType as any) || 'semanal',
+              referenceDate: new Date(card.scheduledDate) // Usar data original como base
+            });
+
+            // Atualizar o card
+            await db
+              .update(salesCards)
+              .set({
+                scheduledDate: correctedResult.nextDate,
+                routeDay: weekdayNames[correctedResult.nextDate.getDay()]
+              })
+              .where(eq(salesCards.id, card.id));
+
+            corrections.push({
+              ...inconsistency,
+              newDate: correctedResult.nextDate,
+              newDay: weekdayNames[correctedResult.nextDate.getDay()]
+            });
+          }
+        }
+      }
+
+      res.json({
+        totalCards: allCards.length,
+        inconsistencies: inconsistencies.length,
+        corrected: corrections.length,
+        details: autoFix ? corrections : inconsistencies,
+        message: autoFix 
+          ? `${corrections.length} cards corrigidos automaticamente`
+          : `${inconsistencies.length} inconsistências detectadas`
+      });
+
+    } catch (error) {
+      console.error("Error validating cards:", error);
+      res.status(500).json({ message: "Failed to validate cards" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

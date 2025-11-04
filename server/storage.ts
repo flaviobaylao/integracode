@@ -736,6 +736,38 @@ export class DatabaseStorage implements IStorage {
       processedSalesCard.routeDay = weekdayNames[dayOfWeek];
     }
     
+    // VALIDAÇÃO CRÍTICA: Verificar se o dia agendado está alinhado com os weekdays do cliente
+    if (processedSalesCard.customerId && processedSalesCard.scheduledDate) {
+      const customer = await this.getCustomer(processedSalesCard.customerId);
+      
+      if (customer && customer.weekdays) {
+        let customerWeekdays: string[] = [];
+        try {
+          customerWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays || [];
+        } catch (e) {
+          console.warn(`⚠️ Cliente ${customer.id} tem weekdays inválido, pulando validação`);
+          customerWeekdays = []; // Garantir que seja array vazio
+        }
+        
+        if (customerWeekdays.length > 0) {
+          const scheduledDate = new Date(processedSalesCard.scheduledDate);
+          const scheduledDayOfWeek = scheduledDate.getDay();
+          const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+          const scheduledDayName = weekdayNames[scheduledDayOfWeek];
+          
+          // Verificar se o dia agendado está na lista de weekdays do cliente
+          if (!customerWeekdays.includes(scheduledDayName)) {
+            console.error(`❌ ERRO DE VALIDAÇÃO: Tentativa de criar card para ${customer.fantasyName || customer.name} em ${scheduledDayName} (${processedSalesCard.scheduledDate}), mas cliente só atende em: ${customerWeekdays.join(', ')}`);
+            throw new Error(`Data agendada (${scheduledDayName}) não está nos dias de atendimento do cliente (${customerWeekdays.join(', ')})`);
+          }
+          
+          console.log(`✅ Validação OK: Card para ${customer.fantasyName || customer.name} agendado para ${scheduledDayName} está alinhado com weekdays [${customerWeekdays.join(', ')}]`);
+        }
+      }
+    }
+    
     // Sempre definir attendanceStartDate como data atual de criação
     if (!processedSalesCard.attendanceStartDate) {
       processedSalesCard.attendanceStartDate = new Date();
