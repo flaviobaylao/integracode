@@ -1914,6 +1914,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
               continue;
             }
 
+            // Ler routeDay da planilha para definir weekdays do cliente
+            let clientWeekdays: string[] = [];
+            const routeDayColCreate = row['ROTA'] || row['Rota'] || row['rota'] || row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'];
+            
+            if (routeDayColCreate) {
+              const dayStr = routeDayColCreate.toString().toLowerCase().trim();
+              const dayMap: Record<string, string> = {
+                'segunda': 'Seg', 'segunda-feira': 'Seg', 'segunda feira': 'Seg', 'seg': 'Seg',
+                'terça': 'Ter', 'terca': 'Ter', 'terça-feira': 'Ter', 'terca-feira': 'Ter', 'terça feira': 'Ter', 'terca feira': 'Ter', 'ter': 'Ter',
+                'quarta': 'Qua', 'quarta-feira': 'Qua', 'quarta feira': 'Qua', 'qua': 'Qua',
+                'quinta': 'Qui', 'quinta-feira': 'Qui', 'quinta feira': 'Qui', 'qui': 'Qui',
+                'sexta': 'Sex', 'sexta-feira': 'Sex', 'sexta feira': 'Sex', 'sex': 'Sex',
+                'sábado': 'Sab', 'sabado': 'Sab', 'sab': 'Sab',
+                'domingo': 'Dom', 'dom': 'Dom'
+              };
+              
+              const normalizedDay = dayMap[dayStr];
+              if (normalizedDay) {
+                clientWeekdays = [normalizedDay];
+              }
+            }
+            
             // Criar cliente com dados da Receita
             customer = await storage.createCustomer({
               cnpj: receitaData.cnpj,
@@ -1928,10 +1950,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               state: receitaData.uf || '',
               zipCode: receitaData.cep || '',
               sellerId: user.role === 'vendedor' ? user.id : (row.Vendedor || user.id),
-              weekdays: (row['Dias da Semana'] || row['dias da semana']) ? JSON.stringify(
-                (row['Dias da Semana'] || row['dias da semana']).toString().split(',').map((d: string) => d.trim().toLowerCase())
-              ) : JSON.stringify([]),
-              visitPeriodicity: (row.Periodicidade || row.periodicidade)?.toLowerCase() || 'semanal'
+              weekdays: JSON.stringify(clientWeekdays),
+              visitPeriodicity: (row.Periodicidade || row.periodicidade || row.FREQUENCIA || row.frequencia)?.toLowerCase() || 'semanal'
             });
             
             results.created++;
@@ -1940,14 +1960,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Atualizar weekdays e periodicidade se fornecidos
             const updateData: any = {};
             
-            const weekdaysCol = row['Dias da Semana'] || row['dias da semana'];
-            if (weekdaysCol) {
-              updateData.weekdays = JSON.stringify(
-                weekdaysCol.toString().split(',').map((d: string) => d.trim().toLowerCase())
-              );
+            // Priorizar coluna ROTA para definir weekdays do cliente
+            const routeDayColUpdate = row['ROTA'] || row['Rota'] || row['rota'] || row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'];
+            
+            if (routeDayColUpdate) {
+              const dayStr = routeDayColUpdate.toString().toLowerCase().trim();
+              const dayMap: Record<string, string> = {
+                'segunda': 'Seg', 'segunda-feira': 'Seg', 'segunda feira': 'Seg', 'seg': 'Seg',
+                'terça': 'Ter', 'terca': 'Ter', 'terça-feira': 'Ter', 'terca-feira': 'Ter', 'terça feira': 'Ter', 'terca feira': 'Ter', 'ter': 'Ter',
+                'quarta': 'Qua', 'quarta-feira': 'Qua', 'quarta feira': 'Qua', 'qua': 'Qua',
+                'quinta': 'Qui', 'quinta-feira': 'Qui', 'quinta feira': 'Qui', 'qui': 'Qui',
+                'sexta': 'Sex', 'sexta-feira': 'Sex', 'sexta feira': 'Sex', 'sex': 'Sex',
+                'sábado': 'Sab', 'sabado': 'Sab', 'sab': 'Sab',
+                'domingo': 'Dom', 'dom': 'Dom'
+              };
+              
+              const normalizedDay = dayMap[dayStr];
+              if (normalizedDay) {
+                updateData.weekdays = JSON.stringify([normalizedDay]);
+                console.log(`✅ Atualizando weekdays do cliente ${customer.fantasyName}: "${routeDayColUpdate}" → "${normalizedDay}"`);
+              }
             }
             
-            const periodicityCol = row.Periodicidade || row.periodicidade;
+            const periodicityCol = row.Periodicidade || row.periodicidade || row.FREQUENCIA || row.frequencia;
             if (periodicityCol) {
               updateData.visitPeriodicity = periodicityCol.toLowerCase();
             }
