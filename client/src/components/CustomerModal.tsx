@@ -300,26 +300,13 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const handleWeekdayToggle = (weekday: string) => {
     const currentWeekdays = JSON.parse(form.getValues('weekdays') || '[]');
-    const periodicity = form.getValues('visitPeriodicity');
     
     if (currentWeekdays.includes(weekday)) {
       // Remove o dia se já estiver selecionado
       const newWeekdays = currentWeekdays.filter((w: string) => w !== weekday);
       form.setValue('weekdays', JSON.stringify(newWeekdays));
     } else {
-      // Se periodicidade é semanal, permitir 2 dias. Senão, apenas 1 dia.
-      const maxDays = periodicity === 'semanal' ? 2 : 1;
-      
-      if (currentWeekdays.length >= maxDays) {
-        toast({
-          title: "Limite atingido",
-          description: periodicity === 'semanal' 
-            ? "Clientes com frequência semanal podem ter no máximo 2 dias de visita."
-            : "Clientes com frequência quinzenal, mensal ou bimestral podem ter apenas 1 dia de visita.",
-          variant: "destructive",
-        });
-        return;
-      }
+      // Adiciona o dia - permite múltiplos dias
       const newWeekdays = [...currentWeekdays, weekday];
       form.setValue('weekdays', JSON.stringify(newWeekdays));
     }
@@ -873,19 +860,15 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     control={form.control}
                     name="weekdays"
                     render={() => {
-                      const periodicity = form.getValues('visitPeriodicity');
-                      const maxDays = periodicity === 'semanal' ? 2 : 1;
                       return (
                       <FormItem>
                         <FormLabel className="flex items-center space-x-1">
                           <Calendar className="h-4 w-4" />
-                          <span>Dias de Visita {periodicity === 'semanal' ? '(máximo 2 dias)' : '(1 dia apenas)'}</span>
+                          <span>Dias de Visita (selecione um ou mais)</span>
                         </FormLabel>
                         <FormDescription className="text-xs">
                           {canManageRouteAndPeriodicity 
-                            ? (periodicity === 'semanal' 
-                              ? "Selecione até 2 dias da semana para visita ao cliente" 
-                              : "Selecione apenas 1 dia da semana para visita ao cliente")
+                            ? "Selecione os dias da semana em que o cliente pode receber visitas. Você pode selecionar múltiplos dias."
                             : "Apenas administradores podem alterar os dias de visita"}
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
