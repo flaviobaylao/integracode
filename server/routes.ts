@@ -1974,16 +1974,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const routeDayCol = row['ROTA'] || row['Rota'] || row['rota'] || row['Dia da Rota'] || row['dia da rota'] || row['DIA DA ROTA'] || row['Dia'] || row['dia'];
           
           if (routeDayCol) {
-            // Normalizar dia da semana da planilha
+            // Normalizar dia da semana da planilha para formato abreviado padronizado (Seg, Ter, Qua, Qui, Sex, Sab, Dom)
             const dayStr = routeDayCol.toString().toLowerCase().trim();
             const dayMap: Record<string, string> = {
-              'segunda': 'segunda', 'segunda-feira': 'segunda', 'segunda feira': 'segunda', 'seg': 'segunda',
-              'terça': 'terca', 'terca': 'terca', 'terça-feira': 'terca', 'terca-feira': 'terca', 'terça feira': 'terca', 'terca feira': 'terca', 'ter': 'terca',
-              'quarta': 'quarta', 'quarta-feira': 'quarta', 'quarta feira': 'quarta', 'qua': 'quarta',
-              'quinta': 'quinta', 'quinta-feira': 'quinta', 'quinta feira': 'quinta', 'qui': 'quinta',
-              'sexta': 'sexta', 'sexta-feira': 'sexta', 'sexta feira': 'sexta', 'sex': 'sexta',
-              'sábado': 'sabado', 'sabado': 'sabado', 'sab': 'sabado',
-              'domingo': 'domingo', 'dom': 'domingo'
+              'segunda': 'Seg', 'segunda-feira': 'Seg', 'segunda feira': 'Seg', 'seg': 'Seg',
+              'terça': 'Ter', 'terca': 'Ter', 'terça-feira': 'Ter', 'terca-feira': 'Ter', 'terça feira': 'Ter', 'terca feira': 'Ter', 'ter': 'Ter',
+              'quarta': 'Qua', 'quarta-feira': 'Qua', 'quarta feira': 'Qua', 'qua': 'Qua',
+              'quinta': 'Qui', 'quinta-feira': 'Qui', 'quinta feira': 'Qui', 'qui': 'Qui',
+              'sexta': 'Sex', 'sexta-feira': 'Sex', 'sexta feira': 'Sex', 'sex': 'Sex',
+              'sábado': 'Sab', 'sabado': 'Sab', 'sab': 'Sab',
+              'domingo': 'Dom', 'dom': 'Dom'
             };
             
             const normalizedDay = dayMap[dayStr];
@@ -1992,25 +1992,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`✅ Dia da rota lido da planilha: "${routeDayCol}" → "${routeDay}" para cliente ${customer.fantasyName}`);
             } else {
               // Valor não reconhecido, usar fallback segunda-feira
-              routeDay = 'segunda';
-              console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando fallback: "segunda" para cliente ${customer.fantasyName}`);
+              routeDay = 'Seg';
+              console.log(`⚠️ Dia da rota "${routeDayCol}" não reconhecido na planilha, usando fallback: "Seg" para cliente ${customer.fantasyName}`);
             }
           } else {
             // Fallback: usar próxima segunda-feira
-            routeDay = 'segunda';
+            routeDay = 'Seg';
             console.log(`⚠️ Dia da rota não encontrado na planilha, usando fallback: "${routeDay}" para cliente ${customer.fantasyName}`);
           }
 
           // Calcular scheduledDate baseado no routeDay da planilha
           // Mapear routeDay para número do dia da semana (0=domingo, 1=segunda, etc.)
           const routeDayToNumber: Record<string, number> = {
-            'domingo': 0,
-            'segunda': 1,
-            'terca': 2,
-            'quarta': 3,
-            'quinta': 4,
-            'sexta': 5,
-            'sabado': 6
+            'Dom': 0,
+            'Seg': 1,
+            'Ter': 2,
+            'Qua': 3,
+            'Qui': 4,
+            'Sex': 5,
+            'Sab': 6
           };
           
           const targetDayNumber = routeDayToNumber[routeDay];
