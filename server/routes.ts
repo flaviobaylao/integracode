@@ -1735,47 +1735,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      const db = storage['db'];
+      // Buscar pedidos com source='hotsite' usando o storage
+      const allCards = await storage.getSalesCards({});
+      console.log('📊 [HOTSITE-ORDERS] Total de sales_cards:', allCards.length);
       
-      // Debug: buscar TODOS os pedidos para ver se há algum
-      const allOrders = await db.select().from(salesCards);
-      console.log('📊 [HOTSITE-ORDERS] Total de sales_cards no banco:', allOrders.length);
+      // Filtrar apenas pedidos do hotsite
+      const hotsiteOrders = allCards.filter(card => card.source === 'hotsite');
+      console.log('📊 [HOTSITE-ORDERS] Sales_cards com source="hotsite":', hotsiteOrders.length);
       
-      // Debug: verificar quantos têm source definido
-      const ordersWithSource = allOrders.filter(o => o.source);
-      console.log('📊 [HOTSITE-ORDERS] Sales_cards com source definido:', ordersWithSource.length);
-      
-      // Debug: verificar quantos têm source='hotsite'
-      const hotsiteCount = allOrders.filter(o => o.source === 'hotsite');
-      console.log('📊 [HOTSITE-ORDERS] Sales_cards com source="hotsite":', hotsiteCount.length);
-      
-      // Debug: pegar exemplos de diferentes sources
-      const sourceExamples = allOrders.slice(0, 10).map(o => ({
-        id: o.id.substring(0, 8),
-        source: o.source,
-        status: o.status,
-        date: o.scheduledDate
-      }));
-      
-      const hotsiteOrders = await db
-        .select()
-        .from(salesCards)
-        .where(eq(salesCards.source, 'hotsite'))
-        .orderBy(desc(salesCards.scheduledDate));
+      // Ordenar por data
+      hotsiteOrders.sort((a, b) => {
+        const dateA = new Date(a.scheduledDate).getTime();
+        const dateB = new Date(b.scheduledDate).getTime();
+        return dateB - dateA; // Mais recentes primeiro
+      });
       
       console.log('✅ [HOTSITE-ORDERS] Retornando', hotsiteOrders.length, 'pedidos');
       
-      // Adicionar informações de debug na resposta
-      res.json({
-        orders: hotsiteOrders,
-        debug: {
-          totalOrders: allOrders.length,
-          ordersWithSource: ordersWithSource.length,
-          hotsiteOrders: hotsiteCount.length,
-          sourceExamples: sourceExamples,
-          timestamp: new Date().toISOString()
-        }
-      });
+      res.json({ orders: hotsiteOrders });
     } catch (error) {
       console.error("❌ [HOTSITE-ORDERS] Error fetching hotsite orders:", error);
       res.status(500).json({ message: "Failed to fetch hotsite orders" });
