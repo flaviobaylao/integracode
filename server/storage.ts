@@ -2572,10 +2572,10 @@ export class DatabaseStorage implements IStorage {
         projection: revenueProjection.toFixed(2)
       });
 
-      // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Vendas da carteira ===
+      // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Projeção de faturamento ===
       let overdueDebtRatio = 0;
       
-      if (prefixedSellerId && totalRevenue > 0) {
+      if (prefixedSellerId && revenueProjection > 0) {
         // Buscar débitos vencidos da carteira do vendedor usando SQL raw
         const customerDocsResult = await db.execute(sql`
           SELECT document FROM customers
@@ -2600,13 +2600,14 @@ export class DatabaseStorage implements IStorage {
             return sum + (isNaN(value) ? 0 : value);
           }, 0);
 
-          overdueDebtRatio = (totalOverdueDebt / totalRevenue) * 100;
+          overdueDebtRatio = (totalOverdueDebt / revenueProjection) * 100;
           
           console.log(`  📉 DÉBITO VENCIDO:`, {
             totalOverdueDebt: totalOverdueDebt.toFixed(2),
-            totalRevenue: totalRevenue.toFixed(2),
+            revenueProjection: revenueProjection.toFixed(2),
             overdueDebtRatio: overdueDebtRatio.toFixed(2) + '%',
-            overdueDebtsCount: overdueDebtsResult.rows.length
+            overdueDebtsCount: overdueDebtsResult.rows.length,
+            formula: `${totalOverdueDebt.toFixed(2)} / ${revenueProjection.toFixed(2)} * 100`
           });
         }
       }
