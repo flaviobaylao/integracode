@@ -2624,19 +2624,13 @@ export class DatabaseStorage implements IStorage {
         scheduledDate: new Date(row.scheduled_date)
       }));
 
-      // Agrupar por dia e calcular percentual de atendimento diário
+      // Agrupar por dia ÚTIL e calcular percentual de atendimento diário
       const dailyServiceRates: number[] = [];
       
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dayDate = new Date(targetYear, targetMonth - 1, day);
-        
-        // Pular se for domingo ou dia futuro
-        if (dayDate.getDay() === 0 || dayDate > currentDate) {
-          continue;
-        }
-
-        const dayStart = new Date(targetYear, targetMonth - 1, day, 0, 0, 0);
-        const dayEnd = new Date(targetYear, targetMonth - 1, day, 23, 59, 59);
+      // Iterar apenas pelos dias úteis já decorridos
+      for (const workingDay of workingDays.filter(date => date <= currentDate)) {
+        const dayStart = new Date(workingDay.getFullYear(), workingDay.getMonth(), workingDay.getDate(), 0, 0, 0);
+        const dayEnd = new Date(workingDay.getFullYear(), workingDay.getMonth(), workingDay.getDate(), 23, 59, 59);
 
         const dayCards = monthSalesCards.filter(card => {
           const cardDate = new Date(card.scheduledDate);
@@ -2651,10 +2645,17 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      // Média dos percentuais diários
+      // Média dos percentuais diários (apenas dias úteis com atendimentos)
       const serviceRate = dailyServiceRates.length > 0
         ? dailyServiceRates.reduce((sum, rate) => sum + rate, 0) / dailyServiceRates.length
         : 0;
+      
+      console.log(`  📈 ATENDIMENTO:`, {
+        totalWorkingDaysElapsed: workingDaysElapsed,
+        daysWithCards: dailyServiceRates.length,
+        dailyRates: dailyServiceRates.map(r => r.toFixed(1) + '%').join(', '),
+        serviceRate: serviceRate.toFixed(2) + '%'
+      });
 
       console.log(`  📊 RESUMO FINAL:`, {
         sellerId: prefixedSellerId,
