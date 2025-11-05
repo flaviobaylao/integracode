@@ -84,27 +84,35 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
   };
 
-  // Verificar se cliente já existe quando email ou telefone for preenchido
+  // Verificar se cliente já existe quando email, telefone ou CPF for preenchido
   const checkExistingCustomer = useCallback(async () => {
     const email = formData.email?.trim();
     const phone = formData.phone.replace(/\D/g, '');
+    const cpf = formData.cpfCnpj?.replace(/\D/g, '');
 
-    // Resetar estado se ambos os campos estiverem vazios
-    if (!email && !phone) {
+    // Resetar estado se todos os campos estiverem vazios
+    if (!email && !phone && !cpf) {
       setCustomerFound(false);
       setIsCheckingCustomer(false);
       return;
     }
 
-    // Só verificar se tiver email válido OU telefone com pelo menos 10 dígitos
-    if ((!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) && phone.length < 10) {
+    // Só verificar se tiver:
+    // - Email válido OU
+    // - Telefone com pelo menos 10 dígitos OU
+    // - CPF com 11 dígitos
+    const hasValidEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const hasValidPhone = phone.length >= 10;
+    const hasValidCPF = cpf && cpf.length === 11;
+
+    if (!hasValidEmail && !hasValidPhone && !hasValidCPF) {
       setCustomerFound(false);
       return;
     }
 
     try {
       setIsCheckingCustomer(true);
-      const result = await api.checkCustomer(email, phone);
+      const result = await api.checkCustomer(email, phone, cpf);
 
       if (result.exists && result.name) {
         // Cliente encontrado! Preencher dados automaticamente
@@ -112,6 +120,10 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
         setFormData(prev => ({
           ...prev,
           name: result.name || prev.name,
+          email: result.email || prev.email,
+          phone: result.phone || prev.phone,
+          address: result.address || prev.address,
+          cpfCnpj: result.cpfCnpj || prev.cpfCnpj,
           customerType: (result.customerType as 'pessoa_fisica' | 'pessoa_juridica') || prev.customerType
         }));
       } else {
@@ -123,7 +135,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     } finally {
       setIsCheckingCustomer(false);
     }
-  }, [formData.email, formData.phone]);
+  }, [formData.email, formData.phone, formData.cpfCnpj]);
 
   // Verificar cliente quando email ou telefone mudar (com debounce)
   useEffect(() => {

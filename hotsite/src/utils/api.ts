@@ -15,16 +15,20 @@ export const api = {
     return response.json();
   },
 
-  async checkCustomer(email?: string, phone?: string): Promise<{
+  async checkCustomer(email?: string, phone?: string, cpf?: string): Promise<{
     exists: boolean;
     customerType?: string;
     id?: string;
     name?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    cpfCnpj?: string;
   }> {
     const response = await fetch(`${API_BASE}/customers/check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, phone }),
+      body: JSON.stringify({ email, phone, cpf }),
     });
     if (!response.ok) throw new Error('Erro ao verificar cliente');
     return response.json();
