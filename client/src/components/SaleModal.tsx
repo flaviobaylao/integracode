@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -58,6 +58,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   // Estados do veículo exclusivo
   const [exclusiveVehicle, setExclusiveVehicle] = useState(false);
   const [vehicleTypes, setVehicleTypes] = useState<string[]>([]);
+  
+  // Estados dos dias da semana de visita ao cliente
+  const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
+  const [initialWeekdays, setInitialWeekdays] = useState<string[]>([]);
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -370,6 +374,24 @@ Qualquer dúvida, estou à disposição.`;
         });
       }
 
+      // Carregar dias da semana do cliente
+      if (card.customer?.weekdays) {
+        try {
+          const parsedWeekdays = typeof card.customer.weekdays === 'string' 
+            ? JSON.parse(card.customer.weekdays) 
+            : card.customer.weekdays;
+          setCustomerWeekdays(parsedWeekdays);
+          setInitialWeekdays(parsedWeekdays);
+        } catch (e) {
+          console.error('Erro ao parsear weekdays:', e);
+          setCustomerWeekdays([]);
+          setInitialWeekdays([]);
+        }
+      } else {
+        setCustomerWeekdays([]);
+        setInitialWeekdays([]);
+      }
+
       // Carregar produtos salvos do pedido anterior
       if (card.products && Array.isArray(card.products) && card.products.length > 0) {
         const savedProducts: {[key: string]: number} = {};
@@ -530,6 +552,33 @@ Qualquer dúvida, estou à disposição.`;
     setShowConfirmation(true);
   };
 
+  // Atualizar cliente weekdays se alterado (apenas admin)
+  const updateCustomerWeekdaysIfChanged = async () => {
+    if (!isAdministrative || !salesCard) return;
+    
+    const card = salesCard as any;
+    const hasChanged = JSON.stringify(customerWeekdays.sort()) !== JSON.stringify([...initialWeekdays].sort());
+    
+    if (hasChanged && customerWeekdays.length > 0) {
+      try {
+        await apiRequest('PUT', `/api/customers/${card.customer.id}`, {
+          weekdays: JSON.stringify(customerWeekdays)
+        });
+        
+        toast({
+          title: "Dias de visita atualizados",
+          description: "Os dias da semana do cliente foram atualizados com sucesso.",
+        });
+      } catch (error: any) {
+        toast({
+          title: "Aviso",
+          description: `Não foi possível atualizar os dias de visita: ${error.message}`,
+          variant: "destructive"
+        });
+      }
+    }
+  };
+
   // Mutation para finalizar venda
   const finalizeSaleMutation = useMutation({
     mutationFn: async (saleData: any) => {
@@ -603,7 +652,10 @@ Qualquer dúvida, estou à disposição.`;
   });
 
   // Confirmar venda
-  const confirmSale = () => {
+  const confirmSale = async () => {
+    // Atualizar weekdays do cliente se admin alterou
+    await updateCustomerWeekdaysIfChanged();
+    
     const saleData = {
       items: saleItems,
       paymentMethod,
@@ -625,7 +677,10 @@ Qualquer dúvida, estou à disposição.`;
   };
 
   // Salvar como rascunho
-  const saveDraft = () => {
+  const saveDraft = async () => {
+    // Atualizar weekdays do cliente se admin alterou
+    await updateCustomerWeekdaysIfChanged();
+    
     const saleData = {
       items: saleItems,
       paymentMethod,
@@ -646,7 +701,10 @@ Qualquer dúvida, estou à disposição.`;
   };
 
   // Fazer checkout
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
+    // Atualizar weekdays do cliente se admin alterou
+    await updateCustomerWeekdaysIfChanged();
+    
     const saleData = {
       items: saleItems,
       paymentMethod,
@@ -1134,6 +1192,65 @@ Qualquer dúvida, estou à disposição.`;
                   >
                     {isCapturingLocation ? 'Capturando...' : 'Capturar GPS'}
                   </Button>
+                </div>
+
+                {/* Dias da Semana de Visita */}
+                <div className="space-y-3 border-t border-gray-200 pt-4 bg-blue-50 p-3 rounded-lg">
+                  <div className="flex items-center gap-2 justify-between">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-blue-600" />
+                      <Label className="text-sm font-medium text-blue-900">Dias da Semana de Visita</Label>
+                    </div>
+                    {!isAdministrative && (
+                      <Badge variant="outline" className="text-xs bg-gray-100">Somente leitura</Badge>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { value: 'Seg', label: 'Seg' },
+                      { value: 'Ter', label: 'Ter' },
+                      { value: 'Qua', label: 'Qua' },
+                      { value: 'Qui', label: 'Qui' },
+                      { value: 'Sex', label: 'Sex' },
+                      { value: 'Sab', label: 'Sáb' },
+                      { value: 'Dom', label: 'Dom' },
+                    ].map((day) => (
+                      <div key={day.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`customer-weekday-${day.value}`}
+                          checked={customerWeekdays.includes(day.value)}
+                          disabled={!isAdministrative}
+                          onCheckedChange={(checked) => {
+                            if (isAdministrative) {
+                              if (checked) {
+                                setCustomerWeekdays(prev => [...prev, day.value]);
+                              } else {
+                                setCustomerWeekdays(prev => prev.filter(d => d !== day.value));
+                              }
+                            }
+                          }}
+                          data-testid={`checkbox-customer-weekday-${day.value}`}
+                        />
+                        <Label 
+                          htmlFor={`customer-weekday-${day.value}`} 
+                          className={`text-sm ${!isAdministrative ? 'cursor-default' : 'cursor-pointer'}`}
+                        >
+                          {day.label}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {isAdministrative && customerWeekdays.length > 0 && (
+                    JSON.stringify(customerWeekdays.sort()) !== JSON.stringify([...initialWeekdays].sort())
+                  ) && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mt-2">
+                      <p className="text-xs text-yellow-800">
+                        ⚠️ Alterar os dias da semana atualizará o cliente e todos os seus cards futuros
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Veículo Exclusivo - Somente Admin */}

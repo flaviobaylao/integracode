@@ -26,6 +26,7 @@
 - **Automated Agenda Management**: Scheduled daily and on-demand synchronization of sales cards, calculating visit dates, managing cards, and providing statistics. System supports multiple weekdays per customer and robust visit allocation.
 - **Sales Card Configuration Replication**: Automatically propagates configuration changes to future pending sales cards.
 - **Sales Schedule Filtering**: Client-side search filter by customer fantasy name or company name. Weekday filter uses standardized abbreviated format (Seg, Ter, Qua, Qui, Sex, Sab, Dom).
+- **Customer Weekdays Management in Sale Flow**: During sale completion, customer weekdays are displayed with checkboxes. For vendors: read-only (locked). For administrative users: editable, with changes automatically updating customer weekdays for all future sales cards.
 - **Data Validation & Integrity**: 3-layer protection system ensures sales cards are always scheduled on correct weekdays: (1) Pre-creation validation in `createSalesCard`, (2) Admin endpoint `/api/admin/validate-cards` for diagnosis and auto-correction, (3) Diagnostic script `diagnose-cards.ts` for manual verification. Full documentation in `VALIDACAO_ROTAS.md`.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices. Features product mapping, vendor resolution, and automatic customer registration from Integra to Omie.
 - **Sync Status Tracking**: Tracks and displays last synchronization date/time for major sync operations.
