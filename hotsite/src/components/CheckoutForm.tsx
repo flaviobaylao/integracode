@@ -134,6 +134,13 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     return () => clearTimeout(timeoutId);
   }, [checkExistingCustomer]);
 
+  // ✅ Forçar mudança de pagamento se pessoa_fisica tentar usar boleto
+  useEffect(() => {
+    if (formData.customerType === 'pessoa_fisica' && paymentMethod === 'boleto') {
+      setPaymentMethod('pix');
+    }
+  }, [formData.customerType, paymentMethod]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-honest-green text-white p-4 sticky top-0 z-10">
