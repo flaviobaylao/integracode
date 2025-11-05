@@ -876,14 +876,15 @@ export class DatabaseStorage implements IStorage {
         console.log('📅 [REALOCAÇÃO] Detectada mudança de routeDay, recalculando datas dos cards...');
         
         // Buscar todos os cards afetados para recalcular suas datas
+        // INCLUINDO o card atual para garantir que ele também seja realocado
         const affectedCards = await db
           .select()
           .from(salesCards)
           .where(
             and(
               eq(salesCards.customerId, currentCard.customerId),
-              inArray(salesCards.status, ['scheduled', 'pending', 'in_progress']),
-              ne(salesCards.id, currentCardId)
+              inArray(salesCards.status, ['scheduled', 'pending', 'in_progress'])
+              // REMOVIDO: ne(salesCards.id, currentCardId) - card atual DEVE ser incluído
             )
           );
 
@@ -1030,6 +1031,7 @@ export class DatabaseStorage implements IStorage {
         console.log('📅 [REALOCAÇÃO] Detectada mudança de routeDay, recalculando datas dos cards futuros...');
         
         // Buscar todos os cards afetados para recalcular suas datas
+        // INCLUINDO o card atual (vendedores só realocam card atual + futuros)
         const affectedCards = await db
           .select()
           .from(salesCards)
@@ -1037,8 +1039,10 @@ export class DatabaseStorage implements IStorage {
             and(
               eq(salesCards.customerId, currentCard.customerId),
               eq(salesCards.status, 'pending'),
-              gt(salesCards.scheduledDate, currentCard.scheduledDate),
-              ne(salesCards.id, currentCardId)
+              or(
+                eq(salesCards.id, currentCardId), // Incluir card atual
+                gt(salesCards.scheduledDate, currentCard.scheduledDate) // Ou cards futuros
+              )
             )
           );
 
