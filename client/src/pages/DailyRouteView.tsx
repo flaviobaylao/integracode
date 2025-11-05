@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
-  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download, Pencil
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -20,6 +20,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import SalesCardModal from "@/components/SalesCardModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 interface DailyRoute {
@@ -74,6 +75,10 @@ export default function DailyRouteView() {
   // Estado para modal de detalhes do card
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const [showCardModal, setShowCardModal] = useState(false);
+  
+  // Estado para modal de edição do card
+  const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
   
   // Estado para modal de foto
   const [selectedPhoto, setSelectedPhoto] = useState<{
@@ -238,6 +243,28 @@ export default function DailyRouteView() {
       
       setSelectedCard(response);
       setShowCardModal(true);
+    } catch (error: any) {
+      console.error('Erro ao carregar card:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao carregar card",
+        description: error.message || "Não foi possível carregar os detalhes do card.",
+      });
+    }
+  };
+
+  // Função para abrir modal de edição do card
+  const handleEditCard = async (visitId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevenir que abra o modal de detalhes
+    try {
+      const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
+      
+      if (!response) {
+        throw new Error('Card não encontrado');
+      }
+      
+      setEditingCard(response);
+      setShowEditModal(true);
     } catch (error: any) {
       console.error('Erro ao carregar card:', error);
       toast({
@@ -727,6 +754,16 @@ export default function DailyRouteView() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 ml-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="bg-orange-500 hover:bg-orange-600 text-white border-orange-600"
+                          onClick={(e) => handleEditCard(visit.id, e)}
+                          data-testid={`button-edit-${index}`}
+                        >
+                          <Pencil className="h-4 w-4 mr-1" />
+                          Editar
+                        </Button>
                         {visit.checkInPhotoUrl && (
                           <Button
                             size="sm"
@@ -1053,6 +1090,18 @@ export default function DailyRouteView() {
           refetch();
         }}
         card={selectedCard}
+      />
+
+      {/* Modal de Edição do Card de Vendas */}
+      <SalesCardModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingCard(null);
+          // Recarregar rota após fechar modal
+          refetch();
+        }}
+        editingCard={editingCard}
       />
 
       {/* Modal de Visualização de Foto */}
