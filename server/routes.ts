@@ -2435,7 +2435,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
+      console.log(`\n🔧 [PUT /api/sales-cards/${id}] Iniciando atualização de card`);
+      console.log(`   📥 req.body.routeDay:`, req.body.routeDay);
+      
       const data = insertSalesCardSchema.partial().parse(req.body);
+      
+      console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
       
       // Check permissions for reassigning sales cards
       const userId = req.userId;
@@ -2444,6 +2449,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.sellerId && user?.role === 'vendedor') {
         return res.status(403).json({ message: "Vendedores cannot reassign sales cards" });
       }
+      
+      // Buscar card ANTES da atualização
+      const cardBefore = await storage.getSalesCard(id);
+      console.log(`   📋 ANTES - routeDay:`, cardBefore?.routeDay);
       
       // Se coordenadas GPS foram capturadas, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
@@ -2473,7 +2482,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } else {
         // Atualização normal sem mudança de status final
+        console.log(`   💾 Salvando card com routeDay:`, data.routeDay);
         salesCard = await storage.updateSalesCard(id, data);
+        console.log(`   ✅ Card salvo - routeDay:`, salesCard.routeDay);
         
         // PROPAGAÇÃO DE ALTERAÇÕES:
         // - Usuários ADMINISTRATIVOS: replicar para TODOS os cards do cliente (futuros E passados)
@@ -2491,6 +2502,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`✅ Configurações replicadas para ${updatedCount} cards futuros`);
           }
         }
+        
+        // Buscar card DEPOIS da propagação para confirmar valor final
+        const cardAfter = await storage.getSalesCard(id);
+        console.log(`   📋 DEPOIS - routeDay:`, cardAfter?.routeDay);
+        salesCard = cardAfter!; // Atualizar salesCard para retornar o valor mais recente
       }
       
       res.json(salesCard);
