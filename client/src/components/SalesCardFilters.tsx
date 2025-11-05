@@ -22,13 +22,13 @@ export default function SalesCardFilters({
   
   const routeOptions = [
     { value: 'all', label: 'Todas as Rotas' },
-    { value: 'segunda', label: 'Segunda-feira' },
-    { value: 'terca', label: 'Terça-feira' },
-    { value: 'quarta', label: 'Quarta-feira' },
-    { value: 'quinta', label: 'Quinta-feira' },
-    { value: 'sexta', label: 'Sexta-feira' },
-    { value: 'sabado', label: 'Sábado' },
-    { value: 'domingo', label: 'Domingo' }
+    { value: 'Seg', label: 'Segunda-feira' },
+    { value: 'Ter', label: 'Terça-feira' },
+    { value: 'Qua', label: 'Quarta-feira' },
+    { value: 'Qui', label: 'Quinta-feira' },
+    { value: 'Sex', label: 'Sexta-feira' },
+    { value: 'Sab', label: 'Sábado' },
+    { value: 'Dom', label: 'Domingo' }
   ];
 
   const statusOptions = [
