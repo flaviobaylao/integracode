@@ -311,12 +311,12 @@ export default function CustomerEditModal({
             <Label className="mb-2 block">Dias da Semana de Visita *</Label>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
-                { value: "segunda", label: "Segunda-feira" },
-                { value: "terca", label: "Terça-feira" },
-                { value: "quarta", label: "Quarta-feira" },
-                { value: "quinta", label: "Quinta-feira" },
-                { value: "sexta", label: "Sexta-feira" },
-                { value: "sabado", label: "Sábado" },
+                { value: "Seg", label: "Segunda-feira" },
+                { value: "Ter", label: "Terça-feira" },
+                { value: "Qua", label: "Quarta-feira" },
+                { value: "Qui", label: "Quinta-feira" },
+                { value: "Sex", label: "Sexta-feira" },
+                { value: "Sab", label: "Sábado" },
               ].map((day) => (
                 <div key={day.value} className="flex items-center space-x-2">
                   <Checkbox

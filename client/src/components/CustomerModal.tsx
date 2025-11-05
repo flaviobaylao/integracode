@@ -36,13 +36,13 @@ interface CNPJData {
 }
 
 const weekdayOptions = [
-  { value: 'segunda', label: 'Segunda-feira' },
-  { value: 'terca', label: 'Terça-feira' },
-  { value: 'quarta', label: 'Quarta-feira' },
-  { value: 'quinta', label: 'Quinta-feira' },
-  { value: 'sexta', label: 'Sexta-feira' },
-  { value: 'sabado', label: 'Sábado' },
-  { value: 'domingo', label: 'Domingo' },
+  { value: 'Seg', label: 'Segunda-feira' },
+  { value: 'Ter', label: 'Terça-feira' },
+  { value: 'Qua', label: 'Quarta-feira' },
+  { value: 'Qui', label: 'Quinta-feira' },
+  { value: 'Sex', label: 'Sexta-feira' },
+  { value: 'Sab', label: 'Sábado' },
+  { value: 'Dom', label: 'Domingo' },
 ];
 
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
@@ -79,7 +79,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       zipCode: '',
       route: '',
       sellerId: '',
-      weekdays: '["domingo"]',
+      weekdays: '["Dom"]',
       visitPeriodicity: 'semanal',
       isActive: true,
       latitude: '',
@@ -138,7 +138,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         zipCode: '',
         route: '',
         sellerId: '',
-        weekdays: '["domingo"]',
+        weekdays: '["Dom"]',
         visitPeriodicity: 'semanal',
         isActive: true,
         latitude: '',

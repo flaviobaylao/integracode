@@ -14,13 +14,13 @@ import { Plus, Edit, Trash2, MapPin } from "lucide-react";
 import { z } from "zod";
 
 const weekdayOptions = [
-  { value: "segunda", label: "Segunda" },
-  { value: "terca", label: "Terça" },
-  { value: "quarta", label: "Quarta" },
-  { value: "quinta", label: "Quinta" },
-  { value: "sexta", label: "Sexta" },
-  { value: "sabado", label: "Sábado" },
-  { value: "domingo", label: "Domingo" },
+  { value: "Seg", label: "Segunda" },
+  { value: "Ter", label: "Terça" },
+  { value: "Qua", label: "Quarta" },
+  { value: "Qui", label: "Quinta" },
+  { value: "Sex", label: "Sexta" },
+  { value: "Sab", label: "Sábado" },
+  { value: "Dom", label: "Domingo" },
 ];
 
 export function RouteManagement() {

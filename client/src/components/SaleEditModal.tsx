@@ -61,7 +61,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [notes, setNotes] = useState('');
   const [routeDay, setRouteDay] = useState('');
   const [recurrenceType, setRecurrenceType] = useState('');
-  const [deliveryWeekdays, setDeliveryWeekdays] = useState<string[]>(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+  const [deliveryWeekdays, setDeliveryWeekdays] = useState<string[]>(['Seg', 'Ter', 'Qua', 'Qui', 'Sex']);
   const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<string[]>(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
   const [customerLatitude, setCustomerLatitude] = useState('');
   const [customerLongitude, setCustomerLongitude] = useState('');
@@ -98,7 +98,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setBoletoDays((card as any).boletoDays || 7);
       
       // Se o card tem configurações de entrega, usa elas, senão usa os valores padrão
-      const defaultWeekdays = ['segunda', 'terca', 'quarta', 'quinta', 'sexta'];
+      const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
       const defaultTimeSlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
       
       setDeliveryWeekdays((card as any).deliveryWeekdays?.length > 0 
@@ -137,7 +137,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setRouteDay('');
       setRecurrenceType('');
       setBoletoDays(7);
-      setDeliveryWeekdays(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+      setDeliveryWeekdays(['Seg', 'Ter', 'Qua', 'Qui', 'Sex']);
       setDeliveryTimeSlots(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
       setCustomerLatitude('');
       setCustomerLongitude('');
@@ -428,7 +428,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     // Definir número de dias úteis baseado na regra
     const workingDaysNeeded = isSameDayAsSale ? 2 : 3;
 
-    const saturdayEnabled = deliveryWeekdays.includes('sabado');
+    const saturdayEnabled = deliveryWeekdays.includes('Sab');
     let workingDaysCount = 0;
     let currentDate = new Date(today); // Usar data atual como base
 
@@ -457,13 +457,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   // Dias da semana disponíveis
   const weekdays = [
-    { value: 'segunda', label: 'Segunda-feira' },
-    { value: 'terca', label: 'Terça-feira' },
-    { value: 'quarta', label: 'Quarta-feira' },
-    { value: 'quinta', label: 'Quinta-feira' },
-    { value: 'sexta', label: 'Sexta-feira' },
-    { value: 'sabado', label: 'Sábado' },
-    { value: 'domingo', label: 'Domingo' }
+    { value: 'Seg', label: 'Segunda-feira' },
+    { value: 'Ter', label: 'Terça-feira' },
+    { value: 'Qua', label: 'Quarta-feira' },
+    { value: 'Qui', label: 'Quinta-feira' },
+    { value: 'Sex', label: 'Sexta-feira' },
+    { value: 'Sab', label: 'Sábado' },
+    { value: 'Dom', label: 'Domingo' }
   ];
 
   // Horários disponíveis das 7h às 19h
@@ -1377,7 +1377,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     </span>
                   </p>
                   <p className="text-xs text-blue-600 mt-1">
-                    (2 dias úteis após o agendamento{deliveryWeekdays.includes('sabado') ? ', incluindo sábado' : ''})
+                    (2 dias úteis após o agendamento{deliveryWeekdays.includes('Sab') ? ', incluindo sábado' : ''})
                   </p>
                 </div>
               )}

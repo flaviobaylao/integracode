@@ -117,13 +117,13 @@ export default function CustomerManagement() {
       const selectedDate = new Date(routeDateFilter);
       const dayOfWeek = selectedDate.getDay(); // 0=domingo, 1=segunda, etc.
       const weekdayMapping = {
-        0: 'domingo',
-        1: 'segunda', 
-        2: 'terca',
-        3: 'quarta',
-        4: 'quinta',
-        5: 'sexta',
-        6: 'sabado'
+        0: 'Dom',
+        1: 'Seg', 
+        2: 'Ter',
+        3: 'Qua',
+        4: 'Qui',
+        5: 'Sex',
+        6: 'Sab'
       };
       const dayString = weekdayMapping[dayOfWeek as keyof typeof weekdayMapping];
       const customerWeekdays = JSON.parse(customer.weekdays || '[]');
@@ -258,13 +258,13 @@ export default function CustomerManagement() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os dias</SelectItem>
-                <SelectItem value="segunda">Segunda-feira</SelectItem>
-                <SelectItem value="terca">Terça-feira</SelectItem>
-                <SelectItem value="quarta">Quarta-feira</SelectItem>
-                <SelectItem value="quinta">Quinta-feira</SelectItem>
-                <SelectItem value="sexta">Sexta-feira</SelectItem>
-                <SelectItem value="sabado">Sábado</SelectItem>
-                <SelectItem value="domingo">Domingo</SelectItem>
+                <SelectItem value="Seg">Segunda-feira</SelectItem>
+                <SelectItem value="Ter">Terça-feira</SelectItem>
+                <SelectItem value="Qua">Quarta-feira</SelectItem>
+                <SelectItem value="Qui">Quinta-feira</SelectItem>
+                <SelectItem value="Sex">Sexta-feira</SelectItem>
+                <SelectItem value="Sab">Sábado</SelectItem>
+                <SelectItem value="Dom">Domingo</SelectItem>
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>

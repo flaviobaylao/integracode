@@ -463,13 +463,13 @@ export default function VisitRoutes() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos os dias</SelectItem>
-                  <SelectItem value="segunda">Segunda-feira</SelectItem>
-                  <SelectItem value="terca">Terça-feira</SelectItem>
-                  <SelectItem value="quarta">Quarta-feira</SelectItem>
-                  <SelectItem value="quinta">Quinta-feira</SelectItem>
-                  <SelectItem value="sexta">Sexta-feira</SelectItem>
-                  <SelectItem value="sabado">Sábado</SelectItem>
-                  <SelectItem value="domingo">Domingo</SelectItem>
+                  <SelectItem value="Seg">Segunda-feira</SelectItem>
+                  <SelectItem value="Ter">Terça-feira</SelectItem>
+                  <SelectItem value="Qua">Quarta-feira</SelectItem>
+                  <SelectItem value="Qui">Quinta-feira</SelectItem>
+                  <SelectItem value="Sex">Sexta-feira</SelectItem>
+                  <SelectItem value="Sab">Sábado</SelectItem>
+                  <SelectItem value="Dom">Domingo</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -37,13 +37,13 @@ import { apiRequest } from "@/lib/queryClient";
 const DAYS_OF_WEEK = [
   { value: 'todos', label: '📅 Todos os Dias' },
   { value: 'atrasados', label: '⚠️ Atrasados (>3 dias)' },
-  { value: 'segunda', label: 'Segunda-feira' },
-  { value: 'terca', label: 'Terça-feira' },
-  { value: 'quarta', label: 'Quarta-feira' },
-  { value: 'quinta', label: 'Quinta-feira' },
-  { value: 'sexta', label: 'Sexta-feira' },
-  { value: 'sabado', label: 'Sábado' },
-  { value: 'domingo', label: 'Domingo' }
+  { value: 'Seg', label: 'Segunda-feira' },
+  { value: 'Ter', label: 'Terça-feira' },
+  { value: 'Qua', label: 'Quarta-feira' },
+  { value: 'Qui', label: 'Quinta-feira' },
+  { value: 'Sex', label: 'Sexta-feira' },
+  { value: 'Sab', label: 'Sábado' },
+  { value: 'Dom', label: 'Domingo' }
 ];
 
 const RECURRENCE_LABELS = {
@@ -74,6 +74,14 @@ const getWeekdaysLabel = (weekdays: string) => {
   try {
     const days = JSON.parse(weekdays);
     const dayLabels: Record<string, string> = {
+      'Seg': 'Seg',
+      'Ter': 'Ter',
+      'Qua': 'Qua',
+      'Qui': 'Qui',
+      'Sex': 'Sex',
+      'Sab': 'Sáb',
+      'Dom': 'Dom',
+      // Manter compatibilidade com formato antigo (se existir)
       'segunda': 'Seg',
       'terca': 'Ter',
       'quarta': 'Qua',
@@ -94,7 +102,7 @@ const getWeekdaysLabel = (weekdays: string) => {
 export default function SalesSchedule() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [selectedDay, setSelectedDay] = useState('segunda');
+  const [selectedDay, setSelectedDay] = useState('Seg');
   const [selectedSeller, setSelectedSeller] = useState<string>('all');
   const [startDate, setStartDate] = useState(() => {
     const today = new Date();

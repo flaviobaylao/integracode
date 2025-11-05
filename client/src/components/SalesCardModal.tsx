@@ -103,7 +103,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         recurrenceType: editingCard.recurrenceType || 'semanal',
         paymentMethod: editingCard.paymentMethod || 'a_vista',
         operationType: editingCard.operationType || 'venda',
-        deliveryWeekdays: (editingCard as any).deliveryWeekdays || ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
+        deliveryWeekdays: (editingCard as any).deliveryWeekdays || ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'],
         deliveryTimeSlots: (editingCard as any).deliveryTimeSlots || ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
         deliverySaturdayTimeSlots: (editingCard as any).deliverySaturdayTimeSlots || [],
         boletoDays: (editingCard as any).boletoDays || 7,
@@ -127,7 +127,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
         recurrenceType: 'semanal',
         paymentMethod: 'a_vista',
         operationType: 'venda',
-        deliveryWeekdays: ['segunda', 'terca', 'quarta', 'quinta', 'sexta'],
+        deliveryWeekdays: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'],
         deliveryTimeSlots: ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'],
         deliverySaturdayTimeSlots: [],
         boletoDays: 7,
@@ -267,13 +267,13 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
 
   // Dias da semana disponíveis
   const weekdays = [
-    { value: 'segunda', label: 'Segunda-feira' },
-    { value: 'terca', label: 'Terça-feira' },
-    { value: 'quarta', label: 'Quarta-feira' },
-    { value: 'quinta', label: 'Quinta-feira' },
-    { value: 'sexta', label: 'Sexta-feira' },
-    { value: 'sabado', label: 'Sábado' },
-    { value: 'domingo', label: 'Domingo' }
+    { value: 'Seg', label: 'Segunda-feira' },
+    { value: 'Ter', label: 'Terça-feira' },
+    { value: 'Qua', label: 'Quarta-feira' },
+    { value: 'Qui', label: 'Quinta-feira' },
+    { value: 'Sex', label: 'Sexta-feira' },
+    { value: 'Sab', label: 'Sábado' },
+    { value: 'Dom', label: 'Domingo' }
   ];
 
   // Horários disponíveis das 7h às 19h
@@ -463,13 +463,13 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   <SelectValue placeholder="Selecione o dia" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="segunda">Segunda-feira</SelectItem>
-                  <SelectItem value="terca">Terça-feira</SelectItem>
-                  <SelectItem value="quarta">Quarta-feira</SelectItem>
-                  <SelectItem value="quinta">Quinta-feira</SelectItem>
-                  <SelectItem value="sexta">Sexta-feira</SelectItem>
-                  <SelectItem value="sabado">Sábado</SelectItem>
-                  <SelectItem value="domingo">Domingo</SelectItem>
+                  <SelectItem value="Seg">Segunda-feira</SelectItem>
+                  <SelectItem value="Ter">Terça-feira</SelectItem>
+                  <SelectItem value="Qua">Quarta-feira</SelectItem>
+                  <SelectItem value="Qui">Quinta-feira</SelectItem>
+                  <SelectItem value="Sex">Sexta-feira</SelectItem>
+                  <SelectItem value="Sab">Sábado</SelectItem>
+                  <SelectItem value="Dom">Domingo</SelectItem>
                 </SelectContent>
               </Select>
               {errors.routeDay && <p className="text-sm text-red-500 mt-1">{errors.routeDay}</p>}
@@ -630,7 +630,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
               </div>
 
               {/* Horários de Sábado - Exibido apenas se sábado estiver selecionado */}
-              {formData.deliveryWeekdays.includes('sabado') && (
+              {formData.deliveryWeekdays.includes('Sab') && (
                 <div className="mt-6">
                   <div className="flex items-center space-x-2 mb-3">
                     <Clock className="h-4 w-4 text-purple-600" />
