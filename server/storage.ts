@@ -2556,6 +2556,11 @@ export class DatabaseStorage implements IStorage {
       const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
       const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59);
       
+      // IMPORTANTE: Se estivermos no mês atual, buscar apenas até a data atual
+      // Caso contrário, buscar até o final do mês
+      const isCurrentMonth = currentDate.getMonth() === (targetMonth - 1) && currentDate.getFullYear() === targetYear;
+      const searchEndDate = isCurrentMonth ? currentDate : endOfMonth;
+      
       // === 1. POSITIVAÇÃO: Clientes únicos que tiveram venda no mês (via faturamentos) ===
       const billingConditions = [];
       
@@ -2566,19 +2571,25 @@ export class DatabaseStorage implements IStorage {
       billingConditions.push(
         and(
           gte(billings.invoiceDate, startOfMonth),
-          lte(billings.invoiceDate, endOfMonth)
+          lte(billings.invoiceDate, searchEndDate)
         )
       );
 
       // Buscar faturamentos do mês usando SQL raw para evitar problemas do Drizzle
-      console.log(`  Buscando faturamentos para:`, { numericSellerId, startOfMonth, endOfMonth });
+      console.log(`  Buscando faturamentos para:`, { 
+        numericSellerId, 
+        startOfMonth, 
+        searchEndDate,
+        isCurrentMonth,
+        note: isCurrentMonth ? 'Usando data atual como limite' : 'Usando fim do mês como limite'
+      });
       console.log(`  Tipo de numericSellerId:`, typeof numericSellerId, 'Valor:', numericSellerId);
       
       const monthBillings = await db.execute(sql`
         SELECT id, customer_document, cfop, total_value, seller_id
         FROM billings
         WHERE invoice_date >= ${startOfMonth}
-          AND invoice_date <= ${endOfMonth}
+          AND invoice_date <= ${searchEndDate}
           AND invoice_status = '100'
           AND is_cancelled = false
           ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
