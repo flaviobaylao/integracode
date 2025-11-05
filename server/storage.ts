@@ -158,6 +158,9 @@ export interface IStorage {
   getSalesCardsByDayAndDate(sellerId: string, routeDay: string, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
   getSalesCardsByDateRange(sellerId: string | undefined, startDate: Date, endDate: Date, limit?: number, offset?: number): Promise<SalesCardWithRelations[]>;
   generateNextSalesCard(parentCardId: string): Promise<SalesCard | null>;
+  updateAllCustomerCardsConfig(currentCardId: string, configUpdates: Partial<InsertSalesCard>): Promise<number>;
+  updateFutureCardsConfig(currentCardId: string, configUpdates: Partial<InsertSalesCard>): Promise<number>;
+  closeCardAndScheduleNext(cardId: string, status: 'completed' | 'no_sale' | 'failed', updateData?: Partial<InsertSalesCard>): Promise<{ closedCard: SalesCard; nextCard: SalesCard | null }>;
   
   // Location operations
   getLocations(): Promise<Location[]>;
@@ -800,6 +803,80 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Atualizar configurações de todos os cards futuros do mesmo cliente
+  async updateAllCustomerCardsConfig(currentCardId: string, configUpdates: Partial<InsertSalesCard>): Promise<number> {
+    try {
+      // 1. Buscar o card atual para pegar o customerId
+      const currentCard = await this.getSalesCard(currentCardId);
+      if (!currentCard) {
+        console.log('Card não encontrado:', currentCardId);
+        return 0;
+      }
+
+      // 2. Extrair apenas os campos de configuração que devem ser replicados
+      const replicableFields: Partial<InsertSalesCard> = {};
+      
+      const configFieldsToReplicate = [
+        'routeDay',
+        'recurrenceType', 
+        'paymentMethod',
+        'deliveryWeekdays',
+        'deliveryTimeSlots',
+        'deliverySaturdayTimeSlots',
+        'boletoDays',
+        'exclusiveVehicle',
+        'vehicleTypes',
+        'customerLatitude',
+        'customerLongitude'
+      ];
+
+      for (const field of configFieldsToReplicate) {
+        if (configUpdates[field as keyof InsertSalesCard] !== undefined) {
+          (replicableFields as any)[field] = configUpdates[field as keyof InsertSalesCard];
+        }
+      }
+
+      // 3. Se não há campos de configuração para replicar, retornar 0
+      if (Object.keys(replicableFields).length === 0) {
+        console.log('Nenhum campo de configuração para replicar');
+        return 0;
+      }
+
+      console.log('📋 [PROPAGAÇÃO ADMIN] Replicando configurações para TODOS os cards do cliente:', currentCard.customerId);
+      console.log('   Campos a replicar:', Object.keys(replicableFields));
+
+      // 4. Atualizar TODOS os cards do mesmo cliente (futuros E passados)
+      // EXCETO: cards finalizados (completed, no_sale, failed) e o próprio card atual
+      const result = await db
+        .update(salesCards)
+        .set({ 
+          ...replicableFields as any, 
+          updatedAt: new Date() 
+        })
+        .where(
+          and(
+            eq(salesCards.customerId, currentCard.customerId),
+            inArray(salesCards.status, ['pending', 'in_progress']), // Apenas cards não finalizados
+            ne(salesCards.id, currentCardId) // Excluir o próprio card
+          )
+        )
+        .returning({ id: salesCards.id });
+
+      const updatedCount = result.length;
+      console.log(`✅ [PROPAGAÇÃO ADMIN] ${updatedCount} card(s) atualizado(s) com as novas configurações`);
+      
+      if (updatedCount > 0) {
+        // Log detalhado dos cards atualizados
+        const updatedIds = result.map(r => r.id).slice(0, 5); // Primeiros 5
+        console.log(`   IDs atualizados (amostra): ${updatedIds.join(', ')}${result.length > 5 ? '...' : ''}`);
+      }
+
+      return updatedCount;
+    } catch (error) {
+      console.error('❌ Erro ao replicar configurações para todos os cards:', error);
+      return 0;
+    }
+  }
+
   async updateFutureCardsConfig(currentCardId: string, configUpdates: Partial<InsertSalesCard>): Promise<number> {
     try {
       // 1. Buscar o card atual para pegar o customerId

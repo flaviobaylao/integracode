@@ -2462,10 +2462,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Atualização normal sem mudança de status final
         salesCard = await storage.updateSalesCard(id, data);
         
-        // Replicar configurações alteradas para todos os cards futuros do mesmo cliente
-        const updatedCount = await storage.updateFutureCardsConfig(id, data);
-        if (updatedCount > 0) {
-          console.log(`✅ Configurações replicadas para ${updatedCount} cards futuros`);
+        // PROPAGAÇÃO DE ALTERAÇÕES:
+        // - Usuários ADMINISTRATIVOS: replicar para TODOS os cards do cliente (futuros E passados)
+        // - Vendedores: replicar apenas para cards futuros
+        if (user && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+          console.log(`🔐 Usuário administrativo (${user.role}) - Propagando alterações para TODOS os cards do cliente`);
+          const updatedCount = await storage.updateAllCustomerCardsConfig(id, data);
+          if (updatedCount > 0) {
+            console.log(`✅ [PROPAGAÇÃO ADMIN] Configurações replicadas para ${updatedCount} card(s) do cliente`);
+          }
+        } else {
+          // Vendedores: apenas cards futuros (comportamento padrão anterior)
+          const updatedCount = await storage.updateFutureCardsConfig(id, data);
+          if (updatedCount > 0) {
+            console.log(`✅ Configurações replicadas para ${updatedCount} cards futuros`);
+          }
         }
       }
       
