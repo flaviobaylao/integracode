@@ -30,7 +30,7 @@
 - **Data Validation & Integrity**: 3-layer protection system ensures sales cards are always scheduled on correct weekdays: (1) Pre-creation validation in `createSalesCard`, (2) Admin endpoint `/api/admin/validate-cards` for diagnosis and auto-correction, (3) Diagnostic script `diagnose-cards.ts` for manual verification. Full documentation in `VALIDACAO_ROTAS.md`.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices. Features product mapping, vendor resolution, and automatic customer registration from Integra to Omie.
 - **Sync Status Tracking**: Tracks and displays last synchronization date/time for major sync operations.
-- **Sales Goals Dashboard**: Displays individual seller metrics using aggregated SQL queries, including refined CFOP filtering logic for revenue calculation.
+- **Sales Goals Dashboard**: Displays individual seller metrics using aggregated SQL queries, including refined CFOP filtering logic for revenue calculation. Revenue calculations use current date as upper limit for month-to-date metrics to ensure accurate real-time values.
 - **HR Management (RH)**: HR tracking system for seller performance (monthly mileage, work hours management) with restricted access.
 - **E-commerce Platform (Hotsite Instagram)**:
     - **Access**: Available at `/shop` path in production mode.
