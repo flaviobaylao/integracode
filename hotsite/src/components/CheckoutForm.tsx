@@ -297,22 +297,25 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <span className="text-2xl">💳</span>
               </label>
 
-              <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
-                <input
-                  type="radio"
-                  name="payment"
-                  value="boleto"
-                  checked={paymentMethod === 'boleto'}
-                  onChange={() => setPaymentMethod('boleto')}
-                  className="w-5 h-5"
-                  data-testid="payment-boleto"
-                />
-                <div className="flex-1">
-                  <div className="font-semibold">Boleto Bancário</div>
-                  <div className="text-sm text-gray-600">Vence em 7 dias</div>
-                </div>
-                <span className="text-2xl">📄</span>
-              </label>
+              {/* Boleto disponível apenas para pessoa jurídica */}
+              {formData.customerType === 'pessoa_juridica' && (
+                <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
+                  <input
+                    type="radio"
+                    name="payment"
+                    value="boleto"
+                    checked={paymentMethod === 'boleto'}
+                    onChange={() => setPaymentMethod('boleto')}
+                    className="w-5 h-5"
+                    data-testid="payment-boleto"
+                  />
+                  <div className="flex-1">
+                    <div className="font-semibold">Boleto Bancário</div>
+                    <div className="text-sm text-gray-600">Vence em 7 dias</div>
+                  </div>
+                  <span className="text-2xl">📄</span>
+                </label>
+              )}
             </div>
           </div>
 
