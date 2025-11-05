@@ -10803,6 +10803,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
     try {
+      // Inicializar serviço Omie
+      const omieService = getOmieService(storage);
+      
       const orderSchema = z.object({
         customer: z.object({
           name: z.string().min(1, 'Nome é obrigatório'),
@@ -10954,9 +10957,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customerRecurrenceType: string;
       
       const customersData = await storage.getCustomers();
+      
+      // Normalizar CPF para comparação
+      const cpfLimpo = validatedData.customer.cpfCnpj ? validatedData.customer.cpfCnpj.replace(/\D/g, '') : null;
+      
       const existingCustomer = customersData.find(c => 
         (validatedData.customer.email && c.email?.toLowerCase() === validatedData.customer.email.toLowerCase()) ||
-        (validatedData.customer.phone && c.phone === validatedData.customer.phone)
+        (validatedData.customer.phone && c.phone === validatedData.customer.phone) ||
+        (cpfLimpo && c.cpfCnpj && c.cpfCnpj.replace(/\D/g, '') === cpfLimpo)
       );
       
       if (existingCustomer) {
@@ -11008,6 +11016,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         
         customerId = newCustomer.id;
+        
+        // ✅ CADASTRAR CLIENTE NO OMIE AUTOMATICAMENTE
+        if (validatedData.customer.cpfCnpj) {
+          console.log('📤 Tentando cadastrar novo cliente no Omie...');
+          try {
+            const omieResult = await omieService.createClient({
+              cpf: validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.cpfCnpj : null,
+              cnpj: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.cpfCnpj : null,
+              name: validatedData.customer.name,
+              fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
+              email: validatedData.customer.email,
+              phone: validatedData.customer.phone,
+              address: validatedData.customer.address,
+              city: null,
+              state: null,
+              zipCode: null
+            });
+            
+            if (omieResult.success) {
+              console.log(`✅ Cliente cadastrado no Omie com sucesso! Código: ${omieResult.omieClientCode}`);
+              
+              // Atualizar cliente no Integra com código Omie
+              if (omieResult.omieClientCode) {
+                await storage.updateCustomer(customerId, {
+                  omieCode: omieResult.omieClientCode.toString()
+                });
+                console.log('✅ Código Omie salvo no Integra');
+              }
+            } else {
+              console.warn('⚠️ Não foi possível cadastrar cliente no Omie:', omieResult.message);
+            }
+          } catch (omieError) {
+            // Não falhar o pedido se houver erro no Omie
+            console.error('❌ Erro ao cadastrar cliente no Omie:', omieError);
+            console.log('⚠️ Pedido será processado mesmo sem cadastro no Omie');
+          }
+        } else {
+          console.log('⚠️ Cliente sem CPF/CNPJ - não será cadastrado no Omie');
+        }
       }
       
       // Gerar número de pedido único
