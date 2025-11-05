@@ -340,10 +340,38 @@ export async function generateDailyRoute(
   const pendingCards = salesCards.filter((c: any) => c.status === 'pending');
 
   // Converter para formato de visitas com dados do cliente
+  // VALIDAÇÃO CRÍTICA: Verificar se o seller_id do card corresponde ao do cliente
   const visits: any[] = [];
+  const incorrectSellerCards: any[] = [];
+  
   for (const card of pendingCards) {
     const customer = await storage.getCustomer(card.customerId);
     if (customer) {
+      // VALIDAÇÃO: Conferir se o vendedor do card é o mesmo do cliente
+      if (card.sellerId !== customer.sellerId) {
+        console.warn(`⚠️ [VALIDAÇÃO ROTA] Card ${card.id} do cliente "${customer.name}" (${customer.id}) 
+          está com vendedor INCORRETO!
+          - Card sellerId: ${card.sellerId}
+          - Cliente sellerId: ${customer.sellerId}
+          - Corrigindo automaticamente...`);
+        
+        incorrectSellerCards.push({
+          cardId: card.id,
+          customerName: customer.name,
+          wrongSellerId: card.sellerId,
+          correctSellerId: customer.sellerId
+        });
+        
+        // AUTO-CORREÇÃO: Atualizar o seller_id do card para corresponder ao cliente
+        await storage.updateSalesCard(card.id, { sellerId: customer.sellerId });
+        
+        // Se o card não pertence ao vendedor da rota atual, não incluir na rota
+        if (customer.sellerId !== sellerId) {
+          console.log(`  → Card movido para vendedor correto (${customer.sellerId}), excluindo desta rota`);
+          continue;
+        }
+      }
+      
       visits.push({
         id: card.id,
         customerId: customer.id,
@@ -355,6 +383,14 @@ export async function generateDailyRoute(
         scheduledDate: card.scheduledDate
       });
     }
+  }
+  
+  // Log de resumo de correções
+  if (incorrectSellerCards.length > 0) {
+    console.log(`🔧 [VALIDAÇÃO ROTA] ${incorrectSellerCards.length} card(s) corrigido(s) automaticamente:`);
+    incorrectSellerCards.forEach(c => {
+      console.log(`   - ${c.customerName}: ${c.wrongSellerId} → ${c.correctSellerId}`);
+    });
   }
 
   // Filtrar apenas visitas presenciais com coordenadas válidas

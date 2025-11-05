@@ -11424,6 +11424,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Corrigir vendedores incorretos nos sales cards
+  app.post('/api/admin/fix-card-sellers', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Admin only." });
+      }
+
+      const { autoFix = false, status = 'all' } = req.body;
+
+      console.log('🔍 Iniciando diagnóstico de vendedores em sales cards...');
+      console.log(`   - AutoFix: ${autoFix}`);
+      console.log(`   - Status filter: ${status}`);
+
+      // Buscar todos os cards (opcionalmente filtrar por status)
+      let query = db
+        .select({
+          cardId: salesCards.id,
+          cardSellerId: salesCards.sellerId,
+          cardStatus: salesCards.status,
+          cardScheduledDate: salesCards.scheduledDate,
+          customerId: customers.id,
+          customerName: customers.fantasyName,
+          customerSellerId: customers.sellerId
+        })
+        .from(salesCards)
+        .leftJoin(customers, eq(salesCards.customerId, customers.id));
+
+      // Filtrar por status se especificado
+      if (status === 'pending') {
+        query = query.where(eq(salesCards.status, 'pending')) as any;
+      } else if (status === 'future') {
+        query = query.where(
+          and(
+            inArray(salesCards.status, ['pending', 'in_progress']),
+            gte(salesCards.scheduledDate, new Date())
+          )
+        ) as any;
+      }
+
+      const allCards = await query;
+
+      const inconsistencies: any[] = [];
+      const corrections: any[] = [];
+      let updated = 0;
+
+      for (const row of allCards) {
+        // Pular se cliente não existe
+        if (!row.customerId || !row.customerSellerId) {
+          continue;
+        }
+
+        // Verificar se o seller_id do card é diferente do seller_id do cliente
+        if (row.cardSellerId !== row.customerSellerId) {
+          const inconsistency = {
+            cardId: row.cardId,
+            customerId: row.customerId,
+            customerName: row.customerName || 'N/A',
+            scheduledDate: row.cardScheduledDate,
+            status: row.cardStatus,
+            wrongSellerId: row.cardSellerId,
+            correctSellerId: row.customerSellerId
+          };
+
+          inconsistencies.push(inconsistency);
+
+          // Se autoFix = true, corrigir o seller_id
+          if (autoFix) {
+            await db
+              .update(salesCards)
+              .set({ sellerId: row.customerSellerId })
+              .where(eq(salesCards.id, row.cardId));
+
+            corrections.push(inconsistency);
+            updated++;
+
+            if (updated % 50 === 0) {
+              console.log(`   → ${updated} cards corrigidos...`);
+            }
+          }
+        }
+      }
+
+      console.log(`✅ Diagnóstico concluído:`);
+      console.log(`   - Total de cards analisados: ${allCards.length}`);
+      console.log(`   - Inconsistências encontradas: ${inconsistencies.length}`);
+      console.log(`   - Cards corrigidos: ${corrections.length}`);
+
+      res.json({
+        totalCards: allCards.length,
+        inconsistencies: inconsistencies.length,
+        corrected: corrections.length,
+        details: autoFix ? corrections : inconsistencies.slice(0, 100), // Limitar a 100 para não sobrecarregar a resposta
+        message: autoFix 
+          ? `${corrections.length} card(s) corrigido(s) com vendedor correto`
+          : `${inconsistencies.length} card(s) com vendedor incorreto detectado(s)`,
+        summary: autoFix ? corrections : undefined
+      });
+
+    } catch (error) {
+      console.error("❌ Error fixing card sellers:", error);
+      res.status(500).json({ message: "Failed to fix card sellers", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

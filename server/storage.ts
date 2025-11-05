@@ -736,7 +736,20 @@ export class DatabaseStorage implements IStorage {
       processedSalesCard.routeDay = weekdayNames[dayOfWeek];
     }
     
-    // VALIDAÇÃO CRÍTICA: Verificar se o dia agendado está alinhado com os weekdays do cliente
+    // VALIDAÇÃO CRÍTICA 1: Garantir que seller_id do card corresponda ao seller_id do cliente
+    if (processedSalesCard.customerId) {
+      const customer = await this.getCustomer(processedSalesCard.customerId);
+      
+      if (customer && customer.sellerId) {
+        // Se o seller_id fornecido é diferente do seller_id do cliente, usar o do cliente
+        if (processedSalesCard.sellerId !== customer.sellerId) {
+          console.warn(`⚠️ [createSalesCard] Seller_id fornecido (${processedSalesCard.sellerId}) diferente do seller_id do cliente (${customer.sellerId}). Usando seller_id do cliente.`);
+          processedSalesCard.sellerId = customer.sellerId;
+        }
+      }
+    }
+    
+    // VALIDAÇÃO CRÍTICA 2: Verificar se o dia agendado está alinhado com os weekdays do cliente
     if (processedSalesCard.customerId && processedSalesCard.scheduledDate) {
       const customer = await this.getCustomer(processedSalesCard.customerId);
       
