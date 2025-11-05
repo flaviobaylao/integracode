@@ -47,6 +47,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne, like } from "drizzle-orm";
+import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
   // User operations
@@ -870,6 +871,92 @@ export class DatabaseStorage implements IStorage {
         console.log(`   IDs atualizados (amostra): ${updatedIds.join(', ')}${result.length > 5 ? '...' : ''}`);
       }
 
+      // 5. Se routeDay foi alterado, recalcular scheduledDate para todos os cards afetados
+      if (replicableFields.routeDay !== undefined) {
+        console.log('📅 [REALOCAÇÃO] Detectada mudança de routeDay, recalculando datas dos cards...');
+        
+        // Buscar todos os cards afetados para recalcular suas datas
+        const affectedCards = await db
+          .select()
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, currentCard.customerId),
+              inArray(salesCards.status, ['scheduled', 'pending', 'in_progress']),
+              ne(salesCards.id, currentCardId)
+            )
+          );
+
+        let reallocatedCount = 0;
+        
+        for (const card of affectedCards) {
+          try {
+            // Extrair horário original do card
+            const originalDate = new Date(card.scheduledDate);
+            const originalHours = originalDate.getHours();
+            const originalMinutes = originalDate.getMinutes();
+
+            // Normalizar datas para início do dia (00:00:00) para comparação
+            const originalDateStart = new Date(originalDate);
+            originalDateStart.setHours(0, 0, 0, 0);
+            
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+
+            // Para cards atrasados, usar data atual como referência mínima
+            // Para cards futuros, manter a data original
+            const referenceDate = originalDateStart < todayStart ? todayStart : originalDateStart;
+
+            // Calcular próxima data para o novo routeDay
+            const { nextDate } = calculateNextVisitDate({
+              weekdays: [replicableFields.routeDay as string],
+              periodicity: (card.recurrenceType || 'semanal') as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+              referenceDate: referenceDate, // Usar max(originalDate, now) como referência
+            });
+
+            // Preservar horário original
+            nextDate.setHours(originalHours, originalMinutes, 0, 0);
+
+            // Verificação final: garantir que a nova data está no futuro
+            // Se ainda está no passado (ex: hoje mas horário já passou), avançar para próximo dia válido
+            const nowFinal = new Date();
+            if (nextDate <= nowFinal) {
+              console.log(`   ⚠️ Card ${card.id}: Data calculada (${nextDate.toISOString()}) está no passado, avançando para próximo ciclo...`);
+              
+              // Avançar um dia e calcular novamente
+              const tomorrowStart = new Date(todayStart);
+              tomorrowStart.setDate(todayStart.getDate() + 1);
+              
+              const { nextDate: futureDate } = calculateNextVisitDate({
+                weekdays: [replicableFields.routeDay as string],
+                periodicity: (card.recurrenceType || 'semanal') as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+                referenceDate: tomorrowStart, // Partir de amanhã
+              });
+              
+              futureDate.setHours(originalHours, originalMinutes, 0, 0);
+              nextDate.setTime(futureDate.getTime()); // Copiar nova data
+            }
+
+            // Atualizar scheduledDate do card
+            await db
+              .update(salesCards)
+              .set({ 
+                scheduledDate: nextDate,
+                updatedAt: new Date()
+              })
+              .where(eq(salesCards.id, card.id));
+
+            reallocatedCount++;
+            
+            console.log(`   ✅ Card ${card.id} realocado: ${originalDate.toISOString().split('T')[0]} → ${nextDate.toISOString().split('T')[0]}`);
+          } catch (error) {
+            console.error(`   ❌ Erro ao realocar card ${card.id}:`, error);
+          }
+        }
+
+        console.log(`✅ [REALOCAÇÃO] ${reallocatedCount} card(s) tiveram suas datas recalculadas`);
+      }
+
       return updatedCount;
     } catch (error) {
       console.error('❌ Erro ao replicar configurações para todos os cards:', error);
@@ -937,6 +1024,93 @@ export class DatabaseStorage implements IStorage {
 
       const updatedCount = result.length;
       console.log(`✅ ${updatedCount} cards futuros atualizados com as novas configurações`);
+      
+      // 5. Se routeDay foi alterado, recalcular scheduledDate para todos os cards afetados
+      if (replicableFields.routeDay !== undefined) {
+        console.log('📅 [REALOCAÇÃO] Detectada mudança de routeDay, recalculando datas dos cards futuros...');
+        
+        // Buscar todos os cards afetados para recalcular suas datas
+        const affectedCards = await db
+          .select()
+          .from(salesCards)
+          .where(
+            and(
+              eq(salesCards.customerId, currentCard.customerId),
+              eq(salesCards.status, 'pending'),
+              gt(salesCards.scheduledDate, currentCard.scheduledDate),
+              ne(salesCards.id, currentCardId)
+            )
+          );
+
+        let reallocatedCount = 0;
+        
+        for (const card of affectedCards) {
+          try {
+            // Extrair horário original do card
+            const originalDate = new Date(card.scheduledDate);
+            const originalHours = originalDate.getHours();
+            const originalMinutes = originalDate.getMinutes();
+
+            // Normalizar datas para início do dia (00:00:00) para comparação
+            const originalDateStart = new Date(originalDate);
+            originalDateStart.setHours(0, 0, 0, 0);
+            
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+
+            // Para cards atrasados, usar data atual como referência mínima
+            // Para cards futuros, manter a data original
+            const referenceDate = originalDateStart < todayStart ? todayStart : originalDateStart;
+
+            // Calcular próxima data para o novo routeDay
+            const { nextDate } = calculateNextVisitDate({
+              weekdays: [replicableFields.routeDay as string],
+              periodicity: (card.recurrenceType || 'semanal') as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+              referenceDate: referenceDate, // Usar max(originalDate, now) como referência
+            });
+
+            // Preservar horário original
+            nextDate.setHours(originalHours, originalMinutes, 0, 0);
+
+            // Verificação final: garantir que a nova data está no futuro
+            // Se ainda está no passado (ex: hoje mas horário já passou), avançar para próximo dia válido
+            const nowFinal = new Date();
+            if (nextDate <= nowFinal) {
+              console.log(`   ⚠️ Card ${card.id}: Data calculada (${nextDate.toISOString()}) está no passado, avançando para próximo ciclo...`);
+              
+              // Avançar um dia e calcular novamente
+              const tomorrowStart = new Date(todayStart);
+              tomorrowStart.setDate(todayStart.getDate() + 1);
+              
+              const { nextDate: futureDate } = calculateNextVisitDate({
+                weekdays: [replicableFields.routeDay as string],
+                periodicity: (card.recurrenceType || 'semanal') as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+                referenceDate: tomorrowStart, // Partir de amanhã
+              });
+              
+              futureDate.setHours(originalHours, originalMinutes, 0, 0);
+              nextDate.setTime(futureDate.getTime()); // Copiar nova data
+            }
+
+            // Atualizar scheduledDate do card
+            await db
+              .update(salesCards)
+              .set({ 
+                scheduledDate: nextDate,
+                updatedAt: new Date()
+              })
+              .where(eq(salesCards.id, card.id));
+
+            reallocatedCount++;
+            
+            console.log(`   ✅ Card ${card.id} realocado: ${originalDate.toISOString().split('T')[0]} → ${nextDate.toISOString().split('T')[0]}`);
+          } catch (error) {
+            console.error(`   ❌ Erro ao realocar card ${card.id}:`, error);
+          }
+        }
+
+        console.log(`✅ [REALOCAÇÃO] ${reallocatedCount} card(s) futuro(s) tiveram suas datas recalculadas`);
+      }
       
       return updatedCount;
     } catch (error) {
