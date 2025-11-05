@@ -1098,7 +1098,9 @@ export default function DailyRouteView() {
         onClose={() => {
           setShowEditModal(false);
           setEditingCard(null);
-          // Recarregar rota após fechar modal
+          // Invalidar queries de rotas e cards para recarregar dados atualizados
+          queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
           refetch();
         }}
         editingCard={editingCard}
