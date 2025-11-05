@@ -855,7 +855,7 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(salesCards.customerId, currentCard.customerId),
-            inArray(salesCards.status, ['pending', 'in_progress']), // Apenas cards não finalizados
+            inArray(salesCards.status, ['scheduled', 'pending', 'in_progress']), // Cards não finalizados
             ne(salesCards.id, currentCardId) // Excluir o próprio card
           )
         )
