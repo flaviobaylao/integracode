@@ -10803,20 +10803,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           address: z.string().min(1, 'Endereço é obrigatório'),
           cpfCnpj: z.string().optional().nullable(),
           customerType: z.enum(['pessoa_fisica', 'pessoa_juridica']).default('pessoa_fisica')
-        }).refine((data) => {
-          // ✅ CPF obrigatório para consumidores (pessoa física)
-          if (data.customerType === 'pessoa_fisica') {
-            if (!data.cpfCnpj || data.cpfCnpj.trim() === '') {
-              return false;
-            }
-            // Validar formato CPF (11 dígitos)
-            const cpfNumbers = data.cpfCnpj.replace(/\D/g, '');
-            return cpfNumbers.length === 11;
-          }
-          return true;
-        }, {
-          message: 'CPF é obrigatório para consumidores (pessoa física) e deve ter 11 dígitos',
-          path: ['cpfCnpj']
         }),
         items: z.array(z.object({
           productId: z.string(),
@@ -10829,9 +10815,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         source: z.enum(['hotsite', 'website']).default('hotsite'),
         // Tabela de preço selecionada pelo cliente no hotsite
         priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional()
+      }).refine((data) => {
+        // ✅ CPF obrigatório para consumidores (pessoa física)
+        if (data.customer.customerType === 'pessoa_fisica') {
+          if (!data.customer.cpfCnpj || data.customer.cpfCnpj.trim() === '') {
+            return false;
+          }
+          // Validar formato CPF (11 dígitos)
+          const cpfNumbers = data.customer.cpfCnpj.replace(/\D/g, '');
+          return cpfNumbers.length === 11;
+        }
+        return true;
+      }, {
+        message: 'CPF é obrigatório para consumidores (pessoa física) e deve ter 11 dígitos',
+        path: ['customer', 'cpfCnpj']
       });
       
       const validatedData = orderSchema.parse(req.body);
+      
+      // ✅ Normalizar CPF (remover pontuação) antes de salvar
+      if (validatedData.customer.cpfCnpj) {
+        validatedData.customer.cpfCnpj = validatedData.customer.cpfCnpj.replace(/\D/g, '');
+      }
       
       // ✅ VALIDAÇÃO SERVER-SIDE DE PREÇOS E TOTAIS
       // O hotsite usa 5 tabelas de preço: retail, wholesale, goiania, interior, brasília
