@@ -10914,6 +10914,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Verificar se cliente já existe ou criar novo
       let customerId: string;
+      let customerRouteDay: string;
+      let customerRecurrenceType: string;
+      
       const customersData = await storage.getCustomers();
       const existingCustomer = customersData.find(c => 
         (validatedData.customer.email && c.email?.toLowerCase() === validatedData.customer.email.toLowerCase()) ||
@@ -10923,6 +10926,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existingCustomer) {
         customerId = existingCustomer.id;
         
+        // ✅ MANTER rota existente do cliente
+        let customerWeekdays: string[] = [];
+        try {
+          customerWeekdays = typeof existingCustomer.weekdays === 'string' 
+            ? JSON.parse(existingCustomer.weekdays) 
+            : existingCustomer.weekdays || [];
+        } catch {
+          customerWeekdays = ['Dom']; // Fallback
+        }
+        
+        customerRouteDay = customerWeekdays[0] || 'Dom'; // Primeiro dia da rota existente
+        customerRecurrenceType = existingCustomer.visitPeriodicity || 'mensal';
+        
+        console.log(`✅ Cliente existente - mantendo rota: ${customerRouteDay}, periodicidade: ${customerRecurrenceType}`);
+        
         // Atualizar informações se necessário
         await storage.updateCustomer(customerId, {
           address: validatedData.customer.address,
@@ -10930,6 +10948,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         
       } else {
+        // ✅ NOVO cliente do hotsite - usar configurações padrão
+        customerRouteDay = 'Dom'; // Domingo para novos clientes do hotsite
+        customerRecurrenceType = 'mensal'; // Mensal para novos clientes
+        
+        console.log(`✅ Novo cliente do hotsite - usando rota padrão: ${customerRouteDay}, periodicidade: ${customerRecurrenceType}`);
+        
         // Criar novo cliente
         const newCustomer = await storage.createCustomer({
           name: validatedData.customer.name,
@@ -10942,7 +10966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           route: 'GOIÂNIA', // Padrão para clientes do hotsite
           sellerId: hotsiteSeller.id, // ✅ Campo obrigatório - Flavio
-          weekdays: JSON.stringify(['Dom']), // ✅ Domingos para pedidos hotsite
+          weekdays: JSON.stringify(['Dom']), // ✅ Domingos para novos clientes hotsite
           visitPeriodicity: 'mensal', // ✅ Periodicidade mensal
           isActive: true
         });
@@ -10953,12 +10977,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Gerar número de pedido único
       const orderNumber = `WEB-${Date.now()}`;
       
-      // ✅ CONFIGURAÇÃO FIXA PARA PEDIDOS HOTSITE:
-      // - Rota: Domingo (Dom)
-      // - Periodicidade: Mensal
-      // - Vendedor: Flavio
+      // ✅ CONFIGURAÇÃO DINÂMICA PARA PEDIDOS HOTSITE:
+      // - Se cliente já existe: manter rota e periodicidade existentes
+      // - Se cliente novo: Domingo + Mensal
+      // - Vendedor: Sempre Flavio
       const scheduledDate = new Date();
-      const routeDay = 'Dom'; // ✅ SEMPRE domingo para pedidos hotsite
+      const routeDay = customerRouteDay; // ✅ Rota do cliente (existente ou nova)
       
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
@@ -10966,9 +10990,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerId,
         sellerId: hotsiteSeller.id, // ✅ Flavio (ou fallback)
         scheduledDate,
-        routeDay, // ✅ 'Dom' fixo
-        recurrenceType: 'mensal', // ✅ Mensal para pedidos hotsite
-        isRecurring: true, // ✅ Habilitar recorrência mensal
+        routeDay, // ✅ Rota do cliente (mantém existente ou usa 'Dom' para novos)
+        recurrenceType: customerRecurrenceType, // ✅ Periodicidade do cliente
+        isRecurring: true, // ✅ Habilitar recorrência
         status: 'pending',
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
