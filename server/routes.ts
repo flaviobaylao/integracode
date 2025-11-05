@@ -665,6 +665,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         visitPeriodicity: updatedCustomer.visitPeriodicity
       });
       
+      // Atualizar automaticamente os salesCards futuros com os novos dados do cliente
+      try {
+        const { updateExistingSalesCardsFromCustomer } = await import('./visitScheduleService');
+        const updateResult = await updateExistingSalesCardsFromCustomer(id);
+        
+        if (updateResult.updated > 0 || updateResult.reallocated > 0) {
+          console.log(`🔄 Cards do cliente atualizados: ${updateResult.updated} atualizados, ${updateResult.reallocated} realocados`);
+        }
+      } catch (updateError: any) {
+        console.error('⚠️ Erro ao atualizar cards do cliente:', updateError.message);
+        // Não falhar a atualização do cliente por causa disso
+      }
+      
       res.json(updatedCustomer);
     } catch (error) {
       console.error("Error updating customer:", error);
@@ -11303,19 +11316,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('🔄 Iniciando sincronização manual completa da agenda...');
       
-      const { syncFutureSalesCards } = await import('./visitScheduleService');
+      // 1. Sincronizar cards futuros (deletar incorretos e criar faltantes)
+      const { syncFutureSalesCards, updateExistingSalesCardsFromCustomer } = await import('./visitScheduleService');
       const result = await syncFutureSalesCards(2);
       
-      console.log('✅ Sincronização manual concluída!');
+      console.log('✅ Fase 1: Sincronização de cards concluída');
       console.log('   Clientes processados:', result.processed);
       console.log('   Cards criados:', result.created);
       console.log('   Cards deletados:', result.deleted);
       console.log('   Erros:', result.errors);
       
+      // 2. Atualizar cards existentes com dados atualizados dos clientes
+      console.log('\n🔄 Fase 2: Atualizando cards existentes com dados dos clientes...');
+      
+      let totalUpdated = 0;
+      let totalReallocated = 0;
+      let updateErrors = 0;
+      
+      // Buscar todos os clientes ativos
+      const activeCustomers = await db.select({ id: customers.id })
+        .from(customers)
+        .where(eq(customers.isActive, true));
+      
+      for (const customer of activeCustomers) {
+        try {
+          const updateResult = await updateExistingSalesCardsFromCustomer(customer.id);
+          totalUpdated += updateResult.updated;
+          totalReallocated += updateResult.reallocated;
+        } catch (error: any) {
+          console.error(`Erro ao atualizar cards do cliente ${customer.id}:`, error.message);
+          updateErrors++;
+        }
+      }
+      
+      console.log('✅ Fase 2 concluída:');
+      console.log('   Cards atualizados:', totalUpdated);
+      console.log('   Cards realocados:', totalReallocated);
+      console.log('   Erros:', updateErrors);
+      
       res.json({
         success: true,
-        message: 'Sincronização da agenda concluída com sucesso!',
-        ...result
+        message: 'Sincronização completa da agenda concluída com sucesso!',
+        sync: result,
+        update: {
+          updated: totalUpdated,
+          reallocated: totalReallocated,
+          errors: updateErrors
+        }
       });
       
     } catch (error: any) {
