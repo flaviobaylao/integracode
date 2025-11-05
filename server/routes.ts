@@ -10650,22 +10650,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Verificar se cliente já existe (por email ou telefone)
+  // Verificar se cliente já existe (por email, telefone ou CPF)
   app.post('/api/public/customers/check', async (req, res) => {
     try {
-      const { email, phone } = req.body;
+      const { email, phone, cpf } = req.body;
       
-      if (!email && !phone) {
+      if (!email && !phone && !cpf) {
         return res.status(400).json({ 
-          message: 'Email ou telefone são obrigatórios' 
+          message: 'Email, telefone ou CPF são obrigatórios' 
         });
       }
       
       const customersData = await storage.getCustomers();
       
+      // Normalizar CPF se fornecido
+      const cpfLimpo = cpf ? cpf.replace(/\D/g, '') : null;
+      
       const existingCustomer = customersData.find(c => 
         (email && c.email?.toLowerCase() === email.toLowerCase()) ||
-        (phone && c.phone === phone)
+        (phone && c.phone === phone) ||
+        (cpfLimpo && c.cpfCnpj && c.cpfCnpj.replace(/\D/g, '') === cpfLimpo)
       );
       
       if (existingCustomer) {
@@ -10673,7 +10677,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           exists: true,
           customerType: existingCustomer.customerType || 'pessoa_fisica',
           id: existingCustomer.id,
-          name: existingCustomer.fantasyName || existingCustomer.companyName || existingCustomer.name
+          name: existingCustomer.fantasyName || existingCustomer.companyName || existingCustomer.name,
+          email: existingCustomer.email,
+          phone: existingCustomer.phone,
+          address: existingCustomer.address,
+          cpfCnpj: existingCustomer.cpfCnpj
         });
       } else {
         res.json({
