@@ -10891,15 +10891,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar totalAmount com valor validado pelo servidor
       validatedData.totalAmount = serverTotal;
       
-      // Buscar vendedor padrão para pedidos do hotsite
+      // Buscar vendedor FLAVIO especificamente para pedidos do hotsite
       const users = await storage.getUsers();
-      const defaultSeller = users.find(u => u.role === 'vendedor' && u.isActive) 
-        || users.find(u => u.role === 'admin');
+      let hotsiteSeller = users.find(u => u.email === 'flavio@bebahonest.com.br' && u.role === 'vendedor');
       
-      if (!defaultSeller) {
-        return res.status(500).json({
-          message: 'Sistema não configurado: nenhum vendedor disponível para processar pedidos'
-        });
+      if (!hotsiteSeller) {
+        console.error('⚠️ Vendedor Flavio não encontrado! Usando fallback...');
+        // Fallback: usar primeiro vendedor ativo ou admin
+        hotsiteSeller = users.find(u => u.role === 'vendedor' && u.isActive) 
+          || users.find(u => u.role === 'admin');
+        
+        if (!hotsiteSeller) {
+          return res.status(500).json({
+            message: 'Sistema não configurado: nenhum vendedor disponível para processar pedidos'
+          });
+        }
+        
+        console.log('⚠️ Usando vendedor fallback:', hotsiteSeller.email);
+      } else {
+        console.log('✅ Usando vendedor Flavio para pedido do hotsite');
       }
       
       // Verificar se cliente já existe ou criar novo
@@ -10931,8 +10941,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           companyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           route: 'GOIÂNIA', // Padrão para clientes do hotsite
-          sellerId: defaultSeller.id, // ✅ Campo obrigatório
-          weekdays: JSON.stringify(['segunda']), // ✅ Campo obrigatório - padrão segunda-feira
+          sellerId: hotsiteSeller.id, // ✅ Campo obrigatório - Flavio
+          weekdays: JSON.stringify(['Dom']), // ✅ Domingos para pedidos hotsite
+          visitPeriodicity: 'mensal', // ✅ Periodicidade mensal
           isActive: true
         });
         
@@ -10942,21 +10953,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Gerar número de pedido único
       const orderNumber = `WEB-${Date.now()}`;
       
-      // Definir data agendada (data atual) e dia da semana
+      // ✅ CONFIGURAÇÃO FIXA PARA PEDIDOS HOTSITE:
+      // - Rota: Domingo (Dom)
+      // - Periodicidade: Mensal
+      // - Vendedor: Flavio
       const scheduledDate = new Date();
-      const dayOfWeek = scheduledDate.getDay();
-      const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-      const routeDay = weekdayNames[dayOfWeek];
+      const routeDay = 'Dom'; // ✅ SEMPRE domingo para pedidos hotsite
       
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
         customerId,
-        sellerId: defaultSeller.id, // ✅ Usar vendedor padrão para pedidos online
+        sellerId: hotsiteSeller.id, // ✅ Flavio (ou fallback)
         scheduledDate,
-        routeDay,
-        recurrenceType: 'semanal', // ✅ Usar valor válido do enum
-        isRecurring: false, // ✅ Desabilitar recorrência para pedidos hotsite
+        routeDay, // ✅ 'Dom' fixo
+        recurrenceType: 'mensal', // ✅ Mensal para pedidos hotsite
+        isRecurring: true, // ✅ Habilitar recorrência mensal
         status: 'pending',
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
