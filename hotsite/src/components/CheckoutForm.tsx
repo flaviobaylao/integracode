@@ -36,6 +36,18 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     if (formData.email && formData.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       newErrors.email = 'Email inválido';
     }
+    
+    // ✅ CPF obrigatório para consumidores (pessoa física)
+    if (formData.customerType === 'pessoa_fisica') {
+      if (!formData.cpfCnpj || !formData.cpfCnpj.trim()) {
+        newErrors.cpfCnpj = 'CPF é obrigatório para consumidores';
+      } else {
+        const cpfNumbers = formData.cpfCnpj.replace(/\D/g, '');
+        if (cpfNumbers.length !== 11) {
+          newErrors.cpfCnpj = 'CPF deve ter 11 dígitos';
+        }
+      }
+    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -65,6 +77,11 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
       return numbers.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3');
     }
     return numbers.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3');
+  };
+
+  const formatCPF = (value: string) => {
+    const numbers = value.replace(/\D/g, '');
+    return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
   };
 
   // Verificar se cliente já existe quando email ou telefone for preenchido
@@ -220,6 +237,23 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   data-testid="input-address"
                 />
                 {errors.address && <p className="text-red-500 text-sm mt-1">{errors.address}</p>}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  CPF * <span className="text-xs text-gray-500">(para faturamento)</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.cpfCnpj || ''}
+                  onChange={(e) => setFormData({ ...formData, cpfCnpj: formatCPF(e.target.value) })}
+                  className={`input-field ${errors.cpfCnpj ? 'border-red-500' : ''}`}
+                  placeholder="000.000.000-00"
+                  maxLength={14}
+                  data-testid="input-cpf"
+                />
+                {errors.cpfCnpj && <p className="text-red-500 text-sm mt-1">{errors.cpfCnpj}</p>}
+                <p className="text-xs text-gray-500 mt-1">Necessário para emissão da nota fiscal</p>
               </div>
             </div>
           </div>

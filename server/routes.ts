@@ -10803,6 +10803,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           address: z.string().min(1, 'Endereço é obrigatório'),
           cpfCnpj: z.string().optional().nullable(),
           customerType: z.enum(['pessoa_fisica', 'pessoa_juridica']).default('pessoa_fisica')
+        }).refine((data) => {
+          // ✅ CPF obrigatório para consumidores (pessoa física)
+          if (data.customerType === 'pessoa_fisica') {
+            if (!data.cpfCnpj || data.cpfCnpj.trim() === '') {
+              return false;
+            }
+            // Validar formato CPF (11 dígitos)
+            const cpfNumbers = data.cpfCnpj.replace(/\D/g, '');
+            return cpfNumbers.length === 11;
+          }
+          return true;
+        }, {
+          message: 'CPF é obrigatório para consumidores (pessoa física) e deve ter 11 dígitos',
+          path: ['cpfCnpj']
         }),
         items: z.array(z.object({
           productId: z.string(),
