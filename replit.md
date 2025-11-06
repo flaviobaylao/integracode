@@ -27,6 +27,16 @@
   - Defensive handling for legacy routes without optimizedOrder
   - Audit logging for deletion operations
 
+- **Add Customer to Daily Route**: Administrators can now manually add any customer to a seller's route for a specific day. Implementation includes:
+  - Backend POST endpoint `/api/daily-routes/:routeId/visits` with role-based permissions (ADMIN ONLY)
+  - "Adicionar Cliente" button in route header (visible only to admins when route exists)
+  - Modal with customer search functionality (searches fantasy_name, name, cpf, cnpj)
+  - Creates sales_card with status 'pending' and source 'manual_route_addition'
+  - Adds visit to route's optimizedOrder without modifying customer's registered data
+  - Audit trail via sales_card notes (records who added and when)
+  - Admins can add any customer regardless of their assigned seller
+  - One-time visit - does not affect customer's weekdays, periodicity, or seller assignment
+
 ## 2025-11-06: Hotsite Bug Fixes
 - **Fixed CPF Recognition**: Corrected `/api/public/customers/check` endpoint that was searching for non-existent `cpfCnpj` field. Now correctly searches `cpf` field for existing customers, enabling proper customer recognition and data auto-fill.
 - **Fixed Order Creation**: Corrected `/api/public/orders` endpoint to use separate `cpf` and `cnpj` fields instead of non-existent `cpfCnpj` field when creating new customers and checking for existing customers. Pedidos from hotsite now successfully migrate to Sistema Integra.
