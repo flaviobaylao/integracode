@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogPortal, DialogOverlay } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
@@ -1311,11 +1311,13 @@ export default function DailyRouteView() {
 
       {/* Modal de Adicionar Cliente à Rota */}
       <Dialog open={showAddCustomerModal} onOpenChange={setShowAddCustomerModal}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-          <div className="flex items-center gap-2 pb-4 border-b">
-            <Users className="h-5 w-5 text-honest-blue" />
-            <h2 className="text-xl font-semibold">Adicionar Cliente à Rota</h2>
-          </div>
+        <DialogPortal>
+          <DialogOverlay className="z-[9999]" />
+          <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col z-[10000]">
+            <div className="flex items-center gap-2 pb-4 border-b">
+              <Users className="h-5 w-5 text-honest-blue" />
+              <h2 className="text-xl font-semibold">Adicionar Cliente à Rota</h2>
+            </div>
           
           <div className="py-4">
             <Label htmlFor="search-customer">Pesquisar Cliente</Label>
@@ -1392,7 +1394,8 @@ export default function DailyRouteView() {
               Fechar
             </Button>
           </div>
-        </DialogContent>
+          </DialogContent>
+        </DialogPortal>
       </Dialog>
     </div>
   );
