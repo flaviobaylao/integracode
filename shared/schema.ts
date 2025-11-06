@@ -295,6 +295,51 @@ export const salesCards = pgTable("sales_cards", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Order History - Histórico de pedidos dentro de cada sales card
+export const orderHistory = pgTable("order_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesCardId: varchar("sales_card_id").notNull(), // FK para sales_cards
+  
+  // Dados do pedido
+  orderDate: timestamp("order_date").notNull().defaultNow(), // Data em que o pedido foi realizado
+  products: jsonb("products").$type<Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>>().notNull(),
+  totalValue: decimal("total_value", { precision: 10, scale: 2 }).notNull(),
+  notes: text("notes"),
+  
+  // Status do pedido individual
+  status: varchar("status").notNull().default('pending'), // pending, completed, delivered, cancelled
+  
+  // Check-in/Check-out do vendedor neste pedido específico
+  checkInTime: timestamp("check_in_time"),
+  checkOutTime: timestamp("check_out_time"),
+  checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }),
+  checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }),
+  checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }),
+  checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }),
+  distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }),
+  checkInPhotoUrl: text("check_in_photo_url"),
+  
+  // Entrega específica deste pedido
+  deliveryStatus: deliveryStatusEnum("delivery_status").default('pending'),
+  deliveryScheduledDate: timestamp("delivery_scheduled_date"),
+  deliveryCompletedDate: timestamp("delivery_completed_date"),
+  deliveryNotes: text("delivery_notes"),
+  trackingCode: varchar("tracking_code"),
+  
+  // Integração Omie para este pedido
+  omieOrderId: varchar("omie_order_id"),
+  invoiceNumber: varchar("invoice_number"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // WhatsApp message templates
 export const messageTemplates = pgTable("message_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -744,6 +789,14 @@ export const salesCardsRelations = relations(salesCards, ({ one, many }) => ({
     references: [salesCards.id],
   }),
   deliveryHistory: many(deliveryHistory),
+  orders: many(orderHistory), // Histórico de pedidos do card
+}));
+
+export const orderHistoryRelations = relations(orderHistory, ({ one }) => ({
+  salesCard: one(salesCards, {
+    fields: [orderHistory.salesCardId],
+    references: [salesCards.id],
+  }),
 }));
 
 export const deliveryHistoryRelations = relations(deliveryHistory, ({ one }) => ({
@@ -893,6 +946,27 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   vehicleTypes: z.array(z.enum(['caminhao', 'carro', 'moto'])).max(2, 'Selecione no máximo 2 tipos de veículos').default([]),
 });
 
+export const insertOrderHistorySchema = createInsertSchema(orderHistory).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  // Campos de data aceitam string ISO ou Date
+  orderDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional(),
+  checkInTime: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  checkOutTime: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  deliveryScheduledDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  deliveryCompletedDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  // Coordenadas GPS podem ser números ou strings
+  checkInLatitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkInLongitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkOutLatitude: z.union([z.string(), z.number()]).optional().nullable(),
+  checkOutLongitude: z.union([z.string(), z.number()]).optional().nullable(),
+  distanceToCustomer: z.union([z.string(), z.number()]).optional().nullable(),
+  // Valor total pode ser número ou string
+  totalValue: z.union([z.string(), z.number()]).transform(val => String(val)),
+});
+
 export const insertMessageTemplateSchema = createInsertSchema(messageTemplates).omit({
   id: true,
   createdAt: true,
@@ -1001,6 +1075,8 @@ export type InsertProductReview = z.infer<typeof insertProductReviewSchema>;
 export type ProductReview = typeof productReviews.$inferSelect;
 export type InsertSalesCard = z.infer<typeof insertSalesCardSchema>;
 export type SalesCard = typeof salesCards.$inferSelect;
+export type InsertOrderHistory = z.infer<typeof insertOrderHistorySchema>;
+export type OrderHistory = typeof orderHistory.$inferSelect;
 export type InsertMessageTemplate = z.infer<typeof insertMessageTemplateSchema>;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type InsertMessageHistory = z.infer<typeof insertMessageHistorySchema>;
