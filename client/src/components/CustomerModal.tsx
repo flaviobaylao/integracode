@@ -92,6 +92,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
 
   const [customerType, setCustomerType] = useState<'pessoa_fisica' | 'pessoa_juridica'>('pessoa_fisica');
   const coordinatesLocked = form.watch('coordinatesLocked');
+  const weekdays = form.watch('weekdays');
 
   useEffect(() => {
     if (customer) {
@@ -299,7 +300,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   };
 
   const handleWeekdayToggle = (weekday: string) => {
-    const currentWeekdays = JSON.parse(form.getValues('weekdays') || '[]');
+    const currentWeekdays = JSON.parse(weekdays || '[]');
     
     if (currentWeekdays.includes(weekday)) {
       // Remove o dia se já estiver selecionado
