@@ -633,6 +633,42 @@ export const routeCheckpoints = pgTable("route_checkpoints", {
   index("idx_route_checkpoints_customer").on(table.customerId),
 ]);
 
+// Visit Schedule History - Histórico de visitas agendadas e realizadas
+export const visitScheduleHistory = pgTable("visit_schedule_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull(),
+  sellerId: varchar("seller_id").notNull(),
+  
+  // Data agendada da visita
+  scheduledDate: date("scheduled_date").notNull(), // Apenas data, sem hora
+  weekday: varchar("weekday").notNull(), // "Seg", "Ter", "Qua", etc
+  periodicity: visitPeriodicityEnum("periodicity").notNull(), // semanal, quinzenal, mensal, bimestral
+  
+  // Status da visita
+  visitStatus: varchar("visit_status").notNull().default('scheduled'), // scheduled, completed, missed, cancelled
+  
+  // Dados de execução (quando há check-in)
+  checkInTime: timestamp("check_in_time"),
+  checkOutTime: timestamp("check_out_time"),
+  checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }),
+  checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }),
+  
+  // Referência ao checkpoint (se fez check-in)
+  routeCheckpointId: varchar("route_checkpoint_id"),
+  
+  // Dados do cliente (cache para performance)
+  customerName: varchar("customer_name").notNull(),
+  customerAddress: text("customer_address"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_visit_schedule_customer").on(table.customerId),
+  index("idx_visit_schedule_seller_date").on(table.sellerId, table.scheduledDate),
+  index("idx_visit_schedule_status").on(table.visitStatus),
+  unique("unique_visit_schedule_customer_date").on(table.customerId, table.scheduledDate),
+]);
+
 // Sales Goals table - para definição de metas mensais por vendedor
 export const salesGoals = pgTable("sales_goals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -907,6 +943,17 @@ export const insertVisitAgendaSchema = createInsertSchema(visitAgenda).omit({
   updatedAt: true,
 });
 
+export const insertVisitScheduleHistorySchema = createInsertSchema(visitScheduleHistory).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  scheduledDate: z.union([z.string(), z.date()]).transform(val => {
+    if (typeof val === 'string') return val;
+    return val.toISOString().split('T')[0]; // Convert to YYYY-MM-DD
+  }),
+});
+
 export const insertBillingSchema = createInsertSchema(billings).omit({
   id: true,
   createdAt: true,
@@ -994,6 +1041,9 @@ export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
 
 export type VisitAgenda = typeof visitAgenda.$inferSelect;
 export type InsertVisitAgenda = z.infer<typeof insertVisitAgendaSchema>;
+
+export type VisitScheduleHistory = typeof visitScheduleHistory.$inferSelect;
+export type InsertVisitScheduleHistory = z.infer<typeof insertVisitScheduleHistorySchema>;
 
 export type Billing = typeof billings.$inferSelect;
 export type InsertBilling = z.infer<typeof insertBillingSchema>;
