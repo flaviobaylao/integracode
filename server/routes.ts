@@ -10960,7 +10960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingCustomer = customersData.find(c => 
         (validatedData.customer.email && c.email?.toLowerCase() === validatedData.customer.email.toLowerCase()) ||
         (validatedData.customer.phone && c.phone === validatedData.customer.phone) ||
-        (cpfLimpo && c.cpfCnpj && c.cpfCnpj.replace(/\D/g, '') === cpfLimpo)
+        (cpfLimpo && ((c.cpf && c.cpf.replace(/\D/g, '') === cpfLimpo) || (c.cnpj && c.cnpj.replace(/\D/g, '') === cpfLimpo)))
       );
       
       if (existingCustomer) {
@@ -11001,7 +11001,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phone: validatedData.customer.phone,
           address: validatedData.customer.address,
           customerType: validatedData.customer.customerType,
-          cpfCnpj: validatedData.customer.cpfCnpj,
+          cpf: validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.cpfCnpj : null,
+          cnpj: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.cpfCnpj : null,
           companyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           route: 'GOIÂNIA', // Padrão para clientes do hotsite
