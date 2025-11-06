@@ -1,5 +1,6 @@
 import { DatabaseStorage } from './storage';
 import { calculateRouteDistances, calculateTotalRouteDistance as calculateRealRouteDistance } from './routingService';
+import { shouldVisitOnDate as shouldVisitOnDateByPeriodicity } from './visitScheduleHistoryService';
 
 // Função Haversine para calcular distância entre dois pontos (em km)
 // Usada para otimização rápida, mas não para distâncias finais
@@ -309,63 +310,14 @@ export async function optimizeRoute(
 }
 
 /**
- * Calcula se um cliente deve ser visitado em uma data específica
- * baseado na periodicidade e data de início do serviço
- */
-function shouldVisitOnDate(
-  customer: any,
-  targetDate: Date
-): boolean {
-  const serviceStart = customer.serviceStartDate ? new Date(customer.serviceStartDate) : null;
-  
-  // Se não tem data de início, assume que pode visitar
-  if (!serviceStart) {
-    return true;
-  }
-  
-  // Normalizar datas para comparação (sem horas)
-  const startDate = new Date(serviceStart);
-  startDate.setHours(0, 0, 0, 0);
-  const checkDate = new Date(targetDate);
-  checkDate.setHours(0, 0, 0, 0);
-  
-  // Se a data alvo é antes do início do serviço, não visitar
-  if (checkDate < startDate) {
-    return false;
-  }
-  
-  // Calcular diferença em dias desde o início do serviço
-  const diffTime = checkDate.getTime() - startDate.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  
-  // Verificar periodicidade
-  const periodicity = customer.visitPeriodicity || 'semanal';
-  
-  switch (periodicity) {
-    case 'semanal':
-      // Toda semana
-      return true;
-    case 'quinzenal':
-      // A cada 14 dias (2 semanas)
-      return diffDays % 14 === 0 || diffDays % 14 <= 6;
-    case 'mensal':
-      // Verificar se está na mesma semana do mês que começou
-      const startWeekOfMonth = Math.floor(startDate.getDate() / 7);
-      const checkWeekOfMonth = Math.floor(checkDate.getDate() / 7);
-      return startWeekOfMonth === checkWeekOfMonth;
-    case 'bimestral':
-      // A cada 2 meses
-      const monthsDiff = (checkDate.getFullYear() - startDate.getFullYear()) * 12 + 
-                        (checkDate.getMonth() - startDate.getMonth());
-      return monthsDiff % 2 === 0;
-    default:
-      return true;
-  }
-}
-
-/**
  * Gera a rota diária para um vendedor consultando direto na tabela customers
  * FONTE ÚNICA DE VERDADE: customers
+ * 
+ * PERIODICIDADE: Agora usa a lógica correta baseada em SEMANAS (não dias)
+ * - Semanal: toda semana nos dias configurados
+ * - Quinzenal: semana SIM, semana NÃO (alternado desde serviceStartDate)
+ * - Mensal: 1 semana SIM, 3 semanas NÃO (desde serviceStartDate)
+ * - Bimestral: a cada 8 semanas (desde serviceStartDate)
  */
 export async function generateDailyRoute(
   storage: DatabaseStorage,
@@ -423,7 +375,10 @@ export async function generateDailyRoute(
     }
     
     // 5. Verificar periodicidade (semanal, quinzenal, mensal, bimestral)
-    if (!shouldVisitOnDate(customer, routeDate)) {
+    const periodicity = customer.visitPeriodicity || 'semanal';
+    const serviceStartDate = customer.serviceStartDate ? new Date(customer.serviceStartDate) : null;
+    
+    if (!shouldVisitOnDateByPeriodicity(periodicity, routeDate, weekdaysArray, serviceStartDate)) {
       return false;
     }
     
