@@ -99,10 +99,19 @@ export function CustomerTypeSelector() {
   const validarCPF = (cpf: string): boolean => {
     const cpfLimpo = cpf.replace(/\D/g, '');
     
-    if (cpfLimpo.length !== 11) return false;
+    console.log('🔍 Validando CPF:', cpf);
+    console.log('🔍 CPF limpo:', cpfLimpo);
+    
+    if (cpfLimpo.length !== 11) {
+      console.log('❌ CPF não tem 11 dígitos');
+      return false;
+    }
     
     // Verifica CPFs inválidos conhecidos
-    if (/^(\d)\1{10}$/.test(cpfLimpo)) return false;
+    if (/^(\d)\1{10}$/.test(cpfLimpo)) {
+      console.log('❌ CPF é sequência repetida');
+      return false;
+    }
     
     // Validação dos dígitos verificadores
     let soma = 0;
@@ -114,7 +123,14 @@ export function CustomerTypeSelector() {
     
     resto = (soma * 10) % 11;
     if (resto === 10 || resto === 11) resto = 0;
-    if (resto !== parseInt(cpfLimpo.substring(9, 10))) return false;
+    
+    console.log('🔍 Primeiro dígito verificador calculado:', resto);
+    console.log('🔍 Primeiro dígito verificador no CPF:', parseInt(cpfLimpo.substring(9, 10)));
+    
+    if (resto !== parseInt(cpfLimpo.substring(9, 10))) {
+      console.log('❌ Primeiro dígito verificador inválido');
+      return false;
+    }
     
     soma = 0;
     for (let i = 1; i <= 10; i++) {
@@ -123,8 +139,16 @@ export function CustomerTypeSelector() {
     
     resto = (soma * 10) % 11;
     if (resto === 10 || resto === 11) resto = 0;
-    if (resto !== parseInt(cpfLimpo.substring(10, 11))) return false;
     
+    console.log('🔍 Segundo dígito verificador calculado:', resto);
+    console.log('🔍 Segundo dígito verificador no CPF:', parseInt(cpfLimpo.substring(10, 11)));
+    
+    if (resto !== parseInt(cpfLimpo.substring(10, 11))) {
+      console.log('❌ Segundo dígito verificador inválido');
+      return false;
+    }
+    
+    console.log('✅ CPF válido!');
     return true;
   };
 
