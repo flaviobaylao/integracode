@@ -6,6 +6,7 @@
 
 ## 2025-11-06: Hotsite Bug Fixes
 - **Fixed CPF Recognition**: Corrected `/api/public/customers/check` endpoint that was searching for non-existent `cpfCnpj` field. Now correctly searches `cpf` field for existing customers, enabling proper customer recognition and data auto-fill.
+- **Fixed Order Creation**: Corrected `/api/public/orders` endpoint to use separate `cpf` and `cnpj` fields instead of non-existent `cpfCnpj` field when creating new customers and checking for existing customers. Pedidos from hotsite now successfully migrate to Sistema Integra.
 - **Fixed Pricing Table Persistence**: Resolved three issues preventing hotsite price updates: (1) corrected apiRequest parameter order to `(method, url, data)`, (2) fixed authentication using `req.currentUser` instead of `req.userId`, (3) extended Zod schema to accept numeric price inputs with automatic string coercion.
 
 # User Preferences
