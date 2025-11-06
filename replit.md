@@ -4,6 +4,18 @@
 
 # Recent Changes
 
+## 2025-11-06: Recurrence Change Propagation
+- **Automatic Future Card Management**: When editing a sales card's recurrence type (mensal ↔ semanal ↔ quinzenal), the system now automatically manages all future cards:
+  - **Increased Frequency** (e.g., mensal → semanal): Creates missing future cards within 60-day window with source='recurrence_change_propagation'
+  - **Decreased Frequency** (e.g., semanal → mensal): Soft-cancels surplus cards (status='cancelled') with audit notes
+  - **Implementation**: New `propagateRecurrenceChange()` function in visitScheduleService.ts
+  - **Horizon**: 60-day window from edited card's date
+  - **Date Handling**: Normalized date comparisons prevent timezone issues
+  - **Audit Trail**: All created/cancelled cards include notes with user name and timestamp
+  - **Integration**: Triggered automatically in PUT /api/sales-cards/:id after normal configuration propagation
+  - **Example**: Changing mensal→semanal creates ~7-8 weekly cards; changing back cancels ~6-7 surplus cards
+  - **Testing**: End-to-end validated with successful creation and cancellation flows
+
 ## 2025-11-06: Blocked Orders Release Fix
 - **Fixed Release Functionality**: Corrected critical bug in `/api/blocked-orders/release` endpoint preventing order release in production:
   - Added status validation to process ONLY orders with status 'blocked'
