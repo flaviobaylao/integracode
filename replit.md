@@ -4,13 +4,28 @@
 
 # Recent Changes
 
-## 2025-11-06: Daily Routes Dual-Table Fix
-- **Fixed Critical Bug**: Daily routes view was showing incomplete/incorrect visit data for routes generated from visit_agenda (legacy system)
-- **Root Cause**: GET endpoints `/api/daily-routes/:sellerId/today` and `/api/daily-routes/:sellerId/date/:date` only searched sales_cards table, causing missing visits
-- **Impact**: Routes like Gilmar's 06/11/2025 showed 5 visits instead of 34, with nonsensical progress values (920%, 16/5 completado)
-- **Solution**: Both endpoints now search sales_cards first, then fall back to visit_agenda if not found - mirrors the pattern already used in optimize-preview endpoint
-- **Result**: All 34 visits now display correctly with proper progress tracking (0/34, 0%)
-- **Compatibility**: System now fully supports routes generated from either sales_cards (new) or visit_agenda (legacy) tables
+## 2025-11-06: Route Generation Migration - Customers as Single Source of Truth
+- **Major Architectural Change**: Migrated daily route generation from sales_cards/visit_agenda to customers table as single source of truth
+- **Previous Flow**: Routes were generated from pre-created sales_cards (created by agenda sync) → required maintaining dual systems
+- **New Flow**: Routes generated on-the-fly from customers table based on:
+  - `seller_id` match
+  - `weekdays` JSON array (supports both abbreviated "Seg"/"Ter" and full "segunda"/"terca" formats)
+  - `visit_periodicity` enum (semanal/quinzenal/mensal/bimestral)
+  - `is_active` = true
+  - `virtual_service` = false
+  - Valid latitude/longitude coordinates
+- **Changes Made**:
+  - Modified `generateDailyRoute()` in routeOptimizationService.ts to query customers directly
+  - Added `storage.getAllCustomers()` method for customer data access
+  - Updated GET endpoints `/api/daily-routes/:sellerId/today` and `/date/:date` to fetch visits from customers
+  - Updated POST `/api/daily-routes/:routeId/optimize-preview` to use customers data
+  - `optimizedOrder` in daily_routes now contains customer IDs (not sales_card IDs)
+- **Benefits**:
+  - Eliminates dependency on pre-created sales_cards for route generation
+  - Simplifies data flow - customers table is authoritative for visit scheduling
+  - Reduces data duplication and synchronization complexity
+- **Test Results**: Successfully generated route for Gabriel R. on 06/11/2025 (quarta-feira) with 23 valid visits from 32 scheduled customers (9 excluded due to missing coordinates)
+- **Legacy Support**: visit_agenda table still exists for backward compatibility with some endpoints (metrics, legacy reports) - will be fully deprecated in future release
 
 # User Preferences
 
