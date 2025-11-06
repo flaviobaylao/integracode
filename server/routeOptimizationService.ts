@@ -386,11 +386,13 @@ export async function generateDailyRoute(
   const startOfDay = new Date(routeDate);
   startOfDay.setHours(0, 0, 0, 0);
 
-  // Descobrir qual dia da semana é a data alvo
-  const daysOfWeek = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-  const targetWeekday = daysOfWeek[routeDate.getDay()];
+  // Descobrir qual dia da semana é a data alvo (formato abreviado e completo)
+  const daysOfWeekAbbr = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+  const daysOfWeekFull = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+  const targetWeekdayAbbr = daysOfWeekAbbr[routeDate.getDay()];
+  const targetWeekdayFull = daysOfWeekFull[routeDate.getDay()];
   
-  console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekday} ${routeDate.toLocaleDateString('pt-BR')}`);
+  console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
   // BUSCAR CLIENTES DIRETO DA TABELA CUSTOMERS (fonte única de verdade)
   const allCustomers = await storage.getAllCustomers();
@@ -415,7 +417,8 @@ export async function generateDailyRoute(
       return false;
     }
     
-    if (!weekdaysArray.includes(targetWeekday)) {
+    // Aceitar tanto formato abreviado (Dom, Seg) quanto completo (domingo, segunda)
+    if (!weekdaysArray.includes(targetWeekdayAbbr) && !weekdaysArray.includes(targetWeekdayFull)) {
       return false;
     }
     

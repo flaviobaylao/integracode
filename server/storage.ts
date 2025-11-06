@@ -71,6 +71,7 @@ export interface IStorage {
   
   // Customer operations
   getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
+  getAllCustomers(): Promise<Customer[]>;
   getCustomer(id: string): Promise<CustomerWithSeller | undefined>;
   getCustomerByCpf(cpf: string): Promise<Customer | undefined>;
   getCustomerByCnpj(cnpj: string): Promise<Customer | undefined>;
@@ -465,6 +466,10 @@ export class DatabaseStorage implements IStorage {
     });
     
     return customersWithExtendedInfo;
+  }
+
+  async getAllCustomers(): Promise<Customer[]> {
+    return await db.select().from(customers);
   }
 
   async getCustomer(id: string): Promise<CustomerWithSeller | undefined> {
