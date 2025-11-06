@@ -8157,7 +8157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           products: products || []
         };
         
-        await db.insert(blockedOrders).values(blockedOrderData);
+        await db.insert(blockedOrders).values([blockedOrderData]);
         console.log(`✅ Pedido bloqueado criado em blocked_orders para card ${id}`);
         
         return res.json({

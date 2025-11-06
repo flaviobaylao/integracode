@@ -13,6 +13,12 @@
   - Example error: "Cliente X: Produtos não encontrados ou sem código Omie: Suco de Laranja, Suco de Uva (sem código Omie)"
   - Orders now fail fast with actionable feedback instead of sending invalid data to Omie
 
+- **Fixed Troca/Amostra Blocking**: Corrected bug in `/api/sales-cards/:id/finalize-sale` preventing proper blocking of exchange and sample orders:
+  - Endpoint was marking sales_card status as 'blocked' but NOT creating record in `blocked_orders` table
+  - Added creation of `blocked_orders` record when blocking troca/amostra orders
+  - Now troca/amostra orders appear in blocked orders screen and can be released by administrators
+  - Fixes: (1) Trocas not appearing as blocked, (2) Amostras not being releasable
+
 ## 2025-11-06: Route Management Enhancement
 - **Delete Visit from Daily Route**: Replaced "Edit" button with "Delete" button in daily routes view (`/daily-route`). Users can now remove specific visits from the optimized daily route with confirmation dialog. Implementation includes:
   - Backend DELETE endpoint `/api/daily-routes/:routeId/visits/:visitId` with role-based permissions (ADMIN ONLY - vendedores não podem excluir)
