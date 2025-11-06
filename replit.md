@@ -4,6 +4,13 @@
 
 # Recent Changes
 
+## 2025-11-06: Route Generation Integration with Visit Schedule History
+- **Critical Fix**: Corrected route generation logic to use proper week-based periodicity calculations
+- **Changed**: `routeOptimizationService.ts` now imports and uses `shouldVisitOnDate()` from `visitScheduleHistoryService.ts`
+- **Removed**: Old incorrect day-based periodicity logic that was causing wrong visit schedules
+- **Impact**: Route generation now perfectly aligned with visit_schedule_history system
+- **Consistency**: Both systems now use identical logic for determining visit eligibility
+
 ## 2025-11-06: Visit Schedule History System
 - **New Feature**: Persistent tracking of all scheduled visits (past and future) with completion status
 - **New Table**: `visit_schedule_history` stores:
