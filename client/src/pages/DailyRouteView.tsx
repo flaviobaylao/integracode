@@ -784,22 +784,24 @@ export default function DailyRouteView() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 ml-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="bg-red-500 hover:bg-red-600 text-white border-red-600"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteVisit({
-                              visitId: visit.id,
-                              customerName: visit.customerName
-                            });
-                          }}
-                          data-testid={`button-delete-${index}`}
-                        >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Excluir
-                        </Button>
+                        {isAdmin && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="bg-red-500 hover:bg-red-600 text-white border-red-600"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteVisit({
+                                visitId: visit.id,
+                                customerName: visit.customerName
+                              });
+                            }}
+                            data-testid={`button-delete-${index}`}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Excluir
+                          </Button>
+                        )}
                         {visit.checkInPhotoUrl && (
                           <Button
                             size="sm"

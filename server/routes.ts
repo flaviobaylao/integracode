@@ -9147,19 +9147,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { routeId, visitId } = req.params;
       
+      // Apenas administradores podem excluir visitas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem excluir visitas.' });
+      }
+      
       // Buscar rota
       const route = await storage.getDailyRoute(routeId);
       
       if (!route) {
         return res.status(404).json({ message: 'Rota não encontrada' });
-      }
-      
-      // Verificar permissão (admin ou vendedor dono da rota)
-      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
-      const isOwner = route.sellerId === user.id;
-      
-      if (!isAdmin && !isOwner) {
-        return res.status(403).json({ message: 'Acesso negado' });
       }
       
       // Remover visita do optimizedOrder (com tratamento para rotas antigas sem optimizedOrder)

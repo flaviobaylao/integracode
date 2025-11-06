@@ -6,7 +6,7 @@
 
 ## 2025-11-06: Route Management Enhancement
 - **Delete Visit from Daily Route**: Replaced "Edit" button with "Delete" button in daily routes view (`/daily-route`). Users can now remove specific visits from the optimized daily route with confirmation dialog. Implementation includes:
-  - Backend DELETE endpoint `/api/daily-routes/:routeId/visits/:visitId` with role-based permissions (admin or route owner)
+  - Backend DELETE endpoint `/api/daily-routes/:routeId/visits/:visitId` with role-based permissions (ADMIN ONLY - vendedores não podem excluir)
   - Frontend confirmation dialog (AlertDialog) before deletion
   - Automatic list and map updates after removal via cache invalidation
   - Defensive handling for legacy routes without optimizedOrder
