@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
-import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer } from "./visitScheduleService";
+import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import {
@@ -2496,6 +2496,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updatedCount = await storage.updateFutureCardsConfig(id, data);
           if (updatedCount > 0) {
             console.log(`✅ Configurações replicadas para ${updatedCount} cards futuros`);
+          }
+        }
+        
+        // PROPAGAÇÃO DE MUDANÇA DE RECORRÊNCIA:
+        // Detectar se recurrenceType mudou e ajustar cards futuros
+        if (cardBefore && data.recurrenceType && cardBefore.recurrenceType !== data.recurrenceType) {
+          console.log(`🔄 Mudança de recorrência detectada: ${cardBefore.recurrenceType} → ${data.recurrenceType}`);
+          
+          try {
+            const userName = user?.name || user?.email || 'Usuário';
+            const recurrenceResult = await propagateRecurrenceChange({
+              cardId: id,
+              oldRecurrence: cardBefore.recurrenceType,
+              newRecurrence: data.recurrenceType,
+              baseDate: cardBefore.scheduledDate,
+              userName
+            });
+            
+            console.log(`✅ [RECORRÊNCIA] ${recurrenceResult.cardsCreated} cards criados, ${recurrenceResult.cardsRemoved} cards removidos`);
+          } catch (recurrenceError: any) {
+            console.error(`❌ Erro ao propagar mudança de recorrência:`, recurrenceError);
+            // Não falhar a requisição inteira por erro na propagação
           }
         }
         
