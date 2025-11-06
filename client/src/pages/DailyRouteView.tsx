@@ -100,6 +100,9 @@ export default function DailyRouteView() {
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
 
+  // Estado para ordem otimizada local (sem salvar no banco)
+  const [localOptimizedOrder, setLocalOptimizedOrder] = useState<string[] | null>(null);
+
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
     queryKey: ['/api/users'],
@@ -149,6 +152,21 @@ export default function DailyRouteView() {
   });
 
   const route: DailyRoute | null = routeData?.route || null;
+
+  // Limpar otimização local quando a rota mudar (vendedor, data, ou rota regenerada)
+  useEffect(() => {
+    setLocalOptimizedOrder(null);
+  }, [selectedSellerId, selectedDate, route?.id]);
+
+  // Usar ordem otimizada local se existir, senão usar a ordem do banco
+  const effectiveOptimizedOrder = localOptimizedOrder || route?.optimizedOrder || [];
+  
+  // Reordenar visitas de acordo com a ordem efetiva
+  const orderedVisits = route?.visits && effectiveOptimizedOrder.length > 0
+    ? effectiveOptimizedOrder
+        .map(id => route.visits.find((v: any) => v.id === id))
+        .filter(Boolean)
+    : route?.visits || [];
 
   // Buscar clientes sem coordenadas para a data selecionada
   const { data: missingCoordsData } = useQuery({
@@ -296,6 +314,7 @@ export default function DailyRouteView() {
       });
       setShowAddCustomerModal(false);
       setCustomerSearchQuery('');
+      setLocalOptimizedOrder(null); // Limpar otimização local ao adicionar cliente
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
     },
@@ -304,6 +323,28 @@ export default function DailyRouteView() {
         variant: "destructive",
         title: "Erro ao adicionar cliente",
         description: error.message || "Não foi possível adicionar o cliente à rota.",
+      });
+    }
+  });
+
+  // Mutation para re-otimizar rota localmente (sem salvar)
+  const reoptimizeRouteMutation = useMutation({
+    mutationFn: async () => {
+      if (!route?.id) throw new Error('Rota não encontrada');
+      return await apiRequest('POST', `/api/daily-routes/${route.id}/optimize-preview`);
+    },
+    onSuccess: (data) => {
+      setLocalOptimizedOrder(data.optimizedOrder);
+      toast({
+        title: "Rota re-otimizada!",
+        description: `Nova ordem calculada com ${data.totalVisits} visitas e ${data.totalDistance}km estimados. Esta otimização é temporária e não foi salva.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao re-otimizar rota",
+        description: error.message || "Não foi possível re-otimizar a rota.",
       });
     }
   });
@@ -596,6 +637,27 @@ export default function DailyRouteView() {
               Adicionar Cliente
             </Button>
           )}
+          {route && route.optimizedOrder && route.optimizedOrder.length > 0 && (
+            <Button
+              onClick={() => reoptimizeRouteMutation.mutate()}
+              disabled={reoptimizeRouteMutation.isPending}
+              variant="secondary"
+              size="sm"
+              data-testid="button-reoptimize-route"
+            >
+              {reoptimizeRouteMutation.isPending ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Re-otimizando...
+                </>
+              ) : (
+                <>
+                  <TrendingUp className="mr-2 h-4 w-4" />
+                  {localOptimizedOrder ? 'Otimizado ✓' : 'Re-otimizar Rota'}
+                </>
+              )}
+            </Button>
+          )}
           <Button
             onClick={() => generateRouteMutation.mutate()}
             disabled={generateRouteMutation.isPending || !selectedSellerId}
@@ -775,8 +837,8 @@ export default function DailyRouteView() {
                 latitude: parseFloat(currentSeller.homeLatitude),
                 longitude: parseFloat(currentSeller.homeLongitude)
               }}
-              visits={route.visits || []}
-              optimizedOrder={route.optimizedOrder || []}
+              visits={orderedVisits}
+              optimizedOrder={effectiveOptimizedOrder}
               checkpoints={route.checkpoints || []}
               onPhotoClick={(photoData) => setSelectedPhoto(photoData)}
             />
@@ -808,7 +870,7 @@ export default function DailyRouteView() {
 
           {/* Visitas */}
           <div className="space-y-2">
-            {route.visits && route.visits.map((visit: any, index: number) => {
+            {orderedVisits && orderedVisits.map((visit: any, index: number) => {
               const status = getVisitStatus(visit);
               const checkpoint = route.checkpoints?.find(cp => cp.visitId === visit.id);
               const segment = route.segments?.find((s: any) => s.visitId === visit.id);

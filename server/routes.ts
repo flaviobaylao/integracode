@@ -9159,6 +9159,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Re-otimizar rota localmente (sem salvar no banco de dados)
+  app.post('/api/daily-routes/:routeId/optimize-preview', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+
+      // Vendedor só pode otimizar sua própria rota
+      if (user.role === 'vendedor' && route.sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      // Buscar dados do vendedor (coordenadas de casa)
+      const seller = await storage.getUser(route.sellerId);
+      
+      if (!seller?.homeLatitude || !seller?.homeLongitude) {
+        return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
+      }
+
+      // Buscar visitas da rota com coordenadas (tentar sales_cards e visit_agenda)
+      const visitsData = await Promise.all(
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          // Tentar buscar na tabela sales_cards (nova estrutura)
+          let [salesCard] = await db
+            .select({
+              id: salesCards.id,
+              customerId: salesCards.customerId,
+              customerName: customers.fantasyName,
+              customerAddress: customers.address,
+              latitude: customers.latitude,
+              longitude: customers.longitude
+            })
+            .from(salesCards)
+            .leftJoin(customers, eq(salesCards.customerId, customers.id))
+            .where(eq(salesCards.id, visitId))
+            .limit(1);
+
+          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
+          if (!salesCard) {
+            const [visit] = await db
+              .select({
+                id: visitAgenda.id,
+                customerId: visitAgenda.customerId,
+                customerName: customers.fantasyName,
+                customerAddress: customers.address,
+                latitude: customers.latitude,
+                longitude: customers.longitude
+              })
+              .from(visitAgenda)
+              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
+              .where(eq(visitAgenda.id, visitId))
+              .limit(1);
+            
+            salesCard = visit;
+          }
+
+          return salesCard;
+        })
+      );
+
+      // Filtrar apenas visitas com coordenadas válidas (aceitar string ou number)
+      const validVisits = visitsData
+        .filter((v): v is NonNullable<typeof v> => {
+          if (!v || v === null || v === undefined) return false;
+          if (v.latitude === null || v.longitude === null) return false;
+          
+          // Converter para número se for string
+          const lat = typeof v.latitude === 'string' ? parseFloat(v.latitude) : v.latitude;
+          const lon = typeof v.longitude === 'string' ? parseFloat(v.longitude) : v.longitude;
+          
+          // Validar se são números válidos
+          return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
+        });
+
+      console.log(`📊 Debug re-otimização - Total visitas na rota: ${route.optimizedOrder?.length || 0}, Visitas encontradas: ${visitsData.filter(v => v).length}, Válidas: ${validVisits.length}`);
+
+      if (validVisits.length === 0) {
+        console.error(`❌ Nenhuma visita válida encontrada para rota ${routeId}. Visitas: ${JSON.stringify(visitsData.map(v => v ? { id: v.id, lat: v.latitude, lon: v.longitude } : null))}`);
+        return res.status(400).json({ message: 'Nenhuma visita com coordenadas válidas encontrada' });
+      }
+
+      // Preparar pontos para otimização (converter coordenadas para número)
+      const points = validVisits.map(visit => ({
+        id: visit.id,
+        latitude: typeof visit.latitude === 'string' ? parseFloat(visit.latitude) : visit.latitude,
+        longitude: typeof visit.longitude === 'string' ? parseFloat(visit.longitude) : visit.longitude,
+        customerName: visit.customerName || 'Cliente',
+        customerAddress: visit.customerAddress || ''
+      }));
+
+      // Executar otimização
+      const { optimizeRoute } = await import('./routeOptimizationService');
+      const optimizedResult = await optimizeRoute(
+        seller.homeLatitude,
+        seller.homeLongitude,
+        points
+      );
+
+      // Retornar apenas a ordem otimizada (IDs) e distância total
+      const optimizedOrder = optimizedResult.orderedPoints.map(p => p.id);
+      
+      console.log(`🔄 Re-otimização preview para rota ${routeId}: ${validVisits.length} visitas, distância: ${optimizedResult.totalDistance}km`);
+
+      res.json({
+        success: true,
+        optimizedOrder,
+        totalDistance: optimizedResult.totalDistance,
+        totalVisits: optimizedOrder.length,
+        message: `Rota re-otimizada com ${optimizedOrder.length} visitas`
+      });
+    } catch (error: any) {
+      console.error('Erro ao re-otimizar rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao re-otimizar rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Validar visita fora da rota (admin apenas)
   app.post('/api/daily-routes/checkpoints/:checkpointId/validate', authenticateUser, async (req: any, res) => {
     try {
