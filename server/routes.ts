@@ -8120,7 +8120,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Create blocked order instead of finalizing
         console.log(`Blocking order for card ${id}, reason: ${blockReason}`);
         
-        // For now, just set status as blocked in sales card
+        // Get card data to create blocked order record
+        const salesCard = await storage.getSalesCard(id);
+        if (!salesCard) {
+          return res.status(404).json({ message: 'Sales card not found' });
+        }
+        
+        // Update sales card status to blocked
         const updateData = {
           status: 'blocked',
           products: products,
@@ -8132,10 +8138,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
           customerLatitude: customerLatitude,
           customerLongitude: customerLongitude,
-          notes: (await storage.getSalesCard(id))?.notes + `\n\nPedido bloqueado: ${blockDetails}`
+          notes: (salesCard.notes || '') + `\n\nPedido bloqueado: ${blockDetails}`
         };
 
         await storage.updateSalesCard(id, updateData);
+        
+        // Create blocked order record in blocked_orders table
+        const blockedOrderData = {
+          salesCardId: id,
+          customerId: salesCard.customerId,
+          sellerId: salesCard.sellerId,
+          blockReason: blockReason,
+          blockDetails: blockDetails,
+          operationType: operationType || 'venda',
+          paymentMethod: paymentMethod || 'a_vista',
+          boletoDays: boletoDays || null,
+          totalAmount: parseFloat(totalValue) || 0,
+          products: products || []
+        };
+        
+        await db.insert(blockedOrders).values(blockedOrderData);
+        console.log(`✅ Pedido bloqueado criado em blocked_orders para card ${id}`);
         
         return res.json({
           success: true,
