@@ -5631,7 +5631,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           
           order = blockedOrder[0];
-          console.log(`✓ Pedido encontrado: salesCardId=${order.salesCardId}, customerId=${order.customerId}`);
+          console.log(`✓ Pedido encontrado: salesCardId=${order.salesCardId}, customerId=${order.customerId}, status=${order.status}`);
+          
+          // Validar status do pedido - apenas processar se estiver bloqueado
+          if (order.status !== 'blocked') {
+            console.log(`⚠️ Pedido ${orderId} não está bloqueado (status: ${order.status}), ignorando`);
+            errors.push(`Pedido já foi processado (status: ${order.status})`);
+            continue;
+          }
           
           // Buscar sales card relacionado
           salesCard = await storage.getSalesCard(order.salesCardId);
@@ -5651,26 +5658,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Buscar dados completos dos produtos
           console.log(`✓ Buscando produtos do pedido...`);
           let products = [];
+          const missingProducts: string[] = [];
+          
           if (order.products && Array.isArray(order.products) && order.products.length > 0) {
-            const productPromises = order.products.map(async (cardProduct: any) => {
+            console.log(`   Produtos no pedido bloqueado:`, order.products.map((p: any) => ({ id: p.id, name: p.name, qty: p.quantity })));
+            
+            for (const cardProduct of order.products) {
+              console.log(`   Buscando produto ${cardProduct.id} (${cardProduct.name})...`);
+              
               let product = await storage.getProduct(cardProduct.id);
               if (!product) {
+                console.log(`     Produto ${cardProduct.id} não encontrado por ID, tentando por código Omie...`);
                 product = await storage.getProductByOmieCode(cardProduct.id);
               }
-              return {
-                id: product?.id || cardProduct.id,
-                omieCode: product?.omieCode || null,
-                omieCodigo: product?.omieCodigo || null,
-                omieCodigoProduto: product?.omieCodigoProduto || null,
-                name: cardProduct.name,
-                unitPrice: cardProduct.unitPrice || 0,
-                quantity: cardProduct.quantity || 1
-              };
-            });
-            products = await Promise.all(productPromises);
-            console.log(`✓ ${products.length} produto(s) encontrado(s)`);
+              
+              if (!product) {
+                console.log(`     ❌ ERRO: Produto ${cardProduct.id} (${cardProduct.name}) não encontrado no cadastro`);
+                missingProducts.push(cardProduct.name);
+              } else {
+                console.log(`     ✓ Produto encontrado: ${product.name} (Omie: ${product.omieCode || product.omieCodigo || product.omieCodigoProduto || 'N/A'})`);
+                
+                // Validar que o produto tem código Omie válido
+                const omieCode = product.omieCode || product.omieCodigo || product.omieCodigoProduto;
+                if (!omieCode) {
+                  console.log(`     ❌ ERRO: Produto ${product.name} não tem código Omie configurado`);
+                  missingProducts.push(`${product.name} (sem código Omie)`);
+                } else {
+                  products.push({
+                    id: product.id,
+                    omieCode: omieCode,
+                    omieCodigo: omieCode,
+                    omieCodigoProduto: omieCode,
+                    name: product.name,
+                    unitPrice: cardProduct.unitPrice || 0,
+                    quantity: cardProduct.quantity || 1
+                  });
+                }
+              }
+            }
+            
+            console.log(`✓ ${products.length} produto(s) válido(s) para envio ao Omie`);
+            if (missingProducts.length > 0) {
+              console.log(`❌ ${missingProducts.length} produto(s) faltando ou sem código Omie: ${missingProducts.join(', ')}`);
+            }
           } else {
             console.log(`⚠️ Nenhum produto no pedido`);
+          }
+          
+          // Validar que há produtos antes de enviar
+          if (missingProducts.length > 0) {
+            console.log(`❌ Pedido não pode ser liberado - produtos faltando: ${missingProducts.join(', ')}`);
+            const customerName = salesCard?.customer?.fantasyName || salesCard?.customer?.name || 'Cliente desconhecido';
+            errors.push(`${customerName}: Produtos não encontrados ou sem código Omie: ${missingProducts.join(', ')}`);
+            continue;
+          }
+          
+          if (!products || products.length === 0) {
+            console.log(`❌ Nenhum produto válido para enviar ao Omie`);
+            const customerName = salesCard?.customer?.fantasyName || salesCard?.customer?.name || 'Cliente desconhecido';
+            errors.push(`${customerName}: Pedido sem produtos válidos`);
+            continue;
           }
           
           // Enviar para Omie

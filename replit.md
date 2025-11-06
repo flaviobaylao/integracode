@@ -4,6 +4,15 @@
 
 # Recent Changes
 
+## 2025-11-06: Blocked Orders Release Fix
+- **Fixed Release Functionality**: Corrected critical bug in `/api/blocked-orders/release` endpoint preventing order release in production:
+  - Added status validation to process ONLY orders with status 'blocked'
+  - Implemented rigorous product validation - products must exist in catalog AND have valid Omie code
+  - Eliminated UUID-as-Omie-code failure path that was causing silent failures
+  - Enhanced error messages to clearly identify missing products or products without Omie codes
+  - Example error: "Cliente X: Produtos não encontrados ou sem código Omie: Suco de Laranja, Suco de Uva (sem código Omie)"
+  - Orders now fail fast with actionable feedback instead of sending invalid data to Omie
+
 ## 2025-11-06: Route Management Enhancement
 - **Delete Visit from Daily Route**: Replaced "Edit" button with "Delete" button in daily routes view (`/daily-route`). Users can now remove specific visits from the optimized daily route with confirmation dialog. Implementation includes:
   - Backend DELETE endpoint `/api/daily-routes/:routeId/visits/:visitId` with role-based permissions (ADMIN ONLY - vendedores não podem excluir)
