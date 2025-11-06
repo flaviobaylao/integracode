@@ -18,7 +18,7 @@ export default function HotsitePricing() {
 
   const updateProductMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<Product> }) => {
-      return apiRequest(`/api/products/${id}`, 'PUT', data);
+      return apiRequest('PUT', `/api/products/${id}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/products'] });
@@ -172,7 +172,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayRetail) as any}
+                      value={formatPrice(displayRetail)}
                       onChange={(e) => handlePriceChange(product.id, 'retailPrice', e.target.value)}
                       data-testid={`input-retail-${product.id}`}
                       className="text-right"
@@ -191,7 +191,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayWholesale) as any}
+                      value={formatPrice(displayWholesale)}
                       onChange={(e) => handlePriceChange(product.id, 'wholesalePrice', e.target.value)}
                       data-testid={`input-wholesale-${product.id}`}
                       className="text-right"
@@ -210,7 +210,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayGoiania) as any}
+                      value={formatPrice(displayGoiania)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleGoianiaPrice', e.target.value)}
                       data-testid={`input-goiania-${product.id}`}
                       className="text-right"
@@ -229,7 +229,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayInterior) as any}
+                      value={formatPrice(displayInterior)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleInteriorPrice', e.target.value)}
                       data-testid={`input-interior-${product.id}`}
                       className="text-right"
@@ -248,7 +248,7 @@ export default function HotsitePricing() {
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={formatPrice(displayBrasilia) as any}
+                      value={formatPrice(displayBrasilia)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleBrasiliaPrice', e.target.value)}
                       data-testid={`input-brasilia-${product.id}`}
                       className="text-right"

@@ -1163,8 +1163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/products', authenticateUser, async (req: any, res) => {
     try {
       // Only admin and coordinators can manage products
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
@@ -1185,10 +1184,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/products/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
+      console.log('🔍 PUT /api/products/:id - user:', user ? `{ id: ${user.id}, email: ${user.email}, role: ${user.role} }` : 'null');
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
+        console.log('❌ PUT /api/products/:id - Access denied for user role:', user?.role);
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -1204,8 +1204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/products/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
@@ -1223,8 +1222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/products/:id/upload-images', authenticateUser, upload.array('images', 10), async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.userId;
-      const user = await storage.getUser(userId);
+      const user = req.currentUser;
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
