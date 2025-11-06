@@ -10857,11 +10857,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ✅ VALIDAÇÃO SERVER-SIDE DE PREÇOS E TOTAIS
       // O hotsite usa 5 tabelas de preço: retail, wholesale, goiania, interior, brasília
       // Validação baseada na tabela de preço selecionada pelo cliente
+      console.log('🔍 Validando produtos do pedido...');
       let serverSubtotal = 0;
       for (const item of validatedData.items) {
+        console.log('🔍 Buscando produto:', item.productId);
         const product = await storage.getProduct(item.productId);
+        console.log('🔍 Produto encontrado:', product ? 'SIM' : 'NÃO');
         
         if (!product) {
+          console.error('❌ Produto não encontrado no banco:', item.productId);
           return res.status(400).json({
             message: `Produto ${item.productName} não encontrado`,
             productId: item.productId
