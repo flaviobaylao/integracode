@@ -2,6 +2,16 @@
 
 "Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos, designed to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. It features robust sales tracking, reporting, and route optimization, with fine-grained access control for various user roles. The system aims to enhance business efficiency, improve customer service, and expand market reach, including an e-commerce platform ("Hotsite Instagram") for direct sales.
 
+# Recent Changes
+
+## 2025-11-06: Daily Routes Dual-Table Fix
+- **Fixed Critical Bug**: Daily routes view was showing incomplete/incorrect visit data for routes generated from visit_agenda (legacy system)
+- **Root Cause**: GET endpoints `/api/daily-routes/:sellerId/today` and `/api/daily-routes/:sellerId/date/:date` only searched sales_cards table, causing missing visits
+- **Impact**: Routes like Gilmar's 06/11/2025 showed 5 visits instead of 34, with nonsensical progress values (920%, 16/5 completado)
+- **Solution**: Both endpoints now search sales_cards first, then fall back to visit_agenda if not found - mirrors the pattern already used in optimize-preview endpoint
+- **Result**: All 34 visits now display correctly with proper progress tracking (0/34, 0%)
+- **Compatibility**: System now fully supports routes generated from either sales_cards (new) or visit_agenda (legacy) tables
+
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
