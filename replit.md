@@ -41,11 +41,14 @@
     - **Public API Routes**: Separate public endpoints for products, orders, customer checks, and reviews.
     - **Structure**: Standalone React SPA with mobile-first design, building to `server/public-hotsite`.
     - **Customer Type Selection**: Interactive flow determines pricing table (Consumer: Retail/Wholesale; Reseller: Location-based with CNPJ verification).
+    - **Consumer CPF Validation**: Pre-checkout CPF validation flow mirrors CNPJ process - consumers must validate CPF and confirm data before accessing catalog. CPF field disabled in checkout to prevent post-validation tampering.
     - **Reseller CNPJ Verification**: Automatic data retrieval from Receita Federal API, customer recognition, and address editing.
+    - **Customer Recognition**: Triple-layer lookup (email OR phone OR CPF/CNPJ) prevents duplicate registrations and auto-fills existing customer data.
+    - **Automatic Omie Registration**: New hotsite customers automatically registered in Omie ERP with PF/PJ differentiation and graceful error handling.
     - **Dynamic Pricing**: Five price tables (`retail_price`, `wholesale_price`, `resale_goiania_price`, `resale_interior_price`, `resale_brasilia_price`) based on customer type.
-    - **Security**: Server-side price validation, stock verification, and total recalculation.
+    - **Security**: Server-side price validation, stock verification, total recalculation, and validated CPF/CNPJ enforcement.
     - **Integration**: Orders automatically registered in Sistema Integra as sales_cards with `source: 'hotsite'`.
-    - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto.
+    - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto (PJ only - PF restricted to Pix/Card).
     - **Product Gallery System**: Multiple images per product with touch-swipe navigation and zoom.
     - **Product Image Management**: Admin interface for uploading multiple images (base64 data URLs).
     - **Review System**: Customer product reviews with ratings, comments, and admin approval workflow.

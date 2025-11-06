@@ -11064,8 +11064,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // - Se cliente já existe: manter rota e periodicidade existentes
       // - Se cliente novo: Domingo + Mensal
       // - Vendedor: Sempre Flavio
-      const scheduledDate = new Date();
+      
+      // ✅ Calcular scheduledDate baseado no routeDay do cliente (não na data atual)
+      // Isso evita erro de validação "Data agendada não está nos dias de atendimento"
       const routeDay = customerRouteDay; // ✅ Rota do cliente (existente ou nova)
+      
+      const weekdayMap: Record<string, number> = {
+        'Dom': 0, 'Seg': 1, 'Ter': 2, 'Qua': 3, 
+        'Qui': 4, 'Sex': 5, 'Sab': 6
+      };
+      
+      const getNextDayOfWeek = (targetDay: string): Date => {
+        const today = new Date();
+        const targetDayNum = weekdayMap[targetDay] ?? 0; // Default Domingo se inválido
+        const currentDayNum = today.getDay();
+        
+        let daysUntilTarget = targetDayNum - currentDayNum;
+        if (daysUntilTarget <= 0) {
+          daysUntilTarget += 7; // Próxima semana
+        }
+        
+        const nextDate = new Date(today);
+        nextDate.setDate(today.getDate() + daysUntilTarget);
+        nextDate.setHours(0, 0, 0, 0); // Zerar horas para meia-noite
+        return nextDate;
+      };
+      
+      const scheduledDate = getNextDayOfWeek(routeDay);
       
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
