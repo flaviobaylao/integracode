@@ -8783,46 +8783,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (tentar sales_cards E visit_agenda)
+      // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (visitId: string) => {
-          // Tentar buscar na tabela sales_cards primeiro (sistema novo)
-          let [card] = await db.select({
-            id: salesCards.id,
-            customerId: salesCards.customerId,
+        (route.optimizedOrder || []).map(async (customerId: string) => {
+          // optimizedOrder agora contém IDs de clientes, não de sales_cards
+          const [customer] = await db.select({
+            id: customers.id,
+            customerId: customers.id,
             customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
             customerLatitude: customers.latitude,
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
-            scheduledDate: salesCards.scheduledDate,
+            scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
             isVirtual: customers.virtualService
           })
-            .from(salesCards)
-            .leftJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(eq(salesCards.id, visitId))
+            .from(customers)
+            .where(eq(customers.id, customerId))
             .limit(1);
           
-          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
-          if (!card) {
-            const [visit] = await db.select({
-              id: visitAgenda.id,
-              customerId: visitAgenda.customerId,
-              customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
-              customerLatitude: customers.latitude,
-              customerLongitude: customers.longitude,
-              customerAddress: customers.address,
-              scheduledDate: visitAgenda.scheduledDate,
-              isVirtual: customers.virtualService
-            })
-              .from(visitAgenda)
-              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
-              .where(eq(visitAgenda.id, visitId))
-              .limit(1);
-            
-            card = visit;
-          }
-          
-          return card;
+          return customer;
         })
       );
 
@@ -8947,46 +8926,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (tentar sales_cards E visit_agenda)
+      // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (visitId: string) => {
-          // Tentar buscar na tabela sales_cards primeiro (sistema novo)
-          let [card] = await db.select({
-            id: salesCards.id,
-            customerId: salesCards.customerId,
+        (route.optimizedOrder || []).map(async (customerId: string) => {
+          // optimizedOrder agora contém IDs de clientes, não de sales_cards
+          const [customer] = await db.select({
+            id: customers.id,
+            customerId: customers.id,
             customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
             customerLatitude: customers.latitude,
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
-            scheduledDate: salesCards.scheduledDate,
+            scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
             isVirtual: customers.virtualService
           })
-            .from(salesCards)
-            .leftJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(eq(salesCards.id, visitId))
+            .from(customers)
+            .where(eq(customers.id, customerId))
             .limit(1);
           
-          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
-          if (!card) {
-            const [visit] = await db.select({
-              id: visitAgenda.id,
-              customerId: visitAgenda.customerId,
-              customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
-              customerLatitude: customers.latitude,
-              customerLongitude: customers.longitude,
-              customerAddress: customers.address,
-              scheduledDate: visitAgenda.scheduledDate,
-              isVirtual: customers.virtualService
-            })
-              .from(visitAgenda)
-              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
-              .where(eq(visitAgenda.id, visitId))
-              .limit(1);
-            
-            card = visit;
-          }
-          
-          return card;
+          return customer;
         })
       );
 
@@ -9228,44 +9186,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
       }
 
-      // Buscar visitas da rota com coordenadas (tentar sales_cards e visit_agenda)
+      // Buscar visitas da rota com coordenadas (DIRETO de customers - fonte única)
       const visitsData = await Promise.all(
-        (route.optimizedOrder || []).map(async (visitId: string) => {
-          // Tentar buscar na tabela sales_cards (nova estrutura)
-          let [salesCard] = await db
+        (route.optimizedOrder || []).map(async (customerId: string) => {
+          // optimizedOrder agora contém IDs de clientes, não de sales_cards
+          const [customer] = await db
             .select({
-              id: salesCards.id,
-              customerId: salesCards.customerId,
+              id: customers.id,
+              customerId: customers.id,
               customerName: customers.fantasyName,
               customerAddress: customers.address,
               latitude: customers.latitude,
               longitude: customers.longitude
             })
-            .from(salesCards)
-            .leftJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(eq(salesCards.id, visitId))
+            .from(customers)
+            .where(eq(customers.id, customerId))
             .limit(1);
 
-          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
-          if (!salesCard) {
-            const [visit] = await db
-              .select({
-                id: visitAgenda.id,
-                customerId: visitAgenda.customerId,
-                customerName: customers.fantasyName,
-                customerAddress: customers.address,
-                latitude: customers.latitude,
-                longitude: customers.longitude
-              })
-              .from(visitAgenda)
-              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
-              .where(eq(visitAgenda.id, visitId))
-              .limit(1);
-            
-            salesCard = visit;
-          }
-
-          return salesCard;
+          return customer;
         })
       );
 

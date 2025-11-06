@@ -309,7 +309,63 @@ export async function optimizeRoute(
 }
 
 /**
- * Gera a rota diária para um vendedor
+ * Calcula se um cliente deve ser visitado em uma data específica
+ * baseado na periodicidade e data de início do serviço
+ */
+function shouldVisitOnDate(
+  customer: any,
+  targetDate: Date
+): boolean {
+  const serviceStart = customer.serviceStartDate ? new Date(customer.serviceStartDate) : null;
+  
+  // Se não tem data de início, assume que pode visitar
+  if (!serviceStart) {
+    return true;
+  }
+  
+  // Normalizar datas para comparação (sem horas)
+  const startDate = new Date(serviceStart);
+  startDate.setHours(0, 0, 0, 0);
+  const checkDate = new Date(targetDate);
+  checkDate.setHours(0, 0, 0, 0);
+  
+  // Se a data alvo é antes do início do serviço, não visitar
+  if (checkDate < startDate) {
+    return false;
+  }
+  
+  // Calcular diferença em dias desde o início do serviço
+  const diffTime = checkDate.getTime() - startDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  // Verificar periodicidade
+  const periodicity = customer.visitPeriodicity || 'semanal';
+  
+  switch (periodicity) {
+    case 'semanal':
+      // Toda semana
+      return true;
+    case 'quinzenal':
+      // A cada 14 dias (2 semanas)
+      return diffDays % 14 === 0 || diffDays % 14 <= 6;
+    case 'mensal':
+      // Verificar se está na mesma semana do mês que começou
+      const startWeekOfMonth = Math.floor(startDate.getDate() / 7);
+      const checkWeekOfMonth = Math.floor(checkDate.getDate() / 7);
+      return startWeekOfMonth === checkWeekOfMonth;
+    case 'bimestral':
+      // A cada 2 meses
+      const monthsDiff = (checkDate.getFullYear() - startDate.getFullYear()) * 12 + 
+                        (checkDate.getMonth() - startDate.getMonth());
+      return monthsDiff % 2 === 0;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Gera a rota diária para um vendedor consultando direto na tabela customers
+ * FONTE ÚNICA DE VERDADE: customers
  */
 export async function generateDailyRoute(
   storage: DatabaseStorage,
@@ -327,98 +383,90 @@ export async function generateDailyRoute(
     throw new Error('Vendedor não possui coordenadas de residência cadastradas');
   }
 
-  // Buscar sales cards pendentes do dia (usando sales_cards como fonte de verdade)
   const startOfDay = new Date(routeDate);
   startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(routeDate);
-  endOfDay.setHours(23, 59, 59, 999);
 
-  // Buscar sales cards pendentes do vendedor para a data
-  const salesCards = await storage.getSalesCardsByDate(startOfDay, sellerId);
-
-  // Filtrar apenas cards pendentes
-  const pendingCards = salesCards.filter((c: any) => c.status === 'pending');
-
-  // Converter para formato de visitas com dados do cliente
-  // VALIDAÇÃO CRÍTICA: Verificar se o seller_id do card corresponde ao do cliente
-  const visits: any[] = [];
-  const incorrectSellerCards: any[] = [];
+  // Descobrir qual dia da semana é a data alvo
+  const daysOfWeek = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+  const targetWeekday = daysOfWeek[routeDate.getDay()];
   
-  for (const card of pendingCards) {
-    const customer = await storage.getCustomer(card.customerId);
-    if (customer) {
-      // VALIDAÇÃO: Conferir se o vendedor do card é o mesmo do cliente
-      if (card.sellerId !== customer.sellerId) {
-        console.warn(`⚠️ [VALIDAÇÃO ROTA] Card ${card.id} do cliente "${customer.name}" (${customer.id}) 
-          está com vendedor INCORRETO!
-          - Card sellerId: ${card.sellerId}
-          - Cliente sellerId: ${customer.sellerId}
-          - Corrigindo automaticamente...`);
-        
-        incorrectSellerCards.push({
-          cardId: card.id,
-          customerName: customer.name,
-          wrongSellerId: card.sellerId,
-          correctSellerId: customer.sellerId
-        });
-        
-        // AUTO-CORREÇÃO: Atualizar o seller_id do card para corresponder ao cliente
-        await storage.updateSalesCard(card.id, { sellerId: customer.sellerId });
-        
-        // Se o card não pertence ao vendedor da rota atual, não incluir na rota
-        if (customer.sellerId !== sellerId) {
-          console.log(`  → Card movido para vendedor correto (${customer.sellerId}), excluindo desta rota`);
-          continue;
-        }
-      }
-      
-      visits.push({
-        id: card.id,
-        customerId: customer.id,
-        customerName: customer.name,
-        customerLatitude: customer.latitude,
-        customerLongitude: customer.longitude,
-        customerAddress: customer.address,
-        isVirtual: customer.virtualService || false,
-        scheduledDate: card.scheduledDate
-      });
+  console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekday} ${routeDate.toLocaleDateString('pt-BR')}`);
+
+  // BUSCAR CLIENTES DIRETO DA TABELA CUSTOMERS (fonte única de verdade)
+  const allCustomers = await storage.getAllCustomers();
+  
+  // Filtrar clientes que devem ser visitados nesta data
+  const customersToVisit = allCustomers.filter((customer: any) => {
+    // 1. Cliente deve estar ativo
+    if (!customer.isActive) return false;
+    
+    // 2. Cliente deve pertencer ao vendedor
+    if (customer.sellerId !== sellerId) return false;
+    
+    // 3. Cliente não pode ser virtual (atendimento remoto)
+    if (customer.virtualService) return false;
+    
+    // 4. Verificar se o dia da semana está nos weekdays do cliente
+    let weekdaysArray: string[] = [];
+    try {
+      weekdaysArray = JSON.parse(customer.weekdays || '[]');
+    } catch (e) {
+      console.warn(`⚠️  Cliente ${customer.name} com weekdays inválido: ${customer.weekdays}`);
+      return false;
     }
-  }
-  
-  // Log de resumo de correções
-  if (incorrectSellerCards.length > 0) {
-    console.log(`🔧 [VALIDAÇÃO ROTA] ${incorrectSellerCards.length} card(s) corrigido(s) automaticamente:`);
-    incorrectSellerCards.forEach(c => {
-      console.log(`   - ${c.customerName}: ${c.wrongSellerId} → ${c.correctSellerId}`);
-    });
-  }
+    
+    if (!weekdaysArray.includes(targetWeekday)) {
+      return false;
+    }
+    
+    // 5. Verificar periodicidade (semanal, quinzenal, mensal, bimestral)
+    if (!shouldVisitOnDate(customer, routeDate)) {
+      return false;
+    }
+    
+    return true;
+  });
 
-  // Filtrar apenas visitas presenciais com coordenadas válidas
-  const validVisits = visits.filter(v => 
-    !v.isVirtual &&
-    v.customerLatitude && 
-    v.customerLongitude &&
-    !isNaN(parseFloat(v.customerLatitude as any)) &&
-    !isNaN(parseFloat(v.customerLongitude as any))
+  console.log(`   ✅ ${customersToVisit.length} clientes agendados para visita neste dia`);
+
+  // Filtrar apenas clientes com coordenadas válidas
+  const validCustomers = customersToVisit.filter((c: any) => 
+    c.latitude && 
+    c.longitude &&
+    !isNaN(parseFloat(c.latitude as any)) &&
+    !isNaN(parseFloat(c.longitude as any))
   );
 
-  if (validVisits.length === 0) {
+  const customersWithoutCoords = customersToVisit.filter((c: any) => 
+    !c.latitude || !c.longitude ||
+    isNaN(parseFloat(c.latitude as any)) ||
+    isNaN(parseFloat(c.longitude as any))
+  );
+
+  if (customersWithoutCoords.length > 0) {
+    console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas:`);
+    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.name} (${c.id})`));
+  }
+
+  if (validCustomers.length === 0) {
     return {
       routeId: null,
       message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
       totalVisits: 0,
-      visitsWithoutCoordinates: visits.filter(v => !v.customerLatitude || !v.customerLongitude).length
+      visitsWithoutCoordinates: customersWithoutCoords.length
     };
   }
 
-  // Converter visitas para pontos de rota
-  const routePoints: RoutePoint[] = validVisits.map(v => ({
-    id: v.id,
-    latitude: parseFloat(v.customerLatitude as any),
-    longitude: parseFloat(v.customerLongitude as any),
-    customerName: v.customerName,
-    customerAddress: v.customerAddress || ''
+  // Converter clientes para pontos de rota
+  const routePoints: RoutePoint[] = validCustomers.map((c: any) => ({
+    id: c.id, // Usar ID do cliente como identificador da visita
+    latitude: parseFloat(c.latitude as any),
+    longitude: parseFloat(c.longitude as any),
+    customerName: c.fantasyName || c.name,
+    customerAddress: c.address || ''
   }));
+
+  console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);
 
   // Otimizar a rota (usando distâncias reais de moto)
   const optimizedRoute = await optimizeRoute(
@@ -427,6 +475,8 @@ export async function generateDailyRoute(
     routePoints
   );
 
+  console.log(`   ✅ Rota otimizada: ${optimizedRoute.totalDistance.toFixed(2)}km estimados`);
+
   // Salvar rota no banco de dados
   const routeData = {
     sellerId,
@@ -434,7 +484,7 @@ export async function generateDailyRoute(
     startLatitude: seller.homeLatitude.toString(),
     startLongitude: seller.homeLongitude.toString(),
     startAddress: `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`,
-    optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
+    optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id), // IDs dos clientes
     totalEstimatedDistance: optimizedRoute.totalDistance.toString(),
     totalActualDistance: '0',
     totalVisits: optimizedRoute.orderedPoints.length,
@@ -460,7 +510,7 @@ export async function generateDailyRoute(
       segments: optimizedRoute.segments,
       totalVisits: optimizedRoute.orderedPoints.length
     },
-    visitsWithoutCoordinates: visits.filter(v => !v.customerLatitude || !v.customerLongitude)
+    visitsWithoutCoordinates: customersWithoutCoords
   };
 }
 
