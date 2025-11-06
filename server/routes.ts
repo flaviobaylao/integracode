@@ -9141,6 +9141,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Remover visita da rota do dia
+  app.delete('/api/daily-routes/:routeId/visits/:visitId', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId, visitId } = req.params;
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Verificar permissão (admin ou vendedor dono da rota)
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const isOwner = route.sellerId === user.id;
+      
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+      
+      // Remover visita do optimizedOrder (com tratamento para rotas antigas sem optimizedOrder)
+      const currentOrder = (route.optimizedOrder as string[]) || [];
+      const newOrder = currentOrder.filter((id: string) => id !== visitId);
+      
+      if (currentOrder.length === newOrder.length) {
+        return res.status(404).json({ message: 'Visita não encontrada na rota' });
+      }
+      
+      // Atualizar rota
+      await storage.updateDailyRoute(routeId, {
+        optimizedOrder: newOrder,
+        totalVisits: newOrder.length
+      });
+      
+      console.log(`🗑️ Visita ${visitId} removida da rota ${routeId} (${currentOrder.length} → ${newOrder.length} visitas)`);
+      
+      res.json({
+        success: true,
+        message: 'Visita removida da rota com sucesso',
+        removedVisitId: visitId,
+        newTotalVisits: newOrder.length
+      });
+    } catch (error: any) {
+      console.error('Erro ao remover visita da rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao remover visita da rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar distância real percorrida (baseado em checkpoints)
   app.get('/api/daily-routes/:routeId/actual-distance', authenticateUser, async (req: any, res) => {
     try {

@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { 
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
-  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download, Pencil
+  AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download, Trash2
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -87,6 +88,12 @@ export default function DailyRouteView() {
     checkInTime: string;
     latitude: string;
     longitude: string;
+  } | null>(null);
+  
+  // Estado para confirmação de exclusão
+  const [deleteVisit, setDeleteVisit] = useState<{
+    visitId: string;
+    customerName: string;
   } | null>(null);
 
   // Buscar lista de vendedores (apenas para admin)
@@ -221,6 +228,29 @@ export default function DailyRouteView() {
         variant: "destructive",
         title: "Erro ao gerar rota",
         description: error.message || "Não foi possível gerar a rota.",
+      });
+    }
+  });
+
+  // Mutation para remover visita da rota
+  const removeVisitMutation = useMutation({
+    mutationFn: async ({ routeId, visitId }: { routeId: string; visitId: string }) => {
+      return await apiRequest('DELETE', `/api/daily-routes/${routeId}/visits/${visitId}`);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Visita removida!",
+        description: "A visita foi removida da rota com sucesso.",
+      });
+      setDeleteVisit(null);
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao remover visita",
+        description: error.message || "Não foi possível remover a visita da rota.",
       });
     }
   });
@@ -757,12 +787,18 @@ export default function DailyRouteView() {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="bg-orange-500 hover:bg-orange-600 text-white border-orange-600"
-                          onClick={(e) => handleEditCard(visit.id, e)}
-                          data-testid={`button-edit-${index}`}
+                          className="bg-red-500 hover:bg-red-600 text-white border-red-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteVisit({
+                              visitId: visit.id,
+                              customerName: visit.customerName
+                            });
+                          }}
+                          data-testid={`button-delete-${index}`}
                         >
-                          <Pencil className="h-4 w-4 mr-1" />
-                          Editar
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Excluir
                         </Button>
                         {visit.checkInPhotoUrl && (
                           <Button
@@ -1176,6 +1212,36 @@ export default function DailyRouteView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* AlertDialog de confirmação para excluir visita */}
+      <AlertDialog open={!!deleteVisit} onOpenChange={(open) => !open && setDeleteVisit(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja remover a visita de <strong>{deleteVisit?.customerName}</strong> da rota de hoje? 
+              Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-500 hover:bg-red-600"
+              onClick={() => {
+                if (deleteVisit && route) {
+                  removeVisitMutation.mutate({
+                    routeId: route.id,
+                    visitId: deleteVisit.visitId
+                  });
+                }
+              }}
+              data-testid="button-confirm-delete"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
