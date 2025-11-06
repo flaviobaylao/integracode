@@ -754,7 +754,10 @@ export class DatabaseStorage implements IStorage {
     }
     
     // VALIDAÇÃO CRÍTICA 2: Verificar se o dia agendado está alinhado com os weekdays do cliente
-    if (processedSalesCard.customerId && processedSalesCard.scheduledDate) {
+    // EXCEÇÃO: Pular validação para adições manuais à rota (source: 'manual_route_addition')
+    const skipWeekdayValidation = processedSalesCard.source === 'manual_route_addition';
+    
+    if (processedSalesCard.customerId && processedSalesCard.scheduledDate && !skipWeekdayValidation) {
       const customer = await this.getCustomer(processedSalesCard.customerId);
       
       if (customer && customer.weekdays) {
@@ -783,6 +786,8 @@ export class DatabaseStorage implements IStorage {
           console.log(`✅ Validação OK: Card para ${customer.fantasyName || customer.name} agendado para ${scheduledDayName} está alinhado com weekdays [${customerWeekdays.join(', ')}]`);
         }
       }
+    } else if (skipWeekdayValidation) {
+      console.log(`ℹ️ [manual_route_addition] Pulando validação de weekdays - visita manual`);
     }
     
     // Sempre definir attendanceStartDate como data atual de criação

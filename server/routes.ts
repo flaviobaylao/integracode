@@ -9318,7 +9318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const newSalesCard = await storage.createSalesCard({
         customerId: customer.id,
         sellerId: route.sellerId,
-        visitDate: routeDate,
+        scheduledDate: routeDate,
         status: 'pending',
         source: 'manual_route_addition',
         notes: `Visita adicionada manualmente à rota por ${user.name} em ${new Date().toLocaleString('pt-BR')}`

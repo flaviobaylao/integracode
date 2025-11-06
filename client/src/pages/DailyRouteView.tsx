@@ -1348,8 +1348,7 @@ export default function DailyRouteView() {
               filteredCustomers.map((customer: any) => (
                 <div
                   key={customer.id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors"
-                  onClick={() => addCustomerToRouteMutation.mutate(customer.id)}
+                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                   data-testid={`customer-item-${customer.id}`}
                 >
                   <div className="flex-1">
@@ -1364,6 +1363,7 @@ export default function DailyRouteView() {
                   </div>
                   <Button
                     size="sm"
+                    onClick={() => addCustomerToRouteMutation.mutate(customer.id)}
                     disabled={addCustomerToRouteMutation.isPending}
                     data-testid={`button-add-customer-${customer.id}`}
                   >
