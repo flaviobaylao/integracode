@@ -874,7 +874,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
-                            const isSelected = JSON.parse(form.getValues('weekdays') || '[]').includes(option.value);
+                            const isSelected = JSON.parse(weekdays || '[]').includes(option.value);
                             return (
                               <Button
                                 key={option.value}
