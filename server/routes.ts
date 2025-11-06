@@ -8783,10 +8783,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (usando sales_cards + customers)
+      // Buscar detalhes das visitas na ordem otimizada (tentar sales_cards E visit_agenda)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (cardId: string) => {
-          const [card] = await db.select({
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          // Tentar buscar na tabela sales_cards primeiro (sistema novo)
+          let [card] = await db.select({
             id: salesCards.id,
             customerId: salesCards.customerId,
             customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
@@ -8798,8 +8799,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
             .from(salesCards)
             .leftJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(eq(salesCards.id, cardId))
+            .where(eq(salesCards.id, visitId))
             .limit(1);
+          
+          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
+          if (!card) {
+            const [visit] = await db.select({
+              id: visitAgenda.id,
+              customerId: visitAgenda.customerId,
+              customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+              customerLatitude: customers.latitude,
+              customerLongitude: customers.longitude,
+              customerAddress: customers.address,
+              scheduledDate: visitAgenda.scheduledDate,
+              isVirtual: customers.virtualService
+            })
+              .from(visitAgenda)
+              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
+              .where(eq(visitAgenda.id, visitId))
+              .limit(1);
+            
+            card = visit;
+          }
+          
           return card;
         })
       );
@@ -8925,10 +8947,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (usando sales_cards + customers)
+      // Buscar detalhes das visitas na ordem otimizada (tentar sales_cards E visit_agenda)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (cardId: string) => {
-          const [card] = await db.select({
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          // Tentar buscar na tabela sales_cards primeiro (sistema novo)
+          let [card] = await db.select({
             id: salesCards.id,
             customerId: salesCards.customerId,
             customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
@@ -8940,8 +8963,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
             .from(salesCards)
             .leftJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(eq(salesCards.id, cardId))
+            .where(eq(salesCards.id, visitId))
             .limit(1);
+          
+          // Se não encontrar em sales_cards, tentar visit_agenda (sistema antigo)
+          if (!card) {
+            const [visit] = await db.select({
+              id: visitAgenda.id,
+              customerId: visitAgenda.customerId,
+              customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+              customerLatitude: customers.latitude,
+              customerLongitude: customers.longitude,
+              customerAddress: customers.address,
+              scheduledDate: visitAgenda.scheduledDate,
+              isVirtual: customers.virtualService
+            })
+              .from(visitAgenda)
+              .leftJoin(customers, eq(visitAgenda.customerId, customers.id))
+              .where(eq(visitAgenda.id, visitId))
+              .limit(1);
+            
+            card = visit;
+          }
+          
           return card;
         })
       );
