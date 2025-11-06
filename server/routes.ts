@@ -2598,6 +2598,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== ORDER HISTORY ROUTES ====================
+  
+  // Get permanent card for a customer (or create if doesn't exist)
+  app.get('/api/customers/:customerId/permanent-card', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const sellerId = req.user.id;
+      
+      const permanentCard = await storage.getOrCreatePermanentCard(customerId, sellerId);
+      res.json(permanentCard);
+    } catch (error) {
+      console.error("Error getting/creating permanent card:", error);
+      res.status(500).json({ message: "Failed to get/create permanent card" });
+    }
+  });
+  
+  // Create new order in history
+  app.post('/api/order-history', authenticateUser, async (req: any, res) => {
+    try {
+      const orderData = req.body;
+      
+      // Validar dados do pedido
+      if (!orderData.salesCardId || !orderData.products || !orderData.totalValue) {
+        return res.status(400).json({ 
+          message: "salesCardId, products, and totalValue are required" 
+        });
+      }
+      
+      const newOrder = await storage.createOrderHistory(orderData);
+      res.json(newOrder);
+    } catch (error) {
+      console.error("Error creating order history:", error);
+      res.status(500).json({ message: "Failed to create order" });
+    }
+  });
+  
+  // Get order history for a sales card
+  app.get('/api/sales-cards/:salesCardId/orders', authenticateUser, async (req: any, res) => {
+    try {
+      const { salesCardId } = req.params;
+      
+      const orders = await storage.getOrderHistoryByCard(salesCardId);
+      res.json(orders);
+    } catch (error) {
+      console.error("Error fetching order history:", error);
+      res.status(500).json({ message: "Failed to fetch order history" });
+    }
+  });
+  
+  // Get single order
+  app.get('/api/order-history/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      
+      const order = await storage.getOrderHistoryById(id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      
+      res.json(order);
+    } catch (error) {
+      console.error("Error fetching order:", error);
+      res.status(500).json({ message: "Failed to fetch order" });
+    }
+  });
+  
+  // Update order
+  app.put('/api/order-history/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const orderData = req.body;
+      
+      const updatedOrder = await storage.updateOrderHistory(id, orderData);
+      res.json(updatedOrder);
+    } catch (error) {
+      console.error("Error updating order:", error);
+      res.status(500).json({ message: "Failed to update order" });
+    }
+  });
+  
+  // Delete order
+  app.delete('/api/order-history/:id', authenticateUser, requireRole(['admin', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      
+      await storage.deleteOrderHistory(id);
+      res.json({ message: "Order deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting order:", error);
+      res.status(500).json({ message: "Failed to delete order" });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {

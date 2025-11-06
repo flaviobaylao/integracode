@@ -3,7 +3,9 @@ import {
   routes,
   customers,
   products,
+  productReviews,
   salesCards,
+  orderHistory,
   messageTemplates,
   messageHistory,
   systemSettings,
@@ -27,9 +29,13 @@ import {
   type CustomerWithSeller,
   type InsertProduct,
   type Product,
+  type InsertProductReview,
+  type ProductReview,
   type InsertSalesCard,
   type SalesCard,
   type SalesCardWithRelations,
+  type InsertOrderHistory,
+  type OrderHistory,
   type InsertMessageTemplate,
   type MessageTemplate,
   type InsertMessageHistory,
@@ -108,6 +114,15 @@ export interface IStorage {
   getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
   duplicateSalesCard(id: string, newDate: Date): Promise<SalesCard>;
+  getOrCreatePermanentCard(customerId: string, sellerId: string): Promise<SalesCard>;
+  getPermanentCardByCustomer(customerId: string): Promise<SalesCard | undefined>;
+  
+  // Order history operations
+  createOrderHistory(order: InsertOrderHistory): Promise<OrderHistory>;
+  getOrderHistoryByCard(salesCardId: string): Promise<OrderHistory[]>;
+  getOrderHistoryById(id: string): Promise<OrderHistory | undefined>;
+  updateOrderHistory(id: string, order: Partial<InsertOrderHistory>): Promise<OrderHistory>;
+  deleteOrderHistory(id: string): Promise<void>;
   
   // Message template operations
   getMessageTemplates(): Promise<MessageTemplate[]>;
@@ -1769,6 +1784,117 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return newCard;
+  }
+
+  /**
+   * Busca o card permanente de um cliente ou cria um novo se não existir
+   * Card permanente: único card por cliente usado para registrar todos os pedidos
+   */
+  async getOrCreatePermanentCard(customerId: string, sellerId: string): Promise<SalesCard> {
+    // Tentar buscar card permanente existente
+    const existingCard = await this.getPermanentCardByCustomer(customerId);
+    
+    if (existingCard) {
+      return existingCard;
+    }
+    
+    // Buscar informações do cliente para configurar o card
+    const customer = await this.getCustomer(customerId);
+    if (!customer) {
+      throw new Error('Cliente não encontrado');
+    }
+    
+    // Pegar primeiro dia de visita do cliente
+    let weekdays: string[] = [];
+    try {
+      weekdays = JSON.parse(customer.weekdays || '[]');
+    } catch (e) {
+      weekdays = ['Dom']; // Fallback
+    }
+    
+    const firstWeekday = weekdays[0] || 'Dom';
+    
+    // Criar card permanente
+    const [permanentCard] = await db
+      .insert(salesCards)
+      .values({
+        customerId,
+        sellerId,
+        status: 'pending',
+        scheduledDate: new Date(), // Data de criação
+        routeDay: firstWeekday,
+        recurrenceType: customer.visitPeriodicity || 'semanal',
+        paymentMethod: 'a_vista',
+        operationType: 'venda',
+        isRecurring: false, // Card permanente não gera novos cards
+        notes: 'Card permanente - histórico de pedidos',
+      } as any)
+      .returning();
+    
+    return permanentCard;
+  }
+
+  /**
+   * Busca o card permanente de um cliente
+   * Critério: card mais antigo ativo do cliente (será consolidado na migração)
+   */
+  async getPermanentCardByCustomer(customerId: string): Promise<SalesCard | undefined> {
+    const [card] = await db
+      .select()
+      .from(salesCards)
+      .where(eq(salesCards.customerId, customerId))
+      .orderBy(salesCards.createdAt) // Card mais antigo
+      .limit(1);
+    
+    return card;
+  }
+
+  // ==================== ORDER HISTORY OPERATIONS ====================
+
+  async createOrderHistory(order: InsertOrderHistory): Promise<OrderHistory> {
+    const [newOrder] = await db
+      .insert(orderHistory)
+      .values(order as any)
+      .returning();
+    
+    return newOrder;
+  }
+
+  async getOrderHistoryByCard(salesCardId: string): Promise<OrderHistory[]> {
+    const orders = await db
+      .select()
+      .from(orderHistory)
+      .where(eq(orderHistory.salesCardId, salesCardId))
+      .orderBy(desc(orderHistory.orderDate));
+    
+    return orders;
+  }
+
+  async getOrderHistoryById(id: string): Promise<OrderHistory | undefined> {
+    const [order] = await db
+      .select()
+      .from(orderHistory)
+      .where(eq(orderHistory.id, id));
+    
+    return order;
+  }
+
+  async updateOrderHistory(id: string, orderData: Partial<InsertOrderHistory>): Promise<OrderHistory> {
+    const [updatedOrder] = await db
+      .update(orderHistory)
+      .set({ ...orderData, updatedAt: new Date() })
+      .where(eq(orderHistory.id, id))
+      .returning();
+    
+    if (!updatedOrder) {
+      throw new Error('Pedido não encontrado');
+    }
+    
+    return updatedOrder;
+  }
+
+  async deleteOrderHistory(id: string): Promise<void> {
+    await db.delete(orderHistory).where(eq(orderHistory.id, id));
   }
 
   // Função helper para calcular distância entre dois pontos (Haversine formula)
