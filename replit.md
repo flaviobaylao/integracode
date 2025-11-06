@@ -4,6 +4,14 @@
 
 # Recent Changes
 
+## 2025-11-06: Route Management Enhancement
+- **Delete Visit from Daily Route**: Replaced "Edit" button with "Delete" button in daily routes view (`/daily-route`). Users can now remove specific visits from the optimized daily route with confirmation dialog. Implementation includes:
+  - Backend DELETE endpoint `/api/daily-routes/:routeId/visits/:visitId` with role-based permissions (admin or route owner)
+  - Frontend confirmation dialog (AlertDialog) before deletion
+  - Automatic list and map updates after removal via cache invalidation
+  - Defensive handling for legacy routes without optimizedOrder
+  - Audit logging for deletion operations
+
 ## 2025-11-06: Hotsite Bug Fixes
 - **Fixed CPF Recognition**: Corrected `/api/public/customers/check` endpoint that was searching for non-existent `cpfCnpj` field. Now correctly searches `cpf` field for existing customers, enabling proper customer recognition and data auto-fill.
 - **Fixed Order Creation**: Corrected `/api/public/orders` endpoint to use separate `cpf` and `cnpj` fields instead of non-existent `cpfCnpj` field when creating new customers and checking for existing customers. Pedidos from hotsite now successfully migrate to Sistema Integra.
