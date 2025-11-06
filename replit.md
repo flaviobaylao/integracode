@@ -4,6 +4,32 @@
 
 # Recent Changes
 
+## 2025-11-06: Visit Schedule History System
+- **New Feature**: Persistent tracking of all scheduled visits (past and future) with completion status
+- **New Table**: `visit_schedule_history` stores:
+  - Scheduled visits for each customer based on their periodicity
+  - Check-in/check-out times and GPS coordinates when completed
+  - Visit status: 'scheduled', 'completed', 'missed', 'cancelled'
+  - Links to route_checkpoints for delivery tracking integration
+- **Corrected Periodicity Logic**:
+  - **Semanal**: Every configured weekday (e.g., every Thursday and Friday)
+  - **Quinzenal**: Alternating weeks (Week YES, Week NO) anchored to customer's `serviceStartDate`
+  - **Mensal**: Quad-weekly pattern (1 week YES, 3 weeks NO) anchored to `serviceStartDate`
+  - **Bimestral**: Every 8 weeks anchored to `serviceStartDate`
+  - **Important**: Schedule is independent of check-ins - calendar doesn't change if vendor misses a visit
+- **Service**: `visitScheduleHistoryService.ts` provides:
+  - `shouldVisitOnDate()`: Determines if customer should be visited on specific date
+  - `generateFutureVisitsForCustomer()`: Creates 60 days of future visit records
+  - `generateFutureVisitsForAllCustomers()`: Batch generation for all active customers
+  - `markVisitAsCompleted()`: Updates visit status when check-in occurs
+  - `markMissedVisits()`: Automatically marks past unvisited dates as 'missed'
+- **Weekday Format Support**: Comprehensive mapping for all variations:
+  - Abbreviated: "Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"
+  - Full capitalized: "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"
+  - Lowercase: "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"
+  - With hyphens: "segunda-feira", "terça-feira", etc.
+- **Reference Date Logic**: Each customer's periodicity is calculated from their own `serviceStartDate` (falls back to 2025-01-02 if missing), ensuring consistent cadence regardless of when they started service
+
 ## 2025-11-06: Route Generation Migration - Customers as Single Source of Truth
 - **Major Architectural Change**: Migrated daily route generation from sales_cards/visit_agenda to customers table as single source of truth
 - **Previous Flow**: Routes were generated from pre-created sales_cards (created by agenda sync) → required maintaining dual systems
