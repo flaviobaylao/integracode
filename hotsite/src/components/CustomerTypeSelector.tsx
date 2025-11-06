@@ -149,16 +149,15 @@ export function CustomerTypeSelector() {
       const cpfLimpo = cpfInput.replace(/\D/g, '');
       const checkResult = await api.checkCustomer('', '', cpfLimpo);
       
-      if (checkResult.exists && checkResult.customer) {
+      if (checkResult.exists && checkResult.name) {
         // Cliente já existe - usar dados cadastrados
-        const customer = checkResult.customer;
         const dados = {
           cpf: cpfInput,
-          nome: customer.name || '',
-          endereco: customer.address || '',
-          telefone: customer.phone || '',
-          email: customer.email || '',
-          existingCustomerId: customer.id
+          nome: checkResult.name || '',
+          endereco: checkResult.address || '',
+          telefone: checkResult.phone || '',
+          email: checkResult.email || '',
+          existingCustomerId: checkResult.id
         };
         
         setEditableConsumerData(dados);
@@ -413,7 +412,7 @@ export function CustomerTypeSelector() {
         <div className="max-w-md w-full">
           <button
             onClick={() => {
-              setConsumerTier(null);
+              setCategory('consumer');
               setConsumerData(null);
               setEditableConsumerData(null);
               setCpfInput('');

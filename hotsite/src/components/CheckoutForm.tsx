@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { HonestLogo } from './HonestLogo';
-import { api } from '../utils/api';
+import { useCustomerType } from '../contexts/CustomerTypeContext';
 import type { Customer, CartItem } from '../types';
 
 interface CheckoutFormProps {
@@ -12,6 +12,8 @@ interface CheckoutFormProps {
 }
 
 export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isProcessing }: CheckoutFormProps) {
+  const { consumerData, companyData } = useCustomerType();
+
   const [formData, setFormData] = useState<Customer>({
     name: '',
     email: '',
@@ -23,8 +25,29 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
-  const [customerFound, setCustomerFound] = useState(false);
+
+  // Preencher dados do contexto quando disponível
+  useEffect(() => {
+    if (consumerData) {
+      setFormData({
+        name: consumerData.nome,
+        email: consumerData.email || '',
+        phone: consumerData.telefone || '',
+        address: consumerData.endereco,
+        cpfCnpj: consumerData.cpf,
+        customerType: 'pessoa_fisica',
+      });
+    } else if (companyData) {
+      setFormData({
+        name: companyData.nomeFantasia,
+        email: companyData.email || '',
+        phone: companyData.telefone || '',
+        address: companyData.endereco,
+        cpfCnpj: companyData.cnpj,
+        customerType: 'pessoa_juridica',
+      });
+    }
+  }, [consumerData, companyData]);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -83,68 +106,6 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     const numbers = value.replace(/\D/g, '');
     return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
   };
-
-  // Verificar se cliente já existe quando email, telefone ou CPF for preenchido
-  const checkExistingCustomer = useCallback(async () => {
-    const email = formData.email?.trim();
-    const phone = formData.phone.replace(/\D/g, '');
-    const cpf = formData.cpfCnpj?.replace(/\D/g, '');
-
-    // Resetar estado se todos os campos estiverem vazios
-    if (!email && !phone && !cpf) {
-      setCustomerFound(false);
-      setIsCheckingCustomer(false);
-      return;
-    }
-
-    // Só verificar se tiver:
-    // - Email válido OU
-    // - Telefone com pelo menos 10 dígitos OU
-    // - CPF com 11 dígitos
-    const hasValidEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    const hasValidPhone = phone.length >= 10;
-    const hasValidCPF = cpf && cpf.length === 11;
-
-    if (!hasValidEmail && !hasValidPhone && !hasValidCPF) {
-      setCustomerFound(false);
-      return;
-    }
-
-    try {
-      setIsCheckingCustomer(true);
-      const result = await api.checkCustomer(email, phone, cpf);
-
-      if (result.exists && result.name) {
-        // Cliente encontrado! Preencher dados automaticamente
-        setCustomerFound(true);
-        setFormData(prev => ({
-          ...prev,
-          name: result.name || prev.name,
-          email: result.email || prev.email,
-          phone: result.phone || prev.phone,
-          address: result.address || prev.address,
-          cpfCnpj: result.cpfCnpj || prev.cpfCnpj,
-          customerType: (result.customerType as 'pessoa_fisica' | 'pessoa_juridica') || prev.customerType
-        }));
-      } else {
-        setCustomerFound(false);
-      }
-    } catch (error) {
-      console.error('Erro ao verificar cliente:', error);
-      setCustomerFound(false);
-    } finally {
-      setIsCheckingCustomer(false);
-    }
-  }, [formData.email, formData.phone, formData.cpfCnpj]);
-
-  // Verificar cliente quando email ou telefone mudar (com debounce)
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      checkExistingCustomer();
-    }, 800);
-
-    return () => clearTimeout(timeoutId);
-  }, [checkExistingCustomer]);
 
   // ✅ Forçar mudança de pagamento se pessoa_fisica tentar usar boleto
   useEffect(() => {
@@ -211,25 +172,11 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: formatPhone(e.target.value) })}
-                  className={`input-field ${errors.phone ? 'border-red-500' : customerFound ? 'border-honest-green' : ''}`}
+                  className={`input-field ${errors.phone ? 'border-red-500' : ''}`}
                   placeholder="(62) 99999-9999"
                   data-testid="input-phone"
                 />
                 {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone}</p>}
-                {isCheckingCustomer && (
-                  <p className="text-gray-500 text-sm mt-1 flex items-center gap-1">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Verificando...
-                  </p>
-                )}
-                {customerFound && !isCheckingCustomer && (
-                  <p className="text-honest-green text-sm mt-1 flex items-center gap-1" data-testid="customer-found-message">
-                    ✅ Cliente reconhecido! Bem-vindo de volta.
-                  </p>
-                )}
               </div>
 
               <div>
@@ -238,7 +185,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="email"
                   value={formData.email || ''}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className={`input-field ${errors.email ? 'border-red-500' : customerFound ? 'border-honest-green' : ''}`}
+                  className={`input-field ${errors.email ? 'border-red-500' : ''}`}
                   placeholder="seuemail@exemplo.com"
                   data-testid="input-email"
                 />
