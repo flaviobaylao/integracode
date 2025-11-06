@@ -960,3 +960,230 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
     throw error;
   }
 }
+
+/**
+ * Propaga mudanças de recorrência ajustando cards futuros
+ * Cria novos cards se mudou para periodicidade maior (mensal→semanal)
+ * Remove cards extras se mudou para periodicidade menor (semanal→mensal)
+ */
+export async function propagateRecurrenceChange(params: {
+  cardId: string;
+  oldRecurrence: string;
+  newRecurrence: string;
+  baseDate: Date;
+  userName: string;
+}): Promise<{
+  cardsCreated: number;
+  cardsRemoved: number;
+  cardsUpdated: number;
+}> {
+  const { cardId, oldRecurrence, newRecurrence, baseDate, userName } = params;
+  
+  console.log(`🔄 [RECURRENCE-CHANGE] Iniciando propagação de mudança de recorrência`);
+  console.log(`   Card: ${cardId}`);
+  console.log(`   Mudança: ${oldRecurrence} → ${newRecurrence}`);
+  console.log(`   Data base: ${baseDate.toISOString().split('T')[0]}`);
+  
+  try {
+    const { salesCards } = await import('../shared/schema');
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    const { inArray, sql } = await import('drizzle-orm');
+    
+    // 1. Buscar o card e cliente
+    const card = await db.select()
+      .from(salesCards)
+      .where(eq(salesCards.id, cardId))
+      .limit(1);
+    
+    if (!card || card.length === 0) {
+      console.log(`⚠️ [RECURRENCE-CHANGE] Card ${cardId} não encontrado`);
+      return { cardsCreated: 0, cardsRemoved: 0, cardsUpdated: 0 };
+    }
+    
+    const currentCard = card[0];
+    
+    const customer = await db.select()
+      .from(customers)
+      .where(eq(customers.id, currentCard.customerId))
+      .limit(1);
+    
+    if (!customer || customer.length === 0) {
+      console.log(`⚠️ [RECURRENCE-CHANGE] Cliente não encontrado`);
+      return { cardsCreated: 0, cardsRemoved: 0, cardsUpdated: 0 };
+    }
+    
+    const customerData = customer[0];
+    
+    // 2. Parsear weekdays do cliente
+    let weekdays: string[] = [];
+    try {
+      if (typeof customerData.weekdays === 'string') {
+        weekdays = JSON.parse(customerData.weekdays);
+      } else if (Array.isArray(customerData.weekdays)) {
+        weekdays = customerData.weekdays;
+      }
+    } catch (e) {
+      console.warn(`⚠️ [RECURRENCE-CHANGE] Erro ao parsear weekdays, usando lógica default`);
+      // Usar o routeDay do card como fallback
+      weekdays = currentCard.routeDay ? [currentCard.routeDay] : ['Seg'];
+    }
+    
+    if (!weekdays || weekdays.length === 0) {
+      console.warn(`⚠️ [RECURRENCE-CHANGE] Cliente sem weekdays configurados, usando routeDay do card`);
+      weekdays = currentCard.routeDay ? [currentCard.routeDay] : ['Seg'];
+    }
+    
+    // 3. Gerar cronograma alvo de datas futuras (60 dias / ~2 meses)
+    const HORIZON_DAYS = 60;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Usar a data do card como base (ou hoje se o card for no passado)
+    let startDate = new Date(baseDate);
+    startDate.setHours(0, 0, 0, 0);
+    
+    // Se a data base é no passado, usar hoje
+    if (startDate < today) {
+      startDate = new Date(today);
+    }
+    
+    const endDate = new Date(today);
+    endDate.setDate(today.getDate() + HORIZON_DAYS);
+    
+    console.log(`📅 [RECURRENCE-CHANGE] Gerando cronograma de ${startDate.toISOString().split('T')[0]} até ${endDate.toISOString().split('T')[0]}`);
+    
+    const targetSchedule: Date[] = [];
+    let currentDate = new Date(startDate);
+    
+    // Gerar primeira data
+    targetSchedule.push(new Date(currentDate));
+    
+    // Gerar datas subsequentes até o horizonte
+    while (currentDate < endDate) {
+      const { nextDate } = calculateNextVisitDate({
+        weekdays,
+        periodicity: newRecurrence as any,
+        lastCompletedDate: currentDate
+      });
+      
+      if (nextDate > endDate) break;
+      
+      targetSchedule.push(new Date(nextDate));
+      currentDate = nextDate;
+    }
+    
+    console.log(`📊 [RECURRENCE-CHANGE] Cronograma alvo gerado: ${targetSchedule.length} datas`);
+    
+    // 4. Buscar cards futuros existentes do cliente (a partir da data base)
+    const existingCards = await db.select()
+      .from(salesCards)
+      .where(
+        and(
+          eq(salesCards.customerId, currentCard.customerId),
+          gte(salesCards.scheduledDate, startDate),
+          inArray(salesCards.status, ['pending', 'scheduled', 'in_progress'])
+        )
+      )
+      .orderBy(salesCards.scheduledDate);
+    
+    console.log(`📋 [RECURRENCE-CHANGE] Cards existentes encontrados: ${existingCards.length}`);
+    
+    // 5. Comparar cronogramas
+    // Normalizar datas para comparação (apenas data, sem hora)
+    const normalizeDate = (date: Date): string => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString().split('T')[0];
+    };
+    
+    const targetDates = new Set(targetSchedule.map(normalizeDate));
+    const existingDates = new Map(
+      existingCards.map(card => [
+        normalizeDate(new Date(card.scheduledDate)),
+        card
+      ])
+    );
+    
+    // Identificar datas ausentes (precisam criar cards)
+    const datesToCreate = Array.from(targetDates).filter(
+      date => !existingDates.has(date)
+    );
+    
+    // Identificar cards excedentes (precisam remover)
+    const cardsToRemove = existingCards.filter(
+      card => !targetDates.has(normalizeDate(new Date(card.scheduledDate)))
+    );
+    
+    console.log(`📊 [RECURRENCE-CHANGE] Análise:`);
+    console.log(`   Datas para criar: ${datesToCreate.length}`);
+    console.log(`   Cards para remover: ${cardsToRemove.length}`);
+    
+    let cardsCreated = 0;
+    let cardsRemoved = 0;
+    
+    // 6. Criar cards ausentes
+    for (const dateStr of datesToCreate) {
+      try {
+        const visitDate = new Date(dateStr);
+        // scheduledDate já inclui hora, vamos usar 8:00 como padrão
+        visitDate.setHours(8, 0, 0, 0);
+        
+        await db.insert(salesCards).values({
+          customerId: currentCard.customerId,
+          sellerId: currentCard.sellerId,
+          scheduledDate: visitDate,
+          routeDay: getRouteDay(visitDate),
+          recurrenceType: newRecurrence,
+          status: 'pending',
+          source: 'recurrence_change_propagation',
+          operationType: currentCard.operationType,
+          paymentMethod: currentCard.paymentMethod,
+          deliveryWeekdays: currentCard.deliveryWeekdays,
+          deliveryTimeSlots: currentCard.deliveryTimeSlots,
+          deliverySaturdayTimeSlots: currentCard.deliverySaturdayTimeSlots,
+          boletoDays: currentCard.boletoDays,
+          exclusiveVehicle: currentCard.exclusiveVehicle,
+          vehicleTypes: currentCard.vehicleTypes,
+          customerLatitude: currentCard.customerLatitude,
+          customerLongitude: currentCard.customerLongitude,
+          notes: `Card criado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${new Date().toLocaleString('pt-BR')}`
+        });
+        
+        cardsCreated++;
+        console.log(`   ✅ Card criado para ${dateStr}`);
+      } catch (createError: any) {
+        console.error(`   ❌ Erro ao criar card para ${dateStr}:`, createError.message);
+      }
+    }
+    
+    // 7. Remover cards excedentes (marcar como cancelled)
+    for (const card of cardsToRemove) {
+      try {
+        await db.update(salesCards)
+          .set({
+            status: 'cancelled' as any,
+            notes: (card.notes || '') + `\n\nCard cancelado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${new Date().toLocaleString('pt-BR')}`,
+            updatedAt: new Date()
+          })
+          .where(eq(salesCards.id, card.id));
+        
+        cardsRemoved++;
+        console.log(`   🗑️ Card cancelado: ${card.id} (${normalizeDate(new Date(card.scheduledDate))})`);
+      } catch (removeError: any) {
+        console.error(`   ❌ Erro ao cancelar card ${card.id}:`, removeError.message);
+      }
+    }
+    
+    console.log(`✅ [RECURRENCE-CHANGE] Propagação concluída: ${cardsCreated} criados, ${cardsRemoved} removidos`);
+    
+    return {
+      cardsCreated,
+      cardsRemoved,
+      cardsUpdated: 0
+    };
+    
+  } catch (error: any) {
+    console.error(`❌ [RECURRENCE-CHANGE] Erro ao propagar mudança de recorrência:`, error);
+    throw error;
+  }
+}
