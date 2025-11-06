@@ -95,6 +95,10 @@ export default function DailyRouteView() {
     visitId: string;
     customerName: string;
   } | null>(null);
+  
+  // Estado para modal de adicionar cliente
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -251,6 +255,55 @@ export default function DailyRouteView() {
         variant: "destructive",
         title: "Erro ao remover visita",
         description: error.message || "Não foi possível remover a visita da rota.",
+      });
+    }
+  });
+
+  // Buscar todos os clientes (para modal de adicionar à rota)
+  const { data: customersData } = useQuery({
+    queryKey: ['/api/customers'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/customers');
+      return response;
+    },
+    enabled: showAddCustomerModal && isAdmin
+  });
+
+  const allCustomers = customersData || [];
+
+  // Filtrar clientes pela busca
+  const filteredCustomers = allCustomers.filter((customer: any) => {
+    const searchLower = customerSearchQuery.toLowerCase();
+    const fantasyName = (customer.fantasyName || '').toLowerCase();
+    const name = (customer.name || '').toLowerCase();
+    const cpfCnpj = (customer.cpf || customer.cnpj || '').toLowerCase();
+    
+    return fantasyName.includes(searchLower) || 
+           name.includes(searchLower) || 
+           cpfCnpj.includes(searchLower);
+  });
+
+  // Mutation para adicionar cliente à rota
+  const addCustomerToRouteMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      if (!route?.id) throw new Error('Rota não encontrada');
+      return await apiRequest('POST', `/api/daily-routes/${route.id}/visits`, { customerId });
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Cliente adicionado!",
+        description: `${data.customer.name} foi adicionado à rota com sucesso.`,
+      });
+      setShowAddCustomerModal(false);
+      setCustomerSearchQuery('');
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao adicionar cliente",
+        description: error.message || "Não foi possível adicionar o cliente à rota.",
       });
     }
   });
@@ -532,6 +585,17 @@ export default function DailyRouteView() {
           </p>
         </div>
         <div className="flex gap-2">
+          {isAdmin && route && (
+            <Button
+              onClick={() => setShowAddCustomerModal(true)}
+              variant="default"
+              size="sm"
+              data-testid="button-add-customer-to-route"
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Adicionar Cliente
+            </Button>
+          )}
           <Button
             onClick={() => generateRouteMutation.mutate()}
             disabled={generateRouteMutation.isPending || !selectedSellerId}
@@ -1244,6 +1308,92 @@ export default function DailyRouteView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Modal de Adicionar Cliente à Rota */}
+      <Dialog open={showAddCustomerModal} onOpenChange={setShowAddCustomerModal}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <div className="flex items-center gap-2 pb-4 border-b">
+            <Users className="h-5 w-5 text-honest-blue" />
+            <h2 className="text-xl font-semibold">Adicionar Cliente à Rota</h2>
+          </div>
+          
+          <div className="py-4">
+            <Label htmlFor="search-customer">Pesquisar Cliente</Label>
+            <Input
+              id="search-customer"
+              type="text"
+              placeholder="Digite o nome, nome fantasia ou CPF/CNPJ..."
+              value={customerSearchQuery}
+              onChange={(e) => setCustomerSearchQuery(e.target.value)}
+              className="mt-1"
+              data-testid="input-search-customer"
+              autoFocus
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              Selecione um cliente para adicionar à rota de {format(new Date(route?.routeDate || new Date()), "dd/MM/yyyy")}
+            </p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-2 min-h-[300px]">
+            {filteredCustomers.length === 0 ? (
+              <div className="text-center py-12">
+                <Users className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                <p className="text-gray-600 dark:text-gray-400">
+                  {customerSearchQuery ? 'Nenhum cliente encontrado' : 'Digite para pesquisar clientes'}
+                </p>
+              </div>
+            ) : (
+              filteredCustomers.map((customer: any) => (
+                <div
+                  key={customer.id}
+                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors"
+                  onClick={() => addCustomerToRouteMutation.mutate(customer.id)}
+                  data-testid={`customer-item-${customer.id}`}
+                >
+                  <div className="flex-1">
+                    <p className="font-medium">{customer.fantasyName || customer.name}</p>
+                    {customer.fantasyName && customer.name !== customer.fantasyName && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{customer.name}</p>
+                    )}
+                    <div className="flex gap-4 text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      <span>{customer.cpf || customer.cnpj}</span>
+                      {customer.address && <span className="truncate max-w-xs">{customer.address}</span>}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={addCustomerToRouteMutation.isPending}
+                    data-testid={`button-add-customer-${customer.id}`}
+                  >
+                    {addCustomerToRouteMutation.isPending ? (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                        Adicionando...
+                      </>
+                    ) : (
+                      'Adicionar'
+                    )}
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowAddCustomerModal(false);
+                setCustomerSearchQuery('');
+              }}
+              className="w-full"
+              data-testid="button-close-add-customer"
+            >
+              Fechar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

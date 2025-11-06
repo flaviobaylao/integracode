@@ -9260,6 +9260,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Adicionar cliente à rota (admin apenas)
+  app.post('/api/daily-routes/:routeId/visits', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      const { customerId } = req.body;
+      
+      // Apenas administradores podem adicionar visitas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem adicionar visitas.' });
+      }
+      
+      if (!customerId) {
+        return res.status(400).json({ message: 'customerId é obrigatório' });
+      }
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Buscar cliente para validar e obter dados
+      const customer = await storage.getCustomer(customerId);
+      
+      if (!customer) {
+        return res.status(404).json({ message: 'Cliente não encontrado' });
+      }
+      
+      // Criar sales_card para esta visita
+      const routeDate = new Date(route.routeDate);
+      
+      const newSalesCard = await storage.createSalesCard({
+        customerId: customer.id,
+        sellerId: route.sellerId,
+        visitDate: routeDate,
+        status: 'pending',
+        source: 'manual_route_addition',
+        notes: `Visita adicionada manualmente à rota por ${user.name} em ${new Date().toLocaleString('pt-BR')}`
+      });
+      
+      // Adicionar ao optimizedOrder
+      const currentOrder = (route.optimizedOrder as string[]) || [];
+      const newOrder = [...currentOrder, newSalesCard.id];
+      
+      // Atualizar rota
+      await storage.updateDailyRoute(routeId, {
+        optimizedOrder: newOrder,
+        totalVisits: newOrder.length
+      });
+      
+      console.log(`➕ Cliente ${customer.fantasyName || customer.name} adicionado à rota ${routeId} (${currentOrder.length} → ${newOrder.length} visitas)`);
+      
+      res.json({
+        success: true,
+        message: 'Cliente adicionado à rota com sucesso',
+        salesCardId: newSalesCard.id,
+        newTotalVisits: newOrder.length,
+        customer: {
+          id: customer.id,
+          name: customer.fantasyName || customer.name
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao adicionar cliente à rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao adicionar cliente à rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar distância real percorrida (baseado em checkpoints)
   app.get('/api/daily-routes/:routeId/actual-distance', authenticateUser, async (req: any, res) => {
     try {
