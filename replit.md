@@ -4,6 +4,26 @@
 
 # Recent Changes
 
+## 2025-11-06: Sales Cards Refactor - Permanent Cards + Order History (IN PROGRESS)
+- **Major Architectural Change**: Transforming sales_cards from multiple recurring cards to single permanent card per customer
+- **Motivation**: Sales cards now only serve as order registration tool, not visit scheduling
+- **New Table**: `order_history` stores:
+  - Individual orders within each sales card
+  - orderDate, products, totalValue, status
+  - Check-in/check-out data per order
+  - Delivery tracking per order
+  - Omie integration data (invoiceNumber, omieOrderId)
+- **FK Constraint**: order_history.salesCardId → salesCards.id (cascade delete)
+- **Implementation Status**:
+  - ✅ Schema and database table created
+  - ⏳ Storage methods for order_history (pending)
+  - ⏳ API endpoints for order management (pending)
+  - ⏳ getOrCreatePermanentCard() logic (pending)
+  - ⏳ Migration script to consolidate existing cards (pending)
+  - ⏳ UI updates to show order history (pending)
+  - ⏳ Disable automatic card generation scripts (pending)
+- **Compatibility**: Keeping products/saleValue fields in sales_cards for backward compatibility during transition
+
 ## 2025-11-06: Route Generation Integration with Visit Schedule History
 - **Critical Fix**: Corrected route generation logic to use proper week-based periodicity calculations
 - **Changed**: `routeOptimizationService.ts` now imports and uses `shouldVisitOnDate()` from `visitScheduleHistoryService.ts`

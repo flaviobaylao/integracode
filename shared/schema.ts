@@ -298,7 +298,7 @@ export const salesCards = pgTable("sales_cards", {
 // Order History - Histórico de pedidos dentro de cada sales card
 export const orderHistory = pgTable("order_history", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  salesCardId: varchar("sales_card_id").notNull(), // FK para sales_cards
+  salesCardId: varchar("sales_card_id").notNull().references(() => salesCards.id, { onDelete: 'cascade' }), // FK para sales_cards
   
   // Dados do pedido
   orderDate: timestamp("order_date").notNull().defaultNow(), // Data em que o pedido foi realizado
