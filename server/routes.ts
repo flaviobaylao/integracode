@@ -10951,6 +10951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customerId: string;
       let customerRouteDay: string;
       let customerRecurrenceType: string;
+      let customerSellerId: string; // ✅ Vendedor do cliente (existente ou novo)
       
       const customersData = await storage.getCustomers();
       
@@ -10966,7 +10967,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existingCustomer) {
         customerId = existingCustomer.id;
         
-        // ✅ MANTER rota existente do cliente
+        // ✅ MANTER configurações existentes do cliente (rota, periodicidade E vendedor)
         let customerWeekdays: string[] = [];
         try {
           customerWeekdays = typeof existingCustomer.weekdays === 'string' 
@@ -10978,8 +10979,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         customerRouteDay = customerWeekdays[0] || 'Dom'; // Primeiro dia da rota existente
         customerRecurrenceType = existingCustomer.visitPeriodicity || 'mensal';
+        customerSellerId = existingCustomer.sellerId; // ✅ Manter vendedor existente
         
-        console.log(`✅ Cliente existente - mantendo rota: ${customerRouteDay}, periodicidade: ${customerRecurrenceType}`);
+        console.log(`✅ Cliente existente - mantendo configurações: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
         
         // Atualizar informações se necessário
         await storage.updateCustomer(customerId, {
@@ -10991,8 +10993,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // ✅ NOVO cliente do hotsite - usar configurações padrão
         customerRouteDay = 'Dom'; // Domingo para novos clientes do hotsite
         customerRecurrenceType = 'mensal'; // Mensal para novos clientes
+        customerSellerId = hotsiteSeller.id; // ✅ Flavio para novos clientes
         
-        console.log(`✅ Novo cliente do hotsite - usando rota padrão: ${customerRouteDay}, periodicidade: ${customerRecurrenceType}`);
+        console.log(`✅ Novo cliente do hotsite - usando configurações padrão: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
         
         // Criar novo cliente
         const newCustomer = await storage.createCustomer({
@@ -11006,7 +11009,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           companyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           route: 'GOIÂNIA', // Padrão para clientes do hotsite
-          sellerId: hotsiteSeller.id, // ✅ Campo obrigatório - Flavio
+          sellerId: customerSellerId, // ✅ Campo obrigatório - Flavio
           weekdays: JSON.stringify(['Dom']), // ✅ Domingos para novos clientes hotsite
           visitPeriodicity: 'mensal', // ✅ Periodicidade mensal
           isActive: true
@@ -11058,9 +11061,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderNumber = `WEB-${Date.now()}`;
       
       // ✅ CONFIGURAÇÃO DINÂMICA PARA PEDIDOS HOTSITE:
-      // - Se cliente já existe: manter rota e periodicidade existentes
-      // - Se cliente novo: Domingo + Mensal
-      // - Vendedor: Sempre Flavio
+      // - Se cliente já existe: manter vendedor, rota e periodicidade existentes
+      // - Se cliente novo: Flavio + Domingo + Mensal
       
       // ✅ Calcular scheduledDate baseado no routeDay do cliente (não na data atual)
       // Isso evita erro de validação "Data agendada não está nos dias de atendimento"
@@ -11093,7 +11095,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
         customerId,
-        sellerId: hotsiteSeller.id, // ✅ Flavio (ou fallback)
+        sellerId: customerSellerId, // ✅ Vendedor do cliente (existente ou Flavio para novos)
         scheduledDate,
         routeDay, // ✅ Rota do cliente (mantém existente ou usa 'Dom' para novos)
         recurrenceType: customerRecurrenceType, // ✅ Periodicidade do cliente
