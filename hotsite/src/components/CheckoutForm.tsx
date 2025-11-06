@@ -207,19 +207,16 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  CPF * <span className="text-xs text-gray-500">(para faturamento)</span>
+                  {formData.customerType === 'pessoa_fisica' ? 'CPF' : 'CNPJ'} * <span className="text-xs text-gray-500">(validado)</span>
                 </label>
                 <input
                   type="text"
                   value={formData.cpfCnpj || ''}
-                  onChange={(e) => setFormData({ ...formData, cpfCnpj: formatCPF(e.target.value) })}
-                  className={`input-field ${errors.cpfCnpj ? 'border-red-500' : ''}`}
-                  placeholder="000.000.000-00"
-                  maxLength={14}
+                  disabled
+                  className="input-field bg-gray-50 cursor-not-allowed"
                   data-testid="input-cpf"
                 />
-                {errors.cpfCnpj && <p className="text-red-500 text-sm mt-1">{errors.cpfCnpj}</p>}
-                <p className="text-xs text-gray-500 mt-1">Necessário para emissão da nota fiscal</p>
+                <p className="text-xs text-green-600 mt-1">✓ Validado anteriormente</p>
               </div>
             </div>
           </div>
