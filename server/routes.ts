@@ -10665,7 +10665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingCustomer = customersData.find(c => 
         (email && c.email?.toLowerCase() === email.toLowerCase()) ||
         (phone && c.phone === phone) ||
-        (cpfLimpo && c.cpfCnpj && c.cpfCnpj.replace(/\D/g, '') === cpfLimpo)
+        (cpfLimpo && c.cpf && c.cpf.replace(/\D/g, '') === cpfLimpo)
       );
       
       if (existingCustomer) {
@@ -10677,7 +10677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: existingCustomer.email,
           phone: existingCustomer.phone,
           address: existingCustomer.address,
-          cpfCnpj: existingCustomer.cpfCnpj
+          cpfCnpj: existingCustomer.cpf || existingCustomer.cnpj
         });
       } else {
         res.json({

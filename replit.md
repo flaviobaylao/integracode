@@ -2,6 +2,12 @@
 
 "Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos. Its primary purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system supports various user roles with fine-grained access control, offering robust sales tracking, reporting, and route optimization. This aims to enhance business efficiency, improve customer service, and expand market reach. The project also includes an e-commerce platform ("Hotsite Instagram") to capture direct sales.
 
+# Recent Changes
+
+## 2025-11-06: Hotsite Bug Fixes
+- **Fixed CPF Recognition**: Corrected `/api/public/customers/check` endpoint that was searching for non-existent `cpfCnpj` field. Now correctly searches `cpf` field for existing customers, enabling proper customer recognition and data auto-fill.
+- **Fixed Pricing Table Persistence**: Resolved three issues preventing hotsite price updates: (1) corrected apiRequest parameter order to `(method, url, data)`, (2) fixed authentication using `req.currentUser` instead of `req.userId`, (3) extended Zod schema to accept numeric price inputs with automatic string coercion.
+
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
