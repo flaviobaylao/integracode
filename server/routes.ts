@@ -1185,10 +1185,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const user = req.currentUser;
-      console.log('🔍 PUT /api/products/:id - user:', user ? `{ id: ${user.id}, email: ${user.email}, role: ${user.role} }` : 'null');
       
       if (!['admin', 'coordinator'].includes(user?.role || '')) {
-        console.log('❌ PUT /api/products/:id - Access denied for user role:', user?.role);
         return res.status(403).json({ message: "Access denied" });
       }
       

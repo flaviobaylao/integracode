@@ -814,6 +814,14 @@ export const insertProductSchema = createInsertSchema(products).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  // Aceitar números ou strings para campos de preço e converter para string
+  price: z.union([z.string(), z.number()]).transform(val => String(val)).optional(),
+  retailPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
+  wholesalePrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
+  resaleGoianiaPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
+  resaleInteriorPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
+  resaleBrasiliaPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
 });
 
 export const insertProductReviewSchema = createInsertSchema(productReviews).omit({
