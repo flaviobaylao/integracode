@@ -10,14 +10,16 @@ export function CustomerTypeSelector() {
     consumerTier,
     resellerLocation,
     companyData,
+    consumerData,
     setCategory,
     setConsumerTier,
     setResellerLocation,
     setCompanyData,
+    setConsumerData,
     reset,
   } = useCustomerType();
 
-  // Estados para CNPJ
+  // Estados para CNPJ (revendedores)
   const [cnpjInput, setCnpjInput] = useState('');
   const [isLoadingCNPJ, setIsLoadingCNPJ] = useState(false);
   const [cnpjError, setCnpjError] = useState('');
@@ -25,6 +27,15 @@ export function CustomerTypeSelector() {
   // Estados para edição de dados da empresa
   const [editableData, setEditableData] = useState<any>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+
+  // Estados para CPF (consumidores)
+  const [cpfInput, setCpfInput] = useState('');
+  const [isLoadingCPF, setIsLoadingCPF] = useState(false);
+  const [cpfError, setCpfError] = useState('');
+  
+  // Estados para edição de dados do consumidor
+  const [editableConsumerData, setEditableConsumerData] = useState<any>(null);
+  const [isConsumerEditMode, setIsConsumerEditMode] = useState(false);
 
   // Formatar CNPJ
   const formatCNPJ = (value: string) => {
@@ -73,6 +84,122 @@ export function CustomerTypeSelector() {
     if (resultado !== parseInt(digitos.charAt(1))) return false;
     
     return true;
+  };
+
+  // Formatar CPF
+  const formatCPF = (value: string) => {
+    const numbers = value.replace(/\D/g, '');
+    if (numbers.length <= 11) {
+      return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+    }
+    return numbers.slice(0, 11).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  };
+
+  // Validar CPF
+  const validarCPF = (cpf: string): boolean => {
+    const cpfLimpo = cpf.replace(/\D/g, '');
+    
+    if (cpfLimpo.length !== 11) return false;
+    
+    // Verifica CPFs inválidos conhecidos
+    if (/^(\d)\1{10}$/.test(cpfLimpo)) return false;
+    
+    // Validação dos dígitos verificadores
+    let soma = 0;
+    let resto;
+    
+    for (let i = 1; i <= 9; i++) {
+      soma += parseInt(cpfLimpo.substring(i - 1, i)) * (11 - i);
+    }
+    
+    resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+    if (resto !== parseInt(cpfLimpo.substring(9, 10))) return false;
+    
+    soma = 0;
+    for (let i = 1; i <= 10; i++) {
+      soma += parseInt(cpfLimpo.substring(i - 1, i)) * (12 - i);
+    }
+    
+    resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+    if (resto !== parseInt(cpfLimpo.substring(10, 11))) return false;
+    
+    return true;
+  };
+
+  // Buscar dados do CPF (verifica se já existe no sistema)
+  const handleConsultarCPF = async () => {
+    setCpfError('');
+    
+    if (!cpfInput) {
+      setCpfError('Por favor, informe o CPF');
+      return;
+    }
+
+    if (!validarCPF(cpfInput)) {
+      setCpfError('CPF inválido');
+      return;
+    }
+
+    setIsLoadingCPF(true);
+
+    try {
+      // Verificar se já existe cliente cadastrado com este CPF
+      const cpfLimpo = cpfInput.replace(/\D/g, '');
+      const checkResult = await api.checkCustomer('', '', cpfLimpo);
+      
+      if (checkResult.exists && checkResult.customer) {
+        // Cliente já existe - usar dados cadastrados
+        const customer = checkResult.customer;
+        const dados = {
+          cpf: cpfInput,
+          nome: customer.name || '',
+          endereco: customer.address || '',
+          telefone: customer.phone || '',
+          email: customer.email || '',
+          existingCustomerId: customer.id
+        };
+        
+        setEditableConsumerData(dados);
+        setIsConsumerEditMode(false);
+      } else {
+        // Novo cliente - formulário vazio
+        setEditableConsumerData({
+          cpf: cpfInput,
+          nome: '',
+          endereco: '',
+          telefone: '',
+          email: ''
+        });
+        setIsConsumerEditMode(true);
+      }
+    } catch (error: any) {
+      setCpfError(error.message || 'Erro ao verificar CPF. Tente novamente.');
+    } finally {
+      setIsLoadingCPF(false);
+    }
+  };
+
+  // Confirmar dados do consumidor
+  const handleConfirmarDadosConsumidor = () => {
+    if (!editableConsumerData) return;
+    
+    // Validar campos obrigatórios
+    if (!editableConsumerData.nome.trim()) {
+      setCpfError('Nome é obrigatório');
+      return;
+    }
+    if (!editableConsumerData.endereco.trim()) {
+      setCpfError('Endereço é obrigatório');
+      return;
+    }
+    if (!editableConsumerData.telefone.trim()) {
+      setCpfError('Telefone é obrigatório');
+      return;
+    }
+    
+    setConsumerData(editableConsumerData);
   };
 
   // Buscar dados do CNPJ
@@ -273,6 +400,257 @@ export function CustomerTypeSelector() {
                 </div>
               </div>
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela de captura de CPF (após selecionar tier de consumidor)
+  if (category === 'consumer' && consumerTier !== null && !editableConsumerData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full">
+          <button
+            onClick={() => {
+              setConsumerTier(null);
+              setConsumerData(null);
+              setEditableConsumerData(null);
+              setCpfInput('');
+              setCpfError('');
+            }}
+            className="mb-6 text-green-700 hover:text-green-900 font-medium"
+            data-testid="button-back-cpf"
+          >
+            ← Voltar
+          </button>
+
+          <div className="bg-white rounded-2xl p-8 shadow-lg">
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
+                <ShoppingCart className="w-10 h-10 text-green-600" />
+              </div>
+            </div>
+
+            <h1 className="text-3xl font-bold text-green-800 text-center mb-3">
+              Informe seu CPF
+            </h1>
+            <p className="text-gray-600 text-center mb-8">
+              Vamos verificar se você já é nosso cliente
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  CPF
+                </label>
+                <input
+                  type="text"
+                  value={cpfInput}
+                  onChange={(e) => {
+                    setCpfInput(formatCPF(e.target.value));
+                    setCpfError('');
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleConsultarCPF();
+                    }
+                  }}
+                  placeholder="000.000.000-00"
+                  className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 transition-all ${
+                    cpfError 
+                      ? 'border-red-300 focus:ring-red-500' 
+                      : 'border-gray-200 focus:ring-green-500'
+                  }`}
+                  maxLength={14}
+                  data-testid="input-cpf"
+                  disabled={isLoadingCPF}
+                />
+                {cpfError && (
+                  <div className="mt-2 flex items-start gap-2 text-red-600 text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>{cpfError}</span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={handleConsultarCPF}
+                disabled={isLoadingCPF || !cpfInput}
+                className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                data-testid="button-consultar-cpf"
+              >
+                {isLoadingCPF ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Verificando...
+                  </>
+                ) : (
+                  'Continuar'
+                )}
+              </button>
+            </div>
+
+            <div className="mt-6 p-4 bg-blue-50 rounded-xl">
+              <p className="text-sm text-blue-800">
+                <strong>ℹ️ Informação:</strong> Se você já for cliente, vamos preencher 
+                seus dados automaticamente para agilizar sua compra.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela de confirmação/edição de dados do consumidor
+  if (category === 'consumer' && editableConsumerData && !consumerData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full">
+          <button
+            onClick={() => {
+              setEditableConsumerData(null);
+              setConsumerData(null);
+              setCpfInput('');
+              setCpfError('');
+            }}
+            className="mb-6 text-green-700 hover:text-green-900 font-medium"
+            data-testid="button-back-edit-consumer"
+          >
+            ← Voltar
+          </button>
+
+          <div className="bg-white rounded-2xl p-8 shadow-lg">
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
+                <Check className="w-10 h-10 text-green-600" />
+              </div>
+            </div>
+
+            <h1 className="text-3xl font-bold text-green-800 text-center mb-2">
+              {editableConsumerData.existingCustomerId ? 'Bem-vindo de volta!' : 'Confirme seus dados'}
+            </h1>
+            <p className="text-gray-600 text-center mb-8">
+              {editableConsumerData.existingCustomerId 
+                ? 'Encontramos seu cadastro em nosso sistema' 
+                : 'Preencha seus dados para continuar'}
+            </p>
+
+            {editableConsumerData.existingCustomerId && (
+              <div className="mb-6 p-4 bg-green-50 border-2 border-green-200 rounded-xl">
+                <p className="text-sm text-green-800 text-center">
+                  ✅ Cliente já cadastrado! Você pode editar os dados se necessário.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  CPF
+                </label>
+                <input
+                  type="text"
+                  value={editableConsumerData.cpf}
+                  disabled
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl bg-gray-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nome Completo {isConsumerEditMode && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={editableConsumerData.nome}
+                  onChange={(e) => setEditableConsumerData({ ...editableConsumerData, nome: e.target.value })}
+                  disabled={!isConsumerEditMode}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                  data-testid="input-nome"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Endereço {isConsumerEditMode && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={editableConsumerData.endereco}
+                  onChange={(e) => setEditableConsumerData({ ...editableConsumerData, endereco: e.target.value })}
+                  disabled={!isConsumerEditMode}
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                  data-testid="input-endereco-consumer"
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Telefone {isConsumerEditMode && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={editableConsumerData.telefone}
+                    onChange={(e) => setEditableConsumerData({ ...editableConsumerData, telefone: e.target.value })}
+                    disabled={!isConsumerEditMode}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                    data-testid="input-telefone-consumer"
+                    placeholder="(00) 00000-0000"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email (opcional)
+                  </label>
+                  <input
+                    type="email"
+                    value={editableConsumerData.email}
+                    onChange={(e) => setEditableConsumerData({ ...editableConsumerData, email: e.target.value })}
+                    disabled={!isConsumerEditMode}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50"
+                    data-testid="input-email-consumer"
+                  />
+                </div>
+              </div>
+
+              {!editableConsumerData.existingCustomerId && (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+                  <p className="text-sm text-yellow-800">
+                    <strong>📝 Novo cliente:</strong> Preencha todos os campos obrigatórios (*) para continuar.
+                  </p>
+                </div>
+              )}
+
+              {cpfError && (
+                <div className="mt-2 flex items-start gap-2 text-red-600 text-sm">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{cpfError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-4">
+                {editableConsumerData.existingCustomerId && !isConsumerEditMode && (
+                  <button
+                    onClick={() => setIsConsumerEditMode(true)}
+                    className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-xl font-semibold hover:bg-gray-300 transition-colors"
+                    data-testid="button-editar"
+                  >
+                    Editar Dados
+                  </button>
+                )}
+                <button
+                  onClick={handleConfirmarDadosConsumidor}
+                  className="flex-1 bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                  data-testid="button-confirmar-consumidor"
+                >
+                  <Check className="w-5 h-5" />
+                  Confirmar e Continuar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
