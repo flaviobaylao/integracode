@@ -1047,8 +1047,9 @@ export async function propagateRecurrenceChange(params: {
       startDate = new Date(today);
     }
     
-    const endDate = new Date(today);
-    endDate.setDate(today.getDate() + HORIZON_DAYS);
+    // Calcular endDate a partir de startDate (não de today!)
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + HORIZON_DAYS);
     
     console.log(`📅 [RECURRENCE-CHANGE] Gerando cronograma de ${startDate.toISOString().split('T')[0]} até ${endDate.toISOString().split('T')[0]}`);
     
