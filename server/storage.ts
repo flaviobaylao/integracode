@@ -461,46 +461,54 @@ export class DatabaseStorage implements IStorage {
       );
     }
     
-    // Buscar última atividade de todos os clientes de uma vez
-    const lastActivities = await db
-      .select()
-      .from(salesCards)
-      .where(inArray(salesCards.customerId, customerIds))
-      .orderBy(salesCards.customerId, desc(salesCards.scheduledDate));
+    // Buscar última venda real de todos os clientes através dos faturamentos (billings)
+    let lastActivityMap = new Map<string, Date>();
     
-    // Agrupar por customerId e pegar a primeira (mais recente)
-    const lastActivityMap = new Map();
-    for (const activity of lastActivities) {
-      if (!lastActivityMap.has(activity.customerId)) {
-        lastActivityMap.set(activity.customerId, activity);
+    if (customerOmieCodes.length > 0) {
+      const lastBillings = await db
+        .select()
+        .from(billings)
+        .where(
+          and(
+            inArray(billings.omieCustomerCode, customerOmieCodes),
+            isNotNull(billings.invoiceDate),
+            eq(billings.isCancelled, false),
+            sql`${billings.totalValue} > 0`
+          )
+        )
+        .orderBy(billings.omieCustomerCode, desc(billings.invoiceDate));
+      
+      // Agrupar por omieCustomerCode e pegar a primeira (mais recente)
+      const omieLastActivityMap = new Map<string, Date>();
+      for (const billing of lastBillings) {
+        if (!omieLastActivityMap.has(billing.omieCustomerCode)) {
+          omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate!);
+        }
       }
+      
+      // Converter de omieCustomerCode para customerId
+      lastActivityMap = new Map(
+        result
+          .filter(row => row.customers?.omieClientCode)
+          .map(row => [
+            row.customers!.id,
+            omieLastActivityMap.get(row.customers!.omieClientCode!) || null
+          ])
+          .filter((entry): entry is [string, Date] => entry[1] !== null)
+      );
     }
     
     // Montar resultado final
     const customersWithExtendedInfo = result.map((row) => {
       const customerId = row.customers!.id;
-      const lastActivity = lastActivityMap.get(customerId);
-      
-      let lastActivityStatus: 'none' | 'success' | 'failed' | 'pending' | 'overdue' | 'scheduled' = 'none';
-      
-      if (lastActivity) {
-        if (lastActivity.status === 'completed') {
-          lastActivityStatus = lastActivity.saleValue && parseFloat(lastActivity.saleValue.toString()) > 0 ? 'success' : 'failed';
-        } else if (lastActivity.status === 'in_progress') {
-          lastActivityStatus = 'pending';
-        } else if (lastActivity.status === 'scheduled') {
-          const scheduledDate = new Date(lastActivity.scheduledDate);
-          const now = new Date();
-          lastActivityStatus = scheduledDate < now ? 'overdue' : 'scheduled';
-        }
-      }
+      const lastActivityDate = lastActivityMap.get(customerId);
       
       return {
         ...row.customers!,
         seller: row.users!,
         isPositivatedThisMonth: positivationMap.get(customerId) || false,
-        lastActivityStatus,
-        lastActivityDate: lastActivity?.scheduledDate?.toISOString() || null,
+        lastActivityStatus: 'none' as const,
+        lastActivityDate: lastActivityDate?.toISOString() || null,
       };
     });
     
