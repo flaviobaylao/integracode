@@ -357,15 +357,29 @@ export default function DailyRouteView() {
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
   // Função para abrir detalhes do card de vendas
-  const handleOpenCardDetails = async (visitId: string) => {
+  const handleOpenCardDetails = async (customerId: string) => {
     try {
-      const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
+      // Buscar sales_cards da data da rota filtrados por este cliente
+      const routeDate = route?.routeDate || selectedDate;
+      const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
       
-      if (!response) {
-        throw new Error('Card não encontrado');
+      if (!response || !response.cards) {
+        throw new Error('Nenhum card encontrado para esta data');
       }
       
-      setSelectedCard(response);
+      // Filtrar pelo customerId
+      const card = response.cards.find((c: any) => c.customerId === customerId);
+      
+      if (!card) {
+        toast({
+          variant: "destructive",
+          title: "Card não encontrado",
+          description: "Não há card de vendas para este cliente na data selecionada.",
+        });
+        return;
+      }
+      
+      setSelectedCard(card);
       setShowCardModal(true);
     } catch (error: any) {
       console.error('Erro ao carregar card:', error);
@@ -378,16 +392,30 @@ export default function DailyRouteView() {
   };
 
   // Função para abrir modal de edição do card
-  const handleEditCard = async (visitId: string, e: React.MouseEvent) => {
+  const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      const response = await apiRequest('GET', `/api/sales-cards/${visitId}`);
+      // Buscar sales_cards da data da rota filtrados por este cliente
+      const routeDate = route?.routeDate || selectedDate;
+      const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
       
-      if (!response) {
-        throw new Error('Card não encontrado');
+      if (!response || !response.cards) {
+        throw new Error('Nenhum card encontrado para esta data');
       }
       
-      setEditingCard(response);
+      // Filtrar pelo customerId
+      const card = response.cards.find((c: any) => c.customerId === customerId);
+      
+      if (!card) {
+        toast({
+          variant: "destructive",
+          title: "Card não encontrado",
+          description: "Não há card de vendas para este cliente na data selecionada.",
+        });
+        return;
+      }
+      
+      setEditingCard(card);
       setShowEditModal(true);
     } catch (error: any) {
       console.error('Erro ao carregar card:', error);
