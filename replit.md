@@ -4,9 +4,9 @@
 
 # Recent Changes
 
-## 2025-11-06: Sales Cards Refactor - Permanent Cards + Order History
-- **Major Architectural Change**: Transforming sales_cards from multiple recurring cards to single permanent card per customer
-- **Motivation**: Sales cards now only serve as order registration tool, not visit scheduling
+## 2025-11-07: Sales Cards Refactor - Permanent Cards + Order History [COMPLETED]
+- **Major Architectural Change**: Transformed sales_cards from multiple recurring cards to single permanent card per customer
+- **Motivation**: Sales cards now only serve as order registration tool, not visit scheduling (visit_schedule_history handles scheduling)
 - **New Table**: `order_history` stores:
   - Individual orders within each sales card
   - orderDate, products, totalValue, status
@@ -14,14 +14,14 @@
   - Delivery tracking per order (deliveryScheduledDate, deliveryCompletedDate, deliveryStatus)
   - Omie integration data (invoiceNumber, omieOrderId)
 - **FK Constraint**: order_history.salesCardId → salesCards.id (cascade delete)
-- **Implementation Status**:
+- **Implementation Status**: ✅ COMPLETE
   - ✅ Schema and database table created (applied with npm run db:push)
   - ✅ Storage methods: getOrCreatePermanentCard(), getPermanentCardByCustomer(), createOrderHistory(), getOrderHistoryByCard(), getOrderHistoryById(), updateOrderHistory(), deleteOrderHistory()
   - ✅ API endpoints: GET /api/customers/:customerId/permanent-card, POST /api/order-history, GET /api/sales-cards/:salesCardId/orders, GET/PUT/DELETE /api/order-history/:id
   - ✅ Migration script: server/migrateToPermanentCards.ts with dry-run and execute modes
   - ✅ Admin endpoint: POST /api/admin/migrate-to-permanent-cards (admin-only, supports dryRun parameter)
-  - ⏳ UI updates to show order history (pending)
-  - ⏳ Disable automatic card generation scripts (pending)
+  - ✅ UI updates: SalesCardDetailsModal displays order history with status-aware styling
+  - ✅ Automated card generation DISABLED: 3 cron jobs commented in scheduler.ts
 - **Migration Script Features**:
   - Consolidates multiple cards per customer into single permanent card
   - Converts completed/cancelled cards into order_history records
@@ -30,7 +30,14 @@
   - Supports dry-run mode for safe testing
   - CLI usage: `tsx server/migrateToPermanentCards.ts --dry-run` or `--execute`
   - API usage: POST to `/api/admin/migrate-to-permanent-cards` with `{dryRun: true/false}`
+  - Architect validated: Safe to execute, processes 1,202 customers
+- **Disabled Cron Jobs** (scheduler.ts):
+  - ✗ generateVisitAgenda() at 06:00h - no longer creates sales_cards
+  - ✗ Overdue card processing at 02:00h - no longer uses closeCardAndScheduleNext()
+  - ✗ syncFutureSalesCards() at 00:00h - no longer creates/deletes recurring cards
+- **Active Jobs**: Route generation (05:00h), Omie sync (hourly 06:00-23:00)
 - **Compatibility**: Keeping products/saleValue fields in sales_cards for backward compatibility during transition
+- **Next Steps**: Execute migration (dry-run → validate → execute), monitor for errors, cleanup unused utilities when safe
 
 ## 2025-11-06: Route Generation Integration with Visit Schedule History
 - **Critical Fix**: Corrected route generation logic to use proper week-based periodicity calculations
