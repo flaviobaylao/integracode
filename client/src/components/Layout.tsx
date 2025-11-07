@@ -5,6 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
@@ -27,73 +28,102 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Buscar contagem de pedidos bloqueados
+  const { data: blockedOrdersData } = useQuery<any[]>({
+    queryKey: ['/api/blocked-orders'],
+    enabled: canAccessReports || isVendedor,
+  });
+  const blockedOrdersCount = blockedOrdersData?.filter(order => order.status === 'blocked').length || 0;
+
+  // Buscar contagem de pedidos do hotsite
+  const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
+    queryKey: ['/api/hotsite-orders'],
+    enabled: canAccessReports,
+  });
+  const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
+
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true },
+    { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true, badge: null },
     { 
       id: 'sales-cards', 
       label: user?.role === 'vendedor' ? 'Meus Cards de Venda' : 'Cards de Venda',
       icon: 'fas fa-clipboard-list', 
-      available: true 
+      available: true,
+      badge: null
     },
-    { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true },
-    { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true },
+    { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true, badge: null },
+    { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
     { 
       id: 'daily-route', 
       label: isVendedor ? 'Minha Rota do Dia' : 'Rotas dos Vendedores', 
       icon: 'fas fa-map-marked-alt', 
-      available: isVendedor || canAccessReports 
+      available: isVendedor || canAccessReports,
+      badge: null
     },
     { 
       id: 'customers', 
       label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes',
       icon: 'fas fa-users', 
-      available: true 
+      available: true,
+      badge: null
     },
-    { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports },
+    { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
     { 
       id: 'sales-goals', 
       label: user?.role === 'vendedor' ? 'Minhas Metas' : 'Metas de Vendas',
       icon: 'fas fa-bullseye', 
-      available: true 
+      available: true,
+      badge: null
     },
-    { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports },
-    { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports },
-    { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports },
-    { id: 'hotsite-orders', label: 'Pedidos do Site', icon: 'fas fa-shopping-bag', available: canAccessReports },
+    { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports, badge: null },
+    { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
+    { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports, badge: null },
+    { 
+      id: 'hotsite-orders', 
+      label: 'Pedidos do Site', 
+      icon: 'fas fa-shopping-bag', 
+      available: canAccessReports,
+      badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null
+    },
     { 
       id: 'billings', 
       label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', 
       icon: 'fas fa-file-invoice-dollar', 
-      available: canAccessReports || isVendedor 
+      available: canAccessReports || isVendedor,
+      badge: null
     },
     { 
       id: 'overdue-debts', 
       label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
       icon: 'fas fa-exclamation-triangle', 
-      available: canAccessReports || isVendedor 
+      available: canAccessReports || isVendedor,
+      badge: null
     },
     { 
       id: 'blocked-orders', 
       label: isVendedor ? 'Meus Pedidos Bloqueados' : 'Pedidos Bloqueados', 
       icon: 'fas fa-ban', 
-      available: canAccessReports || isVendedor 
+      available: canAccessReports || isVendedor,
+      badge: blockedOrdersCount > 0 ? blockedOrdersCount : null
     },
     { 
       id: 'check-in-audit', 
       label: isVendedor ? 'Meus Check-ins' : 'Auditoria de Check-ins', 
       icon: 'fas fa-clipboard-check', 
-      available: true 
+      available: true,
+      badge: null
     },
-    { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports },
+    { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
     { 
       id: 'rh', 
       label: isVendedor ? 'Minhas Métricas' : 'RH', 
       icon: 'fas fa-briefcase', 
-      available: true 
+      available: true,
+      badge: null
     },
-    { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers },
-    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports },
-    { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports },
+    { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
+    { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
   ];
 
   const deliveryMenuItems = [
@@ -189,6 +219,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                       >
                         <i className={item.icon}></i>
                         <span className="font-medium">{item.label}</span>
+                        {item.badge && item.badge > 0 && (
+                          <Badge className="ml-auto bg-red-500 text-white text-xs">
+                            {item.badge}
+                          </Badge>
+                        )}
                       </Button>
                     </li>
                   ))}
@@ -293,14 +328,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </div>
         
         <div className="flex items-center space-x-4">
-          {/* Notifications */}
-          <Button variant="ghost" size="sm" className="relative">
-            <i className="fas fa-bell text-lg"></i>
-            <Badge className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-              3
-            </Badge>
-          </Button>
-          
           {/* User Menu */}
           <div className="flex items-center space-x-3">
             <div className="text-right">

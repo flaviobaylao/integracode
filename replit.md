@@ -69,6 +69,24 @@
 
 # Recent Changes
 
+## 2025-11-07: Badges de Notificação no Menu Lateral
+- **Removido**: Ícone de sino (notificação) no canto superior direito
+- **Adicionado**: Badge vermelho com contador nas abas do menu:
+  - "Pedidos Bloqueados": Mostra número de pedidos com status 'blocked'
+  - "Pedidos do Site": Mostra número total de pedidos recebidos do hotsite
+- **Comportamento**: Badges aparecem apenas quando há pedidos (contador > 0)
+- **Cor**: Badge vermelho (#bg-red-500) para destacar itens que requerem atenção
+
+## 2025-11-07: Busca de Clientes Aprimorada
+- **Melhorias**: Busca agora funciona para todos os campos:
+  - Nome Fantasia (ex: "GRASSA")
+  - Razão Social (nome completo/oficial)
+  - CNPJ (com ou sem formatação)
+  - CPF (com ou sem formatação)
+  - Telefone (com ou sem formatação)
+- **Comportamento**: Busca inteligente que remove pontos, hífens e espaços automaticamente
+- **Case-insensitive**: Não diferencia maiúsculas de minúsculas
+
 ## 2025-11-07: Coluna Última Atividade - Exibição de Data
 - **Mudança**: Coluna "Última Atividade" agora mostra a data da última venda
 - **Formato**: dd/mm/aaaa (formato brasileiro)
