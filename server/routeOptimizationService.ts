@@ -337,73 +337,74 @@ export async function generateDailyRoute(
 
   const startOfDay = new Date(routeDate);
   startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(routeDate);
+  endOfDay.setHours(23, 59, 59, 999);
 
-  // Descobrir qual dia da semana é a data alvo (formato abreviado e completo)
-  const daysOfWeekAbbr = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+  // Descobrir qual dia da semana é a data alvo
   const daysOfWeekFull = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-  const targetWeekdayAbbr = daysOfWeekAbbr[routeDate.getDay()];
   const targetWeekdayFull = daysOfWeekFull[routeDate.getDay()];
   
   console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // BUSCAR CLIENTES DIRETO DA TABELA CUSTOMERS (fonte única de verdade)
-  const allCustomers = await storage.getAllCustomers();
+  // NOVA LÓGICA: Buscar sales_cards agendados para este vendedor nesta data
+  // Sales_cards são a fonte única de verdade após a migração para sistema de cards permanentes
+  const { db } = await import('./db');
+  const { salesCards, customers } = await import('../shared/schema');
+  const { eq, and, gte, lte } = await import('drizzle-orm');
   
-  // Filtrar clientes que devem ser visitados nesta data
-  const customersToVisit = allCustomers.filter((customer: any) => {
-    // 1. Cliente deve estar ativo
-    if (!customer.isActive) return false;
+  const salesCardsWithCustomers = await db.select({
+    cardId: salesCards.id,
+    customerId: salesCards.customerId,
+    customerName: customers.name,
+    customerFantasyName: customers.fantasyName,
+    customerAddress: customers.address,
+    customerLatitude: customers.latitude,
+    customerLongitude: customers.longitude,
+    customerVirtualService: customers.virtualService,
+    cardStatus: salesCards.status
+  })
+    .from(salesCards)
+    .innerJoin(customers, eq(salesCards.customerId, customers.id))
+    .where(
+      and(
+        eq(salesCards.sellerId, sellerId),
+        gte(salesCards.scheduledDate, startOfDay),
+        lte(salesCards.scheduledDate, endOfDay)
+      )
+    );
+
+  console.log(`   📋 ${salesCardsWithCustomers.length} sales_cards encontrados para esta data`);
+  
+  // Filtrar apenas visitas presenciais com status válido
+  const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {
+    // Apenas cards pending ou open
+    if (!['pending', 'open'].includes(sc.cardStatus)) return false;
     
-    // 2. Cliente deve pertencer ao vendedor
-    if (customer.sellerId !== sellerId) return false;
-    
-    // 3. Cliente não pode ser virtual (atendimento remoto)
-    if (customer.virtualService) return false;
-    
-    // 4. Verificar se o dia da semana está nos weekdays do cliente
-    let weekdaysArray: string[] = [];
-    try {
-      weekdaysArray = JSON.parse(customer.weekdays || '[]');
-    } catch (e) {
-      console.warn(`⚠️  Cliente ${customer.name} com weekdays inválido: ${customer.weekdays}`);
-      return false;
-    }
-    
-    // Aceitar tanto formato abreviado (Dom, Seg) quanto completo (domingo, segunda)
-    if (!weekdaysArray.includes(targetWeekdayAbbr) && !weekdaysArray.includes(targetWeekdayFull)) {
-      return false;
-    }
-    
-    // 5. Verificar periodicidade (semanal, quinzenal, mensal, bimestral)
-    const periodicity = customer.visitPeriodicity || 'semanal';
-    const serviceStartDate = customer.serviceStartDate ? new Date(customer.serviceStartDate) : null;
-    
-    if (!shouldVisitOnDateByPeriodicity(periodicity, routeDate, weekdaysArray, serviceStartDate)) {
-      return false;
-    }
+    // Não incluir clientes com atendimento virtual
+    if (sc.customerVirtualService) return false;
     
     return true;
   });
 
-  console.log(`   ✅ ${customersToVisit.length} clientes agendados para visita neste dia`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas (${salesCardsWithCustomers.length - customersToVisit.length} virtuais ou outros status)`);
 
   // Filtrar apenas clientes com coordenadas válidas
   const validCustomers = customersToVisit.filter((c: any) => 
-    c.latitude && 
-    c.longitude &&
-    !isNaN(parseFloat(c.latitude as any)) &&
-    !isNaN(parseFloat(c.longitude as any))
+    c.customerLatitude && 
+    c.customerLongitude &&
+    !isNaN(parseFloat(c.customerLatitude as any)) &&
+    !isNaN(parseFloat(c.customerLongitude as any))
   );
 
   const customersWithoutCoords = customersToVisit.filter((c: any) => 
-    !c.latitude || !c.longitude ||
-    isNaN(parseFloat(c.latitude as any)) ||
-    isNaN(parseFloat(c.longitude as any))
+    !c.customerLatitude || !c.customerLongitude ||
+    isNaN(parseFloat(c.customerLatitude as any)) ||
+    isNaN(parseFloat(c.customerLongitude as any))
   );
 
   if (customersWithoutCoords.length > 0) {
     console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas:`);
-    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.name} (${c.id})`));
+    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.customerFantasyName || c.customerName} (${c.customerId})`));
   }
 
   if (validCustomers.length === 0) {
@@ -411,17 +412,20 @@ export async function generateDailyRoute(
       routeId: null,
       message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
       totalVisits: 0,
-      visitsWithoutCoordinates: customersWithoutCoords.length
+      visitsWithoutCoordinates: customersWithoutCoords.length,
+      warnings: customersWithoutCoords.length > 0 
+        ? [`${customersWithoutCoords.length} clientes sem coordenadas configuradas`]
+        : []
     };
   }
 
   // Converter clientes para pontos de rota
   const routePoints: RoutePoint[] = validCustomers.map((c: any) => ({
-    id: c.id, // Usar ID do cliente como identificador da visita
-    latitude: parseFloat(c.latitude as any),
-    longitude: parseFloat(c.longitude as any),
-    customerName: c.fantasyName || c.name,
-    customerAddress: c.address || ''
+    id: c.customerId, // Usar ID do cliente como identificador da visita
+    latitude: parseFloat(c.customerLatitude as any),
+    longitude: parseFloat(c.customerLongitude as any),
+    customerName: c.customerFantasyName || c.customerName,
+    customerAddress: c.customerAddress || ''
   }));
 
   console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);
