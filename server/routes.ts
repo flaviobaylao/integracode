@@ -8720,6 +8720,125 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
+  // FERRAMENTAS DE DIAGNÓSTICO DE COORDENADAS
+  // ========================================
+  
+  // Diagnóstico de coordenadas suspeitas (Admin apenas)
+  app.get('/api/admin/diagnose-coordinates', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log('🔍 Iniciando diagnóstico de coordenadas...');
+      
+      // 1. Buscar clientes com latitude POSITIVA (erro no Brasil)
+      const positiveLatitudes = await db.select({
+        id: customers.id,
+        name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+        latitude: customers.latitude,
+        longitude: customers.longitude,
+        city: customers.city,
+        state: customers.state
+      })
+        .from(customers)
+        .where(sql`CAST(${customers.latitude} AS FLOAT) > 0`)
+        .limit(100);
+      
+      // 2. Buscar todos os vendedores
+      const sellers = await db.select({
+        id: users.id,
+        name: sql<string>`${users.firstName} || ' ' || COALESCE(${users.lastName}, '')`,
+        homeLatitude: users.homeLatitude,
+        homeLongitude: users.homeLongitude
+      })
+        .from(users)
+        .where(eq(users.role, 'vendedor'));
+      
+      // 3. Verificar clientes com distâncias >100km dos vendedores
+      const suspiciousDistances: any[] = [];
+      
+      for (const seller of sellers) {
+        if (!seller.homeLatitude || !seller.homeLongitude) continue;
+        
+        const sellerLat = parseFloat(seller.homeLatitude as any);
+        const sellerLon = parseFloat(seller.homeLongitude as any);
+        
+        // Buscar clientes deste vendedor via sales_cards
+        const sellerCustomers = await db.selectDistinct({
+          customerId: salesCards.customerId,
+          customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+          customerLat: customers.latitude,
+          customerLon: customers.longitude
+        })
+          .from(salesCards)
+          .innerJoin(customers, eq(salesCards.customerId, customers.id))
+          .where(eq(salesCards.sellerId, seller.id))
+          .limit(200);
+        
+        for (const customer of sellerCustomers) {
+          if (!customer.customerLat || !customer.customerLon) continue;
+          
+          const customerLat = parseFloat(customer.customerLat as any);
+          const customerLon = parseFloat(customer.customerLon as any);
+          
+          // Calcular distância Haversine
+          const R = 6371; // Raio da Terra em km
+          const dLat = (customerLat - sellerLat) * Math.PI / 180;
+          const dLon = (customerLon - sellerLon) * Math.PI / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(sellerLat * Math.PI / 180) * Math.cos(customerLat * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          const distance = R * c;
+          
+          if (distance > 100) {
+            suspiciousDistances.push({
+              sellerId: seller.id,
+              sellerName: seller.name,
+              customerId: customer.customerId,
+              customerName: customer.customerName,
+              distance: Math.round(distance),
+              customerLat: customer.customerLat,
+              customerLon: customer.customerLon
+            });
+          }
+        }
+      }
+      
+      console.log(`✅ Diagnóstico concluído:`);
+      console.log(`   - ${positiveLatitudes.length} clientes com latitude POSITIVA (erro)`);
+      console.log(`   - ${suspiciousDistances.length} clientes com distância >100km do vendedor`);
+      
+      res.json({
+        success: true,
+        summary: {
+          positiveLatitudes: positiveLatitudes.length,
+          suspiciousDistances: suspiciousDistances.length,
+          totalSellers: sellers.length
+        },
+        issues: {
+          positiveLatitudes: positiveLatitudes.map(c => ({
+            id: c.id,
+            name: c.name,
+            latitude: c.latitude,
+            longitude: c.longitude,
+            city: c.city,
+            state: c.state,
+            suggestedFix: `Latitude deveria ser ${-parseFloat(c.latitude as any)}`
+          })),
+          suspiciousDistances: suspiciousDistances.slice(0, 50) // Primeiros 50
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('Erro no diagnóstico:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Erro ao diagnosticar coordenadas',
+        error: error.message 
+      });
+    }
+  });
+
+  // ========================================
   // ROTAS DE ROTEIRIZAÇÃO DIÁRIA
   // ========================================
   
@@ -8883,7 +9002,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         regenerated: false,
-        ...result
+        ...result,
+        warnings: result.warnings || [],
+        suspiciousCoordinates: result.suspiciousCoordinates || []
       });
     } catch (error: any) {
       console.error('Erro ao gerar rota diária:', error);

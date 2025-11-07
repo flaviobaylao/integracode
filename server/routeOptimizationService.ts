@@ -407,6 +407,38 @@ export async function generateDailyRoute(
     customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.customerFantasyName || c.customerName} (${c.customerId})`));
   }
 
+  // 🔍 VALIDAÇÃO DE DISTÂNCIAS ANÔMALAS
+  const sellerLat = parseFloat(seller.homeLatitude as any);
+  const sellerLon = parseFloat(seller.homeLongitude as any);
+  const customersWithSuspiciousCoords: any[] = [];
+  
+  validCustomers.forEach((c: any) => {
+    const customerLat = parseFloat(c.customerLatitude as any);
+    const customerLon = parseFloat(c.customerLongitude as any);
+    
+    // Calcular distância em linha reta (Haversine)
+    const distance = calculateHaversineDistance(sellerLat, sellerLon, customerLat, customerLon);
+    
+    // Alertar se distância > 100km (suspeito para rota diária)
+    if (distance > 100) {
+      customersWithSuspiciousCoords.push({
+        id: c.customerId,
+        name: c.customerFantasyName || c.customerName,
+        distance: Math.round(distance),
+        latitude: c.customerLatitude,
+        longitude: c.customerLongitude,
+        city: c.customerAddress
+      });
+    }
+  });
+
+  if (customersWithSuspiciousCoords.length > 0) {
+    console.log(`   🚨 ALERTA: ${customersWithSuspiciousCoords.length} clientes com coordenadas SUSPEITAS (>100km da casa do vendedor):`);
+    customersWithSuspiciousCoords.forEach((c: any) => 
+      console.log(`      - ${c.name}: ${c.distance}km de distância (lat: ${c.latitude}, lon: ${c.longitude})`)
+    );
+  }
+
   if (validCustomers.length === 0) {
     return {
       routeId: null,
@@ -438,6 +470,21 @@ export async function generateDailyRoute(
   );
 
   console.log(`   ✅ Rota otimizada: ${optimizedRoute.totalDistance.toFixed(2)}km estimados`);
+
+  // 🔍 VALIDAÇÃO DE DISTÂNCIA TOTAL
+  const warnings: string[] = [];
+  
+  if (customersWithSuspiciousCoords.length > 0) {
+    warnings.push(`${customersWithSuspiciousCoords.length} clientes com coordenadas suspeitas (>100km). Verifique: ${customersWithSuspiciousCoords.map(c => c.name).join(', ')}`);
+  }
+  
+  if (optimizedRoute.totalDistance > 500) {
+    console.log(`   🚨 CRÍTICO: Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km)! Verifique coordenadas incorretas.`);
+    warnings.push(`Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km). Provavelmente há coordenadas erradas.`);
+  } else if (optimizedRoute.totalDistance > 300) {
+    console.log(`   ⚠️  AVISO: Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km). Revise se há coordenadas incorretas.`);
+    warnings.push(`Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km). Revise coordenadas.`);
+  }
 
   // Salvar rota no banco de dados
   const routeData = {
@@ -472,7 +519,9 @@ export async function generateDailyRoute(
       segments: optimizedRoute.segments,
       totalVisits: optimizedRoute.orderedPoints.length
     },
-    visitsWithoutCoordinates: customersWithoutCoords
+    visitsWithoutCoordinates: customersWithoutCoords,
+    warnings,
+    suspiciousCoordinates: customersWithSuspiciousCoords
   };
 }
 

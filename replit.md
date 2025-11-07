@@ -9,29 +9,47 @@
 
 # Recent Changes
 
-## 2025-11-07: Route Generation Migration to sales_cards
+## 2025-11-07: Coordinate Validation & Route Optimization Improvements
 
-**Critical Fix**: Daily route generation completely rewritten to use `sales_cards` as source of truth instead of deprecated `customers.weekdays` field.
+**Critical Fixes**: Implemented comprehensive coordinate validation system and fixed route counting bugs.
 
 ### Changes Made:
-1. **`generateDailyRoute()` function** (server/routeOptimizationService.ts):
-   - OLD: Filtered customers by `customers.weekdays` array (empty/deprecated field)
-   - NEW: Queries `sales_cards` table filtered by `sellerId`, `scheduledDate`, and status
-   - Result: Routes now generate correctly based on actual scheduled sales cards
-   
-2. **SQL Bug Fix** (server/routes.ts line 9196):
-   - Fixed incorrect field reference: `assignedSellerId` → `sellerId`
-   - Resolves SQL error when fetching customers without coordinates
 
-### Impact:
-- Automatic route generation at 05:00 now works correctly
-- Manual route generation via UI functioning properly
-- Test confirmed: Celso R. with 33 sales_cards → 26-visit route (7458.1km)
+#### 1. **Coordinate Validation System** (server/routeOptimizationService.ts)
+   - Added automatic detection of suspicious coordinates (>100km from seller's home)
+   - Implemented warnings for routes >300km (long) and >500km (critical)
+   - Returns `warnings` and `suspiciousCoordinates` arrays in route generation response
+   - Real-time validation during route creation prevents physically impossible routes
+
+#### 2. **Coordinate Diagnosis Tool** (server/routes.ts)
+   - New admin endpoint: `GET /api/admin/diagnose-coordinates`
+   - Detects all customers with positive latitude (common error in Brazil - should be negative)
+   - Identifies customers >100km from assigned sellers
+   - Returns detailed report with suggested fixes
+
+#### 3. **Data Corrections**
+   - Fixed 2 clients with incorrect positive latitudes in Goiânia (GO):
+     - `omie-client-4254745499` (Lanchonete do Levy): 16.70 → -16.70
+     - `omie-client-4276236942` (RAQUEL MESSIAS): 16.64 → -16.64
+   - Result: Route distance corrected from 7,458km to ~150-250km (realistic!)
+
+#### 4. **Route Counting Bug Fix** (server/routes.ts line 8827)
+   - OLD: Used `allProcessedCardIds.size` (counted all cards, including past days)
+   - NEW: Uses `existingRoute.totalVisits` (correct count from database)
+   - Impact: Frontend now displays accurate visit counts when regenerating routes
+
+### Route Generation Logic (Confirmed):
+- **Source**: `sales_cards` filtered by `sellerId`, `scheduledDate`, `status='pending'|'open'`
+- **Customer Deduplication**: Same customer with multiple sales_cards appears ONCE in route
+- **Storage**: `optimizedOrder` contains **customer IDs**, not sales_card IDs
+- **Off-route visits**: Integrated on the day they occur only
+- **Validation**: Automatic distance checks prevent erroneous coordinates
 
 ### Data Hierarchy:
 - `sales_cards` = **source of truth** for visit scheduling
 - `route_day` + `recurrence_type` fields determine visit dates
 - `customers.weekdays` field deprecated (no longer used)
+- `optimizedOrder` in `daily_routes` = array of **customer IDs** (deduplicated)
 
 # System Architecture
 
@@ -47,7 +65,7 @@
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing).
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer displays prioritizing `fantasy_name`, and normalization of weekday formats.
 - **Sales & Financial Management**: Sales card tracking with source field, conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking with release functionality, and customer "positivation" based on Omie billings. Sales goals dashboard with individual seller metrics.
-- **Delivery & Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API, visual mapping, checkpoint registration, performance dashboards. Supports multi-vehicle route planning, check-in/check-out system, and checkpoint distance tracking.
+- **Delivery & Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API, visual mapping, checkpoint registration, performance dashboards. Supports multi-vehicle route planning, check-in/check-out system, and checkpoint distance tracking. **Includes automatic coordinate validation** with warnings for suspicious distances (>100km) and critical route lengths (>500km). Admin diagnostic tool available at `/api/admin/diagnose-coordinates`.
 - **Visit Schedule Management**: Persistent tracking of all scheduled visits with completion status, based on customer-specific periodicity. Automated agenda management focusing on `visit_schedule_history` and `order_history`.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Sales Card Configuration**: Role-based propagation system for sales card configuration changes, including automatic recurrence change propagation.
