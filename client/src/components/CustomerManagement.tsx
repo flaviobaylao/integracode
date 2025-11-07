@@ -77,6 +77,7 @@ export default function CustomerManagement() {
   const [statusFilter, setStatusFilter] = useState('active');
   const [sellerFilter, setSellerFilter] = useState('all');
   const [routeDateFilter, setRouteDateFilter] = useState('');
+  const [positivationFilter, setPositivationFilter] = useState('all');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -178,7 +179,12 @@ export default function CustomerManagement() {
       matchesRouteDate = normalizedWeekdays.includes(dayString);
     }
     
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesRouteDate;
+    // Filtro por positivação
+    const matchesPositivation = positivationFilter === 'all' ||
+                               (positivationFilter === 'yes' && customer.isPositivatedThisMonth) ||
+                               (positivationFilter === 'no' && !customer.isPositivatedThisMonth);
+    
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesRouteDate && matchesPositivation;
   }) || [];
 
   const formatCurrency = (value: number) => {
@@ -307,7 +313,7 @@ export default function CustomerManagement() {
       {/* Filters and Search */}
       <Card>
         <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
             <Input
               placeholder="Buscar por nome, CPF/CNPJ ou telefone..."
               value={searchTerm}
@@ -315,7 +321,7 @@ export default function CustomerManagement() {
               data-testid="input-search-customer"
             />
             <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
-              <SelectTrigger>
+              <SelectTrigger data-testid="select-weekday-filter">
                 <SelectValue placeholder="Todos os dias" />
               </SelectTrigger>
               <SelectContent>
@@ -330,7 +336,7 @@ export default function CustomerManagement() {
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
+              <SelectTrigger data-testid="select-status-filter">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -339,8 +345,18 @@ export default function CustomerManagement() {
                 <SelectItem value="inactive">Inativo</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={positivationFilter} onValueChange={setPositivationFilter}>
+              <SelectTrigger data-testid="select-positivation-filter">
+                <SelectValue placeholder="Positivação" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="yes">SIM</SelectItem>
+                <SelectItem value="no">NÃO</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={sellerFilter} onValueChange={setSellerFilter}>
-              <SelectTrigger>
+              <SelectTrigger data-testid="select-seller-filter">
                 <SelectValue placeholder="Todos os vendedores" />
               </SelectTrigger>
               <SelectContent>
@@ -357,6 +373,7 @@ export default function CustomerManagement() {
               placeholder="Data da rota"
               value={routeDateFilter}
               onChange={(e) => setRouteDateFilter(e.target.value)}
+              data-testid="input-route-date-filter"
             />
             <div className="text-sm text-gray-600 flex items-center">
               {filteredCustomers.length} cliente(s) encontrado(s)
