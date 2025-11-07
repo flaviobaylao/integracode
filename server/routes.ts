@@ -69,6 +69,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // Middleware global para impedir cache HTTP em todas as rotas /api/*
+  app.use('/api', (req, res, next) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    next();
+  });
+
   // Version endpoint
   app.get('/api/version', (req, res) => {
     res.json({
