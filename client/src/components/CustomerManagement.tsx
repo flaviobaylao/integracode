@@ -16,6 +16,54 @@ import CustomerExcelImport from "./CustomerExcelImport";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
 
+// Função para normalizar dias da semana de qualquer formato para o padrão abreviado
+function normalizeWeekdays(weekdays: string | string[]): string[] {
+  const weekdayMap: Record<string, string> = {
+    // Formato abreviado (padrão) - minúsculo e maiúsculo, com e sem acento
+    'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua', 'qui': 'Qui', 'sex': 'Sex', 'sab': 'Sab', 'dom': 'Dom',
+    'SEG': 'Seg', 'TER': 'Ter', 'QUA': 'Qua', 'QUI': 'Qui', 'SEX': 'Sex', 'SAB': 'Sab', 'DOM': 'Dom',
+    'sáb': 'Sab', 'SÁB': 'Sab', 'sáb.': 'Sab', 'SÁB.': 'Sab',
+    // Formato completo português - minúsculo
+    'segunda': 'Seg', 'terca': 'Ter', 'quarta': 'Qua', 'quinta': 'Qui', 'sexta': 'Sex', 'sabado': 'Sab', 'domingo': 'Dom',
+    // Formato completo português - com acento
+    'terça': 'Ter', 'sábado': 'Sab',
+    // Formato completo português - maiúsculo
+    'SEGUNDA': 'Seg', 'TERCA': 'Ter', 'TERÇA': 'Ter', 'QUARTA': 'Qua', 'QUINTA': 'Qui', 
+    'SEXTA': 'Sex', 'SABADO': 'Sab', 'SÁBADO': 'Sab', 'DOMINGO': 'Dom',
+    // Formato com "-feira" - minúsculo
+    'segunda-feira': 'Seg', 'terca-feira': 'Ter', 'terça-feira': 'Ter',
+    'quarta-feira': 'Qua', 'quinta-feira': 'Qui', 'sexta-feira': 'Sex',
+    'sabado-feira': 'Sab', 'sábado-feira': 'Sab', 'domingo-feira': 'Dom',
+    // Formato em inglês (legacy)
+    'monday': 'Seg', 'tuesday': 'Ter', 'wednesday': 'Qua', 'thursday': 'Qui',
+    'friday': 'Sex', 'saturday': 'Sab', 'sunday': 'Dom',
+    'MONDAY': 'Seg', 'TUESDAY': 'Ter', 'WEDNESDAY': 'Qua', 'THURSDAY': 'Qui',
+    'FRIDAY': 'Sex', 'SATURDAY': 'Sab', 'SUNDAY': 'Dom',
+  };
+
+  let weekdaysArray: string[] = [];
+  
+  // Se for string JSON, parsear
+  if (typeof weekdays === 'string') {
+    try {
+      weekdaysArray = JSON.parse(weekdays);
+    } catch {
+      // Se não for JSON válido, tratar como array único
+      weekdaysArray = [weekdays];
+    }
+  } else {
+    weekdaysArray = weekdays || [];
+  }
+
+  // Normalizar cada dia
+  return weekdaysArray
+    .map(day => {
+      const normalized = weekdayMap[day.toLowerCase().trim()];
+      return normalized || day; // Se não encontrar no mapa, retorna original
+    })
+    .filter(day => day); // Remove valores vazios
+}
+
 export default function CustomerManagement() {
   const [showModal, setShowModal] = useState(false);
   const [showOmieImport, setShowOmieImport] = useState(false);
@@ -99,8 +147,8 @@ export default function CustomerManagement() {
     let matchesWeekday = true;
     if (weekdayFilter !== 'all') {
       try {
-        const customerWeekdays = JSON.parse(customer.weekdays || '[]');
-        matchesWeekday = customerWeekdays.includes(weekdayFilter);
+        const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
+        matchesWeekday = normalizedWeekdays.includes(weekdayFilter);
       } catch {
         matchesWeekday = false;
       }
@@ -126,8 +174,8 @@ export default function CustomerManagement() {
         6: 'Sab'
       };
       const dayString = weekdayMapping[dayOfWeek as keyof typeof weekdayMapping];
-      const customerWeekdays = JSON.parse(customer.weekdays || '[]');
-      matchesRouteDate = customerWeekdays.includes(dayString);
+      const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
+      matchesRouteDate = normalizedWeekdays.includes(dayString);
     }
     
     return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesRouteDate;

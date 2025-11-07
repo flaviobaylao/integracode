@@ -66,3 +66,29 @@
 - **Omie ERP**
 - **App Entregas Honest**
 - **OSRM API**
+
+# Recent Changes
+
+## 2025-11-07: Positivação baseada em Faturamentos (Billings)
+- **Mudança**: Coluna "Positivado" agora exibe SIM (verde) ou NÃO (vermelho)
+- **Fonte de dados**: Tabela `billings` (faturamentos do Omie) ao invés de `sales_cards`
+- **Lógica**: Cliente positivado se tem `invoiceDate` no mês corrente, `isCancelled = false`, e `totalValue > 0`
+- **Relacionamento**: `customers.omieClientCode` → `billings.omieCustomerCode`
+- **Benefício**: Dados refletem faturamentos reais do ERP Omie, não apenas pedidos internos
+
+## 2025-11-07: Correção de Filtros - Normalização de Dias da Semana
+- **Bugs corrigidos**: 
+  1. Dias da semana não apareciam no modal de edição de clientes
+  2. Filtro de dia da semana não funcionava na tabela de clientes
+  3. Filtro de data de rota não encontrava clientes
+- **Causa raiz**: Dados armazenados em múltiplos formatos ("quarta", "Qua", "Sex", "monday", etc.)
+- **Solução**: Função `normalizeWeekdays()` aplicada em 3 locais:
+  1. `CustomerModal.tsx`: Normaliza ao exibir botões de seleção
+  2. `CustomerManagement.tsx`: Normaliza nos filtros de weekday (linha 153) e data de rota (linha 180)
+  3. `getWeekdaysLabel()`: Normaliza na exibição da coluna "Dias da Semana"
+- **Formatos aceitos**: 
+  - Abreviado PT: "Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"
+  - Completo PT: "segunda", "terça", "quarta", etc. (com/sem acento)
+  - Com "-feira": "segunda-feira", "terça-feira", etc.
+  - Inglês (legacy): "monday", "tuesday", etc.
+- **Impacto**: Todos os filtros e exibições funcionam independente do formato armazenado no banco de dados
