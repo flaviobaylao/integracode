@@ -4,24 +4,32 @@
 
 # Recent Changes
 
-## 2025-11-06: Sales Cards Refactor - Permanent Cards + Order History (IN PROGRESS)
+## 2025-11-06: Sales Cards Refactor - Permanent Cards + Order History
 - **Major Architectural Change**: Transforming sales_cards from multiple recurring cards to single permanent card per customer
 - **Motivation**: Sales cards now only serve as order registration tool, not visit scheduling
 - **New Table**: `order_history` stores:
   - Individual orders within each sales card
   - orderDate, products, totalValue, status
-  - Check-in/check-out data per order
-  - Delivery tracking per order
+  - Check-in/check-out data per order (checkInTime, checkInLatitude, checkInLongitude, checkOutTime, checkOutLatitude, checkOutLongitude)
+  - Delivery tracking per order (deliveryScheduledDate, deliveryCompletedDate, deliveryStatus)
   - Omie integration data (invoiceNumber, omieOrderId)
 - **FK Constraint**: order_history.salesCardId → salesCards.id (cascade delete)
 - **Implementation Status**:
-  - ✅ Schema and database table created
-  - ⏳ Storage methods for order_history (pending)
-  - ⏳ API endpoints for order management (pending)
-  - ⏳ getOrCreatePermanentCard() logic (pending)
-  - ⏳ Migration script to consolidate existing cards (pending)
+  - ✅ Schema and database table created (applied with npm run db:push)
+  - ✅ Storage methods: getOrCreatePermanentCard(), getPermanentCardByCustomer(), createOrderHistory(), getOrderHistoryByCard(), getOrderHistoryById(), updateOrderHistory(), deleteOrderHistory()
+  - ✅ API endpoints: GET /api/customers/:customerId/permanent-card, POST /api/order-history, GET /api/sales-cards/:salesCardId/orders, GET/PUT/DELETE /api/order-history/:id
+  - ✅ Migration script: server/migrateToPermanentCards.ts with dry-run and execute modes
+  - ✅ Admin endpoint: POST /api/admin/migrate-to-permanent-cards (admin-only, supports dryRun parameter)
   - ⏳ UI updates to show order history (pending)
   - ⏳ Disable automatic card generation scripts (pending)
+- **Migration Script Features**:
+  - Consolidates multiple cards per customer into single permanent card
+  - Converts completed/cancelled cards into order_history records
+  - Preserves all historical data (products, check-in/out, delivery, invoices)
+  - Removes duplicate/future pending cards
+  - Supports dry-run mode for safe testing
+  - CLI usage: `tsx server/migrateToPermanentCards.ts --dry-run` or `--execute`
+  - API usage: POST to `/api/admin/migrate-to-permanent-cards` with `{dryRun: true/false}`
 - **Compatibility**: Keeping products/saleValue fields in sales_cards for backward compatibility during transition
 
 ## 2025-11-06: Route Generation Integration with Visit Schedule History

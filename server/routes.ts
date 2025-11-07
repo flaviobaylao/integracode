@@ -2690,6 +2690,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete order" });
     }
   });
+  
+  // Run migration to permanent cards (admin only)
+  app.post('/api/admin/migrate-to-permanent-cards', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { dryRun = true } = req.body;
+      
+      console.log(`\n🔄 Starting migration to permanent cards (dryRun: ${dryRun})...`);
+      
+      // Importar função de migração dinamicamente
+      const { migrateToPermanentCards } = await import('./migrateToPermanentCards');
+      
+      const stats = await migrateToPermanentCards(dryRun);
+      
+      res.json({
+        success: true,
+        dryRun,
+        stats,
+        message: dryRun 
+          ? 'Dry run completed. Review the stats and run with dryRun:false to apply changes.'
+          : 'Migration completed successfully!'
+      });
+    } catch (error: any) {
+      console.error("Error running migration:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Migration failed", 
+        error: error.message 
+      });
+    }
+  });
 
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
