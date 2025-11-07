@@ -98,6 +98,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     if (customer) {
       const type = (customer as any).customerType || 'pessoa_fisica';
       setCustomerType(type);
+      
+      // Debug: log weekdays do cliente
+      console.log('🔍 Customer weekdays:', customer.weekdays, 'Type:', typeof customer.weekdays);
+      
       form.reset({
         customerType: type,
         name: customer.name || '',
@@ -876,7 +880,19 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
-                            const isSelected = JSON.parse(currentWeekdays).includes(option.value);
+                            let parsedWeekdays: string[] = [];
+                            try {
+                              parsedWeekdays = JSON.parse(currentWeekdays);
+                            } catch (e) {
+                              console.error('Erro ao parsear weekdays:', currentWeekdays, e);
+                            }
+                            const isSelected = parsedWeekdays.includes(option.value);
+                            
+                            // Debug
+                            if (isSelected) {
+                              console.log('✅ Dia selecionado:', option.value, option.label);
+                            }
+                            
                             return (
                               <Button
                                 key={option.value}
