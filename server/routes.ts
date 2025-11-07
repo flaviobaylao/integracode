@@ -11019,6 +11019,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para buscar performance de atendimento mensal
+  app.get('/api/hr/daily-attendance', authenticateUser, async (req: any, res) => {
+    try {
+      const { month, year } = req.query;
+      const user = req.user;
+      
+      if (!user) {
+        return res.status(401).json({ message: 'Usuário não autenticado' });
+      }
+      
+      if (!month || !year) {
+        return res.status(400).json({ message: 'Mês e ano são obrigatórios' });
+      }
+
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+
+      // Calcular início e fim do mês
+      const startDate = new Date(yearNum, monthNum - 1, 1);
+      const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
+
+      // Apenas usuários administrativos veem todos os dados
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      
+      // Buscar usuários: todos (se admin) ou apenas o próprio usuário logado
+      const usersQuery = db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        role: users.role
+      })
+      .from(users)
+      .where(eq(users.role, 'vendedor'));
+      
+      const sellers = isAdmin 
+        ? await usersQuery
+        : await usersQuery.where(eq(users.id, user.id));
+
+      // Para cada vendedor, buscar performance de atendimento
+      const attendanceData = await Promise.all(sellers.map(async (seller) => {
+        // Buscar todas as rotas diárias do mês
+        const routes = await db.select({
+          id: dailyRoutes.id,
+          routeDate: dailyRoutes.routeDate,
+          optimizedVisitIds: dailyRoutes.optimizedVisitIds,
+          visitIds: dailyRoutes.visitIds
+        })
+        .from(dailyRoutes)
+        .where(
+          and(
+            eq(dailyRoutes.sellerId, seller.id),
+            gte(dailyRoutes.routeDate, startDate),
+            lte(dailyRoutes.routeDate, endDate)
+          )
+        )
+        .orderBy(asc(dailyRoutes.routeDate));
+
+        // Para cada rota, calcular visitas agendadas vs completadas
+        const dailyData = await Promise.all(routes.map(async (route) => {
+          // Visitas agendadas: usar optimizedVisitIds ou visitIds
+          const visitIdsList = route.optimizedVisitIds || route.visitIds || [];
+          const scheduledVisits = Array.isArray(visitIdsList) ? visitIdsList.length : 0;
+
+          // Visitas completadas: contar check-outs únicos desta rota
+          const completedCheckpoints = await db.select({
+            visitId: routeCheckpoints.visitId
+          })
+          .from(routeCheckpoints)
+          .where(
+            and(
+              eq(routeCheckpoints.dailyRouteId, route.id),
+              eq(routeCheckpoints.checkpointType, 'check_out')
+            )
+          );
+
+          const completedVisits = completedCheckpoints.length;
+
+          // Calcular percentual de atendimento
+          const attendancePercentage = scheduledVisits > 0 
+            ? parseFloat(((completedVisits / scheduledVisits) * 100).toFixed(2))
+            : 0;
+
+          return {
+            date: route.routeDate.toISOString().split('T')[0],
+            scheduledVisits,
+            completedVisits,
+            attendancePercentage
+          };
+        }));
+
+        // Calcular totais e média mensal
+        const totalScheduled = dailyData.reduce((sum, day) => sum + day.scheduledVisits, 0);
+        const totalCompleted = dailyData.reduce((sum, day) => sum + day.completedVisits, 0);
+        const overallPercentage = totalScheduled > 0
+          ? parseFloat(((totalCompleted / totalScheduled) * 100).toFixed(2))
+          : 0;
+
+        // Calcular média dos percentuais diários (apenas dias com visitas agendadas)
+        const daysWithVisits = dailyData.filter(day => day.scheduledVisits > 0);
+        const monthlyAverage = daysWithVisits.length > 0
+          ? parseFloat((daysWithVisits.reduce((sum, day) => sum + day.attendancePercentage, 0) / daysWithVisits.length).toFixed(2))
+          : 0;
+
+        return {
+          sellerId: seller.id,
+          sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
+          sellerEmail: seller.email,
+          dailyData,
+          monthlyAverage,
+          totalScheduled,
+          totalCompleted,
+          overallPercentage
+        };
+      }));
+
+      res.json(attendanceData);
+
+    } catch (error: any) {
+      console.error('Erro ao buscar performance de atendimento:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar performance de atendimento',
+        error: error.message 
+      });
+    }
+  });
+
   // ============================================================================
   // ROTAS PÚBLICAS PARA HOTSITE/E-COMMERCE
   // ============================================================================
