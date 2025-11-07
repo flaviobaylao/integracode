@@ -8821,7 +8821,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.json({
             routeId: existingRoute.id,
             message: 'Nenhuma visita pendente nova encontrada',
-            totalVisits: allProcessedCardIds.size,
+            totalVisits: existingRoute.totalVisits || 0,  // CORRIGIDO: Usar totalVisits do banco
             completedVisits: completedCardIds.length,
             regenerated: true
           });
@@ -8854,6 +8854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const completedVisits = completedCardIds.length;
 
         console.log(`✅ Rota atualizada: ${completedVisits} completadas + ${inProgressCardIds.length} em andamento + ${optimizedRoute.orderedPoints.length} pendentes = ${totalVisits} total`);
+        console.log(`📊 Retornando para frontend: totalVisits=${totalVisits}, completedVisits=${completedVisits}`);
 
         // Atualizar rota existente (PRESERVA routeStatus e checkpoints)
         const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
