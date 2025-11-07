@@ -9042,6 +9042,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { sellerId, date } = req.params;
       
+      console.log(`📡 [API REQUEST] GET /api/daily-routes/${sellerId}/date/${date}`);
+      
       // Vendedor só pode ver sua própria rota
       if (user.role === 'vendedor' && sellerId !== user.id) {
         return res.status(403).json({ message: 'Acesso negado' });
@@ -9051,6 +9053,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       routeDate.setHours(0, 0, 0, 0);
       
       const route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      
+      console.log(`📊 [ROUTE DATA] totalVisits do banco: ${route?.totalVisits}, optimizedOrder.length: ${route?.optimizedOrder?.length}`);
       
       if (!route) {
         return res.json({
