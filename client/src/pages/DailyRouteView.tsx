@@ -1466,7 +1466,13 @@ export default function DailyRouteView() {
                   </div>
                   <Button
                     size="sm"
-                    onClick={() => addCustomerToRouteMutation.mutate(customer.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      if (!addCustomerToRouteMutation.isPending) {
+                        addCustomerToRouteMutation.mutate(customer.id);
+                      }
+                    }}
                     disabled={addCustomerToRouteMutation.isPending}
                     data-testid={`button-add-customer-${customer.id}`}
                   >

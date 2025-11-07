@@ -9554,9 +9554,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notes: `Visita adicionada manualmente à rota por ${user.name} em ${new Date().toLocaleString('pt-BR')}`
       });
       
-      // Adicionar ao optimizedOrder
+      // Adicionar customerId ao optimizedOrder (GET endpoint espera customerIds)
       const currentOrder = (route.optimizedOrder as string[]) || [];
-      const newOrder = [...currentOrder, newSalesCard.id];
+      const newOrder = [...currentOrder, customer.id];
       
       // Atualizar rota
       await storage.updateDailyRoute(routeId, {
