@@ -69,6 +69,19 @@
 
 # Recent Changes
 
+## 2025-11-07: Sistema de Performance de Atendimento (RH)
+- **Nova funcionalidade**: Aba "Atendimento" no módulo RH
+- **Rastreamento diário**: Registra automaticamente o percentual de visitas completadas vs agendadas
+- **Cálculo automático**: Baseado em dados de `daily_routes` (visitas agendadas) e `route_checkpoints` (check-outs)
+- **Métricas exibidas**:
+  - Percentual de atendimento dia a dia
+  - Média mensal de atendimento (média dos dias com visitas)
+  - Total de visitas agendadas vs completadas no mês
+  - Percentual geral do mês
+- **Indicadores visuais**: Cores (verde ≥80%, amarelo ≥60%, vermelho <60%)
+- **Endpoint API**: GET `/api/hr/daily-attendance` com filtros de mês/ano
+- **Tipos compartilhados**: `DailyAttendanceData` e `SellerAttendancePerformance` em `shared/schema.ts`
+
 ## 2025-11-07: Badges de Notificação no Menu Lateral
 - **Removido**: Ícone de sino (notificação) no canto superior direito
 - **Adicionado**: Badge vermelho com contador nas abas do menu:

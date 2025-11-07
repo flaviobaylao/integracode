@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import type { SellerAttendancePerformance } from '@shared/schema';
 
 export default function HRManagement() {
   console.log('✅ HRManagement component rendered!');
@@ -38,6 +39,17 @@ export default function HRManagement() {
     queryFn: async () => {
       const res = await fetch(`/api/hr/monthly-hours?month=${selectedMonth}&year=${selectedYear}`);
       if (!res.ok) throw new Error('Erro ao buscar carga horária');
+      return res.json();
+    },
+    enabled: !!selectedMonth && !!selectedYear
+  });
+
+  // Buscar dados de performance de atendimento
+  const { data: attendanceData, isLoading: isLoadingAttendance } = useQuery<SellerAttendancePerformance[]>({
+    queryKey: ['/api/hr/daily-attendance', selectedMonth, selectedYear],
+    queryFn: async () => {
+      const res = await fetch(`/api/hr/daily-attendance?month=${selectedMonth}&year=${selectedYear}`);
+      if (!res.ok) throw new Error('Erro ao buscar performance de atendimento');
       return res.json();
     },
     enabled: !!selectedMonth && !!selectedYear
@@ -124,7 +136,7 @@ export default function HRManagement() {
       </div>
 
       <Tabs defaultValue="mileage" className="space-y-4">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-3xl grid-cols-3">
           <TabsTrigger value="mileage" data-testid="tab-mileage">
             <Route className="h-4 w-4 mr-2" />
             Quilometragem
@@ -132,6 +144,10 @@ export default function HRManagement() {
           <TabsTrigger value="hours" data-testid="tab-hours">
             <Clock className="h-4 w-4 mr-2" />
             Carga Horária
+          </TabsTrigger>
+          <TabsTrigger value="attendance" data-testid="tab-attendance">
+            <TrendingUp className="h-4 w-4 mr-2" />
+            Atendimento
           </TabsTrigger>
         </TabsList>
 
@@ -352,6 +368,109 @@ export default function HRManagement() {
                           </Card>
                         ))}
                       </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </TabsContent>
+
+        <TabsContent value="attendance" className="space-y-4">
+          {isLoadingAttendance ? (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center text-muted-foreground">Carregando dados...</div>
+              </CardContent>
+            </Card>
+          ) : !attendanceData || attendanceData.length === 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center text-muted-foreground">
+                  Nenhum dado de atendimento encontrado para este período
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            attendanceData.map((seller) => (
+              <Card key={seller.sellerId} data-testid={`card-attendance-${seller.sellerId}`}>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <span data-testid={`text-seller-name-${seller.sellerId}`}>{seller.sellerName}</span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-normal text-muted-foreground" data-testid={`text-monthly-average-${seller.sellerId}`}>
+                        Média Mensal: {seller.monthlyAverage.toFixed(2)}%
+                      </span>
+                      <span 
+                        className={`text-2xl font-bold ${
+                          seller.overallPercentage >= 80 ? 'text-green-600' : 
+                          seller.overallPercentage >= 60 ? 'text-yellow-600' : 'text-red-600'
+                        }`}
+                        data-testid={`text-overall-percentage-${seller.sellerId}`}
+                      >
+                        {seller.overallPercentage.toFixed(2)}%
+                      </span>
+                    </div>
+                  </CardTitle>
+                  <CardDescription data-testid={`text-seller-summary-${seller.sellerId}`}>
+                    {seller.sellerEmail} • {seller.totalCompleted}/{seller.totalScheduled} visitas completadas
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {seller.dailyData.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-4" data-testid="text-no-routes">
+                      Nenhuma rota registrada neste mês
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Data</TableHead>
+                            <TableHead>Dia da Semana</TableHead>
+                            <TableHead className="text-right">Agendadas</TableHead>
+                            <TableHead className="text-right">Completadas</TableHead>
+                            <TableHead className="text-right">% Atendimento</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {seller.dailyData.map((day, idx) => (
+                            <TableRow key={idx} data-testid={`row-attendance-${seller.sellerId}-${idx}`}>
+                              <TableCell data-testid={`cell-date-${idx}`}>
+                                {format(new Date(day.date), "dd/MM/yyyy", { locale: ptBR })}
+                              </TableCell>
+                              <TableCell data-testid={`cell-weekday-${idx}`}>
+                                {format(new Date(day.date), "EEEE", { locale: ptBR })}
+                              </TableCell>
+                              <TableCell className="text-right" data-testid={`cell-scheduled-${idx}`}>{day.scheduledVisits}</TableCell>
+                              <TableCell className="text-right font-medium" data-testid={`cell-completed-${idx}`}>{day.completedVisits}</TableCell>
+                              <TableCell 
+                                className={`text-right font-bold ${
+                                  day.attendancePercentage >= 80 ? 'text-green-600' : 
+                                  day.attendancePercentage >= 60 ? 'text-yellow-600' : 'text-red-600'
+                                }`}
+                                data-testid={`cell-percentage-${idx}`}
+                              >
+                                {day.attendancePercentage.toFixed(2)}%
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow className="bg-muted/50 font-bold" data-testid={`row-total-${seller.sellerId}`}>
+                            <TableCell colSpan={2}>Total do Mês</TableCell>
+                            <TableCell className="text-right" data-testid={`cell-total-scheduled-${seller.sellerId}`}>{seller.totalScheduled}</TableCell>
+                            <TableCell className="text-right" data-testid={`cell-total-completed-${seller.sellerId}`}>{seller.totalCompleted}</TableCell>
+                            <TableCell 
+                              className={`text-right ${
+                                seller.overallPercentage >= 80 ? 'text-green-600' : 
+                                seller.overallPercentage >= 60 ? 'text-yellow-600' : 'text-red-600'
+                              }`}
+                              data-testid={`cell-total-percentage-${seller.sellerId}`}
+                            >
+                              {seller.overallPercentage.toFixed(2)}%
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
                     </div>
                   )}
                 </CardContent>

@@ -11023,7 +11023,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/hr/daily-attendance', authenticateUser, async (req: any, res) => {
     try {
       const { month, year } = req.query;
-      const user = req.user;
+      const user = req.currentUser;
       
       if (!user) {
         return res.status(401).json({ message: 'Usuário não autenticado' });
