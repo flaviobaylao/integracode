@@ -378,12 +378,9 @@ export default function CustomerManagement() {
                       </td>
                       <td className="px-6 py-4 text-center">
                         {customer.isPositivatedThisMonth ? (
-                          <Badge className="bg-green-100 text-green-800">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Positivado
-                          </Badge>
+                          <span className="font-semibold text-green-600">SIM</span>
                         ) : (
-                          <span className="text-gray-400 text-sm">-</span>
+                          <span className="font-semibold text-red-600">NÃO</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">

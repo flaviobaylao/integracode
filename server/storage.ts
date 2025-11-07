@@ -411,31 +411,55 @@ export class DatabaseStorage implements IStorage {
     // Extrair IDs dos clientes
     const customerIds = result.map(row => row.customers!.id);
     
-    // Buscar positivações do mês atual para todos os clientes de uma vez
+    // Buscar positivações do mês atual através dos faturamentos (billings)
     const currentMonthStart = new Date();
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
     
-    const positivations = await db
-      .select({
-        customerId: salesCards.customerId,
-        count: sql<number>`COUNT(*)`.mapWith(Number),
-      })
-      .from(salesCards)
-      .where(
-        and(
-          inArray(salesCards.customerId, customerIds),
-          eq(salesCards.status, 'completed'),
-          gte(salesCards.completedDate, currentMonthStart),
-          sql`${salesCards.saleValue} > 0`
-        )
-      )
-      .groupBy(salesCards.customerId);
+    const currentMonthEnd = new Date();
+    currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
+    currentMonthEnd.setDate(0);
+    currentMonthEnd.setHours(23, 59, 59, 999);
     
-    // Criar mapa de positivações
-    const positivationMap = new Map(
-      positivations.map(p => [p.customerId, p.count > 0])
-    );
+    // Buscar códigos Omie dos clientes (filtrar nulls e garantir tipo string[])
+    const customerOmieCodes = result
+      .map(row => row.customers?.omieClientCode)
+      .filter((code): code is string => !!code);
+    
+    let positivationMap = new Map();
+    
+    if (customerOmieCodes.length > 0) {
+      const positivations = await db
+        .select({
+          omieCustomerCode: billings.omieCustomerCode,
+          count: sql<number>`COUNT(*)`.mapWith(Number),
+        })
+        .from(billings)
+        .where(
+          and(
+            inArray(billings.omieCustomerCode, customerOmieCodes),
+            isNotNull(billings.invoiceDate),
+            gte(billings.invoiceDate, currentMonthStart),
+            sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
+            eq(billings.isCancelled, false),
+            sql`${billings.totalValue} > 0`
+          )
+        )
+        .groupBy(billings.omieCustomerCode);
+      
+      // Criar mapa: omieCustomerCode -> true/false
+      const omieCodeMap = new Map(
+        positivations.map(p => [p.omieCustomerCode, p.count > 0])
+      );
+      
+      // Converter para customerId -> true/false
+      positivationMap = new Map(
+        result.map(row => [
+          row.customers!.id,
+          row.customers!.omieClientCode ? omieCodeMap.get(row.customers!.omieClientCode) || false : false
+        ])
+      );
+    }
     
     // Buscar última atividade de todos os clientes de uma vez
     const lastActivities = await db
