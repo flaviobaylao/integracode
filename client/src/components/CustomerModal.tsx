@@ -860,7 +860,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   <FormField
                     control={form.control}
                     name="weekdays"
-                    render={() => {
+                    render={({ field }) => {
+                      // Usar field.value em vez de form.watch para garantir sincronização
+                      const currentWeekdays = field.value || '[]';
                       return (
                       <FormItem>
                         <FormLabel className="flex items-center space-x-1">
@@ -874,7 +876,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
-                            const isSelected = JSON.parse(weekdays || '[]').includes(option.value);
+                            const isSelected = JSON.parse(currentWeekdays).includes(option.value);
                             return (
                               <Button
                                 key={option.value}
