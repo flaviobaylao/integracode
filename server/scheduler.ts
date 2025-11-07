@@ -130,7 +130,10 @@ cron.schedule('0 6-23 * * *', () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Geração automática de agenda de visitas todos os dias às 06:00h
+// DESATIVADO: Sistema migrado para cards permanentes + order_history
+// Geração automática de agenda de visitas REMOVIDA após migração para cards permanentes
+// A geração de visitas agora usa visit_schedule_history em vez de sales_cards
+/* 
 cron.schedule('0 6 * * *', async () => {
   console.log('Iniciando geração automática de agenda de visitas às 06:00h...');
   
@@ -147,8 +150,12 @@ cron.schedule('0 6 * * *', async () => {
 }, {
   timezone: "America/Sao_Paulo"
 });
+*/
 
-// Processamento de cards criticamente atrasados todos os dias às 02:00h
+// DESATIVADO: Sistema migrado para cards permanentes + order_history
+// Processamento de cards atrasados REMOVIDO - não há mais geração de próximos cards
+// Cards são permanentes e pedidos são registrados em order_history
+/*
 cron.schedule('0 2 * * *', async () => {
   console.log('🕐 [SCHEDULER] Iniciando processamento de cards atrasados...');
   
@@ -185,6 +192,7 @@ cron.schedule('0 2 * * *', async () => {
 }, {
   timezone: "America/Sao_Paulo"
 });
+*/
 
 // Geração automática de rotas diárias para todos os vendedores às 05:00h
 cron.schedule('0 5 * * *', async () => {
@@ -249,8 +257,10 @@ cron.schedule('0 5 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Sincronização completa de agenda futura (2 meses) todos os dias à meia-noite
-// Deleta cards incorretos e cria cards faltantes baseado em periodicidade/weekdays
+// DESATIVADO: Sistema migrado para cards permanentes + order_history
+// Sincronização de agenda futura REMOVIDA - não há mais necessidade de criar/deletar cards recorrentes
+// Sistema agora usa cards permanentes (um por cliente) + order_history para pedidos
+/*
 cron.schedule('0 0 * * *', async () => {
   console.log('🌙 [SCHEDULER] Iniciando sincronização completa de agenda futura à meia-noite...');
   
@@ -269,10 +279,13 @@ cron.schedule('0 0 * * *', async () => {
 }, {
   timezone: "America/Sao_Paulo"
 });
+*/
 
 console.log('✅ Agendador configurado:');
-console.log('   - Sincronização completa de agenda futura (2 meses) à 00:00h (UTC-3)');
-console.log('   - Processamento de cards atrasados às 02:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
-console.log('   - Geração de agenda de visitas às 06:00h (UTC-3)');
+console.log('');
+console.log('⚠️  Jobs desativados após migração para cards permanentes:');
+console.log('   ✗ Sincronização de agenda futura (não necessário com cards permanentes)');
+console.log('   ✗ Processamento de cards atrasados (não necessário com cards permanentes)');
+console.log('   ✗ Geração de agenda de visitas (substituído por visit_schedule_history)');

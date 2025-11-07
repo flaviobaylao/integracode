@@ -77,6 +77,18 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   // Usar freshCard se disponível, senão usar card da prop
   const displayCard = freshCard || card;
 
+  // Buscar histórico de pedidos do card
+  const { data: orderHistory } = useQuery({
+    queryKey: ['/api/sales-cards', card?.id, 'orders'],
+    queryFn: async () => {
+      if (!card?.id) return [];
+      const response = await fetch(`/api/sales-cards/${card.id}/orders`);
+      if (!response.ok) return [];
+      return response.json();
+    },
+    enabled: !!card?.id && isOpen,
+  });
+
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
   
@@ -803,6 +815,83 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   </div>
                 )}
               </div>
+            )}
+
+            {/* Histórico de Pedidos */}
+            {orderHistory && orderHistory.length > 0 && (
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Package className="h-5 w-5 text-orange-600" />
+                    <span>Histórico de Pedidos ({orderHistory.length})</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3 max-h-64 overflow-y-auto">
+                    {orderHistory.map((order: any, index: number) => (
+                      <div 
+                        key={order.id} 
+                        className="border-l-4 border-orange-500 pl-3 py-2 bg-gray-50 rounded-r"
+                        data-testid={`order-history-${index}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-semibold text-gray-800">
+                            {new Date(order.orderDate).toLocaleDateString('pt-BR')}
+                          </span>
+                          <Badge className={
+                            order.status === 'completed' ? 'bg-green-500' :
+                            order.status === 'cancelled' ? 'bg-red-500' :
+                            'bg-blue-500'
+                          }>
+                            {order.status === 'completed' ? 'Concluído' :
+                             order.status === 'cancelled' ? 'Cancelado' :
+                             'Pendente'}
+                          </Badge>
+                        </div>
+                        
+                        <div className="text-sm space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Valor Total:</span>
+                            <span className="font-medium text-green-600">
+                              R$ {parseFloat(order.totalValue || '0').toFixed(2)}
+                            </span>
+                          </div>
+                          
+                          {order.products && order.products.length > 0 && (
+                            <div className="mt-2">
+                              <span className="text-gray-600 text-xs">Produtos:</span>
+                              <ul className="list-disc list-inside text-xs text-gray-700 mt-1">
+                                {order.products.slice(0, 3).map((product: any, idx: number) => (
+                                  <li key={idx}>
+                                    {product.name} - {product.quantity}x R$ {parseFloat(product.unitPrice || '0').toFixed(2)}
+                                  </li>
+                                ))}
+                                {order.products.length > 3 && (
+                                  <li className="text-gray-500 italic">
+                                    ...e mais {order.products.length - 3} produto(s)
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {order.notes && (
+                            <div className="mt-2 text-xs text-gray-600 italic">
+                              Obs: {order.notes}
+                            </div>
+                          )}
+                          
+                          {order.invoiceNumber && (
+                            <div className="mt-1 text-xs text-blue-600">
+                              NF: {order.invoiceNumber}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Botões de Venda */}
