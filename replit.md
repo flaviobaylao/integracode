@@ -69,6 +69,16 @@
 
 # Recent Changes
 
+## 2025-11-07: Integração de Atendimento RH em Metas de Vendas
+- **Modificação**: Campo "Atendimento" em Metas de Vendas agora usa dados reais de visitas
+- **Fonte de dados**: Integrado com sistema RH de atendimento (`daily_routes` + `route_checkpoints`)
+- **Cálculo**: Média do percentual de visitas completadas vs agendadas (igual à aba RH)
+- **Filtros aplicados**:
+  - Apenas rotas do mês selecionado
+  - Apenas rotas até a data atual (exclui rotas futuras)
+  - Filtro condicional por vendedor (funciona em visão agregada e individual)
+- **Consistência**: Ambas abas (RH e Metas) usam mesma lógica e fonte de dados
+
 ## 2025-11-07: Sistema de Performance de Atendimento (RH)
 - **Nova funcionalidade**: Aba "Atendimento" no módulo RH
 - **Rastreamento diário**: Registra automaticamente o percentual de visitas completadas vs agendadas
