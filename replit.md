@@ -69,6 +69,12 @@
 
 # Recent Changes
 
+## 2025-11-07: Coluna Última Atividade - Exibição de Data
+- **Mudança**: Coluna "Última Atividade" agora mostra a data da última venda
+- **Formato**: dd/mm/aaaa (formato brasileiro)
+- **Quando vazio**: Exibe "Nunca" se o cliente não tiver vendas
+- **Fonte**: `lastActivityDate` do `sales_cards` mais recente do cliente
+
 ## 2025-11-07: Botão de Inativação de Cliente
 - **Funcionalidade**: Botão "Inativar Cliente" no modal de edição (somente para clientes ativos)
 - **Confirmação**: AlertDialog com lista de consequências da inativação

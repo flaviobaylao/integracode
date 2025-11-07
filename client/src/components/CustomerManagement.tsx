@@ -449,8 +449,11 @@ export default function CustomerManagement() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <div className="flex items-center justify-center">
-                          {renderLastActivityIcon(customer.lastActivityStatus)}
+                        <div className="text-sm text-gray-700">
+                          {customer.lastActivityDate 
+                            ? formatDate(customer.lastActivityDate)
+                            : <span className="text-gray-400">Nunca</span>
+                          }
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
