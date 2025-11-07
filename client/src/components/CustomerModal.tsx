@@ -45,6 +45,48 @@ const weekdayOptions = [
   { value: 'Dom', label: 'Domingo' },
 ];
 
+// Função para normalizar dias da semana de qualquer formato para o padrão abreviado
+function normalizeWeekdays(weekdays: string | string[]): string[] {
+  const weekdayMap: Record<string, string> = {
+    // Formato abreviado (padrão)
+    'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua', 'qui': 'Qui', 'sex': 'Sex', 'sab': 'Sab', 'dom': 'Dom',
+    // Formato completo minúsculo
+    'segunda': 'Seg', 'terca': 'Ter', 'quarta': 'Qua', 'quinta': 'Qui', 'sexta': 'Sex', 'sabado': 'Sab', 'domingo': 'Dom',
+    // Formato completo com acento
+    'terça': 'Ter', 'sábado': 'Sab',
+    // Formato com "-feira"
+    'segunda-feira': 'Seg', 'terca-feira': 'Ter', 'terça-feira': 'Ter', 
+    'quarta-feira': 'Qua', 'quinta-feira': 'Qui', 'sexta-feira': 'Sex',
+    'sabado-feira': 'Sab', 'sábado-feira': 'Sab', 'domingo-feira': 'Dom',
+    // Maiúsculas
+    'SEG': 'Seg', 'TER': 'Ter', 'QUA': 'Qua', 'QUI': 'Qui', 'SEX': 'Sex', 'SAB': 'Sab', 'DOM': 'Dom',
+    'SEGUNDA': 'Seg', 'TERCA': 'Ter', 'TERÇA': 'Ter', 'QUARTA': 'Qua', 'QUINTA': 'Qui', 
+    'SEXTA': 'Sex', 'SABADO': 'Sab', 'SÁBADO': 'Sab', 'DOMINGO': 'Dom',
+  };
+
+  let weekdaysArray: string[] = [];
+  
+  // Se for string JSON, parsear
+  if (typeof weekdays === 'string') {
+    try {
+      weekdaysArray = JSON.parse(weekdays);
+    } catch {
+      // Se não for JSON válido, tratar como array único
+      weekdaysArray = [weekdays];
+    }
+  } else {
+    weekdaysArray = weekdays || [];
+  }
+
+  // Normalizar cada dia
+  return weekdaysArray
+    .map(day => {
+      const normalized = weekdayMap[day.toLowerCase().trim()];
+      return normalized || day; // Se não encontrar no mapa, retorna original
+    })
+    .filter(day => day); // Remove valores vazios
+}
+
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
   // DEBUG: Log direto do prop
   console.log('🚀 CustomerModal renderizado | customer:', customer);
@@ -105,8 +147,12 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       const type = (customer as any).customerType || 'pessoa_fisica';
       setCustomerType(type);
       
-      // Debug: log weekdays do cliente
-      console.log('🔍 Customer weekdays:', customer.weekdays, 'Type:', typeof customer.weekdays);
+      // Normalizar weekdays para o formato padrão abreviado
+      const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
+      const weekdaysJson = JSON.stringify(normalizedWeekdays);
+      
+      console.log('🔍 Original weekdays:', customer.weekdays);
+      console.log('✅ Normalized weekdays:', normalizedWeekdays, '→', weekdaysJson);
       
       form.reset({
         customerType: type,
@@ -123,7 +169,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         zipCode: (customer as any).zipCode || '',
         route: customer.route || '',
         sellerId: customer.sellerId || '',
-        weekdays: customer.weekdays || '[]',
+        weekdays: weekdaysJson,
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
