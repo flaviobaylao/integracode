@@ -9,9 +9,44 @@
 
 # Recent Changes
 
+## 2025-11-07: Auditoria "Gestão de Clientes" + Coordinate Validation
+
+**Priority Audit**: Confirmed that "Gestão de Clientes" (customers table) is the **single source of truth** for all sales operations and route generation.
+
+### Audit Results (see AUDITORIA_GESTAO_CLIENTES.md):
+
+#### ✅ **CONFIRMATIONS:**
+1. **Data Hierarchy Validated**: All 7 dependent tables (sales_cards, visit_schedule_history, route_checkpoints, message_history, blocked_orders, delivery_route_stops, billings) correctly reference `customers`
+2. **Route Generation**: Uses INNER JOIN with `customers` to fetch coordinates, addresses, and customer data in real-time (line 355-374 in routeOptimizationService.ts)
+3. **Sales_cards Integrity**: 100% referential integrity - 0 orphaned customer_ids, 0 stale coordinates, 11,163 cards across 1,200 unique customers
+4. **Omie Sync**: 99.25% of customers (1,193/1,202) synchronized from Omie ERP with 0 duplicates by omie_client_code
+
+#### 🚨 **CRITICAL ISSUES IDENTIFIED:**
+1. **362 active customers WITHOUT coordinates** (30% of active base)
+   - **Impact**: 2,828 pending sales_cards blocked from route generation
+   - **Top affected seller**: Flavio Administrador (142 customers)
+2. **No explicit Foreign Keys** in database (referential integrity enforced by application only)
+3. **Omie sync failure** since 28/10/2025 (SOAP error in omie_complete job)
+4. **64 duplicate documents** (60× CPF "00000000000" placeholder + 4 real duplicates)
+
+#### ⚠️ **OTHER DATA QUALITY ISSUES:**
+- 154 customers without addresses (13%)
+- 6 customers without assigned sellers (orphans)
+- 83 PF without CPF, 1 PJ without CNPJ
+- 9 customers without Omie code
+
+#### 📋 **PRIORITY ACTIONS:**
+1. **URGENT**: Geocode 362 customers to unblock 2,828 sales operations
+2. **HIGH**: Add database Foreign Keys for customers → dependent tables
+3. **HIGH**: Fix omie_complete sync job (SOAP tag error)
+4. **MEDIUM**: Clean 60 customers with placeholder CPF "00000000000"
+5. **LOW**: Assign sellers to 6 orphaned customers
+
+---
+
 ## 2025-11-07: Coordinate Validation & Route Optimization Improvements
 
-**Critical Fixes**: Implemented comprehensive coordinate validation system and fixed route counting bugs.
+**Technical Fixes**: Implemented comprehensive coordinate validation system and fixed route counting bugs.
 
 ### Changes Made:
 
