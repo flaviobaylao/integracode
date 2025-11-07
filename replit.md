@@ -69,6 +69,21 @@
 
 # Recent Changes
 
+## 2025-11-07: Botão de Inativação de Cliente
+- **Funcionalidade**: Botão "Inativar Cliente" no modal de edição (somente para clientes ativos)
+- **Confirmação**: AlertDialog com lista de consequências da inativação
+- **Consequências da inativação**:
+  1. Cliente não aparecerá mais nas rotas de visitas
+  2. Não será considerado na carteira para fins de positivação
+  3. Cliente pode ser reativado posteriormente editando e mudando status
+- **Localização**: Lado esquerdo do rodapé do modal de edição (botão vermelho)
+- **Permissão**: Requer permissão de edição de cliente (admin/coordinator/administrative)
+
+## 2025-11-07: Filtro de Positivação
+- **Funcionalidade**: Novo filtro "Positivação" na tela de Gestão de Clientes
+- **Opções**: Todos / SIM / NÃO
+- **Comportamento**: Filtra clientes baseado em `isPositivatedThisMonth` (faturamento no mês)
+
 ## 2025-11-07: Positivação baseada em Faturamentos (Billings)
 - **Mudança**: Coluna "Positivado" agora exibe SIM (verde) ou NÃO (vermelho)
 - **Fonte de dados**: Tabela `billings` (faturamentos do Omie) ao invés de `sales_cards`

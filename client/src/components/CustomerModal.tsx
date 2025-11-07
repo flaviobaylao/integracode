@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +14,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
-import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock } from "lucide-react";
+import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface CustomerModalProps {
@@ -97,6 +98,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
+  const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -347,6 +349,33 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       });
     },
   });
+
+  const inactivateCustomerMutation = useMutation({
+    mutationFn: async () => {
+      if (!customer) throw new Error("Cliente não encontrado");
+      return await apiRequest('PATCH', `/api/customers/${customer.id}`, { omieStatus: 'inativo' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      toast({
+        title: "Cliente inativado",
+        description: "O cliente foi inativado com sucesso. Ele não aparecerá mais nas rotas de visitas.",
+      });
+      setShowInactivateDialog(false);
+      onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleInactivate = () => {
+    inactivateCustomerMutation.mutate();
+  };
 
   const onSubmit = (data: InsertCustomer) => {
     customerMutation.mutate(data);
@@ -1065,21 +1094,67 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
             </Card>
 
             {/* Botões */}
-            <div className="flex justify-end space-x-2">
-              <Button type="button" variant="outline" onClick={onClose}>
-                Cancelar
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={customerMutation.isPending}
-                className="bg-honest-blue hover:bg-honest-blue/90"
-              >
-                {customerMutation.isPending ? 'Salvando...' : customer ? 'Atualizar' : 'Criar'}
-              </Button>
+            <div className="flex justify-between items-center">
+              {/* Botão de Inativação (somente ao editar cliente ativo) */}
+              {customer && customer.omieStatus === 'ativo' && (
+                <Button 
+                  type="button" 
+                  variant="destructive"
+                  onClick={() => setShowInactivateDialog(true)}
+                  disabled={inactivateCustomerMutation.isPending}
+                  data-testid="button-inactivate-customer"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Inativar Cliente
+                </Button>
+              )}
+              {!customer || customer.omieStatus !== 'ativo' ? <div /> : null}
+              
+              <div className="flex space-x-2">
+                <Button type="button" variant="outline" onClick={onClose}>
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={customerMutation.isPending}
+                  className="bg-honest-blue hover:bg-honest-blue/90"
+                  data-testid="button-save-customer"
+                >
+                  {customerMutation.isPending ? 'Salvando...' : customer ? 'Atualizar' : 'Criar'}
+                </Button>
+              </div>
             </div>
           </form>
         </Form>
       </DialogContent>
+
+      {/* Dialog de Confirmação de Inativação */}
+      <AlertDialog open={showInactivateDialog} onOpenChange={setShowInactivateDialog}>
+        <AlertDialogContent data-testid="dialog-confirm-inactivate">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar Inativação de Cliente</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja inativar este cliente? Ao inativá-lo:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Ele não aparecerá mais nas rotas de visitas</li>
+                <li>Não será considerado na carteira para fins de positivação</li>
+                <li>Você poderá reativá-lo posteriormente editando o cliente</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-inactivate">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleInactivate}
+              disabled={inactivateCustomerMutation.isPending}
+              className="bg-red-600 hover:bg-red-700"
+              data-testid="button-confirm-inactivate"
+            >
+              {inactivateCustomerMutation.isPending ? 'Inativando...' : 'Sim, Inativar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
