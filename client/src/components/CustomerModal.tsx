@@ -46,6 +46,12 @@ const weekdayOptions = [
 ];
 
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
+  // DEBUG: Log direto do prop
+  console.log('🚀 CustomerModal renderizado | customer:', customer);
+  if (customer) {
+    console.log('🚀 customer.weekdays:', customer.weekdays, '| tipo:', typeof customer.weekdays);
+  }
+  
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
