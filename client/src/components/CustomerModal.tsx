@@ -48,20 +48,26 @@ const weekdayOptions = [
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
 function normalizeWeekdays(weekdays: string | string[]): string[] {
   const weekdayMap: Record<string, string> = {
-    // Formato abreviado (padrão)
+    // Formato abreviado (padrão) - minúsculo e maiúsculo, com e sem acento
     'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua', 'qui': 'Qui', 'sex': 'Sex', 'sab': 'Sab', 'dom': 'Dom',
-    // Formato completo minúsculo
-    'segunda': 'Seg', 'terca': 'Ter', 'quarta': 'Qua', 'quinta': 'Qui', 'sexta': 'Sex', 'sabado': 'Sab', 'domingo': 'Dom',
-    // Formato completo com acento
-    'terça': 'Ter', 'sábado': 'Sab',
-    // Formato com "-feira"
-    'segunda-feira': 'Seg', 'terca-feira': 'Ter', 'terça-feira': 'Ter', 
-    'quarta-feira': 'Qua', 'quinta-feira': 'Qui', 'sexta-feira': 'Sex',
-    'sabado-feira': 'Sab', 'sábado-feira': 'Sab', 'domingo-feira': 'Dom',
-    // Maiúsculas
     'SEG': 'Seg', 'TER': 'Ter', 'QUA': 'Qua', 'QUI': 'Qui', 'SEX': 'Sex', 'SAB': 'Sab', 'DOM': 'Dom',
+    'sáb': 'Sab', 'SÁB': 'Sab', 'sáb.': 'Sab', 'SÁB.': 'Sab',
+    // Formato completo português - minúsculo
+    'segunda': 'Seg', 'terca': 'Ter', 'quarta': 'Qua', 'quinta': 'Qui', 'sexta': 'Sex', 'sabado': 'Sab', 'domingo': 'Dom',
+    // Formato completo português - com acento
+    'terça': 'Ter', 'sábado': 'Sab',
+    // Formato completo português - maiúsculo
     'SEGUNDA': 'Seg', 'TERCA': 'Ter', 'TERÇA': 'Ter', 'QUARTA': 'Qua', 'QUINTA': 'Qui', 
     'SEXTA': 'Sex', 'SABADO': 'Sab', 'SÁBADO': 'Sab', 'DOMINGO': 'Dom',
+    // Formato com "-feira" - minúsculo
+    'segunda-feira': 'Seg', 'terca-feira': 'Ter', 'terça-feira': 'Ter',
+    'quarta-feira': 'Qua', 'quinta-feira': 'Qui', 'sexta-feira': 'Sex',
+    'sabado-feira': 'Sab', 'sábado-feira': 'Sab', 'domingo-feira': 'Dom',
+    // Formato em inglês (legacy)
+    'monday': 'Seg', 'tuesday': 'Ter', 'wednesday': 'Qua', 'thursday': 'Qui',
+    'friday': 'Sex', 'saturday': 'Sab', 'sunday': 'Dom',
+    'MONDAY': 'Seg', 'TUESDAY': 'Ter', 'WEDNESDAY': 'Qua', 'THURSDAY': 'Qui',
+    'FRIDAY': 'Sex', 'SATURDAY': 'Sab', 'SUNDAY': 'Dom',
   };
 
   let weekdaysArray: string[] = [];
@@ -88,12 +94,6 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 }
 
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
-  // DEBUG: Log direto do prop
-  console.log('🚀 CustomerModal renderizado | customer:', customer);
-  if (customer) {
-    console.log('🚀 customer.weekdays:', customer.weekdays, '| tipo:', typeof customer.weekdays);
-  }
-  
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
@@ -150,9 +150,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       // Normalizar weekdays para o formato padrão abreviado
       const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
       const weekdaysJson = JSON.stringify(normalizedWeekdays);
-      
-      console.log('🔍 Original weekdays:', customer.weekdays);
-      console.log('✅ Normalized weekdays:', normalizedWeekdays, '→', weekdaysJson);
       
       form.reset({
         customerType: type,
@@ -939,11 +936,6 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                               console.error('Erro ao parsear weekdays:', currentWeekdays, e);
                             }
                             const isSelected = parsedWeekdays.includes(option.value);
-                            
-                            // Debug
-                            if (isSelected) {
-                              console.log('✅ Dia selecionado:', option.value, option.label);
-                            }
                             
                             return (
                               <Button

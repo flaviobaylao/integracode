@@ -164,19 +164,33 @@ export default function CustomerManagement() {
 
   const getWeekdaysLabel = (weekdays: string) => {
     try {
-      const days = JSON.parse(weekdays);
-      const dayLabels: { [key: string]: string } = {
-        monday: 'Seg',
-        tuesday: 'Ter',
-        wednesday: 'Qua',
-        thursday: 'Qui',
-        friday: 'Sex',
-        saturday: 'Sáb',
-        sunday: 'Dom',
+      let days = JSON.parse(weekdays);
+      
+      // Mapeamento de formatos variados para abreviações em português
+      const weekdayMap: { [key: string]: string } = {
+        // Formato abreviado (já no padrão)
+        'seg': 'Seg', 'ter': 'Ter', 'qua': 'Qua', 'qui': 'Qui', 'sex': 'Sex', 'sab': 'Sáb', 'dom': 'Dom',
+        // Formato completo minúsculo
+        'segunda': 'Seg', 'terca': 'Ter', 'quarta': 'Qua', 'quinta': 'Qui', 'sexta': 'Sex', 'sabado': 'Sáb', 'domingo': 'Dom',
+        // Com acento
+        'terça': 'Ter', 'sábado': 'Sáb',
+        // Com "-feira"
+        'segunda-feira': 'Seg', 'terca-feira': 'Ter', 'terça-feira': 'Ter',
+        'quarta-feira': 'Qua', 'quinta-feira': 'Qui', 'sexta-feira': 'Sex',
+        'sabado-feira': 'Sáb', 'sábado-feira': 'Sáb', 'domingo-feira': 'Dom',
+        // Formato antigo em inglês (compatibilidade)
+        'monday': 'Seg', 'tuesday': 'Ter', 'wednesday': 'Qua', 'thursday': 'Qui',
+        'friday': 'Sex', 'saturday': 'Sáb', 'sunday': 'Dom',
       };
-      return days.map((day: string) => dayLabels[day]).join('/');
+      
+      // Normalizar e filtrar dias válidos
+      const normalizedDays = days
+        .map((day: string) => weekdayMap[day.toLowerCase().trim()] || day)
+        .filter((day: string) => day);
+      
+      return normalizedDays.join(', ');
     } catch {
-      return weekdays;
+      return '-';
     }
   };
 
