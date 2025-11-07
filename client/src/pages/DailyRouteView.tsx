@@ -102,6 +102,9 @@ export default function DailyRouteView() {
 
   // Estado para ordem otimizada local (sem salvar no banco)
   const [localOptimizedOrder, setLocalOptimizedOrder] = useState<string[] | null>(null);
+  
+  // Estado para distância estimada local após re-otimização
+  const [localEstimatedDistance, setLocalEstimatedDistance] = useState<number | null>(null);
 
   // Buscar lista de vendedores (apenas para admin)
   const { data: sellersData } = useQuery({
@@ -156,6 +159,7 @@ export default function DailyRouteView() {
   // Limpar otimização local quando a rota mudar (vendedor, data, ou rota regenerada)
   useEffect(() => {
     setLocalOptimizedOrder(null);
+    setLocalEstimatedDistance(null);
   }, [selectedSellerId, selectedDate, route?.id]);
 
   // Usar ordem otimizada local se existir, senão usar a ordem do banco
@@ -335,6 +339,8 @@ export default function DailyRouteView() {
     },
     onSuccess: (data) => {
       setLocalOptimizedOrder(data.optimizedOrder);
+      // Armazenar distância em metros (backend retorna em km)
+      setLocalEstimatedDistance(Math.round(parseFloat(data.totalDistance) * 1000));
       toast({
         title: "Rota re-otimizada!",
         description: `Nova ordem calculada com ${data.totalVisits} visitas e ${data.totalDistance}km estimados. Esta otimização é temporária e não foi salva.`,
@@ -827,7 +833,7 @@ export default function DailyRouteView() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">Dist. Estimada</p>
                 <p className="text-2xl font-bold">
-                  {formatDistance(route.progress.totalEstimatedDistance)}
+                  {formatDistance(localEstimatedDistance ?? route.progress.totalEstimatedDistance)}
                 </p>
               </div>
               <MapPin className="h-8 w-8 text-purple-600" />
