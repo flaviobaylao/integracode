@@ -1202,3 +1202,22 @@ export const syncStatus = pgTable("sync_status", {
 export const insertSyncStatusSchema = createInsertSchema(syncStatus).omit({ id: true, updatedAt: true });
 export type SyncStatus = typeof syncStatus.$inferSelect;
 export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
+
+// Daily Attendance Performance types - for HR tracking of visit completion rates
+export type DailyAttendanceData = {
+  date: string; // ISO date string (YYYY-MM-DD)
+  scheduledVisits: number; // Total de visitas agendadas no dia
+  completedVisits: number; // Total de visitas completadas (com check-out)
+  attendancePercentage: number; // Percentual de atendimento (completedVisits / scheduledVisits * 100)
+};
+
+export type SellerAttendancePerformance = {
+  sellerId: string;
+  sellerName: string;
+  sellerEmail: string;
+  dailyData: DailyAttendanceData[];
+  monthlyAverage: number; // Média mensal do percentual de atendimento
+  totalScheduled: number; // Total de visitas agendadas no mês
+  totalCompleted: number; // Total de visitas completadas no mês
+  overallPercentage: number; // Percentual geral do mês
+};
