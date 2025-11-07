@@ -135,12 +135,14 @@ export default function CustomerManagement() {
 
   const filteredCustomers = customers?.filter((customer: any) => {
     const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
+    const fantasyName = customer.fantasyName || '';
     // Normalizar termos de busca removendo formatação (pontos, barras, hífens)
     const normalizedSearchTerm = searchTerm.replace(/[.\-\/\s]/g, '');
     const normalizedDocument = documentSearch.replace(/[.\-\/\s]/g, '');
     const normalizedPhone = customer.phone.replace(/[.\-\/\s()\s]/g, '');
     
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         fantasyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          normalizedDocument.includes(normalizedSearchTerm) ||
                          normalizedPhone.includes(normalizedSearchTerm);
     

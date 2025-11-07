@@ -481,8 +481,8 @@ export class DatabaseStorage implements IStorage {
       // Agrupar por omieCustomerCode e pegar a primeira (mais recente)
       const omieLastActivityMap = new Map<string, Date>();
       for (const billing of lastBillings) {
-        if (!omieLastActivityMap.has(billing.omieCustomerCode)) {
-          omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate!);
+        if (billing.omieCustomerCode && billing.invoiceDate && !omieLastActivityMap.has(billing.omieCustomerCode)) {
+          omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate);
         }
       }
       
