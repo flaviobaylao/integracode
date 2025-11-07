@@ -211,8 +211,16 @@ export const salesCards = pgTable("sales_cards", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull(),
   sellerId: varchar("seller_id").notNull(),
-  status: varchar("status").notNull().default('pending'), // pending, completed, invoiced, telemarketing, cancelled, transferred
-  scheduledDate: timestamp("scheduled_date").notNull(),
+  status: varchar("status").notNull().default('pending'), // pending, overdue, failed, completed, invoiced, telemarketing, cancelled, transferred
+  
+  // NOVO SISTEMA: Cards permanentes com histórico
+  isPermanent: boolean("is_permanent").notNull().default(false), // Flag de card permanente (1 por cliente ativo)
+  lastVisitDate: timestamp("last_visit_date"), // Última visita realizada (calculado do order_history)
+  nextVisitDate: timestamp("next_visit_date"), // Próxima visita calculada (baseada em weekdays + periodicity)
+  daysOverdue: integer("days_overdue").notNull().default(0), // Dias de atraso (0, 1, 2, 3+)
+  
+  // DEPRECATED: scheduledDate agora é NULLABLE (calculado dinamicamente para cards permanentes)
+  scheduledDate: timestamp("scheduled_date"), // Mantido apenas para compatibilidade durante migração
   attendanceStartDate: timestamp("attendance_start_date"), // Data de início de atendimento (prioriza checkInTime > scheduledDate > serviceStartDate)
   completedDate: timestamp("completed_date"),
   saleValue: decimal("sale_value", { precision: 10, scale: 2 }),
