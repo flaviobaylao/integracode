@@ -28,17 +28,19 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Buscar contagem de pedidos bloqueados
+  // Buscar contagem de pedidos bloqueados (atualiza a cada 30 segundos)
   const { data: blockedOrdersData } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
     enabled: canAccessReports || isVendedor,
+    refetchInterval: 30000,
   });
   const blockedOrdersCount = blockedOrdersData?.filter(order => order.status === 'blocked').length || 0;
 
-  // Buscar contagem de pedidos do hotsite
+  // Buscar contagem de pedidos do hotsite (atualiza a cada 30 segundos)
   const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
     queryKey: ['/api/hotsite-orders'],
     enabled: canAccessReports,
+    refetchInterval: 30000,
   });
   const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
 
