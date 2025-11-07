@@ -69,6 +69,28 @@
 
 # Recent Changes
 
+## 2025-11-07: Barra de Rolagem no Menu Lateral
+- **Adicionado**: Barra de rolagem automática no menu lateral (sidebar)
+- **Benefício**: Facilita acesso a todas as abas quando há muitos itens de menu
+- **Implementação**: Menu agora usa `overflow-y-auto` com versão do sistema fixa no rodapé
+
+## 2025-11-07: Correção - Vendas Atuais em Metas de Vendas
+- **Bug corrigido**: Vendas não apareciam na aba "Metas de Vendas" (valores zerados)
+- **Causa raiz**: Campo `cfop` vazio em todos os billings, mas código filtrava apenas CFOPs específicos (5.101, 1.201)
+- **Solução**: Modificado filtro de vendas para incluir billings quando CFOP está vazio/null
+- **Lógica**: Se CFOP vazio → incluir; Se CFOP preenchido → aplicar filtro de CFOPs permitidos
+- **Pendências identificadas**:
+  - Vendedores "Fabio H." e "Flávio" aparecem no Omie mas não estão cadastrados no sistema
+  - 28 faturamentos sem vendedor associado (seller_name = null) precisam de vendedor correto
+  - Sincronização Omie precisa mapear vendedores corretamente
+
+## 2025-11-07: Atualização de Distância Estimada na Re-otimização de Rota
+- **Nova funcionalidade**: Distância estimada atualiza em tempo real após re-otimização local
+- **Estado local**: Adicionado `localEstimatedDistance` para armazenar distância calculada
+- **Conversão**: Backend retorna km, frontend armazena em metros para compatibilidade
+- **Limpeza de estado**: Estados locais resetam corretamente quando rota é regenerada, vendedor ou data mudam
+- **Validação**: Guard para evitar NaN quando distância não for válida
+
 ## 2025-11-07: Correção - Abertura de Card de Vendas nas Rotas
 - **Bug corrigido**: Card de vendas não abria ao clicar nas linhas da rota
 - **Causa**: Estrutura de dados da rota mudou de `salesCardId` para `customerId`

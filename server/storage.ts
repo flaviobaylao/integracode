@@ -3071,8 +3071,12 @@ export class DatabaseStorage implements IStorage {
 
       const validBillings = monthBillings.rows.filter((billing: any) => {
         const cfop = (billing.cfop ?? '').toString().trim();
-        // Incluir apenas se o CFOP estiver na lista permitida
-        return cfop !== '' && includedCFOPs.includes(cfop);
+        // IMPORTANTE: Se CFOP estiver vazio/null, incluir o billing
+        // Caso contrário, aplicar filtro de CFOPs permitidos
+        if (cfop === '') {
+          return true; // Incluir quando CFOP não está preenchido
+        }
+        return includedCFOPs.includes(cfop);
       });
       
       console.log(`  🔍 FILTRO CFOP:`, {
