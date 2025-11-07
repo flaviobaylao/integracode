@@ -368,8 +368,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
       <div className="flex">
         {/* Sidebar Navigation - Hidden on mobile */}
-        <nav className="hidden md:block w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200">
-          <div className="p-4">
+        <nav className="hidden md:block w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200 flex flex-col">
+          <div className="p-4 flex-1 overflow-y-auto">
             <ul className="space-y-2">
               {menuItems
                 .filter(item => item.available)
@@ -465,13 +465,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 </li>
               )}
             </ul>
-            
-            {/* Versão do Sistema - Rodapé do Sidebar Desktop */}
-            <div className="absolute bottom-4 left-0 right-0 px-4">
-              <div className="pt-4 border-t border-gray-200">
-                <VersionDisplay />
-              </div>
-            </div>
+          </div>
+          
+          {/* Versão do Sistema - Rodapé do Sidebar Desktop */}
+          <div className="p-4 border-t border-gray-200">
+            <VersionDisplay />
           </div>
         </nav>
 
