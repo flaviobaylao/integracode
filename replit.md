@@ -7,6 +7,32 @@
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
 
+# Recent Changes
+
+## 2025-11-07: Route Generation Migration to sales_cards
+
+**Critical Fix**: Daily route generation completely rewritten to use `sales_cards` as source of truth instead of deprecated `customers.weekdays` field.
+
+### Changes Made:
+1. **`generateDailyRoute()` function** (server/routeOptimizationService.ts):
+   - OLD: Filtered customers by `customers.weekdays` array (empty/deprecated field)
+   - NEW: Queries `sales_cards` table filtered by `sellerId`, `scheduledDate`, and status
+   - Result: Routes now generate correctly based on actual scheduled sales cards
+   
+2. **SQL Bug Fix** (server/routes.ts line 9196):
+   - Fixed incorrect field reference: `assignedSellerId` → `sellerId`
+   - Resolves SQL error when fetching customers without coordinates
+
+### Impact:
+- Automatic route generation at 05:00 now works correctly
+- Manual route generation via UI functioning properly
+- Test confirmed: Celso R. with 33 sales_cards → 26-visit route (7458.1km)
+
+### Data Hierarchy:
+- `sales_cards` = **source of truth** for visit scheduling
+- `route_day` + `recurrence_type` fields determine visit dates
+- `customers.weekdays` field deprecated (no longer used)
+
 # System Architecture
 
 ## UI/UX Decisions

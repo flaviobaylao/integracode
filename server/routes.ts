@@ -9190,7 +9190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(customers, eq(salesCards.customerId, customers.id))
         .where(
           and(
-            eq(salesCards.assignedSellerId, sellerId),
+            eq(salesCards.sellerId, sellerId),
             gte(salesCards.scheduledDate, startOfDay),
             lte(salesCards.scheduledDate, endOfDay),
             eq(salesCards.status, 'open')
