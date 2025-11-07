@@ -74,15 +74,16 @@
 - **Benefício**: Facilita acesso a todas as abas quando há muitos itens de menu
 - **Implementação**: Menu agora usa `overflow-y-auto` com versão do sistema fixa no rodapé
 
-## 2025-11-07: Correção - Vendas Atuais em Metas de Vendas
+## 2025-11-07: Correção - Vendas Atuais em Metas de Vendas  
 - **Bug corrigido**: Vendas não apareciam na aba "Metas de Vendas" (valores zerados)
-- **Causa raiz**: Campo `cfop` vazio em todos os billings, mas código filtrava apenas CFOPs específicos (5.101, 1.201)
-- **Solução**: Modificado filtro de vendas para incluir billings quando CFOP está vazio/null
-- **Lógica**: Se CFOP vazio → incluir; Se CFOP preenchido → aplicar filtro de CFOPs permitidos
-- **Pendências identificadas**:
-  - Vendedores "Fabio H." e "Flávio" aparecem no Omie mas não estão cadastrados no sistema
-  - 28 faturamentos sem vendedor associado (seller_name = null) precisam de vendedor correto
-  - Sincronização Omie precisa mapear vendedores corretamente
+- **Causa raiz**: Filtros incompletos - faltavam critérios de Situação e Operação do Omie
+- **Solução aplicada**: Implementados **todos** os filtros do Omie:
+  - **CFOP**: Vazio ou 1.201 (Devolução) / 5.101 (Venda)
+  - **Situação**: `invoice_status = '100'` (Autorizado/Devolvido)
+  - **Operação**: `billing_type IN ('venda', 'devolução')` (Pedido de Venda + Devolução de Venda)
+  - **Não canceladas**: `is_cancelled = false`
+- **Lógica CFOP**: Se vazio → incluir; Se preenchido → validar contra lista permitida
+- **Nota**: Vendedores "Fabio H." e "Flávio" aparecem no Omie mas não precisam estar no Sistema Integra
 
 ## 2025-11-07: Atualização de Distância Estimada na Re-otimização de Rota
 - **Nova funcionalidade**: Distância estimada atualiza em tempo real após re-otimização local

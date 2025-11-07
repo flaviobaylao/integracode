@@ -3022,12 +3022,13 @@ export class DatabaseStorage implements IStorage {
       console.log(`  Tipo de numericSellerId:`, typeof numericSellerId, 'Valor:', numericSellerId);
       
       const monthBillings = await db.execute(sql`
-        SELECT id, customer_document, cfop, total_value, seller_id
+        SELECT id, customer_document, cfop, total_value, seller_id, billing_type
         FROM billings
         WHERE invoice_date >= ${startOfMonth}
           AND invoice_date <= ${searchEndDate}
           AND invoice_status = '100'
           AND is_cancelled = false
+          AND billing_type IN ('venda', 'devolução')
           ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
       `);
       
