@@ -3137,51 +3137,66 @@ export class DatabaseStorage implements IStorage {
         });
       }
 
-      // === 4. META DE ATENDIMENTO: Média do percentual de visitas efetuadas dia a dia ===
-      // Calcular baseado em salesCards com status success vs total de cards programados
-      const monthSalesCardsResult = await db.execute(sql`
-        SELECT id, status, scheduled_date
-        FROM sales_cards
-        WHERE scheduled_date >= ${startOfMonth}
-          AND scheduled_date <= ${endOfMonth}
-          ${prefixedSellerId ? sql`AND seller_id = ${prefixedSellerId}` : sql``}
-      `);
+      // === 4. META DE ATENDIMENTO: Média do percentual de visitas completadas vs agendadas ===
+      // Calcular baseado em daily_routes (visitas agendadas) e route_checkpoints (visitas completadas)
       
-      const monthSalesCards = monthSalesCardsResult.rows.map((row: any) => ({
-        id: row.id,
-        status: row.status,
-        scheduledDate: new Date(row.scheduled_date)
-      }));
+      // Construir condições de filtro
+      const routeConditions = [
+        gte(dailyRoutes.routeDate, startOfMonth),
+        lte(dailyRoutes.routeDate, endOfMonth),
+        lte(dailyRoutes.routeDate, currentDate) // Apenas rotas até hoje
+      ];
+      
+      // Adicionar filtro de seller apenas se especificado
+      if (prefixedSellerId) {
+        routeConditions.push(eq(dailyRoutes.sellerId, prefixedSellerId));
+      }
+      
+      // Buscar todas as rotas diárias do mês (apenas dias já decorridos)
+      const routes = await db.select({
+        id: dailyRoutes.id,
+        routeDate: dailyRoutes.routeDate,
+        optimizedOrder: dailyRoutes.optimizedOrder,
+        totalVisits: dailyRoutes.totalVisits
+      })
+      .from(dailyRoutes)
+      .where(and(...routeConditions))
+      .orderBy(desc(dailyRoutes.routeDate));
 
-      // Agrupar por dia ÚTIL e calcular percentual de atendimento diário
       const dailyServiceRates: number[] = [];
       
-      // Iterar apenas pelos dias úteis já decorridos
-      for (const workingDay of workingDays.filter(date => date <= currentDate)) {
-        const dayStart = new Date(workingDay.getFullYear(), workingDay.getMonth(), workingDay.getDate(), 0, 0, 0);
-        const dayEnd = new Date(workingDay.getFullYear(), workingDay.getMonth(), workingDay.getDate(), 23, 59, 59);
-
-        const dayCards = monthSalesCards.filter(card => {
-          const cardDate = new Date(card.scheduledDate);
-          return cardDate >= dayStart && cardDate <= dayEnd;
-        });
-
-        const daySuccessCards = dayCards.filter(card => card.status === 'success');
-
-        if (dayCards.length > 0) {
-          const dayServiceRate = (daySuccessCards.length / dayCards.length) * 100;
-          dailyServiceRates.push(dayServiceRate);
-        }
+      // Para cada rota do mês (apenas dias já decorridos), calcular o percentual de atendimento
+      for (const route of routes) {
+        const visitIdsArray = (route.optimizedOrder as string[] | null) || [];
+        const scheduledVisits = visitIdsArray.length;
+        
+        if (scheduledVisits === 0) continue;
+        
+        // Contar visitas completadas (checkpoints com check_out)
+        const checkpoints = await db.select({
+          id: routeCheckpoints.id
+        })
+        .from(routeCheckpoints)
+        .where(
+          and(
+            eq(routeCheckpoints.dailyRouteId, route.id),
+            eq(routeCheckpoints.checkpointType, 'check_out')
+          )
+        );
+        
+        const completedVisits = checkpoints.length;
+        const dayServiceRate = (completedVisits / scheduledVisits) * 100;
+        dailyServiceRates.push(dayServiceRate);
       }
 
-      // Média dos percentuais diários (apenas dias úteis com atendimentos)
+      // Média dos percentuais diários (apenas dias com rotas)
       const serviceRate = dailyServiceRates.length > 0
         ? dailyServiceRates.reduce((sum, rate) => sum + rate, 0) / dailyServiceRates.length
         : 0;
       
-      console.log(`  📈 ATENDIMENTO:`, {
-        totalWorkingDaysElapsed: workingDaysElapsed,
-        daysWithCards: dailyServiceRates.length,
+      console.log(`  📈 ATENDIMENTO (RH):`, {
+        totalRoutes: routes.length,
+        daysWithData: dailyServiceRates.length,
         dailyRates: dailyServiceRates.map(r => r.toFixed(1) + '%').join(', '),
         serviceRate: serviceRate.toFixed(2) + '%'
       });
