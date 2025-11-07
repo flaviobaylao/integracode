@@ -6,7 +6,7 @@
  * - Data da última visita completada
  */
 
-export type VisitPeriodicity = 'semanal' | 'quinzenal' | 'mensal' | 'bimestral';
+export type VisitPeriodicity = 'semanal' | 'quinzenal' | 'mensal';
 export type Weekday = 'domingo' | 'segunda' | 'terca' | 'quarta' | 'quinta' | 'sexta' | 'sabado';
 export type WeekdayAbbr = 'Dom' | 'Seg' | 'Ter' | 'Qua' | 'Qui' | 'Sex' | 'Sab';
 
@@ -68,8 +68,7 @@ function normalizeWeekday(day: string): number | null {
 const PERIODICITY_DAYS: { [key in VisitPeriodicity]: number } = {
   semanal: 7,
   quinzenal: 14,
-  mensal: 30,
-  bimestral: 60
+  mensal: 28
 };
 
 export interface ScheduleInput {

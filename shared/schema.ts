@@ -76,8 +76,8 @@ export const routes = pgTable("routes", {
 // Customer type enum  
 export const customerTypeEnum = pgEnum('customer_type', ['pessoa_fisica', 'pessoa_juridica']);
 
-// Visit periodicity enum
-export const visitPeriodicityEnum = pgEnum('visit_periodicity', ['semanal', 'quinzenal', 'mensal', 'bimestral']);
+// Visit periodicity enum (semanal=7d, quinzenal=14d, mensal=28d)
+export const visitPeriodicityEnum = pgEnum('visit_periodicity', ['semanal', 'quinzenal', 'mensal']);
 
 // Customers table
 export const customers = pgTable("customers", {

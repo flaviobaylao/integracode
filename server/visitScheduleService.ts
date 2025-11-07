@@ -903,7 +903,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
             // Calcular nova data válida
             const { nextDate } = calculateNextVisitDate({
               weekdays: customerWeekdays,
-              periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+              periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
               referenceDate: cardDate
             });
             
@@ -918,7 +918,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
               
               const { nextDate: futureDate } = calculateNextVisitDate({
                 weekdays: customerWeekdays,
-                periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal' | 'bimestral',
+                periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
                 referenceDate: tomorrow
               });
               

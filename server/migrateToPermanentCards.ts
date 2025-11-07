@@ -1,17 +1,24 @@
 import { db } from './db';
 import { salesCards, orderHistory, customers } from '@shared/schema';
-import { eq, and, ne, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, sql } from 'drizzle-orm';
+import { calculateNextVisitDate } from '@shared/visitSchedule';
 
 /**
  * Script de migração: Converte sistema de múltiplos sales_cards
- * para sistema de card permanente + order_history
+ * para sistema de CARD PERMANENTE + order_history
  * 
- * Lógica:
- * 1. Para cada cliente, encontra todos os seus sales_cards
- * 2. Seleciona o card mais antigo como "card permanente"
- * 3. Converte todos os cards finalizados (completed, no_sale, cancelled) em registros de order_history
- * 4. Remove cards duplicados/futuros, mantendo apenas o permanente
- * 5. Atualiza o card permanente com flag isRecurring = false
+ * NOVA ARQUITETURA:
+ * - 1 sales_card PERMANENTE por cliente ativo (isPermanent=true)
+ * - Próxima visita calculada dinamicamente (customers.weekdays + visitPeriodicity)
+ * - Histórico de pedidos em order_history
+ * - scheduledDate = NULL para cards permanentes (calculado on-demand)
+ * 
+ * LÓGICA:
+ * 1. Para cada cliente ATIVO, criar UM card permanente novo
+ * 2. Mover TODOS os cards antigos (completed, failed, cancelled) para order_history
+ * 3. Calcular lastVisitDate (última venda em order_history)
+ * 4. Calcular nextVisitDate (baseado em weekdays + periodicity + lastVisitDate)
+ * 5. Deletar todos os sales_cards antigos
  */
 
 interface MigrationStats {
@@ -19,6 +26,7 @@ interface MigrationStats {
   permanentCardsCreated: number;
   ordersHistoryCreated: number;
   cardsRemoved: number;
+  skipped: { customerId: string; reason: string }[];
   errors: { customerId: string; error: string }[];
 }
 
@@ -28,142 +36,189 @@ export async function migrateToPermanentCards(dryRun: boolean = true): Promise<M
     permanentCardsCreated: 0,
     ordersHistoryCreated: 0,
     cardsRemoved: 0,
+    skipped: [],
     errors: [],
   };
 
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`🔄 MIGRATION TO PERMANENT CARDS ${dryRun ? '(DRY RUN)' : '(LIVE)'}`);
-  console.log(`${'='.repeat(60)}\n`);
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`🔄 MIGRATION TO PERMANENT CARDS ARCHITECTURE ${dryRun ? '(DRY RUN)' : '(LIVE)'}`);
+  console.log(`${'='.repeat(80)}\n`);
 
   try {
-    // Buscar TODOS os clientes (ativos e inativos)
-    // Precisamos processar todos para evitar deixar sistema em estado misto
-    const allCustomers = await db
+    // Buscar APENAS clientes ATIVOS (inativos não precisam de card permanente)
+    const activeCustomers = await db
       .select()
-      .from(customers);
+      .from(customers)
+      .where(
+        and(
+          eq(customers.isActive, true),
+          isNotNull(customers.sellerId),
+          isNotNull(customers.weekdays),
+          isNotNull(customers.visitPeriodicity)
+        )
+      );
 
-    console.log(`📊 Found ${allCustomers.length} total customers (active + inactive)\n`);
+    console.log(`📊 Found ${activeCustomers.length} active customers with configuration\n`);
 
-    for (const customer of allCustomers) {
+    for (const customer of activeCustomers) {
       try {
         stats.customersProcessed++;
         
-        // Buscar todos os cards deste cliente
-        const customerCards = await db
-          .select()
-          .from(salesCards)
-          .where(eq(salesCards.customerId, customer.id))
-          .orderBy(salesCards.createdAt); // Mais antigo primeiro
-
-        if (customerCards.length === 0) {
-          console.log(`⚠️  Customer ${customer.fantasyName} (${customer.id}): No cards found`);
+        // Parse weekdays
+        let parsedWeekdays: string[];
+        try {
+          parsedWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays;
+        } catch (e) {
+          console.log(`⏭️  SKIPPED: ${customer.fantasyName} - Invalid weekdays: ${customer.weekdays}`);
+          stats.skipped.push({ customerId: customer.id, reason: 'Invalid weekdays' });
           continue;
         }
 
-        // Card permanente = card mais antigo
-        const permanentCard = customerCards[0];
-        const otherCards = customerCards.slice(1);
-
-        console.log(`\n👤 Customer: ${customer.fantasyName}`);
-        console.log(`   📋 Total cards: ${customerCards.length}`);
-        console.log(`   ✅ Permanent card: ${permanentCard.id} (created: ${permanentCard.createdAt})`);
-
-        // Atualizar o card permanente para não gerar novos cards
-        if (!dryRun) {
-          await db
-            .update(salesCards)
-            .set({
-              isRecurring: false,
-              notes: sql`COALESCE(${salesCards.notes}, '') || ' [Card Permanente - Migrado]'`,
-            })
-            .where(eq(salesCards.id, permanentCard.id));
-          
-          stats.permanentCardsCreated++;
-          console.log(`   ✓ Marked as permanent`);
-        } else {
-          console.log(`   [DRY RUN] Would mark as permanent`);
+        if (!parsedWeekdays || parsedWeekdays.length === 0) {
+          console.log(`⏭️  SKIPPED: ${customer.fantasyName} - No weekdays configured`);
+          stats.skipped.push({ customerId: customer.id, reason: 'No weekdays' });
+          continue;
         }
 
-        // Processar outros cards (converter em order_history)
-        for (const card of otherCards) {
-          // Apenas cards finalizados viram histórico
-          if (['completed', 'no_sale', 'cancelled', 'failed'].includes(card.status)) {
-            
-            // IMPORTANTE: Sempre criar registro de histórico para preservar dados
-            // mesmo se não houver produtos/venda (registro de visitas sem venda)
-            
-            // Mapear status para os valores aceitos pelo order_history
-            let historyStatus: 'pending' | 'completed' | 'cancelled' = 'cancelled';
-            if (card.status === 'completed') {
-              historyStatus = 'completed';
-            } else if (card.status === 'no_sale' || card.status === 'failed' || card.status === 'cancelled') {
-              historyStatus = 'cancelled';
-            }
-            
-            // Garantir que products seja um array válido
-            const products = (card.products && Array.isArray(card.products)) ? card.products : [];
-            
-            const orderData = {
-              salesCardId: permanentCard.id, // Link para o card permanente
-              orderDate: card.scheduledDate || card.createdAt,
-              products: products,
-              totalValue: card.saleValue || '0',
-              status: historyStatus,
-              notes: card.notes || (card.status === 'no_sale' ? `Sem venda - Motivo: ${card.noSaleReason || 'Não informado'}` : null),
-              checkInTime: card.checkInTime || null,
-              checkInLatitude: card.checkInLatitude || null,
-              checkInLongitude: card.checkInLongitude || null,
-              checkOutTime: card.checkOutTime || null,
-              checkOutLatitude: card.checkOutLatitude || null,
-              checkOutLongitude: card.checkOutLongitude || null,
-              distanceToCustomer: card.distanceToCustomer || null,
-              checkInPhotoUrl: card.checkInPhotoUrl || null,
-              deliveryScheduledDate: card.deliveryScheduledDate || null,
-              deliveryCompletedDate: card.deliveryCompletedDate || null,
-              deliveryStatus: card.deliveryStatus || null,
-              deliveryNotes: card.deliveryNotes || null,
-              trackingCode: card.trackingCode || null,
-              invoiceNumber: card.invoiceNumber || null,
-              omieOrderId: card.omieOrderId || null,
-            };
+        // Buscar todos os cards existentes deste cliente
+        const existingCards = await db
+          .select()
+          .from(salesCards)
+          .where(eq(salesCards.customerId, customer.id))
+          .orderBy(desc(salesCards.scheduledDate));
 
-            if (!dryRun) {
-              await db.insert(orderHistory).values(orderData as any);
-              stats.ordersHistoryCreated++;
-              console.log(`   ➕ Created order history from card ${card.id} (${card.status} → ${historyStatus})`);
-            } else {
-              console.log(`   [DRY RUN] Would create order history from card ${card.id} (${card.status} → ${historyStatus})`);
-            }
+        console.log(`\n👤 ${customer.fantasyName} (${customer.id})`);
+        console.log(`   📋 Existing cards: ${existingCards.length}`);
+        console.log(`   📅 Weekdays: ${parsedWeekdays.join(', ')}`);
+        console.log(`   🔁 Periodicity: ${customer.visitPeriodicity}`);
 
-            // Remover o card antigo após criar histórico
-            if (!dryRun) {
-              await db.delete(salesCards).where(eq(salesCards.id, card.id));
-              stats.cardsRemoved++;
-              console.log(`   ➖ Removed card ${card.id}`);
-            } else {
-              console.log(`   [DRY RUN] Would remove card ${card.id}`);
-            }
+        // ETAPA 1: Mover TODOS os cards (incluindo pending/open) para order_history
+        // Rastreamos os IDs inseridos para linkar ao card permanente depois
+        const insertedHistoryIds: string[] = [];
+
+        for (const card of existingCards) {
+          // Determinar status de histórico
+          let historyStatus: 'pending' | 'completed' | 'cancelled';
+          if (card.status === 'completed') {
+            historyStatus = 'completed';
+          } else if (['pending', 'open', 'in_progress'].includes(card.status)) {
+            historyStatus = 'pending'; // Cards não finalizados ficam como pending
           } else {
-            // Cards pendentes/em progresso: apenas remover se forem futuros duplicados
-            const isPending = card.status === 'pending';
-            const isScheduledLater = card.scheduledDate && card.scheduledDate > new Date();
-            
-            if (isPending && isScheduledLater) {
-              if (!dryRun) {
-                await db.delete(salesCards).where(eq(salesCards.id, card.id));
-                stats.cardsRemoved++;
-                console.log(`   ➖ Removed future pending card ${card.id}`);
-              } else {
-                console.log(`   [DRY RUN] Would remove future pending card ${card.id}`);
-              }
-            } else {
-              console.log(`   ⏭️  Kept active card ${card.id} (${card.status})`);
-            }
+            historyStatus = 'cancelled'; // failed, no_sale, cancelled
+          }
+          
+          const products = (card.products && Array.isArray(card.products)) ? card.products : [];
+          
+          const orderData = {
+            salesCardId: null, // Será linkado ao card permanente depois (via insertedHistoryIds)
+            orderDate: card.scheduledDate || card.createdAt,
+            products: products,
+            totalValue: card.saleValue || '0',
+            status: historyStatus,
+            notes: card.notes || (card.status === 'no_sale' ? `Sem venda - ${card.noSaleReason}` : null),
+            checkInTime: card.checkInTime,
+            checkInLatitude: card.checkInLatitude,
+            checkInLongitude: card.checkInLongitude,
+            checkOutTime: card.checkOutTime,
+            checkOutLatitude: card.checkOutLatitude,
+            checkOutLongitude: card.checkOutLongitude,
+            distanceToCustomer: card.distanceToCustomer,
+            checkInPhotoUrl: card.checkInPhotoUrl,
+            deliveryScheduledDate: card.deliveryScheduledDate,
+            deliveryCompletedDate: card.deliveryCompletedDate,
+            deliveryStatus: card.deliveryStatus,
+            deliveryNotes: card.deliveryNotes,
+            trackingCode: card.trackingCode,
+            invoiceNumber: card.invoiceNumber,
+            omieOrderId: card.omieOrderId,
+          };
+
+          if (!dryRun) {
+            const [insertedHistory] = await db.insert(orderHistory).values(orderData as any).returning();
+            insertedHistoryIds.push(insertedHistory.id); // CAPTURAR ID INSERIDO
+            stats.ordersHistoryCreated++;
+            console.log(`   ➕ order_history: ${card.scheduledDate?.toISOString().split('T')[0]} (${card.status} → ${historyStatus})`);
+          } else {
+            console.log(`   [DRY] order_history: ${card.scheduledDate?.toISOString().split('T')[0]} (${card.status} → ${historyStatus})`);
           }
         }
 
+        // ETAPA 2: Calcular lastVisitDate (última venda completada)
+        const lastCompletedCard = existingCards.find(card => card.status === 'completed');
+        const lastVisitDate = lastCompletedCard?.scheduledDate || null;
+
+        // ETAPA 3: Calcular nextVisitDate usando calculateNextVisitDate()
+        let nextVisitDate: Date;
+        try {
+          const result = calculateNextVisitDate({
+            weekdays: parsedWeekdays,
+            periodicity: customer.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
+            lastCompletedDate: lastVisitDate || undefined,
+            referenceDate: new Date()
+          });
+          nextVisitDate = result.nextDate;
+        } catch (e: any) {
+          console.log(`   ❌ ERROR calculating nextVisitDate: ${e.message}`);
+          stats.errors.push({ customerId: customer.id, error: e.message });
+          continue;
+        }
+
+        // ETAPA 4: Criar NOVO card permanente
+        const permanentCardData = {
+          customerId: customer.id,
+          sellerId: customer.sellerId,
+          status: 'pending' as const,
+          isPermanent: true,
+          lastVisitDate: lastVisitDate,
+          nextVisitDate: nextVisitDate,
+          daysOverdue: 0,
+          scheduledDate: null, // Cards permanentes não têm scheduledDate (calculado dinamicamente)
+          routeDay: parsedWeekdays[0], // Primeiro dia da semana configurado
+          recurrenceType: customer.visitPeriodicity || 'semanal',
+          isRecurring: false, // Não gera mais cards automáticos
+          notes: '[Card Permanente - Sistema migrado]',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        if (!dryRun) {
+          const [newCard] = await db.insert(salesCards).values(permanentCardData as any).returning();
+          stats.permanentCardsCreated++;
+          
+          // ETAPA 5: Atualizar APENAS os order_history criados NESTE loop com salesCardId do card permanente
+          // FIX: Não usar WHERE IS NULL (pega históricos de outros clientes!) - usar lista de IDs inseridos
+          if (insertedHistoryIds.length > 0) {
+            await db
+              .update(orderHistory)
+              .set({ salesCardId: newCard.id })
+              .where(sql`id = ANY(ARRAY[${sql.join(insertedHistoryIds.map(id => sql`${id}`), sql`, `)}]::varchar[])`);
+            console.log(`   🔗 Linked ${insertedHistoryIds.length} history records to permanent card`);
+          }
+          
+          console.log(`   ✅ PERMANENT CARD created: ${newCard.id}`);
+          console.log(`      - Last visit: ${lastVisitDate?.toISOString().split('T')[0] || 'Never'}`);
+          console.log(`      - Next visit: ${nextVisitDate.toISOString().split('T')[0]}`);
+        } else {
+          console.log(`   [DRY] PERMANENT CARD would be created`);
+          console.log(`      - Last visit: ${lastVisitDate?.toISOString().split('T')[0] || 'Never'}`);
+          console.log(`      - Next visit: ${nextVisitDate.toISOString().split('T')[0]}`);
+        }
+
+        // ETAPA 6: Deletar TODOS os cards antigos
+        if (!dryRun) {
+          for (const card of existingCards) {
+            await db.delete(salesCards).where(eq(salesCards.id, card.id));
+            stats.cardsRemoved++;
+          }
+          console.log(`   🗑️  Removed ${existingCards.length} old cards`);
+        } else {
+          console.log(`   [DRY] Would remove ${existingCards.length} old cards`);
+        }
+
       } catch (error: any) {
-        console.error(`   ❌ Error processing customer ${customer.id}:`, error.message);
+        console.error(`   ❌ ERROR processing customer ${customer.fantasyName}:`, error.message);
         stats.errors.push({
           customerId: customer.id,
           error: error.message,
@@ -177,23 +232,34 @@ export async function migrateToPermanentCards(dryRun: boolean = true): Promise<M
   }
 
   // Relatório final
-  console.log(`\n${'='.repeat(60)}`);
+  console.log(`\n${'='.repeat(80)}`);
   console.log(`📊 MIGRATION SUMMARY ${dryRun ? '(DRY RUN)' : ''}`);
-  console.log(`${'='.repeat(60)}`);
+  console.log(`${'='.repeat(80)}`);
   console.log(`Customers processed:       ${stats.customersProcessed}`);
   console.log(`Permanent cards created:   ${stats.permanentCardsCreated}`);
   console.log(`Order history created:     ${stats.ordersHistoryCreated}`);
   console.log(`Cards removed:             ${stats.cardsRemoved}`);
+  console.log(`Skipped:                   ${stats.skipped.length}`);
   console.log(`Errors:                    ${stats.errors.length}`);
+  
+  if (stats.skipped.length > 0) {
+    console.log(`\n⚠️  Skipped customers:`);
+    stats.skipped.slice(0, 10).forEach(item => {
+      console.log(`   - ${item.customerId}: ${item.reason}`);
+    });
+    if (stats.skipped.length > 10) {
+      console.log(`   ... and ${stats.skipped.length - 10} more`);
+    }
+  }
   
   if (stats.errors.length > 0) {
     console.log(`\n❌ Errors:`);
     stats.errors.forEach(err => {
-      console.log(`   - Customer ${err.customerId}: ${err.error}`);
+      console.log(`   - ${err.customerId}: ${err.error}`);
     });
   }
   
-  console.log(`${'='.repeat(60)}\n`);
+  console.log(`${'='.repeat(80)}\n`);
 
   return stats;
 }
@@ -201,31 +267,29 @@ export async function migrateToPermanentCards(dryRun: boolean = true): Promise<M
 /**
  * Execução via linha de comando
  * Uso:
- *   tsx server/migrateToPermanentCards.ts --dry-run
- *   tsx server/migrateToPermanentCards.ts --execute
+ *   tsx server/migrateToPermanentCards.ts              (dry-run)
+ *   tsx server/migrateToPermanentCards.ts --execute    (live)
  */
-if (require.main === module) {
-  const args = process.argv.slice(2);
-  const dryRun = !args.includes('--execute');
-  
-  if (dryRun) {
-    console.log('ℹ️  Running in DRY RUN mode. Use --execute to apply changes.\n');
-  } else {
-    console.log('⚠️  Running in EXECUTE mode. Changes will be applied to database.\n');
-  }
+const args = process.argv.slice(2);
+const dryRun = !args.includes('--execute');
 
-  migrateToPermanentCards(dryRun)
-    .then(stats => {
-      if (dryRun) {
-        console.log('✅ Dry run completed. Review the output above.');
-        console.log('💡 To execute the migration, run: tsx server/migrateToPermanentCards.ts --execute');
-      } else {
-        console.log('✅ Migration completed successfully!');
-      }
-      process.exit(0);
-    })
-    .catch(error => {
-      console.error('❌ Migration failed:', error);
-      process.exit(1);
-    });
+if (dryRun) {
+  console.log('ℹ️  Running in DRY RUN mode. Use --execute to apply changes.\n');
+} else {
+  console.log('⚠️  Running in EXECUTE mode. Changes will be applied to database.\n');
 }
+
+migrateToPermanentCards(dryRun)
+  .then(stats => {
+    if (dryRun) {
+      console.log('✅ Dry run completed. Review the output above.');
+      console.log('💡 To execute the migration, run: tsx server/migrateToPermanentCards.ts --execute');
+    } else {
+      console.log('✅ Migration completed successfully!');
+    }
+    process.exit(0);
+  })
+  .catch(error => {
+    console.error('❌ Migration failed:', error);
+    process.exit(1);
+  });
