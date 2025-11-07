@@ -69,6 +69,15 @@
 
 # Recent Changes
 
+## 2025-11-07: Correção - Abertura de Card de Vendas nas Rotas
+- **Bug corrigido**: Card de vendas não abria ao clicar nas linhas da rota
+- **Causa**: Estrutura de dados da rota mudou de `salesCardId` para `customerId`
+- **Solução**: 
+  - Modificado `handleOpenCardDetails` para buscar cards por data e filtrar por customerId
+  - Modificado `handleEditCard` com a mesma lógica
+  - Toast informativo quando card não existe para a data
+- **Impacto**: Usuários agora podem clicar nas visitas da rota e ver/editar os cards de vendas corretamente
+
 ## 2025-11-07: Integração de Atendimento RH em Metas de Vendas
 - **Modificação**: Campo "Atendimento" em Metas de Vendas agora usa dados reais de visitas
 - **Fonte de dados**: Integrado com sistema RH de atendimento (`daily_routes` + `route_checkpoints`)
