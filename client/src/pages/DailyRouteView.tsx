@@ -233,6 +233,10 @@ export default function DailyRouteView() {
       return response;
     },
     onSuccess: (data) => {
+      // Limpar otimizações locais ao regenerar rota
+      setLocalOptimizedOrder(null);
+      setLocalEstimatedDistance(null);
+      
       if (data.regenerated) {
         toast({
           title: "Rota atualizada com sucesso!",
@@ -340,7 +344,10 @@ export default function DailyRouteView() {
     onSuccess: (data) => {
       setLocalOptimizedOrder(data.optimizedOrder);
       // Armazenar distância em metros (backend retorna em km)
-      setLocalEstimatedDistance(Math.round(parseFloat(data.totalDistance) * 1000));
+      const distanceKm = parseFloat(data.totalDistance);
+      if (!isNaN(distanceKm) && distanceKm > 0) {
+        setLocalEstimatedDistance(Math.round(distanceKm * 1000));
+      }
       toast({
         title: "Rota re-otimizada!",
         description: `Nova ordem calculada com ${data.totalVisits} visitas e ${data.totalDistance}km estimados. Esta otimização é temporária e não foi salva.`,
