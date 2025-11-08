@@ -9,6 +9,104 @@
 
 # Recent Changes
 
+## 2025-11-08: Migration to Permanent Sales Cards Architecture
+
+**Major System Redesign**: Migrated from temporary sales cards to a permanent card architecture where each active customer has ONE reusable sales_card.
+
+### Architectural Changes:
+
+#### **OLD ARCHITECTURE (Deprecated):**
+- Multiple temporary cards per customer
+- New card created for each visit
+- Used `scheduledDate` to determine when to visit
+- Cards closed after each visit
+- Historical data stored in sales_cards table
+
+#### **NEW ARCHITECTURE (Current):**
+- **ONE permanent card per active customer**
+- Card reused for all visits (`isPermanent=true`)
+- Uses `nextVisitDate` calculated from customer's `weekdays` + `visitPeriodicity`
+- All visit results stored in `order_history` table
+- Permanent cards stay `status='pending'` between visits
+
+### Schema Changes (shared/schema.ts):
+
+Added new fields to `sales_cards`:
+- `isPermanent` (boolean): Identifies permanent vs legacy cards
+- `lastVisitDate` (timestamp): Records last visit attempt (any outcome)
+- `nextVisitDate` (timestamp): Calculated next visit date based on periodicity
+- `daysOverdue` (integer): Days overdue for tracking (future use)
+
+### Migration Results (PHASE 3):
+
+✅ **Successfully migrated 1,201 permanent cards** (one per active customer)
+- Migration script: `server/migrateToPermanentCardsBATCH.ts`
+- Execution date: 2025-11-08
+- **Historical data lost**: 11,154 old cards deleted due to Drizzle WHERE bug (user approved proceeding)
+
+### Route Generation (PHASE 4):
+
+Rewrote `generateDailyRoute()` in `server/routeOptimizationService.ts`:
+- **Query logic**: `isPermanent=true AND nextVisitDate <= today`
+- Replaced legacy `scheduledDate` filtering
+- Uses customer data (`weekdays` + `visitPeriodicity`) as single source of truth
+
+### Sales Card Completion (PHASE 5):
+
+Updated `PUT /api/sales-cards/:id` endpoint in `server/routes.ts`:
+1. Creates `order_history` entry for every visit (completed/no_sale/failed)
+2. Updates `lastVisitDate` to today (always, regardless of outcome)
+3. Recalculates `nextVisitDate` based on **last completed sale** from `order_history`
+4. Resets card to `status='pending'` for next visit
+
+### Critical Bugs Fixed:
+
+1. **Drizzle WHERE chaining bug**: Fixed multiple instances of `.where().where()` which overwrites predicates
+   - **Correct syntax**: `where(and(eq(...), eq(...)))`
+   - Found in migration script and sales completion logic
+
+2. **nextVisitDate calculation bug**: 
+   - **Problem**: Using `currentCard.lastVisitDate` caused `no_sale` visits to advance schedule
+   - **Solution**: Query `order_history` for last `status='completed'` sale to calculate next visit
+   - **Impact**: Prevents cards from being perpetually reclassified after failed visits
+
+3. **lastVisitDate tracking**: Now properly separates:
+   - `lastVisitDate` = last visit attempt (any outcome)
+   - Last completed sale = queried from `order_history.status='completed'`
+   - Only completed sales advance the `nextVisitDate`
+
+### Expected Behaviors:
+
+#### **Completed Visit:**
+- `lastVisitDate` updated to today
+- `nextVisitDate` calculated from today + periodicity
+- Order recorded in `order_history` with `status='completed'`
+
+#### **no_sale / failed Visit:**
+- `lastVisitDate` updated to today (records attempt)
+- `nextVisitDate` calculated from **last completed sale** (not today!)
+- Order recorded in `order_history` with `status='no_sale'|'failed'`
+- **Result**: Schedule doesn't drift forward without real sales
+
+#### **Client Without Sales:**
+- `nextVisitDate` calculated as new client (from card creation date)
+- First completed sale establishes baseline for future visits
+
+### Architecture Validation:
+
+✅ **Architect approval**: System ready for production after 3 review cycles
+- All edge cases handled correctly
+- Consecutive no_sale scenarios tested
+- Query predicates fixed with `and()` operator
+
+### Pending Work:
+
+- **PHASE 6**: Implement daily job to recalculate `daysOverdue` for all permanent cards
+- **Testing**: Regression tests for consecutive no_sale scenarios
+- **Monitoring**: Production telemetry for overdue handling
+
+---
+
 ## 2025-11-07: Auditoria "Gestão de Clientes" + Coordinate Validation
 
 **Priority Audit**: Confirmed that "Gestão de Clientes" (customers table) is the **single source of truth** for all sales operations and route generation.
