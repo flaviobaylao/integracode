@@ -793,19 +793,19 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
 }
 
 /**
- * Atualiza os salesCards futuros existentes com dados atualizados do cliente
- * Usado quando há alterações em: nome, vendedor, coordenadas, weekdays, etc.
+ * Atualiza o permanent card do cliente quando há mudanças em weekdays, periodicidade, etc.
+ * Com a arquitetura de permanent cards, cada cliente ativo tem apenas UM card permanente
  */
 export async function updateExistingSalesCardsFromCustomer(customerId: string): Promise<{
   updated: number;
   reallocated: number;
 }> {
-  console.log(`🔄 [UPDATE-CARDS] Atualizando cards existentes do cliente: ${customerId}`);
+  console.log(`🔄 [UPDATE-PERMANENT-CARD] Atualizando permanent card do cliente: ${customerId}`);
   
   try {
-    const { salesCards } = await import('../shared/schema');
+    const { salesCards, orderHistory } = await import('../shared/schema');
     const { calculateNextVisitDate } = await import('../shared/visitSchedule');
-    const { inArray } = await import('drizzle-orm');
+    const { desc } = await import('drizzle-orm');
     
     // Buscar dados atualizados do cliente
     const customer = await db.select()
@@ -814,56 +814,57 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
       .limit(1);
     
     if (!customer || customer.length === 0) {
-      console.log(`⚠️ [UPDATE-CARDS] Cliente ${customerId} não encontrado`);
+      console.log(`⚠️ [UPDATE-PERMANENT-CARD] Cliente ${customerId} não encontrado`);
       return { updated: 0, reallocated: 0 };
     }
     
     const customerData = customer[0];
     
-    // Buscar todos os cards futuros não finalizados deste cliente
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const futureCards = await db.select()
+    // Buscar o permanent card deste cliente (deve ter apenas um)
+    const permanentCards = await db.select()
       .from(salesCards)
       .where(
         and(
           eq(salesCards.customerId, customerId),
-          inArray(salesCards.status, ['pending', 'scheduled', 'in_progress']),
-          gte(salesCards.scheduledDate, today)
+          eq(salesCards.isPermanent, true)
         )
       );
     
-    if (!futureCards || futureCards.length === 0) {
-      console.log(`ℹ️ [UPDATE-CARDS] Nenhum card futuro encontrado para atualizar`);
+    if (!permanentCards || permanentCards.length === 0) {
+      console.log(`ℹ️ [UPDATE-PERMANENT-CARD] Nenhum permanent card encontrado para cliente ${customerId}`);
       return { updated: 0, reallocated: 0 };
     }
     
-    console.log(`📊 [UPDATE-CARDS] Encontrados ${futureCards.length} cards futuros para atualizar`);
+    if (permanentCards.length > 1) {
+      console.warn(`⚠️ [UPDATE-PERMANENT-CARD] Cliente ${customerId} tem ${permanentCards.length} permanent cards! Deveria ter apenas 1.`);
+    }
+    
+    const card = permanentCards[0];
+    console.log(`📊 [UPDATE-PERMANENT-CARD] Encontrado permanent card: ${card.id}`);
     
     // Preparar dados de atualização
-    const updateData: any = {};
+    const updateData: any = {
+      updatedAt: new Date()
+    };
     
     // Atualizar vendedor se mudou
-    if (customerData.sellerId) {
+    if (customerData.sellerId && customerData.sellerId !== card.sellerId) {
       updateData.sellerId = customerData.sellerId;
+      console.log(`   🔄 Atualizando vendedor: ${card.sellerId} → ${customerData.sellerId}`);
     }
     
-    // Atualizar coordenadas GPS se existem
-    if (customerData.latitude !== null) {
+    // Atualizar coordenadas GPS se mudaram
+    if (customerData.latitude !== null && customerData.latitude !== card.customerLatitude) {
       updateData.customerLatitude = customerData.latitude;
     }
-    if (customerData.longitude !== null) {
+    if (customerData.longitude !== null && customerData.longitude !== card.customerLongitude) {
       updateData.customerLongitude = customerData.longitude;
     }
     
     // Atualizar endereço se mudou
-    if (customerData.address) {
+    if (customerData.address && customerData.address !== card.customerAddress) {
       updateData.customerAddress = customerData.address;
     }
-    
-    let updatedCount = 0;
-    let reallocatedCount = 0;
     
     // Parsear weekdays do cliente
     let customerWeekdays: string[] = [];
@@ -874,89 +875,77 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
         customerWeekdays = customerData.weekdays;
       }
     } catch (e) {
-      console.warn(`⚠️ [UPDATE-CARDS] Erro ao parsear weekdays do cliente ${customerId}`);
+      console.warn(`⚠️ [UPDATE-PERMANENT-CARD] Erro ao parsear weekdays do cliente ${customerId}`);
     }
     
-    // Atualizar cada card
-    for (const card of futureCards) {
-      try {
-        const cardUpdateData = { ...updateData, updatedAt: new Date() };
-        
-        // Verificar se precisa realocar devido a mudança de weekdays
-        const needsReallocation = customerWeekdays.length > 0 && 
-                                  customerData.visitPeriodicity &&
-                                  card.routeDay;
-        
-        if (needsReallocation) {
-          // Verificar se a data atual do card está em um dia válido
-          const cardDate = new Date(card.scheduledDate);
-          const cardDayOfWeek = getRouteDay(cardDate);
-          
-          // Se o dia do card não está mais nos weekdays do cliente, realocar
-          if (!customerWeekdays.includes(cardDayOfWeek)) {
-            console.log(`   🔄 Card ${card.id}: dia ${cardDayOfWeek} não está mais nos weekdays ${JSON.stringify(customerWeekdays)}, realocando...`);
-            
-            // Preservar horário original
-            const originalHours = cardDate.getHours();
-            const originalMinutes = cardDate.getMinutes();
-            
-            // Calcular nova data válida
-            const { nextDate } = calculateNextVisitDate({
-              weekdays: customerWeekdays,
-              periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
-              referenceDate: cardDate
-            });
-            
-            // Preservar horário
-            nextDate.setHours(originalHours, originalMinutes, 0, 0);
-            
-            // Garantir que está no futuro
-            const now = new Date();
-            if (nextDate <= now) {
-              const tomorrow = new Date(today);
-              tomorrow.setDate(today.getDate() + 1);
-              
-              const { nextDate: futureDate } = calculateNextVisitDate({
-                weekdays: customerWeekdays,
-                periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
-                referenceDate: tomorrow
-              });
-              
-              futureDate.setHours(originalHours, originalMinutes, 0, 0);
-              nextDate.setTime(futureDate.getTime());
-            }
-            
-            cardUpdateData.scheduledDate = nextDate;
-            cardUpdateData.routeDay = getRouteDay(nextDate);
-            
-            console.log(`   ✅ Card ${card.id} realocado: ${cardDate.toISOString().split('T')[0]} (${cardDayOfWeek}) → ${nextDate.toISOString().split('T')[0]} (${cardUpdateData.routeDay})`);
-            reallocatedCount++;
-          }
-        }
-        
-        // Atualizar card no banco
-        if (Object.keys(cardUpdateData).length > 1) { // Mais que só updatedAt
-          await db.update(salesCards)
-            .set(cardUpdateData)
-            .where(eq(salesCards.id, card.id));
-          
-          updatedCount++;
-        }
-        
-      } catch (cardError: any) {
-        console.error(`   ❌ Erro ao atualizar card ${card.id}:`, cardError.message);
+    // RECALCULAR nextVisitDate se weekdays ou periodicidade mudaram
+    let recalculatedNextVisit = false;
+    if (customerWeekdays.length > 0 && customerData.visitPeriodicity) {
+      console.log(`   📅 Recalculando nextVisitDate com weekdays: ${JSON.stringify(customerWeekdays)}, periodicidade: ${customerData.visitPeriodicity}`);
+      
+      // Buscar última venda completed do order_history para base de cálculo
+      const lastCompletedOrder = await db
+        .select({ orderDate: orderHistory.orderDate })
+        .from(orderHistory)
+        .where(and(
+          eq(orderHistory.salesCardId, card.id),
+          eq(orderHistory.status, 'completed')
+        ))
+        .orderBy(desc(orderHistory.orderDate))
+        .limit(1);
+      
+      const lastCompletedDate = lastCompletedOrder.length > 0 && lastCompletedOrder[0].orderDate 
+        ? lastCompletedOrder[0].orderDate 
+        : undefined;
+      
+      if (lastCompletedDate) {
+        console.log(`   📅 Última venda completed: ${lastCompletedDate.toLocaleDateString('pt-BR')}`);
+      } else {
+        console.log(`   📅 Nenhuma venda completed encontrada - calculando como cliente novo`);
+      }
+      
+      // Calcular nova nextVisitDate
+      const scheduleResult = calculateNextVisitDate({
+        weekdays: customerWeekdays,
+        periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
+        lastCompletedDate: lastCompletedDate,
+        referenceDate: new Date()
+      });
+      
+      const oldNextVisit = card.nextVisitDate ? new Date(card.nextVisitDate).toLocaleDateString('pt-BR') : 'N/A';
+      const newNextVisit = scheduleResult.nextDate.toLocaleDateString('pt-BR');
+      
+      if (oldNextVisit !== newNextVisit) {
+        updateData.nextVisitDate = scheduleResult.nextDate;
+        console.log(`   ✅ nextVisitDate atualizado: ${oldNextVisit} → ${newNextVisit}`);
+        recalculatedNextVisit = true;
+      } else {
+        console.log(`   ℹ️ nextVisitDate não mudou: ${newNextVisit}`);
       }
     }
     
-    console.log(`✅ [UPDATE-CARDS] ${updatedCount} cards atualizados, ${reallocatedCount} cards realocados`);
-    
-    return {
-      updated: updatedCount,
-      reallocated: reallocatedCount
-    };
+    // Atualizar card no banco se houver mudanças
+    if (Object.keys(updateData).length > 1) { // Mais que só updatedAt
+      await db.update(salesCards)
+        .set(updateData)
+        .where(eq(salesCards.id, card.id));
+      
+      console.log(`✅ [UPDATE-PERMANENT-CARD] Permanent card atualizado com ${Object.keys(updateData).length - 1} mudanças`);
+      
+      return {
+        updated: 1,
+        reallocated: recalculatedNextVisit ? 1 : 0
+      };
+    } else {
+      console.log(`ℹ️ [UPDATE-PERMANENT-CARD] Nenhuma mudança detectada`);
+      return {
+        updated: 0,
+        reallocated: 0
+      };
+    }
     
   } catch (error: any) {
-    console.error(`❌ [UPDATE-CARDS] Erro ao atualizar cards do cliente ${customerId}:`, error);
+    console.error(`❌ [UPDATE-PERMANENT-CARD] Erro ao atualizar permanent card do cliente ${customerId}:`, error);
     throw error;
   }
 }
