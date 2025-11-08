@@ -346,11 +346,11 @@ export async function generateDailyRoute(
   
   console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // NOVA LÓGICA: Buscar sales_cards agendados para este vendedor nesta data
-  // Sales_cards são a fonte única de verdade após a migração para sistema de cards permanentes
+  // NOVA ARQUITETURA: Buscar PERMANENT CARDS cuja nextVisitDate é HOJE ou está ATRASADA
+  // Permanent cards = 1 card por cliente com isPermanent=true, nextVisitDate calculado dinamicamente
   const { db } = await import('./db');
   const { salesCards, customers } = await import('../shared/schema');
-  const { eq, and, gte, lte } = await import('drizzle-orm');
+  const { eq, and, lte } = await import('drizzle-orm');
   
   const salesCardsWithCustomers = await db.select({
     cardId: salesCards.id,
@@ -361,19 +361,22 @@ export async function generateDailyRoute(
     customerLatitude: customers.latitude,
     customerLongitude: customers.longitude,
     customerVirtualService: customers.virtualService,
-    cardStatus: salesCards.status
+    cardStatus: salesCards.status,
+    nextVisitDate: salesCards.nextVisitDate,
+    lastVisitDate: salesCards.lastVisitDate,
+    isPermanent: salesCards.isPermanent
   })
     .from(salesCards)
     .innerJoin(customers, eq(salesCards.customerId, customers.id))
     .where(
       and(
         eq(salesCards.sellerId, sellerId),
-        gte(salesCards.scheduledDate, startOfDay),
-        lte(salesCards.scheduledDate, endOfDay)
+        eq(salesCards.isPermanent, true),  // Apenas permanent cards
+        lte(salesCards.nextVisitDate, endOfDay)  // nextVisitDate <= hoje (inclui atrasados)
       )
     );
 
-  console.log(`   📋 ${salesCardsWithCustomers.length} sales_cards encontrados para esta data`);
+  console.log(`   📋 ${salesCardsWithCustomers.length} clientes com visita agendada/atrasada encontrados`);
   
   // Filtrar apenas visitas presenciais com status válido
   const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {

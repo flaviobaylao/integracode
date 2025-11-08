@@ -2477,14 +2477,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Se o status mudou para completed, no_sale ou failed, usar função helper para fechar e reagendar
+      // NOVA ARQUITETURA: Permanent cards não fecham/criam novos - atualizam order_history
       let salesCard;
       if (data.status && ['completed', 'no_sale', 'failed'].includes(data.status)) {
-        const result = await storage.closeCardAndScheduleNext(id, data.status as any, data);
-        salesCard = result.closedCard;
+        // Buscar card atual para verificar se é permanent
+        const currentCard = await storage.getSalesCard(id);
         
-        if (result.nextCard) {
-          console.log(`Card fechado e próxima visita agendada: ${result.nextCard.id} para ${result.nextCard.scheduledDate}`);
+        if (!currentCard) {
+          return res.status(404).json({ message: "Sales card not found" });
+        }
+        
+        if (currentCard.isPermanent) {
+          // PERMANENT CARD: criar order_history e recalcular nextVisitDate
+          console.log(`🔄 Permanent card - Criando order_history e recalculando próxima visita`);
+          
+          // 1. Criar registro em order_history
+          const orderData = {
+            salesCardId: id,
+            orderDate: new Date(),
+            products: data.products || currentCard.products || [],
+            totalValue: data.saleValue || currentCard.saleValue || '0',
+            status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
+            notes: data.notes || (data.status === 'no_sale' ? `Sem venda - ${data.noSaleReason || 'não informado'}` : null),
+            checkInTime: data.checkInTime,
+            checkInLatitude: data.checkInLatitude,
+            checkInLongitude: data.checkInLongitude,
+            checkOutTime: data.checkOutTime,
+            checkOutLatitude: data.checkOutLatitude,
+            checkOutLongitude: data.checkOutLongitude,
+            completedAt: data.status === 'completed' ? new Date() : null
+          };
+          
+          await storage.createOrderHistory(orderData);
+          console.log(`✅ Order history criado`);
+          
+          // 2. Atualizar lastVisitDate e recalcular nextVisitDate
+          const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+          const customer = await storage.getCustomer(currentCard.customerId);
+          
+          if (customer && customer.weekdays && customer.visitPeriodicity) {
+            // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
+            const lastVisitDate = new Date();
+            
+            const parsedWeekdays = typeof customer.weekdays === 'string' 
+              ? JSON.parse(customer.weekdays) 
+              : customer.weekdays;
+            
+            // Buscar última venda COMPLETED do order_history para base de cálculo
+            let lastCompletedSaleDate: Date | undefined;
+            
+            if (data.status === 'completed') {
+              // Se esta visita foi completed, usar hoje
+              lastCompletedSaleDate = lastVisitDate;
+            } else {
+              // Buscar última venda completed no histórico (ignora no_sale/failed)
+              const { db } = await import('./db');
+              const { orderHistory } = await import('../shared/schema');
+              const { eq, desc, and } = await import('drizzle-orm');
+              
+              const lastCompletedOrder = await db
+                .select({ orderDate: orderHistory.orderDate })
+                .from(orderHistory)
+                .where(and(
+                  eq(orderHistory.salesCardId, id),
+                  eq(orderHistory.status, 'completed')
+                ))
+                .orderBy(desc(orderHistory.orderDate))
+                .limit(1);
+              
+              if (lastCompletedOrder.length > 0 && lastCompletedOrder[0].orderDate) {
+                lastCompletedSaleDate = lastCompletedOrder[0].orderDate;
+                console.log(`📅 Última venda completed encontrada: ${lastCompletedSaleDate.toLocaleDateString('pt-BR')}`);
+              } else {
+                // Nunca teve venda completed
+                lastCompletedSaleDate = undefined;
+                console.log(`📅 Nenhuma venda completed encontrada - cliente novo ou sem vendas`);
+              }
+            }
+            
+            const scheduleResult = calculateNextVisitDate({
+              weekdays: parsedWeekdays,
+              periodicity: customer.visitPeriodicity,
+              lastCompletedDate: lastCompletedSaleDate,
+              referenceDate: new Date()
+            });
+            
+            // Atualizar permanent card
+            salesCard = await storage.updateSalesCard(id, {
+              ...data,
+              lastVisitDate: lastVisitDate,  // Sempre atualiza (qualquer visita)
+              nextVisitDate: scheduleResult.nextDate,
+              status: 'pending' // Permanent card sempre volta para pending
+            });
+            
+            console.log(`✅ Permanent card atualizado - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+          } else {
+            // Fallback se cliente não tiver configuração completa
+            salesCard = await storage.updateSalesCard(id, data);
+          }
+        } else {
+          // LEGACY CARD: usar lógica antiga (se ainda existir algum)
+          const result = await storage.closeCardAndScheduleNext(id, data.status as any, data);
+          salesCard = result.closedCard;
+          
+          if (result.nextCard) {
+            console.log(`Card fechado e próxima visita agendada: ${result.nextCard.id} para ${result.nextCard.scheduledDate}`);
+          }
         }
       } else {
         // Atualização normal sem mudança de status final
