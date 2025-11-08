@@ -1688,9 +1688,12 @@ export class DatabaseStorage implements IStorage {
     // Formatar data como YYYY-MM-DD para comparação
     const targetDate = date.toISOString().split('T')[0];
     
-    console.log(`🔍 [getSalesCardsByDate] Buscando cards para data: ${targetDate} (sellerId: ${sellerId || 'todos'})`);
-    console.log(`   - Input date object: ${date.toISOString()}`);
-    console.log(`   - Timezone local: ${date.toString()}`);
+    console.log(`🔍 [getSalesCardsByDate] ============================================`);
+    console.log(`   Buscando cards para data: ${targetDate} (sellerId: ${sellerId || 'todos'})`);
+    console.log(`   - Input date object (UTC): ${date.toISOString()}`);
+    console.log(`   - Input date (local toString): ${date.toString()}`);
+    console.log(`   - SQL targetDate usado na query: ${targetDate}`);
+    console.log(`   - Query SQL irá filtrar: (nextVisitDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}'`);
     
     // Converter timestamptz para date no timezone de São Paulo
     // Sintaxe correta: (col AT TIME ZONE 'America/Sao_Paulo')::date
@@ -1743,27 +1746,48 @@ export class DatabaseStorage implements IStorage {
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
     
-    console.log(`📊 [getSalesCardsByDate] Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
+    console.log(`📊 [getSalesCardsByDate] RESULTADOS:`);
+    console.log(`   - Total de cards encontrados: ${result.length}`);
     
     // Log detalhado dos primeiros cards encontrados para debug
     if (result.length > 0) {
-      console.log(`   📋 Primeiros 3 cards encontrados:`);
+      console.log(`   📋 Amostra dos primeiros 3 cards:`);
       result.slice(0, 3).forEach((row, idx) => {
         const card = row.sales_cards;
         const customer = row.customers;
+        const nextVisitUTC = card.nextVisitDate ? new Date(card.nextVisitDate) : null;
+        const scheduledUTC = card.scheduledDate ? new Date(card.scheduledDate) : null;
+        
         console.log(`   ${idx + 1}. Cliente: ${customer?.fantasyName || customer?.name}`);
         console.log(`      - Card ID: ${card.id}`);
-        console.log(`      - Status: ${card.status}`);
-        console.log(`      - isPermanent: ${card.isPermanent}`);
-        console.log(`      - nextVisitDate: ${card.nextVisitDate ? new Date(card.nextVisitDate).toISOString() : 'N/A'}`);
-        console.log(`      - scheduledDate: ${card.scheduledDate ? new Date(card.scheduledDate).toISOString() : 'N/A'}`);
+        console.log(`      - Status: ${card.status}, isPermanent: ${card.isPermanent}`);
+        if (nextVisitUTC) {
+          console.log(`      - nextVisitDate (UTC): ${nextVisitUTC.toISOString()}`);
+          console.log(`      - nextVisitDate (BRT): ${nextVisitUTC.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
+        } else {
+          console.log(`      - nextVisitDate: NULL`);
+        }
+        if (scheduledUTC) {
+          console.log(`      - scheduledDate (UTC): ${scheduledUTC.toISOString()}`);
+          console.log(`      - scheduledDate (BRT): ${scheduledUTC.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
+        } else {
+          console.log(`      - scheduledDate: NULL`);
+        }
       });
     } else {
-      console.log(`   ⚠️ NENHUM card encontrado! Possíveis causas:`);
-      console.log(`      1. nextVisitDate dos cards permanentes não coincide com ${targetDate} em BRT`);
-      console.log(`      2. Status dos cards não é 'pending' ou 'open'`);
-      console.log(`      3. sellerId não coincide`);
+      console.log(`   ⚠️ NENHUM card encontrado!`);
+      console.log(`   Filtros aplicados na query:`);
+      console.log(`      - targetDate (SQL): '${targetDate}'`);
+      console.log(`      - sellerId: ${sellerId || 'TODOS'}`);
+      console.log(`      - Permanent cards: (nextVisitDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}' AND status IN ('pending', 'open')`);
+      console.log(`      - Legacy cards: (scheduledDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}'`);
+      console.log(`   Possíveis causas:`);
+      console.log(`      1. nextVisitDate no banco não corresponde a ${targetDate} quando convertido para BRT`);
+      console.log(`      2. Todos os cards deste vendedor/data têm status diferente de 'pending'/'open'`);
+      console.log(`      3. sellerId filtrado não possui cards para esta data`);
     }
+    console.log(`   ============================================`);
+    
     
     return result.map(row => ({
       ...row.sales_cards,
