@@ -52,7 +52,7 @@ import {
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, ne, like } from "drizzle-orm";
+import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
@@ -1694,16 +1694,50 @@ export class DatabaseStorage implements IStorage {
     const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
     
-    let whereConditions = and(
-      gte(salesCards.scheduledDate, startOfDay),
-      lte(salesCards.scheduledDate, endOfDay)
-    );
+    // Com permanent cards: buscar por nextVisitDate no intervalo do dia AND isPermanent=true
+    // Também incluir legacy cards (isPermanent=false) por scheduledDate para compatibilidade
+    let whereConditions;
     
     if (sellerId) {
       whereConditions = and(
-        gte(salesCards.scheduledDate, startOfDay),
-        lte(salesCards.scheduledDate, endOfDay),
-        eq(salesCards.sellerId, sellerId)
+        eq(salesCards.sellerId, sellerId),
+        or(
+          // Permanent cards: nextVisitDate dentro do dia específico
+          and(
+            eq(salesCards.isPermanent, true),
+            gte(salesCards.nextVisitDate, startOfDay),
+            lte(salesCards.nextVisitDate, endOfDay),
+            inArray(salesCards.status, ['pending', 'open'])
+          ),
+          // Legacy cards: scheduledDate no intervalo do dia (compatibilidade)
+          and(
+            or(
+              eq(salesCards.isPermanent, false),
+              isNull(salesCards.isPermanent)
+            ),
+            gte(salesCards.scheduledDate, startOfDay),
+            lte(salesCards.scheduledDate, endOfDay)
+          )
+        )
+      );
+    } else {
+      whereConditions = or(
+        // Permanent cards: nextVisitDate dentro do dia específico
+        and(
+          eq(salesCards.isPermanent, true),
+          gte(salesCards.nextVisitDate, startOfDay),
+          lte(salesCards.nextVisitDate, endOfDay),
+          inArray(salesCards.status, ['pending', 'open'])
+        ),
+        // Legacy cards: scheduledDate no intervalo do dia (compatibilidade)
+        and(
+          or(
+            eq(salesCards.isPermanent, false),
+            isNull(salesCards.isPermanent)
+          ),
+          gte(salesCards.scheduledDate, startOfDay),
+          lte(salesCards.scheduledDate, endOfDay)
+        )
       );
     }
     
@@ -1714,6 +1748,8 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
+    
+    console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
     
     return result.map(row => ({
       ...row.sales_cards,
