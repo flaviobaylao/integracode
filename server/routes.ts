@@ -672,20 +672,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('✅ Cliente atualizado:', {
         id: updatedCustomer.id,
+        name: updatedCustomer.fantasyName || updatedCustomer.name,
         weekdays: updatedCustomer.weekdays,
-        visitPeriodicity: updatedCustomer.visitPeriodicity
+        visitPeriodicity: updatedCustomer.visitPeriodicity,
+        sellerId: updatedCustomer.sellerId
       });
       
       // Atualizar automaticamente os salesCards futuros com os novos dados do cliente
       try {
+        console.log(`🔄 Iniciando recalculo de nextVisitDate para cliente ${updatedCustomer.fantasyName || updatedCustomer.name}...`);
         const { updateExistingSalesCardsFromCustomer } = await import('./visitScheduleService');
         const updateResult = await updateExistingSalesCardsFromCustomer(id);
         
         if (updateResult.updated > 0 || updateResult.reallocated > 0) {
-          console.log(`🔄 Cards do cliente atualizados: ${updateResult.updated} atualizados, ${updateResult.reallocated} realocados`);
+          console.log(`✅ Cards do cliente atualizados: ${updateResult.updated} atualizados, ${updateResult.reallocated} realocados`);
+        } else {
+          console.log(`ℹ️ Nenhum card foi atualizado. Verifique se o cliente tem um permanent card ativo.`);
         }
       } catch (updateError: any) {
-        console.error('⚠️ Erro ao atualizar cards do cliente:', updateError.message);
+        console.error('⚠️ Erro ao atualizar cards do cliente:', updateError);
+        console.error('⚠️ Stack:', updateError.stack);
         // Não falhar a atualização do cliente por causa disso
       }
       
