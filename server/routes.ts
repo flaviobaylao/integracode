@@ -9071,24 +9071,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         // CORRIGIDO: Buscar customerIds dos cards completados e em andamento
-        const completedCustomerIds = await Promise.all(
-          completedCheckpoints.map(async (cp: any) => {
-            const card = await storage.getSalesCard(cp.salesCardId);
-            return card?.customerId;
-          })
-        );
-        const inProgressCustomerIds = await Promise.all(
-          inProgressCheckpoints.map(async (cp: any) => {
-            const card = await storage.getSalesCard(cp.salesCardId);
-            return card?.customerId;
-          })
-        );
+        // E VALIDAR se ainda deveriam estar na rota (baseado em nextVisitDate)
+        const completedCustomerIds: string[] = [];
+        for (const cp of completedCheckpoints) {
+          const card = await storage.getSalesCard(cp.salesCardId);
+          if (card?.customerId) {
+            // Verificar se o cliente ainda deveria estar na rota deste dia
+            const customer = await storage.getCustomer(card.customerId);
+            if (customer && customer.isActive) {
+              // Buscar permanent card do cliente
+              const permanentCard = await db.select()
+                .from(salesCards)
+                .where(and(
+                  eq(salesCards.customerId, customer.id),
+                  eq(salesCards.isPermanent, true)
+                ))
+                .limit(1);
+              
+              if (permanentCard.length > 0) {
+                const nextVisitDate = permanentCard[0].nextVisitDate;
+                if (nextVisitDate) {
+                  // Comparar datas (ignora hora)
+                  const visitDateStr = new Date(nextVisitDate).toISOString().split('T')[0];
+                  const routeDateStr = routeDate.toISOString().split('T')[0];
+                  
+                  if (visitDateStr === routeDateStr) {
+                    // Cliente ainda deveria estar nesta rota
+                    completedCustomerIds.push(card.customerId);
+                  } else {
+                    console.log(`⚠️ Cliente ${customer.fantasyName || customer.name} completado mas nextVisitDate mudou: ${visitDateStr} ≠ ${routeDateStr}`);
+                  }
+                } else {
+                  // Se não tem nextVisitDate, manter para não perder dados
+                  completedCustomerIds.push(card.customerId);
+                }
+              } else {
+                // Se não tem permanent card, manter
+                completedCustomerIds.push(card.customerId);
+              }
+            }
+          }
+        }
+        
+        const inProgressCustomerIds: string[] = [];
+        for (const cp of inProgressCheckpoints) {
+          const card = await storage.getSalesCard(cp.salesCardId);
+          if (card?.customerId) {
+            // Verificar se o cliente ainda deveria estar na rota deste dia
+            const customer = await storage.getCustomer(card.customerId);
+            if (customer && customer.isActive) {
+              // Buscar permanent card do cliente
+              const permanentCard = await db.select()
+                .from(salesCards)
+                .where(and(
+                  eq(salesCards.customerId, customer.id),
+                  eq(salesCards.isPermanent, true)
+                ))
+                .limit(1);
+              
+              if (permanentCard.length > 0) {
+                const nextVisitDate = permanentCard[0].nextVisitDate;
+                if (nextVisitDate) {
+                  // Comparar datas (ignora hora)
+                  const visitDateStr = new Date(nextVisitDate).toISOString().split('T')[0];
+                  const routeDateStr = routeDate.toISOString().split('T')[0];
+                  
+                  if (visitDateStr === routeDateStr) {
+                    // Cliente ainda deveria estar nesta rota
+                    inProgressCustomerIds.push(card.customerId);
+                  } else {
+                    console.log(`⚠️ Cliente ${customer.fantasyName || customer.name} em andamento mas nextVisitDate mudou: ${visitDateStr} ≠ ${routeDateStr}`);
+                  }
+                } else {
+                  // Se não tem nextVisitDate, manter para não perder dados
+                  inProgressCustomerIds.push(card.customerId);
+                }
+              } else {
+                // Se não tem permanent card, manter
+                inProgressCustomerIds.push(card.customerId);
+              }
+            }
+          }
+        }
 
-        // Construir ordem final preservando TODAS as visitas já iniciadas (USANDO CUSTOMER IDs)
+        // Construir ordem final preservando APENAS visitas que ainda deveriam estar neste dia
         const finalOrder = [
-          ...completedCustomerIds.filter(Boolean),        // 1. Visitas completadas (IDs de customers)
-          ...inProgressCustomerIds.filter(Boolean),       // 2. Visitas em andamento (IDs de customers)
-          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes (IDs de customers)
+          ...completedCustomerIds,        // 1. Visitas completadas E que ainda deveriam estar aqui
+          ...inProgressCustomerIds,       // 2. Visitas em andamento E que ainda deveriam estar aqui
+          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes
         ];
 
         const totalVisits = finalOrder.length;
