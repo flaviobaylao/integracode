@@ -8,6 +8,7 @@ import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
+import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import {
   insertCustomerSchema,
   insertProductSchema,
@@ -8956,7 +8957,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Data é obrigatória' });
       }
 
-      const routeDate = new Date(date);
+      // Converter data string para timezone do Brasil (America/Sao_Paulo)
+      // IMPORTANTE: new Date('2025-11-10') interpreta como UTC midnight, que em BRT é 21h do dia anterior!
+      // Usar fromZonedTime garante que 2025-11-10 seja interpretado como 2025-11-10 00:00 BRT
+      const routeDate = fromZonedTime(`${date}T00:00:00`, 'America/Sao_Paulo');
       
       // Verificar se já existe rota para este dia
       const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
