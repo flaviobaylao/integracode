@@ -9499,14 +9499,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      // Buscar detalhes das visitas
+      // Buscar detalhes das visitas (DIRETO de customers - fonte única)
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (visitId: string) => {
-          const [visit] = await db.select()
-            .from(visitAgenda)
-            .where(eq(visitAgenda.id, visitId))
+        (route.optimizedOrder || []).map(async (customerId: string) => {
+          // optimizedOrder agora contém IDs de clientes, não de sales_cards
+          const [customer] = await db.select({
+            id: customers.id,
+            customerId: customers.id,
+            customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+            customerLatitude: customers.latitude,
+            customerLongitude: customers.longitude,
+            customerAddress: customers.address,
+            scheduledDate: sql<Date>`${route.routeDate}::timestamp`,
+            isVirtual: customers.virtualService
+          })
+            .from(customers)
+            .where(eq(customers.id, customerId))
             .limit(1);
-          return visit;
+          
+          return customer;
         })
       );
 
