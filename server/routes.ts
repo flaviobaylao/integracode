@@ -9051,7 +9051,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Otimizar APENAS as visitas realmente pendentes (não processadas)
         const { optimizeRoute } = await import('./routeOptimizationService');
         const routePoints = validVisits.map(v => ({
-          id: v.id,
+          id: v.customerId, // CORRIGIDO: Usar customerId ao invés de card.id
           latitude: parseFloat(v.customerLatitude as any),
           longitude: parseFloat(v.customerLongitude as any),
           customerName: v.customerName,
@@ -9064,11 +9064,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           routePoints
         );
 
-        // Construir ordem final preservando TODAS as visitas já iniciadas
+        // CORRIGIDO: Buscar customerIds dos cards completados e em andamento
+        const completedCustomerIds = await Promise.all(
+          completedCheckpoints.map(async (cp: any) => {
+            const card = await storage.getSalesCard(cp.salesCardId);
+            return card?.customerId;
+          })
+        );
+        const inProgressCustomerIds = await Promise.all(
+          inProgressCheckpoints.map(async (cp: any) => {
+            const card = await storage.getSalesCard(cp.salesCardId);
+            return card?.customerId;
+          })
+        );
+
+        // Construir ordem final preservando TODAS as visitas já iniciadas (USANDO CUSTOMER IDs)
         const finalOrder = [
-          ...completedCardIds,        // 1. Visitas completadas (mantém ordem original)
-          ...inProgressCardIds,       // 2. Visitas em andamento (mantém ordem original)
-          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes (otimizadas)
+          ...completedCustomerIds.filter(Boolean),        // 1. Visitas completadas (IDs de customers)
+          ...inProgressCustomerIds.filter(Boolean),       // 2. Visitas em andamento (IDs de customers)
+          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes (IDs de customers)
         ];
 
         const totalVisits = finalOrder.length;
