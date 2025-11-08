@@ -1685,58 +1685,48 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]> {
-    // Extrair ano, mês e dia da data recebida (já no timezone correto)
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const day = date.getDate();
+    // Formatar data como YYYY-MM-DD para comparação
+    const targetDate = date.toISOString().split('T')[0];
     
-    // Criar início e fim do dia usando UTC para evitar problemas de timezone
-    const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-    const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
-    
-    // Com permanent cards: buscar por nextVisitDate no intervalo do dia AND isPermanent=true
-    // Também incluir legacy cards (isPermanent=false) por scheduledDate para compatibilidade
+    // Converter timestamptz para date no timezone de São Paulo
+    // Sintaxe correta: (col AT TIME ZONE 'America/Sao_Paulo')::date
     let whereConditions;
     
     if (sellerId) {
       whereConditions = and(
         eq(salesCards.sellerId, sellerId),
         or(
-          // Permanent cards: nextVisitDate dentro do dia específico
+          // Permanent cards: converter nextVisitDate para date em BRT
           and(
             eq(salesCards.isPermanent, true),
-            gte(salesCards.nextVisitDate, startOfDay),
-            lte(salesCards.nextVisitDate, endOfDay),
+            sql`(${salesCards.nextVisitDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`,
             inArray(salesCards.status, ['pending', 'open'])
           ),
-          // Legacy cards: scheduledDate no intervalo do dia (compatibilidade)
+          // Legacy cards: converter scheduledDate para date em BRT
           and(
             or(
               eq(salesCards.isPermanent, false),
               isNull(salesCards.isPermanent)
             ),
-            gte(salesCards.scheduledDate, startOfDay),
-            lte(salesCards.scheduledDate, endOfDay)
+            sql`(${salesCards.scheduledDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`
           )
         )
       );
     } else {
       whereConditions = or(
-        // Permanent cards: nextVisitDate dentro do dia específico
+        // Permanent cards: converter nextVisitDate para date em BRT
         and(
           eq(salesCards.isPermanent, true),
-          gte(salesCards.nextVisitDate, startOfDay),
-          lte(salesCards.nextVisitDate, endOfDay),
+          sql`(${salesCards.nextVisitDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`,
           inArray(salesCards.status, ['pending', 'open'])
         ),
-        // Legacy cards: scheduledDate no intervalo do dia (compatibilidade)
+        // Legacy cards: converter scheduledDate para date em BRT
         and(
           or(
             eq(salesCards.isPermanent, false),
             isNull(salesCards.isPermanent)
           ),
-          gte(salesCards.scheduledDate, startOfDay),
-          lte(salesCards.scheduledDate, endOfDay)
+          sql`(${salesCards.scheduledDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`
         )
       );
     }
