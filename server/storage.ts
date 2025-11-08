@@ -1688,6 +1688,10 @@ export class DatabaseStorage implements IStorage {
     // Formatar data como YYYY-MM-DD para comparação
     const targetDate = date.toISOString().split('T')[0];
     
+    console.log(`🔍 [getSalesCardsByDate] Buscando cards para data: ${targetDate} (sellerId: ${sellerId || 'todos'})`);
+    console.log(`   - Input date object: ${date.toISOString()}`);
+    console.log(`   - Timezone local: ${date.toString()}`);
+    
     // Converter timestamptz para date no timezone de São Paulo
     // Sintaxe correta: (col AT TIME ZONE 'America/Sao_Paulo')::date
     let whereConditions;
@@ -1739,7 +1743,27 @@ export class DatabaseStorage implements IStorage {
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
     
-    console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
+    console.log(`📊 [getSalesCardsByDate] Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
+    
+    // Log detalhado dos primeiros cards encontrados para debug
+    if (result.length > 0) {
+      console.log(`   📋 Primeiros 3 cards encontrados:`);
+      result.slice(0, 3).forEach((row, idx) => {
+        const card = row.sales_cards;
+        const customer = row.customers;
+        console.log(`   ${idx + 1}. Cliente: ${customer?.fantasyName || customer?.name}`);
+        console.log(`      - Card ID: ${card.id}`);
+        console.log(`      - Status: ${card.status}`);
+        console.log(`      - isPermanent: ${card.isPermanent}`);
+        console.log(`      - nextVisitDate: ${card.nextVisitDate ? new Date(card.nextVisitDate).toISOString() : 'N/A'}`);
+        console.log(`      - scheduledDate: ${card.scheduledDate ? new Date(card.scheduledDate).toISOString() : 'N/A'}`);
+      });
+    } else {
+      console.log(`   ⚠️ NENHUM card encontrado! Possíveis causas:`);
+      console.log(`      1. nextVisitDate dos cards permanentes não coincide com ${targetDate} em BRT`);
+      console.log(`      2. Status dos cards não é 'pending' ou 'open'`);
+      console.log(`      3. sellerId não coincide`);
+    }
     
     return result.map(row => ({
       ...row.sales_cards,
