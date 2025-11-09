@@ -200,8 +200,14 @@ export class OmieService {
     // Normalizar CFOP (remover pontos)
     const normalizedCfop = cfop?.replace(/\./g, '') || '';
     
-    // CFOPs específicos de devolução (lista precisa)
-    const devolucaoCfops = ['1151', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    // CFOPs específicos de devolução (lista expandida)
+    // 1.152 = Devolução de Compra
+    // 1.201 = Devolução de Venda de Produção
+    // 1.202, 1.203, 1.204 = Outras devoluções de venda
+    // 1.411 = Devolução de venda de produção do estabelecimento industrializador
+    // 1.556 = Devolução de venda de bem do ativo imobilizado
+    // 2.xxx = Operações interestaduais de devolução
+    const devolucaoCfops = ['1151', '1152', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
     if (devolucaoCfops.includes(normalizedCfop)) {
       return 'devolucao';
     }
