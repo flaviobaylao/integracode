@@ -119,50 +119,68 @@ export async function applyCustomerRecurrenceChange(
 
     const invalidatedRoutes: string[] = [];
 
-    if (previousNextVisitDate && newNextVisitDate) {
-      const previousDateStr = new Date(previousNextVisitDate).toISOString().split('T')[0];
-      const newDateStr = new Date(newNextVisitDate).toISOString().split('T')[0];
+    const hasSellerChanged = previousState.sellerId && previousState.sellerId !== finalSellerId;
+    const hasDateChanged = previousNextVisitDate && newNextVisitDate &&
+      new Date(previousNextVisitDate).toISOString().split('T')[0] !== new Date(newNextVisitDate).toISOString().split('T')[0];
 
-      if (previousDateStr !== newDateStr) {
+    if (previousNextVisitDate && (hasDateChanged || hasSellerChanged)) {
+      const previousDateStr = new Date(previousNextVisitDate).toISOString().split('T')[0];
+      const previousRouteDate = fromZonedTime(`${previousDateStr}T00:00:00`, 'America/Sao_Paulo');
+      const previousSellerId = previousState.sellerId || finalSellerId;
+
+      if (hasDateChanged && hasSellerChanged) {
+        console.info('[RECURRENCE] Data e vendedor mudaram', {
+          customerId,
+          previousDate: previousDateStr,
+          newDate: new Date(newNextVisitDate!).toISOString().split('T')[0],
+          previousSeller: previousSellerId,
+          newSeller: finalSellerId
+        });
+      } else if (hasDateChanged) {
         console.info('[RECURRENCE] Data de visita mudou', {
           customerId,
           previousDate: previousDateStr,
-          newDate: newDateStr
+          newDate: new Date(newNextVisitDate!).toISOString().split('T')[0]
         });
-        
-        const previousRouteDate = fromZonedTime(`${previousDateStr}T00:00:00`, 'America/Sao_Paulo');
-        
-        const previousSellerId = previousState.sellerId || finalSellerId;
-        const affectedRoutes = await tx.select()
-          .from(dailyRoutes)
-          .where(and(
-            eq(dailyRoutes.sellerId, previousSellerId || ''),
-            eq(dailyRoutes.routeDate, previousRouteDate)
-          ));
+      } else if (hasSellerChanged) {
+        console.info('[RECURRENCE] Vendedor mudou sem alterar data', {
+          customerId,
+          previousSeller: previousSellerId,
+          newSeller: finalSellerId,
+          visitDate: previousDateStr
+        });
+      }
 
-        for (const route of affectedRoutes) {
-          if (!route.optimizedOrder || route.optimizedOrder.length === 0) {
-            continue;
-          }
+      const affectedRoutes = await tx.select()
+        .from(dailyRoutes)
+        .where(and(
+          eq(dailyRoutes.sellerId, previousSellerId || ''),
+          eq(dailyRoutes.routeDate, previousRouteDate)
+        ));
+
+      for (const route of affectedRoutes) {
+        if (!route.optimizedOrder || route.optimizedOrder.length === 0) {
+          continue;
+        }
+        
+        if (route.optimizedOrder.includes(customerId)) {
+          const updatedOrder = route.optimizedOrder.filter(id => id !== customerId);
           
-          if (route.optimizedOrder.includes(customerId)) {
-            const updatedOrder = route.optimizedOrder.filter(id => id !== customerId);
-            
-            await tx.update(dailyRoutes)
-              .set({
-                optimizedOrder: updatedOrder,
-                totalVisits: updatedOrder.length
-              })
-              .where(eq(dailyRoutes.id, route.id));
+          await tx.update(dailyRoutes)
+            .set({
+              optimizedOrder: updatedOrder,
+              totalVisits: updatedOrder.length
+            })
+            .where(eq(dailyRoutes.id, route.id));
 
-            invalidatedRoutes.push(route.id);
-            console.info('[RECURRENCE] Cliente removido da rota antiga', {
-              customerId,
-              routeId: route.id,
-              routeDate: previousDateStr,
-              previousSellerId
-            });
-          }
+          invalidatedRoutes.push(route.id);
+          console.info('[RECURRENCE] Cliente removido da rota antiga', {
+            customerId,
+            routeId: route.id,
+            routeDate: previousDateStr,
+            previousSellerId,
+            reason: hasDateChanged ? 'data_mudou' : 'vendedor_mudou'
+          });
         }
       }
     }
