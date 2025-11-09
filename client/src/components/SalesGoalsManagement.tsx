@@ -19,8 +19,8 @@ interface SalesGoalsManagementProps {
 }
 
 export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps) {
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<SalesGoal | null>(null);
   const { toast } = useToast();
@@ -32,11 +32,16 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     enabled: ['admin', 'coordinator', 'administrative'].includes(user.role)
   });
 
-  // Buscar metas
+  // Buscar metas - SEM FILTRO por padrão para mostrar todas as metas
   const { data: salesGoals = [], isLoading } = useQuery<SalesGoal[]>({
     queryKey: ['/api/sales-goals', selectedMonth, selectedYear],
-    queryFn: () => fetch(`/api/sales-goals?month=${selectedMonth}&year=${selectedYear}`)
-      .then(res => res.json())
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (selectedMonth !== 'all') params.append('month', selectedMonth.toString());
+      if (selectedYear !== 'all') params.append('year', selectedYear.toString());
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+      return fetch(`/api/sales-goals${queryString}`).then(res => res.json());
+    }
   });
 
   // Mutação para criar/atualizar meta
@@ -112,10 +117,13 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
+    const month = parseInt(formData.get('month') as string);
+    const year = parseInt(formData.get('year') as string);
+    
     const goalData = {
       sellerId: formData.get('sellerId') as string,
-      month: selectedMonth,
-      year: selectedYear,
+      month,
+      year,
       positivationGoal: formData.get('positivationGoal') ? parseFloat(formData.get('positivationGoal') as string) : null,
       revenueGoal: formData.get('revenueGoal') ? parseFloat(formData.get('revenueGoal') as string) : null,
       overdueDebtGoal: formData.get('overdueDebtGoal') ? parseFloat(formData.get('overdueDebtGoal') as string) : null,
@@ -170,11 +178,12 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
             <div className="flex justify-between items-center">
               <h3 className="text-xl font-semibold text-gray-700">Gerenciar Metas</h3>
               <div className="flex space-x-2">
-                <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
-                  <SelectTrigger className="w-32">
+                <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(value === 'all' ? 'all' : parseInt(value))}>
+                  <SelectTrigger className="w-40">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">Todos os meses</SelectItem>
                     {months.map((month) => (
                       <SelectItem key={month.value} value={month.value.toString()}>
                         {month.label}
@@ -182,11 +191,12 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-                  <SelectTrigger className="w-24">
+                <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(value === 'all' ? 'all' : parseInt(value))}>
+                  <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">Todos os anos</SelectItem>
                     {years.map((year) => (
                       <SelectItem key={year} value={year.toString()}>
                         {year}
@@ -223,6 +233,39 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                               ))}
                             </SelectContent>
                           </Select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="month">Mês</Label>
+                            <Select name="month" defaultValue={editingGoal?.month.toString() || new Date().getMonth().toString()} required>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o mês" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {months.map((month) => (
+                                  <SelectItem key={month.value} value={month.value.toString()}>
+                                    {month.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label htmlFor="year">Ano</Label>
+                            <Select name="year" defaultValue={editingGoal?.year.toString() || new Date().getFullYear().toString()} required>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o ano" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {years.map((year) => (
+                                  <SelectItem key={year} value={year.toString()}>
+                                    {year}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">

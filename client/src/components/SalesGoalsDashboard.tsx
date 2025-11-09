@@ -31,7 +31,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
   const [selectedSeller, setSelectedSeller] = useState<string>(user.role === 'vendedor' ? user.id : 'all');
 
   // Buscar vendedores (apenas para admins/coordinators/administrative)
-  const { data: sellers = [] } = useQuery({
+  const { data: sellers = [] } = useQuery<User[]>({
     queryKey: ['/api/users'],
     enabled: ['admin', 'coordinator', 'administrative'].includes(user.role)
   });
