@@ -63,6 +63,12 @@
       - UI displays sync status badges, Omie order numbers, and send buttons
       - Smart toast notifications distinguish demo/stub responses from real Omie integration
       - **Status**: Infrastructure complete, real Omie API integration pending (Task 4)
+    - **Payment Gateway Integration (Nov 2025)**: Pending implementation after Efí Bank account approval.
+      - **Chosen Platform**: Efí Bank (formerly Gerencianet)
+      - **Reasons**: Lowest card fees (3,49%), competitive PIX (1,19%), official Node.js SDK, excellent documentation
+      - **Features to Implement**: PIX QR Code generation, card tokenization, boleto generation, webhook notifications, automatic order status updates
+      - **Estimated Costs**: ~R$ 196/mês for R$ 10k monthly sales (60% PIX, 30% card, 10% boleto)
+      - **Status**: Awaiting user to create Efí Bank account and provide API credentials (Client ID + Client Secret)
 
 # External Dependencies
 
