@@ -40,7 +40,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, Search, MapPin } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -104,6 +104,7 @@ export default function LeadManagement() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [capturingLocation, setCapturingLocation] = useState(false);
 
   // Fetch leads
   const { data: leads = [], isLoading } = useQuery<Lead[]>({
@@ -269,6 +270,62 @@ export default function LeadManagement() {
     } else {
       createMutation.mutate(data);
     }
+  };
+
+  const handleCaptureLocation = () => {
+    if (!navigator.geolocation) {
+      toast({
+        title: "Geolocalização não suportada",
+        description: "Seu navegador não suporta captura de localização.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCapturingLocation(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        
+        form.setValue("latitude", lat);
+        form.setValue("longitude", lng);
+        
+        setCapturingLocation(false);
+        toast({
+          title: "Localização capturada!",
+          description: `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`,
+        });
+      },
+      (error) => {
+        setCapturingLocation(false);
+        let errorMessage = "Não foi possível capturar a localização.";
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Permissão de localização negada. Habilite nas configurações do navegador.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Localização indisponível no momento.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Tempo esgotado ao tentar capturar localização.";
+            break;
+        }
+        
+        toast({
+          title: "Erro ao capturar localização",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
   };
 
   // Filter leads
@@ -553,45 +610,67 @@ export default function LeadManagement() {
                   </FormItem>
                 )}
               />
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="latitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Latitude</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          step="any"
-                          {...field}
-                          onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
-                          data-testid="input-lead-latitude"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="latitude"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Latitude</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="any"
+                            {...field}
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-lead-latitude"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="longitude"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Longitude</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="any"
+                            {...field}
+                            onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            data-testid="input-lead-longitude"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCaptureLocation}
+                  disabled={capturingLocation}
+                  className="w-full"
+                  data-testid="button-capture-location"
+                >
+                  {capturingLocation ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-900 mr-2"></div>
+                      Capturando localização...
+                    </>
+                  ) : (
+                    <>
+                      <MapPin className="w-4 h-4 mr-2" />
+                      Capturar Minha Localização
+                    </>
                   )}
-                />
-                <FormField
-                  control={form.control}
-                  name="longitude"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Longitude</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          step="any"
-                          {...field}
-                          onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
-                          data-testid="input-lead-longitude"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                </Button>
               </div>
               <FormField
                 control={form.control}
