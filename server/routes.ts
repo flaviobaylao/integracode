@@ -734,21 +734,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Inactivate customer and delete future cards
       const result = await storage.inactivateCustomer(id, cardId);
       
-      // Build success message
+      // Build success message and sync with Omie if applicable
       let message = "Cliente inativado com sucesso no sistema";
+      let omieInactivationResult = null;
+      
       if (result.customer.omieClientCode) {
-        message += ". IMPORTANTE: A inativação no Omie ERP deve ser feita manualmente, pois a API do Omie não permite inativar clientes programaticamente.";
+        try {
+          // Extract numeric code from omieClientCode (format: "omie-client-XXXXXX")
+          const numericCode = parseInt(result.customer.omieClientCode.replace('omie-client-', ''));
+          
+          if (!isNaN(numericCode)) {
+            console.log(`🔄 Sincronizando inativação com Omie para cliente ${numericCode}...`);
+            const omieResult = await omieIntegration.inactivateClient(numericCode);
+            omieInactivationResult = omieResult;
+            
+            if (omieResult.success) {
+              message += `. Cliente também foi inativado no Omie ERP com sucesso!`;
+            } else {
+              message += `. ATENÇÃO: Erro ao inativar no Omie ERP: ${omieResult.message}. Por favor, inative manualmente no Omie.`;
+            }
+          } else {
+            message += ". ATENÇÃO: Código Omie inválido. Por favor, inative manualmente no Omie ERP.";
+          }
+        } catch (omieError) {
+          console.error('❌ Erro ao sincronizar inativação com Omie:', omieError);
+          message += `. ATENÇÃO: Erro ao comunicar com Omie ERP. Por favor, inative manualmente no Omie.`;
+        }
       }
       
       res.json({
         message,
         customer: result.customer,
         deletedCards: result.deletedCards,
-        requiresManualOmieInactivation: !!result.customer.omieClientCode
+        omieInactivation: omieInactivationResult
       });
     } catch (error) {
       console.error("Error inactivating customer:", error);
       res.status(500).json({ message: "Falha ao inativar cliente" });
+    }
+  });
+
+  // Gerenciar TAG "NAO CLIENTE"
+  app.post('/api/customers/:id/tags', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { tag, action } = req.body; // action: "add" or "remove"
+      const user = req.currentUser;
+      
+      // Only admin, coordinator, and administrative can manage the "NAO CLIENTE" tag
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem gerenciar tags de clientes." });
+      }
+      
+      // Validate tag (currently only "NAO CLIENTE" is supported)
+      if (tag !== 'NAO CLIENTE') {
+        return res.status(400).json({ message: "Tag inválida. Apenas a tag 'NAO CLIENTE' é suportada atualmente." });
+      }
+      
+      // Validate action
+      if (!['add', 'remove'].includes(action)) {
+        return res.status(400).json({ message: "Ação inválida. Use 'add' ou 'remove'." });
+      }
+      
+      // Get customer
+      const customer = await storage.getCustomer(id);
+      if (!customer) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      
+      // Get current tags array (ensure it's always an array)
+      let currentTags: string[] = [];
+      if (customer.tags) {
+        currentTags = Array.isArray(customer.tags) ? customer.tags : [];
+      }
+      
+      // Add or remove tag
+      let newTags: string[];
+      let message: string;
+      
+      if (action === 'add') {
+        if (currentTags.includes(tag)) {
+          return res.status(400).json({ message: `Cliente já possui a tag '${tag}'` });
+        }
+        newTags = [...currentTags, tag];
+        message = `Tag '${tag}' adicionada com sucesso. Este cliente não aparecerá mais nas rotinas de vendas (positivação, rotas, metas).`;
+      } else {
+        if (!currentTags.includes(tag)) {
+          return res.status(400).json({ message: `Cliente não possui a tag '${tag}'` });
+        }
+        newTags = currentTags.filter(t => t !== tag);
+        message = `Tag '${tag}' removida com sucesso. Este cliente voltará a aparecer nas rotinas de vendas.`;
+      }
+      
+      // Update customer with new tags
+      const updatedCustomer = await storage.updateCustomer(id, { tags: newTags });
+      
+      res.json({
+        message,
+        customer: updatedCustomer,
+        tags: newTags
+      });
+    } catch (error) {
+      console.error("Error managing customer tags:", error);
+      res.status(500).json({ message: "Falha ao gerenciar tags do cliente" });
     }
   });
 

@@ -122,6 +122,9 @@ export const customers = pgTable("customers", {
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
   omieClientCode: varchar("omie_client_code"), // Código numérico do cliente no Omie (codigo_cliente_omie)
   
+  // Tags para classificação de clientes (ex: "NAO CLIENTE" para excluir de operações de vendas)
+  tags: text("tags").array().default(sql`ARRAY[]::text[]`), // Array de tags - apenas admin/coordinator/administrative podem usar "NAO CLIENTE"
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

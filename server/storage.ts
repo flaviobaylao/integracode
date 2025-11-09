@@ -661,14 +661,18 @@ export class DatabaseStorage implements IStorage {
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
     let whereConditions = and(
       eq(customers.omieStatus, 'ativo'),
-      sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
+      sql`${customers.weekdays} LIKE ${`%${weekday}%`}`,
+      // Excluir clientes com TAG "NAO CLIENTE"
+      sql`NOT ('NAO CLIENTE' = ANY(${customers.tags}))`
     );
     
     if (sellerId) {
       whereConditions = and(
         eq(customers.omieStatus, 'ativo'),
         eq(customers.sellerId, sellerId),
-        sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
+        sql`${customers.weekdays} LIKE ${`%${weekday}%`}`,
+        // Excluir clientes com TAG "NAO CLIENTE"
+        sql`NOT ('NAO CLIENTE' = ANY(${customers.tags}))`
       );
     }
     
@@ -3132,7 +3136,7 @@ export class DatabaseStorage implements IStorage {
       const uniqueCustomers = new Set(monthBillings.rows.map((b: any) => b.customer_document));
       const positivatedCustomers = uniqueCustomers.size;
 
-      // Total de clientes ativos na carteira do vendedor
+      // Total de clientes ativos na carteira do vendedor (excluindo TAG "NAO CLIENTE")
       let totalCustomersInRoute = 0;
       if (prefixedSellerId) {
         const routeCustomersResult = await db.execute(sql`
@@ -3140,6 +3144,7 @@ export class DatabaseStorage implements IStorage {
           WHERE seller_id = ${prefixedSellerId}
             AND omie_status = 'ativo'
             AND virtual_service = false
+            AND NOT ('NAO CLIENTE' = ANY(tags))
         `);
         totalCustomersInRoute = routeCustomersResult.rows.length;
       }

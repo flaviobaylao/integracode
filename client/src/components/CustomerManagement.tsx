@@ -111,6 +111,40 @@ export default function CustomerManagement() {
     },
   });
 
+  const toggleNaoClienteTagMutation = useMutation({
+    mutationFn: async ({ customerId, action }: { customerId: string; action: 'add' | 'remove' }) => {
+      return await apiRequest('POST', `/api/customers/${customerId}/tags`, {
+        tag: 'NAO CLIENTE',
+        action
+      });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      toast({
+        title: "Sucesso",
+        description: data.message,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao gerenciar TAG do cliente",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleToggleNaoClienteTag = (customer: Customer) => {
+    const tags = (customer as any).tags || [];
+    const hasTag = Array.isArray(tags) ? tags.includes('NAO CLIENTE') : false;
+    const action = hasTag ? 'remove' : 'add';
+    const actionText = hasTag ? 'remover' : 'adicionar';
+    
+    if (confirm(`Tem certeza que deseja ${actionText} a TAG "NÃO CLIENTE" ${hasTag ? 'deste' : 'para este'} cliente?\n\n${hasTag ? 'O cliente voltará a aparecer nas rotinas de vendas.' : 'O cliente NÃO aparecerá mais nas rotinas de vendas (rotas, positivação, metas).'}`)) {
+      toggleNaoClienteTagMutation.mutate({ customerId: customer.id, action });
+    }
+  };
+
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
       `Olá ${customerName}! Somos da Honest Sucos. Como está tudo? Gostaria de saber se precisa de algum produto hoje.`
@@ -505,6 +539,21 @@ export default function CustomerManagement() {
                               <MapPin className="h-4 w-4" />
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleToggleNaoClienteTag(customer)}
+                            data-testid={`button-tag-nao-cliente-${customer.id}`}
+                            title={(customer as any).tags?.includes('NAO CLIENTE') 
+                              ? "Remover TAG 'NÃO CLIENTE' (cliente voltará a aparecer nas rotinas)" 
+                              : "Marcar como 'NÃO CLIENTE' (cliente não aparecerá nas rotinas de vendas)"}
+                          >
+                            {(customer as any).tags?.includes('NAO CLIENTE') ? (
+                              <XCircle className="h-4 w-4 text-orange-600" />
+                            ) : (
+                              <AlertTriangle className="h-4 w-4 text-gray-400" />
+                            )}
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"
