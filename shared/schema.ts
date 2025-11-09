@@ -484,7 +484,7 @@ export const overdueDebts = pgTable("overdue_debts", {
 });
 
 // Billing type enum  
-export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra', 'devolucao']);
+export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra', 'devolucao', 'entrada']);
 
 // Billing/Invoice table - Pedidos e notas fiscais do Omie
 export const billings = pgTable("billings", {

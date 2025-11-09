@@ -196,19 +196,25 @@ export class OmieService {
   }
 
   // Método auxiliar para determinar o tipo de faturamento baseado no CFOP
-  private determineBillingType(cfop: string): 'venda' | 'troca' | 'amostra' | 'devolucao' {
+  private determineBillingType(cfop: string): 'venda' | 'troca' | 'amostra' | 'devolucao' | 'entrada' {
     // Normalizar CFOP (remover pontos)
     const normalizedCfop = cfop?.replace(/\./g, '') || '';
     
-    // CFOPs específicos de devolução (lista expandida)
-    // 1.152 = Devolução de Compra para Comercialização
+    // CFOPs de entrada/transferência (NÃO afetam vendas)
+    // 1.152 = Transferência para comercialização (entrada entre filiais)
+    // 1.213 = Devolução de remessa para demonstração (ato cooperativo)
+    const entradaCfops = ['1152', '1213', '2152', '2213'];
+    if (entradaCfops.includes(normalizedCfop)) {
+      return 'entrada';
+    }
+    
+    // CFOPs específicos de devolução DE VENDAS (SUBTRAEM das vendas)
     // 1.201 = Devolução de Venda de Produção
     // 1.202, 1.203, 1.204 = Outras devoluções de venda
-    // 1.213 = Devolução de remessa para demonstração
     // 1.411 = Devolução de venda de produção do estabelecimento industrializador
     // 1.556 = Devolução de venda de bem do ativo imobilizado
-    // 2.xxx = Operações interestaduais de devolução
-    const devolucaoCfops = ['1151', '1152', '1201', '1202', '1203', '1204', '1213', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    // 2.xxx = Operações interestaduais de devolução de venda
+    const devolucaoCfops = ['1151', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
     if (devolucaoCfops.includes(normalizedCfop)) {
       return 'devolucao';
     }
