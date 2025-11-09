@@ -2036,6 +2036,55 @@ export class OmieService {
     }
   }
 
+  // Método auxiliar para buscar apenas o CFOP de uma nota fiscal
+  async getInvoiceCFOP(invoiceNumber: string): Promise<string | null> {
+    try {
+      console.log(`📋 Buscando CFOP para NF ${invoiceNumber}...`);
+      
+      const invoiceData = await this.getInvoiceByNumber(invoiceNumber);
+      
+      if (!invoiceData) {
+        console.log(`⚠️ NF ${invoiceNumber}: Resposta vazia da API`);
+        return null;
+      }
+      
+      // Tentar diferentes estruturas de resposta do Omie
+      // Estrutura 1: det direto
+      let det = invoiceData.det;
+      
+      // Estrutura 2: nfe.det
+      if (!det && invoiceData.nfe?.det) {
+        det = invoiceData.nfe.det;
+      }
+      
+      // Estrutura 3: nfCadastro.det
+      if (!det && invoiceData.nfCadastro?.det) {
+        det = invoiceData.nfCadastro.det;
+      }
+      
+      // Validar se det é um array com itens
+      if (!det || !Array.isArray(det) || det.length === 0) {
+        console.log(`⚠️ NF ${invoiceNumber}: Sem itens (det) na resposta`);
+        return null;
+      }
+      
+      // Extrair CFOP do primeiro item da nota
+      const cfop = det[0]?.prod?.CFOP || null;
+      
+      if (cfop) {
+        console.log(`✅ CFOP encontrado para NF ${invoiceNumber}: ${cfop}`);
+      } else {
+        console.log(`⚠️ NF ${invoiceNumber}: CFOP não disponível na API`);
+      }
+      
+      return cfop;
+    } catch (error: any) {
+      console.error(`❌ Erro ao buscar CFOP da NF ${invoiceNumber}:`, error.message);
+      // Retorna null em caso de erro para não interromper o fluxo
+      return null;
+    }
+  }
+
   // Buscar cliente por código interno Omie
   async getClientByCode(codigoCliente: number): Promise<OmieClient | null> {
     try {
