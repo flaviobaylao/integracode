@@ -6,6 +6,7 @@ import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, 
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
+import { applyCustomerRecurrenceChange } from "./customerRecurrenceService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
@@ -938,6 +939,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const customer = await storage.updateCustomer(id, data);
+      
+      const hasWeekdaysChanged = data.weekdays && 
+        JSON.stringify([...(Array.isArray(data.weekdays) ? data.weekdays : [data.weekdays])].sort()) !== 
+        JSON.stringify([...(Array.isArray(currentCustomer.weekdays) ? currentCustomer.weekdays : [currentCustomer.weekdays])].sort());
+      
+      const hasPeriodicityChanged = data.visitPeriodicity && data.visitPeriodicity !== currentCustomer.visitPeriodicity;
+      const hasSellerChanged = data.sellerId && data.sellerId !== currentCustomer.sellerId;
+      
+      if (hasWeekdaysChanged || hasPeriodicityChanged || hasSellerChanged) {
+        console.info('[CUSTOMER-UPDATE] Detectadas mudanças de recorrência', {
+          customerId: id,
+          hasWeekdaysChanged,
+          hasPeriodicityChanged,
+          hasSellerChanged
+        });
+        
+        try {
+          const result = await applyCustomerRecurrenceChange(
+            id,
+            {
+              weekdays: customer.weekdays ? (Array.isArray(customer.weekdays) ? customer.weekdays : [customer.weekdays]) : undefined,
+              visitPeriodicity: customer.visitPeriodicity || undefined,
+              sellerId: customer.sellerId || undefined
+            },
+            {
+              sellerId: currentCustomer.sellerId || undefined,
+              weekdays: currentCustomer.weekdays ? (Array.isArray(currentCustomer.weekdays) ? currentCustomer.weekdays : [currentCustomer.weekdays]) : undefined,
+              visitPeriodicity: currentCustomer.visitPeriodicity || undefined
+            }
+          );
+          
+          if (result.success) {
+            console.info('[CUSTOMER-UPDATE] Recorrência atualizada com sucesso', {
+              customerId: id,
+              previousNextVisitDate: result.previousNextVisitDate,
+              newNextVisitDate: result.newNextVisitDate,
+              invalidatedRoutes: result.invalidatedRoutes
+            });
+          } else {
+            console.warn('[CUSTOMER-UPDATE] Falha ao atualizar recorrência', {
+              customerId: id,
+              message: result.message
+            });
+          }
+        } catch (recurrenceError: any) {
+          console.error('[CUSTOMER-UPDATE] Erro ao atualizar recorrência', {
+            customerId: id,
+            error: recurrenceError.message
+          });
+        }
+      }
+      
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
