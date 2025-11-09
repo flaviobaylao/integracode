@@ -3364,12 +3364,11 @@ export class OmieService {
                       console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
                     }
                     
-                    // Verificar se está cancelado
+                    // Verificar se está cancelado via etapa do pedido
                     if (stageData.cancelled) {
                       isCancelled = true;
-                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - pulando sincronização`);
-                      skipped++;
-                      continue; // Pular notas canceladas
+                      invoiceStage = 'CANCELADO';
+                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - marcando para exclusão dos cálculos`);
                     }
                   }
                 } catch (error) {
@@ -3379,9 +3378,9 @@ export class OmieService {
               
               // Verificação adicional: campo de cancelamento direto da NF
               if (invoice.cancelamento?.cCancelado === 'S') {
-                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - pulando sincronização`);
-                skipped++;
-                continue;
+                isCancelled = true;
+                invoiceStage = 'CANCELADO';
+                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - marcando para exclusão dos cálculos`);
               }
               
               const billingData = {
@@ -3405,6 +3404,7 @@ export class OmieService {
                   return this.mapSefazStatus(validStatus); // Fallback para 100 (Autorizado)
                 })(),
                 invoiceStage: invoiceStage || '',
+                isCancelled: isCancelled, // ✅ Passar flag de cancelamento
                 products
               };
               

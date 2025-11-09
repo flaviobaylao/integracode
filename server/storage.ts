@@ -3721,9 +3721,16 @@ export class DatabaseStorage implements IStorage {
       }
       
       // NOVA LÓGICA: Dar etapa "CANCELADO" APENAS para notas realmente canceladas
-      if (isCanceled) {
-        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status cancelado: ${invoiceStatus})`);
+      // Verificar cancelamento via status SEFAZ OU via flag enviada
+      const isCancelledViaFlag = billing.isCancelled === true;
+      
+      if (isCanceled || isCancelledViaFlag) {
+        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status: ${invoiceStatus}, flag: ${isCancelledViaFlag})`);
         billing.invoiceStage = 'CANCELADO';
+        billing.isCancelled = true; // ✅ Marcar como cancelada no banco
+      } else {
+        // Garantir que notas não-canceladas tenham is_cancelled = false
+        billing.isCancelled = false;
       }
       
       // Validação 2: Data da nota fiscal deve ser válida

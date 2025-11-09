@@ -39,6 +39,7 @@
     - **Amostra** (CFOP 5.910, 5.911, 6.910, 6.911): Free samples and donations, not counted in sales
     - **Troca** (CFOP 5.949, 6.949): Product exchanges, not counted in sales
   - **Billing Schema**: Added `billing_type` enum with 5 values ('venda', 'devolucao', 'entrada', 'amostra', 'troca'). Sales metrics calculation: `vendas_líquidas = vendas - devoluções` (entrada/amostra/troca excluded).
+  - **Cancelled Invoice Handling (Nov 2025)**: System now correctly identifies and excludes cancelled invoices from sales calculations through three detection methods: (1) SEFAZ status codes (101, 135, 155), (2) order stage cancellation flag (`stageData.cancelled`), and (3) direct invoice cancellation field (`invoice.cancelamento?.cCancelado === 'S'`). All cancelled invoices are saved in database with `is_cancelled = true` and `invoice_stage = 'CANCELADO'` for complete audit trail. Sales calculations filter `is_cancelled = false` to ensure cancelled invoices are excluded from revenue metrics.
 - **HR Management (RH)**: HR tracking system for seller performance (monthly mileage, work hours management, and daily attendance percentage).
 - **E-commerce Platform (Hotsite Instagram)**:
     - **Access**: Available at `/shop` with public API routes.
