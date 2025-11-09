@@ -12234,7 +12234,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           unitPrice: z.number().min(0)
         })).min(1, 'Adicione pelo menos um produto'),
         totalAmount: z.number().min(0),
-        paymentMethod: z.enum(['pix', 'card', 'boleto']).default('pix'),
+        paymentMethod: z.enum(['pix', 'boleto']).default('pix'),
         source: z.enum(['hotsite', 'website']).default('hotsite'),
         // Tabela de preço selecionada pelo cliente no hotsite
         priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional()
@@ -12252,15 +12252,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, {
         message: 'CPF é obrigatório para consumidores (pessoa física) e deve ter 11 dígitos',
         path: ['customer', 'cpfCnpj']
-      }).refine((data) => {
-        // ✅ Boleto não permitido para pessoa física (consumidores)
-        if (data.customer.customerType === 'pessoa_fisica' && data.paymentMethod === 'boleto') {
-          return false;
-        }
-        return true;
-      }, {
-        message: 'Boleto bancário não está disponível para consumidores. Utilize Pix ou Cartão.',
-        path: ['paymentMethod']
       });
       
       const validatedData = orderSchema.parse(req.body);
