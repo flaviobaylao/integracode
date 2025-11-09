@@ -956,16 +956,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         
         try {
+          const parseWeekdays = (wd: any): string[] | undefined => {
+            if (!wd) return undefined;
+            if (Array.isArray(wd)) return wd;
+            if (typeof wd === 'string') {
+              try {
+                const parsed = JSON.parse(wd);
+                return Array.isArray(parsed) ? parsed : [wd];
+              } catch {
+                return [wd];
+              }
+            }
+            return undefined;
+          };
+
           const result = await applyCustomerRecurrenceChange(
             id,
             {
-              weekdays: customer.weekdays ? (Array.isArray(customer.weekdays) ? customer.weekdays : [customer.weekdays]) : undefined,
+              weekdays: parseWeekdays(customer.weekdays),
               visitPeriodicity: customer.visitPeriodicity || undefined,
               sellerId: customer.sellerId || undefined
             },
             {
               sellerId: currentCustomer.sellerId || undefined,
-              weekdays: currentCustomer.weekdays ? (Array.isArray(currentCustomer.weekdays) ? currentCustomer.weekdays : [currentCustomer.weekdays]) : undefined,
+              weekdays: parseWeekdays(currentCustomer.weekdays),
               visitPeriodicity: currentCustomer.visitPeriodicity || undefined
             }
           );
