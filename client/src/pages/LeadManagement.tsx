@@ -40,7 +40,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, Search, MapPin } from "lucide-react";
+import { Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, Search, MapPin, Camera, X } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -51,6 +51,7 @@ const leadFormSchema = z.object({
   address: z.string().min(1, "Endereço é obrigatório"),
   latitude: z.coerce.number().optional(),
   longitude: z.coerce.number().optional(),
+  photoUrl: z.string().optional(),
   notes: z.string().optional(),
   scheduledDate: z.string().optional(),
   sellerId: z.string().min(1, "Vendedor é obrigatório"),
@@ -65,6 +66,7 @@ interface Lead {
   address: string;
   latitude?: number;
   longitude?: number;
+  photoUrl?: string;
   notes?: string;
   status: "pending" | "scheduled" | "visited" | "converted" | "discarded";
   scheduledDate?: string;
@@ -98,6 +100,55 @@ const statusLabel = {
   discarded: "Descartado",
 };
 
+// Helper function to compress image
+const compressImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Resize to max 800px on longest edge
+        const maxSize = 800;
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > height && width > maxSize) {
+          height = (height * maxSize) / width;
+          width = maxSize;
+        } else if (height > maxSize) {
+          width = (width * maxSize) / height;
+          height = maxSize;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Compress with quality 0.7 (70%)
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        
+        // Check size (max ~350KB)
+        const sizeInBytes = (compressedDataUrl.length * 3) / 4;
+        const sizeInKB = sizeInBytes / 1024;
+        
+        if (sizeInKB > 350) {
+          reject(new Error(`Imagem muito grande (${Math.round(sizeInKB)}KB). Máximo permitido: 350KB`));
+          return;
+        }
+        
+        resolve(compressedDataUrl);
+      };
+      img.onerror = () => reject(new Error('Erro ao processar imagem'));
+    };
+    reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+  });
+};
+
 export default function LeadManagement() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -105,6 +156,7 @@ export default function LeadManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [capturingLocation, setCapturingLocation] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   // Fetch leads
   const { data: leads = [], isLoading } = useQuery<Lead[]>({
@@ -127,6 +179,7 @@ export default function LeadManagement() {
       address: "",
       latitude: undefined,
       longitude: undefined,
+      photoUrl: "",
       notes: "",
       scheduledDate: "",
       sellerId: "",
@@ -247,21 +300,72 @@ export default function LeadManagement() {
   const handleOpenDialog = (lead?: Lead) => {
     if (lead) {
       setEditingLead(lead);
+      setPhotoPreview(lead.photoUrl || null);
       form.reset({
         name: lead.name,
         phone: lead.phone,
         address: lead.address,
         latitude: lead.latitude,
         longitude: lead.longitude,
+        photoUrl: lead.photoUrl || "",
         notes: lead.notes || "",
         scheduledDate: lead.scheduledDate || "",
         sellerId: lead.sellerId,
       });
     } else {
       setEditingLead(null);
+      setPhotoPreview(null);
       form.reset();
     }
     setIsDialogOpen(true);
+  };
+
+  const handlePhotoCapture = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Arquivo inválido",
+        description: "Por favor, selecione uma imagem.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate file size (max 5MB before compression)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Imagem muito grande",
+        description: "A imagem deve ter no máximo 5MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const compressedImage = await compressImage(file);
+      setPhotoPreview(compressedImage);
+      form.setValue("photoUrl", compressedImage);
+      
+      const sizeInKB = Math.round((compressedImage.length * 3) / (4 * 1024));
+      toast({
+        title: "Foto capturada!",
+        description: `Imagem comprimida para ${sizeInKB}KB`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro ao processar foto",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoPreview(null);
+    form.setValue("photoUrl", "");
   };
 
   const handleSubmit = (data: LeadFormData) => {
@@ -610,6 +714,50 @@ export default function LeadManagement() {
                   </FormItem>
                 )}
               />
+              
+              {/* Photo Capture */}
+              <div className="space-y-3">
+                <label className="text-sm font-medium">Foto do Local</label>
+                {photoPreview ? (
+                  <div className="relative">
+                    <img 
+                      src={photoPreview} 
+                      alt="Preview" 
+                      className="w-full h-48 object-cover rounded-lg border"
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleRemovePhoto}
+                      className="absolute top-2 right-2"
+                      data-testid="button-remove-photo"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoCapture}
+                      className="hidden"
+                      id="photo-input"
+                      data-testid="input-photo-capture"
+                    />
+                    <label
+                      htmlFor="photo-input"
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-md cursor-pointer hover:bg-gray-50 transition-colors"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Tirar Foto</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-4">
                   <FormField

@@ -1250,6 +1250,9 @@ export const leads = pgTable("leads", {
   latitude: decimal("latitude", { precision: 9, scale: 6 }),
   longitude: decimal("longitude", { precision: 10, scale: 6 }),
   
+  // Foto do local/prospect (base64)
+  photoUrl: text("photo_url"), // Foto capturada da câmera em base64
+  
   // Data agendada para visita (inclusão na rota) - timestamp para integração com sistema de rotas
   scheduledDate: timestamp("scheduled_date"),
   
