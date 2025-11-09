@@ -6,7 +6,7 @@ import type { Customer, CartItem } from '../types';
 interface CheckoutFormProps {
   cartItems: CartItem[];
   total: number;
-  onSubmit: (customer: Customer, paymentMethod: 'pix' | 'card' | 'boleto') => void;
+  onSubmit: (customer: Customer, paymentMethod: 'pix' | 'boleto') => void;
   onBack: () => void;
   isProcessing: boolean;
 }
@@ -23,7 +23,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     customerType: 'pessoa_fisica',
   });
   
-  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
+  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'boleto'>('pix');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Preencher dados do contexto quando disponível
@@ -247,38 +247,18 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <input
                   type="radio"
                   name="payment"
-                  value="card"
-                  checked={paymentMethod === 'card'}
-                  onChange={() => setPaymentMethod('card')}
+                  value="boleto"
+                  checked={paymentMethod === 'boleto'}
+                  onChange={() => setPaymentMethod('boleto')}
                   className="w-5 h-5"
-                  data-testid="payment-card"
+                  data-testid="payment-boleto"
                 />
                 <div className="flex-1">
-                  <div className="font-semibold">Cartão de Crédito/Débito</div>
-                  <div className="text-sm text-gray-600">Parcelamento disponível</div>
+                  <div className="font-semibold">Boleto Bancário</div>
+                  <div className="text-sm text-gray-600">Prazo de 7 dias para pagamento</div>
                 </div>
-                <span className="text-2xl">💳</span>
+                <span className="text-2xl">📄</span>
               </label>
-
-              {/* Boleto disponível apenas para pessoa jurídica */}
-              {formData.customerType === 'pessoa_juridica' && (
-                <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
-                  <input
-                    type="radio"
-                    name="payment"
-                    value="boleto"
-                    checked={paymentMethod === 'boleto'}
-                    onChange={() => setPaymentMethod('boleto')}
-                    className="w-5 h-5"
-                    data-testid="payment-boleto"
-                  />
-                  <div className="flex-1">
-                    <div className="font-semibold">Boleto Bancário</div>
-                    <div className="text-sm text-gray-600">Vence em 7 dias</div>
-                  </div>
-                  <span className="text-2xl">📄</span>
-                </label>
-              )}
             </div>
           </div>
 
