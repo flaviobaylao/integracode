@@ -393,6 +393,36 @@ export class OmieService {
     }
   }
 
+  // Atualizar vendedor responsável de um cliente no Omie
+  async updateCustomerVendor(omieClientCode: number, omieVendorCode: number): Promise<{ success: boolean; message: string }> {
+    try {
+      console.log(`🔄 Atualizando vendedor do cliente ${omieClientCode} no Omie para vendedor ${omieVendorCode}...`);
+      
+      const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', {
+        codigo_cliente_omie: omieClientCode,
+        recomendacoes: {
+          codigo_vendedor: omieVendorCode
+        }
+      });
+
+      if (response && response.codigo_cliente_omie) {
+        console.log(`✅ Vendedor do cliente ${omieClientCode} atualizado com sucesso no Omie (vendedor: ${omieVendorCode})`);
+        return {
+          success: true,
+          message: response.descricao_status || 'Vendedor atualizado com sucesso no Omie'
+        };
+      } else {
+        throw new Error('Resposta inválida da API Omie ao atualizar vendedor do cliente');
+      }
+    } catch (error) {
+      console.error(`❌ Erro ao atualizar vendedor do cliente ${omieClientCode} no Omie:`, error);
+      return {
+        success: false,
+        message: `Erro ao atualizar vendedor no Omie: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      };
+    }
+  }
+
   // ==================== MÉTODOS AUXILIARES PARA VENDEDORES E ETAPAS ====================
   
   // Cache para vendedores, etapas e clientes (para evitar múltiplas requisições)
