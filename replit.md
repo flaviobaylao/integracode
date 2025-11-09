@@ -31,6 +31,14 @@
 - **Data Validation & Integrity**: 3-layer protection for sales card scheduling, automated seller validation, and admin tools for diagnosis and correction. Critical audit identified 362 active customers without coordinates, which impacts route generation.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices, including product mapping and customer registration. Sync status tracking.
   - **Automatic Vendor Sync (Nov 2025)**: When a customer's seller is changed in "Gestão de Clientes", the system automatically updates the responsible vendor (`recomendacoes.codigo_vendedor`) in Omie ERP via `UpsertCliente` API call. Sync only occurs for Omie-sourced customers (ID prefix: `omie-client-*`) and Omie vendors (ID prefix: `omie-vendor-*`). Includes validation of numeric codes, graceful degradation on sync failures (logs errors without blocking customer updates), and detailed logging for debugging.
+  - **CFOP Fallback Mechanism (Nov 2025)**: Implemented ConsultarNF API fallback with p-limit concurrency control (5 concurrent requests) to retrieve missing CFOPs from invoices. Reduces null CFOP values to near-zero (92-100% success rate). Uses Map cache to avoid duplicate API calls and respects Omie rate limits.
+  - **Enhanced CFOP Classification (Nov 2025)**: Five billing types for accurate financial reporting:
+    - **Venda** (CFOP 5.101): Normal sales, counted in revenue
+    - **Devolução** (CFOP 1.201, 1.202-1.204, 1.411, 1.556, 2.201-2.204, 2.411, 2.556): Returns of sales, **subtracted from revenue**
+    - **Entrada** (CFOP 1.151, 1.152, 1.213, 2.151, 2.152, 2.213): Transfers between branches or cooperative returns, **do NOT affect sales calculations**
+    - **Amostra** (CFOP 5.910, 5.911, 6.910, 6.911): Free samples and donations, not counted in sales
+    - **Troca** (CFOP 5.949, 6.949): Product exchanges, not counted in sales
+  - **Billing Schema**: Added `billing_type` enum with 5 values ('venda', 'devolucao', 'entrada', 'amostra', 'troca'). Sales metrics calculation: `vendas_líquidas = vendas - devoluções` (entrada/amostra/troca excluded).
 - **HR Management (RH)**: HR tracking system for seller performance (monthly mileage, work hours management, and daily attendance percentage).
 - **E-commerce Platform (Hotsite Instagram)**:
     - **Access**: Available at `/shop` with public API routes.

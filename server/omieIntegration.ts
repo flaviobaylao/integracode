@@ -201,9 +201,11 @@ export class OmieService {
     const normalizedCfop = cfop?.replace(/\./g, '') || '';
     
     // CFOPs de entrada/transferência (NÃO afetam vendas)
+    // 1.151 = Transferência para industrialização (entrada entre filiais)
     // 1.152 = Transferência para comercialização (entrada entre filiais)
     // 1.213 = Devolução de remessa para demonstração (ato cooperativo)
-    const entradaCfops = ['1152', '1213', '2152', '2213'];
+    // 2.xxx = Operações interestaduais de entrada/transferência
+    const entradaCfops = ['1151', '1152', '1213', '2151', '2152', '2213'];
     if (entradaCfops.includes(normalizedCfop)) {
       return 'entrada';
     }
@@ -214,7 +216,7 @@ export class OmieService {
     // 1.411 = Devolução de venda de produção do estabelecimento industrializador
     // 1.556 = Devolução de venda de bem do ativo imobilizado
     // 2.xxx = Operações interestaduais de devolução de venda
-    const devolucaoCfops = ['1151', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    const devolucaoCfops = ['1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
     if (devolucaoCfops.includes(normalizedCfop)) {
       return 'devolucao';
     }
