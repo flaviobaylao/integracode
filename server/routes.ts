@@ -2224,8 +2224,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      // Buscar pedidos com source='hotsite' usando o storage
-      const allCards = await storage.getSalesCards({});
+      // Buscar TODOS os pedidos (sem filtro de sellerId)
+      const allCards = await storage.getSalesCards();
       console.log('📊 [HOTSITE-ORDERS] Total de sales_cards:', allCards.length);
       
       // Filtrar apenas pedidos do hotsite
