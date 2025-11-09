@@ -1004,6 +1004,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
       }
+
+      // Sincronizar mudança de vendedor com Omie
+      if (hasSellerChanged && customer.sellerId) {
+        try {
+          // Verificar se é cliente do Omie (id começa com "omie-client-")
+          const isOmieClient = id.startsWith('omie-client-');
+          // Verificar se é vendedor do Omie (sellerId começa com "omie-vendor-")
+          const isOmieVendor = customer.sellerId.startsWith('omie-vendor-');
+          
+          if (isOmieClient && isOmieVendor) {
+            // Extrair códigos numéricos do Omie
+            const omieClientCode = parseInt(id.replace('omie-client-', ''));
+            const omieVendorCode = parseInt(customer.sellerId.replace('omie-vendor-', ''));
+            
+            // Validar códigos numéricos
+            if (isNaN(omieClientCode) || isNaN(omieVendorCode)) {
+              console.error('[OMIE-SYNC] Códigos Omie inválidos', {
+                customerId: id,
+                omieClientCode,
+                omieVendorCode
+              });
+            } else {
+              const omieService = getOmieService(storage);
+              if (!omieService) {
+                console.warn('[OMIE-SYNC] Serviço Omie não está configurado');
+              } else {
+                console.info('[OMIE-SYNC] Sincronizando mudança de vendedor com Omie', {
+                  customerId: id,
+                  omieClientCode,
+                  previousSellerId: currentCustomer.sellerId,
+                  newSellerId: customer.sellerId,
+                  omieVendorCode
+                });
+                
+                const omieResult = await omieService.updateCustomerVendor(omieClientCode, omieVendorCode);
+                
+                if (omieResult.success) {
+                  console.info('[OMIE-SYNC] Vendedor atualizado no Omie com sucesso', {
+                    customerId: id,
+                    omieClientCode,
+                    omieVendorCode,
+                    message: omieResult.message
+                  });
+                } else {
+                  console.warn('[OMIE-SYNC] Falha ao atualizar vendedor no Omie', {
+                    customerId: id,
+                    message: omieResult.message
+                  });
+                }
+              }
+            }
+          } else {
+            if (!isOmieClient) {
+              console.log('[OMIE-SYNC] Cliente não é do Omie, pulando sincronização de vendedor');
+            }
+            if (!isOmieVendor) {
+              console.log('[OMIE-SYNC] Vendedor não é do Omie, pulando sincronização de vendedor');
+            }
+          }
+        } catch (omieError: any) {
+          console.error('[OMIE-SYNC] Erro ao sincronizar vendedor com Omie', {
+            customerId: id,
+            error: omieError.message
+          });
+          // Não bloquear a atualização do cliente em caso de erro no Omie
+        }
+      }
       
       res.json(customer);
     } catch (error) {
