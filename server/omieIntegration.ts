@@ -1629,13 +1629,8 @@ export class OmieService {
         }
       }
       
-      // Determinar tipo de faturamento
-      let billingType = 'venda';
-      if (order.informacoes_adicionais?.tipo_operacao) {
-        const tipoOp = order.informacoes_adicionais.tipo_operacao.toLowerCase();
-        if (tipoOp.includes('troca')) billingType = 'troca';
-        else if (tipoOp.includes('amostra')) billingType = 'amostra';
-      }
+      // Determinar tipo de faturamento baseado no CFOP (usa função especializada)
+      const billingType = this.determineBillingType(cfop);
       
       // Produtos do pedido
       const products = (order.det || []).map((item: any) => ({
