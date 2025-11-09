@@ -3084,6 +3084,12 @@ export class OmieService {
     errors: any[];
     isComplete: boolean;
     message: string;
+    cfopFallbackStats?: {
+      attempts: number;
+      successes: number;
+      failures: number;
+      stillMissing: string[];
+    };
   }> {
     try {
       console.log('🔄 Iniciando sincronização de TODAS as notas fiscais históricas (apenas NF-e autorizadas)...');
@@ -3093,6 +3099,15 @@ export class OmieService {
       let updated = 0;
       let skipped = 0;
       const errors: any[] = [];
+      
+      // Cache de CFOPs e estatísticas de fallback
+      const cfopCache = new Map<string, string>();
+      const fallbackStats = {
+        attempts: 0,
+        successes: 0,
+        failures: 0,
+        stillMissing: [] as string[]
+      };
       
       let page = 1;
       let hasMorePages = true;
@@ -3239,7 +3254,38 @@ export class OmieService {
               }
               
               // Extrair CFOP do primeiro produto da nota fiscal
-              const cfop = invoice.det?.[0]?.prod?.CFOP || '';
+              let cfop = invoice.det?.[0]?.prod?.CFOP || '';
+              
+              // FALLBACK: Se CFOP ausente, buscar via ConsultarNF (com cache)
+              if (!cfop && invoiceNumber) {
+                // Verificar cache primeiro
+                if (cfopCache.has(invoiceNumber)) {
+                  cfop = cfopCache.get(invoiceNumber) || '';
+                  console.log(`📦 CFOP da NF ${invoiceNumber} recuperado do cache: ${cfop}`);
+                } else {
+                  // Buscar via API
+                  console.log(`⚠️ CFOP ausente para NF ${invoiceNumber}, buscando via fallback...`);
+                  fallbackStats.attempts++;
+                  
+                  try {
+                    const fetchedCfop = await this.getInvoiceCFOP(invoiceNumber);
+                    if (fetchedCfop) {
+                      cfop = fetchedCfop;
+                      cfopCache.set(invoiceNumber, cfop);
+                      fallbackStats.successes++;
+                      console.log(`✅ CFOP ${cfop} obtido via fallback para NF ${invoiceNumber}`);
+                    } else {
+                      fallbackStats.failures++;
+                      fallbackStats.stillMissing.push(invoiceNumber);
+                      console.log(`❌ Fallback falhou para NF ${invoiceNumber} - CFOP continua ausente`);
+                    }
+                  } catch (error: any) {
+                    fallbackStats.failures++;
+                    fallbackStats.stillMissing.push(invoiceNumber);
+                    console.error(`❌ Erro no fallback para NF ${invoiceNumber}:`, error.message);
+                  }
+                }
+              }
               
               // Determinar tipo de faturamento baseado no CFOP (usa função especializada)
               const billingType = this.determineBillingType(cfop);
@@ -3430,6 +3476,15 @@ export class OmieService {
       console.log(`⚠️ Rejeitados: ${skipped}`);
       console.log(`❌ Erros: ${errors.length}`);
       
+      // Log de estatísticas de fallback de CFOP
+      console.log(`\n📋 ESTATÍSTICAS DE FALLBACK DE CFOP:`);
+      console.log(`🔍 Tentativas: ${fallbackStats.attempts}`);
+      console.log(`✅ Sucessos: ${fallbackStats.successes}`);
+      console.log(`❌ Falhas: ${fallbackStats.failures}`);
+      if (fallbackStats.stillMissing.length > 0) {
+        console.log(`⚠️ Notas ainda sem CFOP (${fallbackStats.stillMissing.length}): ${fallbackStats.stillMissing.slice(0, 10).join(', ')}${fallbackStats.stillMissing.length > 10 ? '...' : ''}`);
+      }
+      
       const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
       
       return {
@@ -3439,7 +3494,8 @@ export class OmieService {
         skipped,
         errors,
         isComplete,
-        message: `Sincronização concluída. Total: ${totalProcessed}, Importados: ${imported}, Atualizados: ${updated}, Rejeitados: ${skipped}. ${recordsProcessedThisSync} registros processados nesta execução.`
+        message: `Sincronização concluída. Total: ${totalProcessed}, Importados: ${imported}, Atualizados: ${updated}, Rejeitados: ${skipped}. ${recordsProcessedThisSync} registros processados nesta execução.`,
+        cfopFallbackStats: fallbackStats
       };
       
     } catch (error) {
