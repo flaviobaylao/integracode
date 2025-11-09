@@ -199,6 +199,13 @@ export const blockedOrderStatusEnum = pgEnum('blocked_order_status', [
   'sent_to_omie'  // Enviado para Omie
 ]);
 
+// Omie sync status enum - Para rastrear envio de pedidos do hotsite ao Omie
+export const omieSyncStatusEnum = pgEnum('omie_sync_status', [
+  'aguardando_omie',  // Aguardando envio ao Omie
+  'enviado_omie',     // Enviado com sucesso ao Omie
+  'erro_omie'         // Erro ao enviar ao Omie
+]);
+
 // Delivery failure reasons enum
 export const deliveryFailureReasonEnum = pgEnum('delivery_failure_reason', [
   'customer_absent',     // Cliente ausente
@@ -264,8 +271,14 @@ export const salesCards = pgTable("sales_cards", {
   trackingCode: varchar("tracking_code"),
   
   // Integração com Omie ERP
-  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP
+  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP (deprecated, usar omieOrderNumber)
   invoiceNumber: varchar("invoice_number"), // Número da nota fiscal emitida
+  
+  // Hotsite → Omie sync tracking (Nov 2025)
+  omieOrderNumber: varchar("omie_order_number"), // Número do pedido retornado pelo Omie ao criar pedido
+  omieSyncStatus: omieSyncStatusEnum("omie_sync_status"), // Status de sincronização com Omie (apenas para pedidos do hotsite)
+  omieSentAt: timestamp("omie_sent_at"), // Data/hora de envio ao Omie
+  omieErrorMessage: text("omie_error_message"), // Mensagem de erro caso envio falhe
   
   // Novas funcionalidades - Pagamento e Operação
   paymentMethod: paymentMethodEnum("payment_method").notNull().default('a_vista'),
@@ -538,6 +551,25 @@ export const syncStates = pgTable("sync_states", {
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Omie sync attempts - Log de tentativas de envio de pedidos do hotsite ao Omie (Nov 2025)
+export const omieSyncAttempts = pgTable("omie_sync_attempts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesCardId: varchar("sales_card_id").notNull().references(() => salesCards.id, { onDelete: 'cascade' }),
+  status: omieSyncStatusEnum("status").notNull(), // aguardando_omie, enviado_omie, erro_omie
+  attemptedBy: varchar("attempted_by").notNull(), // ID do usuário que tentou enviar
+  
+  // Payload enviado ao Omie
+  requestPayload: jsonb("request_payload").$type<any>(), // Dados do pedido enviado
+  
+  // Resposta do Omie
+  responsePayload: jsonb("response_payload").$type<any>(), // Resposta completa do Omie
+  omieOrderNumber: varchar("omie_order_number"), // Número do pedido retornado
+  errorMessage: text("error_message"), // Mensagem de erro detalhada
+  
+  attemptedAt: timestamp("attempted_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Blocked orders table - para pedidos bloqueados
