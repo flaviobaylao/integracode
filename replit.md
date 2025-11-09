@@ -54,6 +54,15 @@
     - **Review System**: Customer product reviews with ratings, comments, and admin approval.
     - **Stock Management**: Accepts orders regardless of inventory levels.
     - **Order Management**: Dedicated page for managing hotsite orders with filtering and notification badges.
+    - **Omie Submission Workflow (Nov 2025)**: Hotsite orders can be reviewed and manually sent to Omie ERP from dedicated management interface. Features:
+      - Enum `omieSyncStatus` with states: null (not sent), 'aguardando_omie' (pending), 'enviado_omie' (sent), 'erro_omie' (failed)
+      - Fields `omie_order_number`, `omie_sent_at`, `omie_error_message` in sales_cards for tracking
+      - Audit table `omie_sync_attempts` logs all submission attempts
+      - POST `/api/hotsite-orders/:id/send-to-omie` endpoint with role-based access (admin/coordinator/administrative)
+      - Prevents duplicate sends (validates status before submission)
+      - UI displays sync status badges, Omie order numbers, and send buttons
+      - Smart toast notifications distinguish demo/stub responses from real Omie integration
+      - **Status**: Infrastructure complete, real Omie API integration pending (Task 4)
 
 # External Dependencies
 
