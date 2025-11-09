@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User } from 'lucide-react';
+import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Send, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useToast } from '@/hooks/use-toast';
+import { apiRequest, queryClient } from '@/lib/queryClient';
 
 interface HotsiteOrder {
   id: string;
@@ -29,6 +31,11 @@ interface HotsiteOrder {
   operationType?: string;
   notes?: string;
   source?: string;
+  // Novos campos de sync com Omie
+  omieSyncStatus?: 'aguardando_omie' | 'enviado_omie' | 'erro_omie' | null;
+  omieOrderNumber?: string;
+  omieSentAt?: string;
+  omieErrorMessage?: string;
 }
 
 interface Customer {
@@ -43,6 +50,7 @@ interface Customer {
 export default function HotsiteOrders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const { toast } = useToast();
 
   // Buscar pedidos do hotsite
   const { data: hotsiteData, isLoading: isLoadingOrders } = useQuery<{
@@ -60,6 +68,35 @@ export default function HotsiteOrders() {
 
   const orders = hotsiteData?.orders || [];
   const debugInfo = hotsiteData?.debug;
+
+  // Mutation para enviar pedido ao Omie
+  const sendToOmieMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest(`/api/hotsite-orders/${orderId}/send-to-omie`, {
+        method: 'POST',
+      });
+    },
+    onSuccess: (data: any) => {
+      const orderNumber = data?.omieOrderNumber || 'pendente';
+      const isDemo = orderNumber.startsWith('STUB');
+      
+      toast({
+        title: isDemo ? 'Demonstração' : 'Pedido enviado ao Omie!',
+        description: isDemo 
+          ? 'Integração com Omie em desenvolvimento. Este é um envio simulado.' 
+          : `Pedido #${orderNumber} criado com sucesso`,
+        variant: isDemo ? 'default' : 'default',
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao enviar pedido',
+        description: error.message || 'Ocorreu um erro ao enviar o pedido ao Omie',
+        variant: 'destructive',
+      });
+    },
+  });
 
   // Buscar clientes para exibir nomes
   const { data: customers } = useQuery<Customer[]>({
@@ -120,6 +157,28 @@ export default function HotsiteOrders() {
       amostra: 'Amostra',
     };
     return typeMap[type || ''] || type || 'Venda';
+  };
+
+  const getOmieSyncBadge = (omieSyncStatus?: string | null) => {
+    if (!omieSyncStatus) {
+      return <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />Pendente</Badge>;
+    }
+    
+    const statusMap: Record<string, { label: string; variant: 'default' | 'success' | 'destructive'; icon: any }> = {
+      aguardando_omie: { label: 'Aguardando', variant: 'default', icon: Clock },
+      enviado_omie: { label: 'Enviado', variant: 'success', icon: CheckCircle },
+      erro_omie: { label: 'Erro', variant: 'destructive', icon: XCircle },
+    };
+    
+    const statusInfo = statusMap[omieSyncStatus] || { label: omieSyncStatus, variant: 'secondary', icon: Clock };
+    const Icon = statusInfo.icon;
+    
+    return (
+      <Badge variant={statusInfo.variant as any} className="gap-1">
+        <Icon className="h-3 w-3" />
+        {statusInfo.label}
+      </Badge>
+    );
   };
 
   return (
@@ -297,13 +356,15 @@ export default function HotsiteOrders() {
                       <TableHead>Valor</TableHead>
                       <TableHead>Pagamento</TableHead>
                       <TableHead>Tipo</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>Status Omie</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredOrders.map((order) => {
                       const customer = customersMap[order.customerId];
                       const customerName = customer?.fantasy_name || customer?.name || 'Cliente não encontrado';
+                      const canSendToOmie = !order.omieSyncStatus || order.omieSyncStatus === 'erro_omie';
                       
                       return (
                         <TableRow key={order.id} data-testid={`row-order-${order.id}`}>
@@ -346,7 +407,41 @@ export default function HotsiteOrders() {
                           </TableCell>
                           <TableCell>{getPaymentMethodLabel(order.paymentMethod)}</TableCell>
                           <TableCell>{getOperationTypeLabel(order.operationType)}</TableCell>
-                          <TableCell>{getStatusBadge(order.status)}</TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              {getOmieSyncBadge(order.omieSyncStatus)}
+                              {order.omieOrderNumber && (
+                                <div className="text-xs text-gray-500">
+                                  Pedido #{order.omieOrderNumber}
+                                </div>
+                              )}
+                              {order.omieErrorMessage && (
+                                <div className="text-xs text-red-600 max-w-xs truncate" title={order.omieErrorMessage}>
+                                  {order.omieErrorMessage}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {canSendToOmie && (
+                              <Button
+                                size="sm"
+                                onClick={() => sendToOmieMutation.mutate(order.id)}
+                                disabled={sendToOmieMutation.isPending}
+                                className="gap-1"
+                                data-testid={`button-send-to-omie-${order.id}`}
+                              >
+                                <Send className="h-3 w-3" />
+                                {sendToOmieMutation.isPending ? 'Enviando...' : 'Enviar para Omie'}
+                              </Button>
+                            )}
+                            {order.omieSyncStatus === 'enviado_omie' && (
+                              <Badge variant="success" className="gap-1">
+                                <CheckCircle className="h-3 w-3" />
+                                Enviado
+                              </Badge>
+                            )}
+                          </TableCell>
                         </TableRow>
                       );
                     })}

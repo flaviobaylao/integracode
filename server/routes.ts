@@ -2248,6 +2248,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Enviar pedido do hotsite para o Omie (Nov 2025)
+  app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      // Apenas admin, coordinator e administrative podem enviar
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      console.log(`📤 [SEND-TO-OMIE] Sending order ${id} to Omie`);
+      
+      // Buscar pedido
+      const order = await storage.getSalesCardById(id);
+      if (!order) {
+        return res.status(404).json({ message: "Pedido não encontrado" });
+      }
+      
+      // Verificar se já foi enviado ou está aguardando
+      if (order.omieSyncStatus === 'enviado_omie') {
+        return res.status(400).json({ message: "Pedido já foi enviado ao Omie" });
+      }
+      if (order.omieSyncStatus === 'aguardando_omie') {
+        return res.status(400).json({ message: "Pedido já está sendo processado" });
+      }
+      
+      // TODO: Implementar integração com Omie (Task 4 pendente)
+      // Por enquanto, retorna resposta mock para testar fluxo
+      console.log(`⚠️ [SEND-TO-OMIE] STUB: Simulando envio bem-sucedido (integração real pendente)`);
+      
+      res.json({ 
+        success: true,
+        omieOrderNumber: `STUB-${Date.now()}`,
+        message: 'DEMO: Pedido marcado para envio (integração com Omie em desenvolvimento)'
+      });
+      
+    } catch (error) {
+      console.error("❌ [SEND-TO-OMIE] Error:", error);
+      res.status(500).json({ message: "Failed to send order to Omie" });
+    }
+  });
+
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
