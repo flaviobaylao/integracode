@@ -49,7 +49,7 @@
     - **Dynamic Pricing**: Five price tables based on customer type.
     - **Security**: Server-side price validation, stock verification, and validated CPF/CNPJ enforcement.
     - **Integration**: Orders automatically registered in Sistema Integra as `sales_cards` with `source: 'hotsite'`.
-    - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto (PJ only).
+    - **Payment Methods (Nov 2025)**: Aceita apenas **PIX e Boleto Bancário** com prazo de 7 dias para pagamento. Cartão de crédito/débito removido para simplificar processo de cobrança.
     - **Product Features**: Gallery system with multiple images, touch-swipe navigation, zoom, and admin interface for image upload.
     - **Review System**: Customer product reviews with ratings, comments, and admin approval.
     - **Stock Management**: Accepts orders regardless of inventory levels.
