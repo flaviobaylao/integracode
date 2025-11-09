@@ -20,6 +20,7 @@ import {
   insertSalesGoalSchema,
   insertRouteSchema,
   insertUserSchema,
+  insertLeadSchema,
   visitAgenda,
   users,
   salesCards,
@@ -1460,6 +1461,246 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error removing product image:", error);
       res.status(500).json({ message: "Failed to remove image" });
+    }
+  });
+
+  // ============================================================================
+  // LEADS MANAGEMENT ROUTES
+  // ============================================================================
+  
+  // GET all leads with filters (name, date, seller, status)
+  app.get('/api/leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, scheduledDate, status } = req.query;
+      
+      // Controle de acesso: vendedores veem apenas seus leads
+      let targetSellerId: string | undefined;
+      if (user.role === 'vendedor') {
+        targetSellerId = user.id; // Vendedor vê apenas seus leads
+      } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        targetSellerId = sellerId; // Admin/coordinator pode filtrar por vendedor
+      } else {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const filters: any = {};
+      if (targetSellerId) filters.sellerId = targetSellerId;
+      if (scheduledDate) filters.scheduledDate = new Date(scheduledDate as string);
+      if (status) filters.status = status as string;
+      
+      const leads = await storage.getLeads(filters);
+      res.json(leads);
+    } catch (error) {
+      console.error("Error fetching leads:", error);
+      res.status(500).json({ message: "Failed to fetch leads" });
+    }
+  });
+  
+  // GET single lead
+  app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      const lead = await storage.getLead(id);
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      // Controle de acesso: vendedores só podem ver seus próprios leads
+      if (user.role === 'vendedor' && lead.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      res.json(lead);
+    } catch (error) {
+      console.error("Error fetching lead:", error);
+      res.status(500).json({ message: "Failed to fetch lead" });
+    }
+  });
+  
+  // CREATE new lead
+  app.post('/api/leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin, coordinator, administrative e vendedor podem criar leads
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Processar scheduledDate para timezone Brasil
+      const cleanedData = {
+        ...req.body,
+        latitude: req.body.latitude === '' ? null : req.body.latitude,
+        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        scheduledDate: req.body.scheduledDate 
+          ? fromZonedTime(`${req.body.scheduledDate}T00:00:00`, 'America/Sao_Paulo')
+          : null,
+      };
+      
+      const data = insertLeadSchema.parse(cleanedData);
+      
+      // Vendedores só podem criar leads para si mesmos
+      if (user.role === 'vendedor' && data.sellerId !== user.id) {
+        return res.status(403).json({ message: "Vendedores só podem criar leads para si mesmos" });
+      }
+      
+      const lead = await storage.createLead(data);
+      res.status(201).json(lead);
+    } catch (error) {
+      console.error("Error creating lead:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create lead" });
+    }
+  });
+  
+  // UPDATE lead
+  app.put('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      const existingLead = await storage.getLead(id);
+      if (!existingLead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      // Controle de acesso: vendedores só podem editar seus próprios leads
+      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Processar scheduledDate para timezone Brasil
+      const cleanedData = {
+        ...req.body,
+        latitude: req.body.latitude === '' ? null : req.body.latitude,
+        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        scheduledDate: req.body.scheduledDate 
+          ? fromZonedTime(`${req.body.scheduledDate}T00:00:00`, 'America/Sao_Paulo')
+          : undefined,
+      };
+      
+      const lead = await storage.updateLead(id, cleanedData);
+      res.json(lead);
+    } catch (error) {
+      console.error("Error updating lead:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update lead" });
+    }
+  });
+  
+  // DELETE lead (soft delete)
+  app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      const existingLead = await storage.getLead(id);
+      if (!existingLead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      // Apenas admin/coordinator podem deletar leads
+      if (!['admin', 'coordinator'].includes(user.role)) {
+        return res.status(403).json({ message: "Apenas administradores podem deletar leads" });
+      }
+      
+      await storage.deleteLead(id);
+      res.json({ message: "Lead deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting lead:", error);
+      res.status(500).json({ message: "Failed to delete lead" });
+    }
+  });
+  
+  // DISCARD lead with reason
+  app.post('/api/leads/:id/discard', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const { reason } = req.body;
+      
+      if (!reason) {
+        return res.status(400).json({ message: "Motivo de descarte é obrigatório" });
+      }
+      
+      const existingLead = await storage.getLead(id);
+      if (!existingLead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      // Controle de acesso: vendedores podem descartar seus próprios leads
+      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const lead = await storage.discardLead(id, reason);
+      res.json(lead);
+    } catch (error) {
+      console.error("Error discarding lead:", error);
+      res.status(500).json({ message: "Failed to discard lead" });
+    }
+  });
+  
+  // CONVERT lead to customer (transactional)
+  app.post('/api/leads/:id/convert', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const customerData = req.body;
+      
+      const existingLead = await storage.getLead(id);
+      if (!existingLead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      // Controle de acesso
+      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      if (existingLead.status === 'converted') {
+        return res.status(400).json({ message: "Lead já foi convertido" });
+      }
+      
+      // Pré-processar dados do cliente
+      const cleanedCustomerData = {
+        ...customerData,
+        latitude: existingLead.latitude,
+        longitude: existingLead.longitude,
+        sellerId: existingLead.sellerId,
+        fantasyName: customerData.fantasyName || existingLead.fantasyName,
+        phone: customerData.phone || existingLead.phone,
+      };
+      
+      const validatedData = insertCustomerSchema.parse(cleanedCustomerData);
+      
+      // TRANSAÇÃO ATÔMICA: Criar cliente + Atualizar lead + Criar permanent card
+      const customer = await storage.createCustomer(validatedData);
+      
+      // Criar permanent card para o novo cliente
+      await storage.getOrCreatePermanentCard(customer.id, customer.sellerId);
+      
+      // Marcar lead como convertido
+      const updatedLead = await storage.convertLeadToCustomer(id, customer.id);
+      
+      res.status(201).json({
+        message: "Lead convertido com sucesso",
+        customer,
+        lead: updatedLead
+      });
+    } catch (error) {
+      console.error("Error converting lead:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to convert lead" });
     }
   });
 

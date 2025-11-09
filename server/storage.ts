@@ -20,6 +20,7 @@ import {
   deliveryRoutes,
   deliveryRouteStops,
   syncStatus,
+  leads,
   type User,
   type UpsertUser,
   type Route,
@@ -49,6 +50,8 @@ import {
   type ExportedReport,
   type SyncStatus,
   type InsertSyncStatus,
+  type Lead,
+  type InsertLead,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -265,6 +268,16 @@ export interface IStorage {
     message?: string; 
     recordsProcessed?: number;
   }): Promise<SyncStatus>;
+
+  // Lead operations
+  getLeads(filters?: { sellerId?: string; scheduledDate?: Date; status?: string }): Promise<Lead[]>;
+  getLead(id: string): Promise<Lead | undefined>;
+  createLead(lead: InsertLead): Promise<Lead>;
+  updateLead(id: string, lead: Partial<InsertLead>): Promise<Lead>;
+  deleteLead(id: string): Promise<void>;
+  getLeadsByDate(date: Date, sellerId?: string): Promise<Lead[]>;
+  convertLeadToCustomer(leadId: string, customerId: string): Promise<Lead>;
+  discardLead(leadId: string, reason: string): Promise<Lead>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -4633,6 +4646,124 @@ export class DatabaseStorage implements IStorage {
 
   async getSyncStatuses(): Promise<SyncStatus[]> {
     return await db.select().from(syncStatus);
+  }
+
+  // Lead operations
+  async getLeads(filters?: { sellerId?: string; scheduledDate?: Date; status?: string }): Promise<Lead[]> {
+    let query = db.select().from(leads).where(eq(leads.isActive, true));
+    
+    const conditions = [eq(leads.isActive, true)];
+    
+    if (filters?.sellerId) {
+      conditions.push(eq(leads.sellerId, filters.sellerId));
+    }
+    
+    if (filters?.scheduledDate) {
+      // Convert to Brazil timezone for comparison
+      const { fromZonedTime } = require('date-fns-tz');
+      const dateStr = filters.scheduledDate.toISOString().split('T')[0];
+      const startOfDay = fromZonedTime(`${dateStr}T00:00:00`, 'America/Sao_Paulo');
+      const endOfDay = fromZonedTime(`${dateStr}T23:59:59`, 'America/Sao_Paulo');
+      
+      conditions.push(
+        and(
+          gte(leads.scheduledDate, startOfDay),
+          lte(leads.scheduledDate, endOfDay)
+        ) as any
+      );
+    }
+    
+    if (filters?.status) {
+      conditions.push(eq(leads.status, filters.status as any));
+    }
+    
+    return await db
+      .select()
+      .from(leads)
+      .where(and(...conditions))
+      .orderBy(desc(leads.createdAt));
+  }
+
+  async getLead(id: string): Promise<Lead | undefined> {
+    const [lead] = await db
+      .select()
+      .from(leads)
+      .where(eq(leads.id, id))
+      .limit(1);
+    return lead;
+  }
+
+  async createLead(leadData: InsertLead): Promise<Lead> {
+    const [lead] = await db.insert(leads).values(leadData).returning();
+    return lead;
+  }
+
+  async updateLead(id: string, leadData: Partial<InsertLead>): Promise<Lead> {
+    const [lead] = await db
+      .update(leads)
+      .set({ ...leadData, updatedAt: new Date() })
+      .where(eq(leads.id, id))
+      .returning();
+    return lead;
+  }
+
+  async deleteLead(id: string): Promise<void> {
+    await db
+      .update(leads)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(leads.id, id));
+  }
+
+  async getLeadsByDate(date: Date, sellerId?: string): Promise<Lead[]> {
+    const { fromZonedTime } = require('date-fns-tz');
+    const dateStr = date.toISOString().split('T')[0];
+    const startOfDay = fromZonedTime(`${dateStr}T00:00:00`, 'America/Sao_Paulo');
+    const endOfDay = fromZonedTime(`${dateStr}T23:59:59`, 'America/Sao_Paulo');
+    
+    const conditions = [
+      eq(leads.isActive, true),
+      gte(leads.scheduledDate, startOfDay),
+      lte(leads.scheduledDate, endOfDay),
+      ne(leads.status, 'converted' as any),
+      ne(leads.status, 'discarded' as any)
+    ];
+    
+    if (sellerId) {
+      conditions.push(eq(leads.sellerId, sellerId));
+    }
+    
+    return await db
+      .select()
+      .from(leads)
+      .where(and(...conditions));
+  }
+
+  async convertLeadToCustomer(leadId: string, customerId: string): Promise<Lead> {
+    const [lead] = await db
+      .update(leads)
+      .set({
+        status: 'converted' as any,
+        convertedCustomerId: customerId,
+        convertedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(eq(leads.id, leadId))
+      .returning();
+    return lead;
+  }
+
+  async discardLead(leadId: string, reason: string): Promise<Lead> {
+    const [lead] = await db
+      .update(leads)
+      .set({
+        status: 'discarded' as any,
+        discardReason: reason,
+        discardedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(eq(leads.id, leadId))
+      .returning();
+    return lead;
   }
 }
 

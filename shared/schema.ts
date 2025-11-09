@@ -1229,3 +1229,55 @@ export type SellerAttendancePerformance = {
   totalCompleted: number; // Total de visitas completadas no mês
   overallPercentage: number; // Percentual geral do mês
 };
+
+// Lead status enum - tracks prospect lifecycle
+export const leadStatusEnum = pgEnum('lead_status', [
+  'pending',      // Aguardando contato inicial
+  'scheduled',    // Visita agendada
+  'visited',      // Visita realizada
+  'converted',    // Convertido em cliente
+  'discarded'     // Descartado/Desqualificado
+]);
+
+// Leads table - prospects without recurring visits
+export const leads = pgTable("leads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fantasyName: varchar("fantasy_name").notNull(), // Nome fantasia do prospect
+  contactName: varchar("contact_name").notNull(), // Nome da pessoa de contato
+  phone: varchar("phone").notNull(),
+  
+  // Geolocalização
+  latitude: decimal("latitude", { precision: 9, scale: 6 }),
+  longitude: decimal("longitude", { precision: 10, scale: 6 }),
+  
+  // Data agendada para visita (inclusão na rota) - timestamp para integração com sistema de rotas
+  scheduledDate: timestamp("scheduled_date"),
+  
+  // Vendedor responsável
+  sellerId: varchar("seller_id").notNull(),
+  
+  // Status do lead no pipeline
+  status: leadStatusEnum("status").notNull().default('pending'),
+  
+  // Rastreamento de conversão
+  convertedCustomerId: varchar("converted_customer_id"), // ID do cliente criado quando convertido
+  convertedAt: timestamp("converted_at"), // Data da conversão
+  
+  // Rastreamento de descarte
+  discardReason: text("discard_reason"), // Motivo de descarte (se status = discarded)
+  discardedAt: timestamp("discarded_at"), // Data do descarte
+  
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeadSchema = createInsertSchema(leads).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  convertedAt: true,
+  discardedAt: true
+});
+export type Lead = typeof leads.$inferSelect;
+export type InsertLead = z.infer<typeof insertLeadSchema>;
