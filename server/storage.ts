@@ -3119,7 +3119,7 @@ export class DatabaseStorage implements IStorage {
           AND invoice_date <= ${searchEndDate}
           AND invoice_status = '100'
           AND is_cancelled = false
-          AND billing_type IN ('venda', 'devolução')
+          AND billing_type IN ('venda', 'devolucao')
           ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
       `);
       
@@ -3185,7 +3185,13 @@ export class DatabaseStorage implements IStorage {
 
       const totalRevenue = validBillings.reduce((sum: number, billing: any) => {
         const value = parseFloat(billing.total_value?.toString() || '0');
-        return sum + (isNaN(value) ? 0 : value);
+        const numericValue = isNaN(value) ? 0 : value;
+        
+        // SUBTRAIR devoluções, SOMAR vendas (alinhado com relatório Omie)
+        if (billing.billing_type === 'devolucao') {
+          return sum - numericValue;
+        }
+        return sum + numericValue;
       }, 0);
 
       const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;

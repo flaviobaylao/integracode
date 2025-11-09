@@ -3188,14 +3188,11 @@ export class OmieService {
                 }
               }
               
-              // Determinar tipo de faturamento (simplificado)
-              let billingType: 'venda' | 'troca' | 'amostra' = 'venda';
-              const operationDescription = invoice.ide?.xJust || invoice.infAdic?.infCpl || '';
-              if (operationDescription.toLowerCase().includes('troca')) {
-                billingType = 'troca';
-              } else if (operationDescription.toLowerCase().includes('amostra')) {
-                billingType = 'amostra';
-              }
+              // Extrair CFOP do primeiro produto da nota fiscal
+              const cfop = invoice.det?.[0]?.prod?.CFOP || '';
+              
+              // Determinar tipo de faturamento baseado no CFOP (usa função especializada)
+              const billingType = this.determineBillingType(cfop);
               
               // Extrair produtos da nota fiscal
               const products = (invoice.det || []).map((item: any) => ({
@@ -3285,6 +3282,7 @@ export class OmieService {
                 invoiceNumber,
                 customerFantasyName: customerFantasyName || 'Cliente não identificado',
                 billingType,
+                cfop: cfop || '',
                 totalValue,
                 invoiceDate: invoiceDateObj,
                 sellerId: sellerId || '',
