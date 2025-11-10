@@ -180,6 +180,41 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
     }
 
+    // ============================================================
+    // SISTEMA DE CORES DE PIN BASEADO NA DISTÂNCIA
+    // ============================================================
+    // Verde: check-in e check-out no mesmo lugar (<=100m)
+    // Roxo: check-in (quando >100m do check-out)
+    // Vermelho: check-out (quando >100m do check-in)
+    // ============================================================
+    
+    // Função para calcular distância entre dois pontos (Haversine em metros)
+    const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+      const R = 6371000; // Raio da Terra em metros
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    // Agrupar checkpoints por visitId para comparar check-in e check-out
+    const checkpointsByVisit = new Map<string, { checkIn?: typeof checkpoints[0], checkOut?: typeof checkpoints[0] }>();
+    checkpoints.forEach((checkpoint) => {
+      if (!checkpointsByVisit.has(checkpoint.visitId)) {
+        checkpointsByVisit.set(checkpoint.visitId, {});
+      }
+      const visitCheckpoints = checkpointsByVisit.get(checkpoint.visitId)!;
+      if (checkpoint.checkpointType === 'check_in') {
+        visitCheckpoints.checkIn = checkpoint;
+      } else {
+        visitCheckpoints.checkOut = checkpoint;
+      }
+    });
+
     // Adicionar marcadores de checkpoints reais (se houver)
     const checkInCoordinates: [number, number][] = [];
     
@@ -199,9 +234,43 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       const correspondingVisit = visits.find(v => v.id === checkpoint.visitId);
       const hasPhoto = correspondingVisit?.checkInPhotoUrl && checkpoint.checkpointType === 'check_in';
 
+      // Determinar cor do PIN baseado na distância entre check-in e check-out
+      let pinColor = 'bg-purple-600'; // Padrão: roxo para check-in
+      let pinHoverColor = 'hover:bg-purple-700';
+      
+      const visitCheckpoints = checkpointsByVisit.get(checkpoint.visitId);
+      if (visitCheckpoints?.checkIn && visitCheckpoints?.checkOut) {
+        const checkInLat = parseFloat(visitCheckpoints.checkIn.checkpointLatitude);
+        const checkInLon = parseFloat(visitCheckpoints.checkIn.checkpointLongitude);
+        const checkOutLat = parseFloat(visitCheckpoints.checkOut.checkpointLatitude);
+        const checkOutLon = parseFloat(visitCheckpoints.checkOut.checkpointLongitude);
+        
+        if (!isNaN(checkInLat) && !isNaN(checkInLon) && !isNaN(checkOutLat) && !isNaN(checkOutLon)) {
+          const distance = calculateDistance(checkInLat, checkInLon, checkOutLat, checkOutLon);
+          
+          if (distance <= 100) {
+            // Check-in e check-out no mesmo lugar (<=100m) → VERDE
+            pinColor = 'bg-green-600';
+            pinHoverColor = 'hover:bg-green-700';
+          } else if (checkpoint.checkpointType === 'check_in') {
+            // Check-in diferente do check-out (>100m) → ROXO
+            pinColor = 'bg-purple-600';
+            pinHoverColor = 'hover:bg-purple-700';
+          } else {
+            // Check-out diferente do check-in (>100m) → VERMELHO
+            pinColor = 'bg-red-600';
+            pinHoverColor = 'hover:bg-red-700';
+          }
+        }
+      } else if (checkpoint.checkpointType === 'check_out') {
+        // Se só tem check-out sem check-in → VERMELHO
+        pinColor = 'bg-red-600';
+        pinHoverColor = 'hover:bg-red-700';
+      }
+
       // Ícone diferente se tiver foto (camera icon)
       const checkpointIconHtml = hasPhoto ? renderToStaticMarkup(
-        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center cursor-pointer hover:bg-purple-700"
+        <div className={`${pinColor} rounded-full shadow-lg flex items-center justify-center cursor-pointer ${pinHoverColor}`}
              style={{ width: '20px', height: '20px' }}
              title="Clique para ver a foto">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -210,7 +279,7 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
           </svg>
         </div>
       ) : renderToStaticMarkup(
-        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center"
+        <div className={`${pinColor} rounded-full shadow-lg flex items-center justify-center`}
              style={{ width: '12px', height: '12px' }}>
         </div>
       );
