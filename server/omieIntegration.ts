@@ -2662,7 +2662,24 @@ export class OmieService {
         errors: []
       };
 
+      const { applyCustomerRecurrenceChange } = await import('./customerRecurrenceService');
+
       console.log('Iniciando sincronização COMPLETA de clientes (ativos + inativos)...');
+
+      // Helper para normalizar weekdays
+      const normalizeWeekdays = (wd: any): string[] | undefined => {
+        if (!wd) return undefined;
+        if (Array.isArray(wd)) return wd.map(d => d.toLowerCase());
+        if (typeof wd === 'string') {
+          try {
+            const parsed = JSON.parse(wd);
+            return Array.isArray(parsed) ? parsed.map(d => d.toLowerCase()) : undefined;
+          } catch {
+            return undefined;
+          }
+        }
+        return undefined;
+      };
 
       // PRIMEIRA PASSADA: Clientes ATIVOS (padrão)
       console.log('Sincronizando clientes ATIVOS...');
@@ -2672,10 +2689,61 @@ export class OmieService {
       while (hasMorePages) {
         const pageData = await this.getAllClients(currentPage, 100, false); // false = apenas ativos
         
-        for (const client of pageData.clients) {
-          result.totalProcessed++;
-          // Este método retorna apenas os dados formatados
-          // A lógica de salvamento será feita na rota
+        for (const omieClient of pageData.clients) {
+          try {
+            result.totalProcessed++;
+            const formatted = this.convertClientToSystemFormat(omieClient);
+            const existing = await this.storage.getCustomer(formatted.id);
+            
+            if (existing) {
+              // Cliente existe - CAPTURAR SNAPSHOT COMPLETO ANTES DE ATUALIZAR
+              const previousSnapshot = {
+                sellerId: existing.sellerId || undefined,
+                weekdays: normalizeWeekdays(existing.weekdays),
+                visitPeriodicity: existing.visitPeriodicity || undefined
+              };
+              
+              // Verificar mudança de vendedor (Omie não fornece weekdays/visitPeriodicity)
+              const sellerChanged = existing.sellerId !== formatted.sellerId;
+              
+              // Atualizar cliente no banco
+              await this.storage.updateCustomer(formatted.id, formatted);
+              result.updated++;
+              
+              // Se houve mudança de vendedor, aplicar correções em rotas e cards
+              if (sellerChanged) {
+                console.log(`🔄 [OMIE-SYNC] Detectada mudança de vendedor para ${formatted.fantasyName || formatted.name}:`, {
+                  previous: previousSnapshot.sellerId,
+                  new: formatted.sellerId
+                });
+                
+                try {
+                  // Estado NOVO: seller do Omie, weekdays/periodicity existentes (Omie não fornece)
+                  const newState = {
+                    sellerId: formatted.sellerId || undefined,
+                    weekdays: previousSnapshot.weekdays,  // Mantém existentes (Omie não fornece)
+                    visitPeriodicity: previousSnapshot.visitPeriodicity  // Mantém existentes
+                  };
+                  
+                  // Estado ANTERIOR: snapshot capturado antes da atualização
+                  await applyCustomerRecurrenceChange(formatted.id, newState, previousSnapshot);
+                  console.log(`✅ [OMIE-SYNC] Vendedor atualizado com sucesso para ${formatted.fantasyName || formatted.name}`);
+                } catch (recErr: any) {
+                  console.error(`⚠️ [OMIE-SYNC] Erro ao atualizar vendedor:`, recErr.message);
+                  const errorMsg = `${formatted.fantasyName || formatted.name}: Erro ao atualizar vendedor`;
+                  (result.errors as string[]).push(errorMsg);
+                }
+              }
+            } else {
+              // Cliente novo - criar
+              await this.storage.createCustomer(formatted);
+              result.imported++;
+            }
+          } catch (clientError: any) {
+            console.error(`❌ [OMIE-SYNC] Erro ao processar cliente ${omieClient.codigo_cliente_omie}:`, clientError.message);
+            const errorMsg = `Cliente ${omieClient.codigo_cliente_omie}: ${clientError.message}`;
+            (result.errors as string[]).push(errorMsg);
+          }
         }
 
         currentPage++;
@@ -2692,10 +2760,24 @@ export class OmieService {
       while (hasMorePages) {
         const pageData = await this.getAllClients(currentPage, 100, true); // true = apenas inativos
         
-        for (const client of pageData.clients) {
-          result.totalProcessed++;
-          // Este método retorna apenas os dados formatados
-          // A lógica de salvamento será feita na rota
+        for (const omieClient of pageData.clients) {
+          try {
+            result.totalProcessed++;
+            const formatted = this.convertClientToSystemFormat(omieClient);
+            const existing = await this.storage.getCustomer(formatted.id);
+            
+            if (existing) {
+              await this.storage.updateCustomer(formatted.id, formatted);
+              result.updated++;
+            } else {
+              await this.storage.createCustomer(formatted);
+              result.imported++;
+            }
+          } catch (clientError: any) {
+            console.error(`❌ [OMIE-SYNC] Erro ao processar cliente inativo ${omieClient.codigo_cliente_omie}:`, clientError.message);
+            const errorMsg = `Cliente inativo ${omieClient.codigo_cliente_omie}: ${clientError.message}`;
+            (result.errors as string[]).push(errorMsg);
+          }
         }
 
         currentPage++;
@@ -2703,6 +2785,7 @@ export class OmieService {
       }
 
       console.log(`Total de clientes processados (ativos + inativos): ${result.totalProcessed}`);
+      console.log(`✅ Sincronização concluída: ${result.imported} novos, ${result.updated} atualizados, ${result.errors.length} erros`);
 
       return result;
     } catch (error) {
