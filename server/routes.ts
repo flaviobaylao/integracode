@@ -3020,10 +3020,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`\n🔧 [PUT /api/sales-cards/${id}] Iniciando atualização de card`);
       console.log(`   📥 req.body.routeDay:`, req.body.routeDay);
+      console.log(`   📥 req.body Omie campos:`, {
+        omieSyncStatus: req.body.omieSyncStatus,
+        omieOrderId: req.body.omieOrderId,
+        omieOrderNumber: req.body.omieOrderNumber,
+        invoiceNumber: req.body.invoiceNumber
+      });
       
       const data = insertSalesCardSchema.partial().parse(req.body);
       
       console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
+      console.log(`   ✅ Após parse - Omie campos:`, {
+        omieSyncStatus: data.omieSyncStatus,
+        omieOrderId: data.omieOrderId,
+        omieOrderNumber: data.omieOrderNumber,
+        invoiceNumber: data.invoiceNumber
+      });
       
       // Check permissions for reassigning sales cards
       const userId = req.userId;
@@ -3293,6 +3305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete sales card" });
     }
   });
+
 
   // Delete all sales cards (admin only)
   app.delete('/api/sales-cards', authenticateUser, requireRole(['admin', 'administrative']), async (req: any, res) => {
