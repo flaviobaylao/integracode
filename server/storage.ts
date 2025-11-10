@@ -19,6 +19,7 @@ import {
   routeCheckpoints,
   deliveryRoutes,
   deliveryRouteStops,
+  deliveryDrivers,
   syncStatus,
   leads,
   type User,
@@ -52,7 +53,10 @@ import {
   type InsertSyncStatus,
   type Lead,
   type InsertLead,
+  type DeliveryDriver,
+  type InsertDeliveryDriver,
   insertSystemSettingSchema,
+  insertDeliveryDriverSchema,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -144,17 +148,21 @@ export interface IStorage {
   getPendingDeliveries(): Promise<SalesCard[]>;
   createDeliveryHistory(data: any): Promise<any>;
   getDeliveryHistory(salesCardId: string): Promise<any[]>;
-  getDeliveryDrivers(): Promise<any[]>;
-  getActiveDeliveryDrivers(): Promise<any[]>;
-  createDeliveryDriver(data: any): Promise<any>;
-  updateDeliveryDriver(id: string, data: any): Promise<any>;
-  updateDriverLocation(driverId: string, location: string): Promise<any>;
+  
+  // Delivery driver operations
+  getDeliveryDrivers(): Promise<DeliveryDriver[]>;
+  getDeliveryDriver(id: string): Promise<DeliveryDriver | undefined>;
+  getActiveDeliveryDrivers(): Promise<DeliveryDriver[]>;
+  createDeliveryDriver(data: InsertDeliveryDriver): Promise<DeliveryDriver>;
+  updateDeliveryDriver(id: string, data: Partial<InsertDeliveryDriver>): Promise<DeliveryDriver>;
+  updateDriverLocation(driverId: string, location: string): Promise<DeliveryDriver>;
+  getDeliveryDriverStats(): Promise<{ total: number; active: number; inactive: number; lastUpdated: Date }>;
+  
   getDeliveryStats(period: string): Promise<any>;
   getDeliveryMetrics(period: string): Promise<any>;
   getAllDeliveries(): Promise<any[]>;
   getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any>;
   getDeliveryReportComparison(period: string): Promise<any>;
-  getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
   getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]>;
@@ -2437,39 +2445,95 @@ export class DatabaseStorage implements IStorage {
     return result.rows;
   }
 
-  async getDeliveryDrivers(): Promise<any[]> {
-    const result = await db.execute(sql`
-      SELECT 
-        id,
-        CONCAT(first_name, ' ', last_name) as name,
-        email as phone,
-        'moto' as "vehicleType",
-        '' as "licensePlate",
-        is_active as "isActive"
-      FROM users 
-      WHERE role = 'motorista' AND is_active = true
-      ORDER BY first_name, last_name
-    `);
-    return result.rows;
+  async getDeliveryDrivers(): Promise<DeliveryDriver[]> {
+    return await db.select()
+      .from(deliveryDrivers)
+      .orderBy(desc(deliveryDrivers.createdAt));
   }
 
-  async createDeliveryDriver(data: any): Promise<any> {
-    const result = await db.execute(sql`
-      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, current_location)
-      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${data.currentLocation})
-      RETURNING *
-    `);
-    return result.rows[0];
+  async getDeliveryDriver(id: string): Promise<DeliveryDriver | undefined> {
+    const [driver] = await db.select()
+      .from(deliveryDrivers)
+      .where(eq(deliveryDrivers.id, id))
+      .limit(1);
+    return driver;
   }
 
-  async updateDriverLocation(driverId: string, location: string): Promise<any> {
-    const result = await db.execute(sql`
-      UPDATE delivery_drivers 
-      SET current_location = ${location}, updated_at = NOW() 
-      WHERE id = ${driverId}
-      RETURNING *
-    `);
-    return result.rows[0];
+  async getActiveDeliveryDrivers(): Promise<DeliveryDriver[]> {
+    return await db.select()
+      .from(deliveryDrivers)
+      .where(eq(deliveryDrivers.isActive, true))
+      .orderBy(desc(deliveryDrivers.createdAt));
+  }
+
+  async createDeliveryDriver(data: InsertDeliveryDriver): Promise<DeliveryDriver> {
+    const validated = insertDeliveryDriverSchema.parse(data);
+    const [newDriver] = await db.insert(deliveryDrivers)
+      .values(validated)
+      .returning();
+    return newDriver;
+  }
+
+  async updateDeliveryDriver(id: string, data: Partial<InsertDeliveryDriver>): Promise<DeliveryDriver> {
+    if (Object.keys(data).length === 0) {
+      throw new Error('Pelo menos um campo deve ser atualizado');
+    }
+    
+    const [updatedDriver] = await db.update(deliveryDrivers)
+      .set({
+        ...data,
+        updatedAt: new Date()
+      })
+      .where(eq(deliveryDrivers.id, id))
+      .returning();
+    
+    if (!updatedDriver) {
+      throw new Error('Motorista não encontrado');
+    }
+    
+    return updatedDriver;
+  }
+
+  async updateDriverLocation(driverId: string, location: string): Promise<DeliveryDriver> {
+    const [updatedDriver] = await db.update(deliveryDrivers)
+      .set({
+        currentLocation: location,
+        updatedAt: new Date()
+      })
+      .where(eq(deliveryDrivers.id, driverId))
+      .returning();
+    
+    if (!updatedDriver) {
+      throw new Error('Motorista não encontrado');
+    }
+    
+    return updatedDriver;
+  }
+
+  async getDeliveryDriverStats(): Promise<{ total: number; active: number; inactive: number; lastUpdated: Date }> {
+    const drivers = await this.getDeliveryDrivers();
+    const active = drivers.filter(d => d.isActive).length;
+    const inactive = drivers.filter(d => !d.isActive).length;
+    
+    let lastUpdated = new Date();
+    if (drivers.length > 0) {
+      const validDates = drivers
+        .map(driver => driver.updatedAt || driver.createdAt)
+        .filter((date): date is Date => date !== null);
+      
+      if (validDates.length > 0) {
+        lastUpdated = validDates.reduce((latest, current) => 
+          current > latest ? current : latest
+        );
+      }
+    }
+    
+    return {
+      total: drivers.length,
+      active,
+      inactive,
+      lastUpdated
+    };
   }
 
   // ===== SISTEMA DE VENDAS RECORRENTES =====

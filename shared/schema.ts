@@ -1105,6 +1105,18 @@ export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteSto
   customerLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
 });
 
+export const insertDeliveryDriverSchema = createInsertSchema(deliveryDrivers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  name: z.string().min(1, "Nome é obrigatório"),
+  phone: z.string().min(1, "Telefone é obrigatório"),
+  vehicleType: z.string().min(1, "Tipo de veículo é obrigatório"),
+  licensePlate: z.string().optional().nullable(),
+  isActive: z.boolean().default(true),
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -1140,7 +1152,7 @@ export type SalesCardWithRelations = SalesCard & {
 };
 
 export type DeliveryDriver = typeof deliveryDrivers.$inferSelect;
-export type InsertDeliveryDriver = typeof deliveryDrivers.$inferInsert;
+export type InsertDeliveryDriver = z.infer<typeof insertDeliveryDriverSchema>;
 
 export type OverdueDebt = typeof overdueDebts.$inferSelect;
 export type InsertOverdueDebt = typeof overdueDebts.$inferInsert;

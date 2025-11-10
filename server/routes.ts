@@ -21,6 +21,7 @@ import {
   insertRouteSchema,
   insertUserSchema,
   insertLeadSchema,
+  insertDeliveryDriverSchema,
   visitAgenda,
   users,
   salesCards,
@@ -7505,78 +7506,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ===== DELIVERY DRIVERS APIS =====
+  // ===== DELIVERY DRIVERS API (COM AUTENTICAÇÃO) =====
   
-  // Buscar todos os motoristas
-  app.get("/api/delivery-drivers", async (req, res) => {
-    try {
-      const drivers = await storage.getDeliveryDrivers();
-      res.json(drivers);
-    } catch (error) {
-      console.error("Error fetching delivery drivers:", error);
-      res.status(500).json({ message: "Failed to fetch delivery drivers" });
-    }
-  });
-
-  // Buscar motoristas ativos
-  app.get("/api/delivery-drivers/active", async (req, res) => {
-    try {
-      const activeDrivers = await storage.getActiveDeliveryDrivers();
-      res.json(activeDrivers);
-    } catch (error) {
-      console.error("Error fetching active delivery drivers:", error);
-      res.status(500).json({ message: "Failed to fetch active delivery drivers" });
-    }
-  });
-
-  // Criar motorista
-  app.post("/api/delivery-drivers", async (req, res) => {
-    try {
-      const driverData = req.body;
-      const driver = await storage.createDeliveryDriver(driverData);
-      res.json(driver);
-    } catch (error) {
-      console.error("Error creating delivery driver:", error);
-      res.status(500).json({ message: "Failed to create delivery driver" });
-    }
-  });
-
-  // Atualizar motorista
-  app.put("/api/delivery-drivers/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const driverData = req.body;
-      const driver = await storage.updateDeliveryDriver(id, driverData);
-      res.json(driver);
-    } catch (error) {
-      console.error("Error updating delivery driver:", error);
-      res.status(500).json({ message: "Failed to update delivery driver" });
-    }
-  });
-
-  // Alternar status do motorista
-  app.put("/api/delivery-drivers/:id/toggle-status", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { isActive } = req.body;
-      const driver = await storage.updateDeliveryDriver(id, { isActive });
-      res.json(driver);
-    } catch (error) {
-      console.error("Error toggling driver status:", error);
-      res.status(500).json({ message: "Failed to toggle driver status" });
-    }
-  });
-
-  // Estatísticas de motoristas
-  app.get("/api/delivery-drivers/stats", async (req, res) => {
+  // 1. GET /api/delivery-drivers/stats - Estatísticas
+  app.get("/api/delivery-drivers/stats", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const stats = await storage.getDeliveryDriverStats();
       res.json(stats);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching driver stats:", error);
-      res.status(500).json({ message: "Failed to fetch driver stats" });
+      res.status(500).json({ message: "Failed to fetch driver stats", error: error.message });
     }
   });
+
+  // 2. GET /api/delivery-drivers - Listar todos
+  app.get("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const drivers = await storage.getDeliveryDrivers();
+      res.json(drivers);
+    } catch (error: any) {
+      console.error("Error fetching delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch delivery drivers", error: error.message });
+    }
+  });
+
+  // 3. GET /api/delivery-drivers/active - Listar motoristas ativos
+  app.get("/api/delivery-drivers/active", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const drivers = await storage.getActiveDeliveryDrivers();
+      res.json(drivers);
+    } catch (error: any) {
+      console.error("Error fetching active drivers:", error);
+      res.status(500).json({ message: "Failed to fetch active drivers", error: error.message });
+    }
+  });
+
+  // 4. GET /api/delivery-drivers/:id - Buscar por ID
+  app.get("/api/delivery-drivers/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const driver = await storage.getDeliveryDriver(id);
+      if (!driver) {
+        return res.status(404).json({ message: "Motorista não encontrado" });
+      }
+      res.json(driver);
+    } catch (error: any) {
+      console.error("Error fetching delivery driver:", error);
+      res.status(500).json({ message: "Failed to fetch delivery driver", error: error.message });
+    }
+  });
+
+  // 5. POST /api/delivery-drivers - Criar motorista
+  app.post("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const validated = insertDeliveryDriverSchema.parse(req.body);
+      const driver = await storage.createDeliveryDriver(validated);
+      res.json(driver);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
+      }
+      console.error("Error creating delivery driver:", error);
+      res.status(500).json({ message: "Failed to create delivery driver", error: error.message });
+    }
+  });
+
+  // 6. PUT /api/delivery-drivers/:id - Atualizar motorista
+  app.put("/api/delivery-drivers/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const validated = insertDeliveryDriverSchema.partial().parse(req.body);
+      const driver = await storage.updateDeliveryDriver(id, validated);
+      res.json(driver);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
+      }
+      console.error("Error updating delivery driver:", error);
+      res.status(500).json({ message: "Failed to update delivery driver", error: error.message });
+    }
+  });
+
+  // 7. PUT /api/delivery-drivers/:id/toggle-status - Alternar status
+  app.put("/api/delivery-drivers/:id/toggle-status", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const toggleSchema = insertDeliveryDriverSchema.pick({ isActive: true });
+      const { isActive } = toggleSchema.parse(req.body);
+      const driver = await storage.updateDeliveryDriver(id, { isActive });
+      res.json(driver);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
+      }
+      console.error("Error toggling driver status:", error);
+      res.status(500).json({ message: "Failed to toggle driver status", error: error.message });
+    }
+  });
+
+  // ===== DELIVERY STATUS API =====
 
   // Atualizar status de entrega
   app.put("/api/deliveries/:salesCardId/status", async (req, res) => {
@@ -7613,17 +7641,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating delivery status:", error);
       res.status(500).json({ message: "Failed to update delivery status" });
-    }
-  });
-
-  // Buscar motoristas ativos
-  app.get("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const drivers = await storage.getActiveDeliveryDrivers();
-      res.json(drivers);
-    } catch (error: any) {
-      console.error("Error fetching delivery drivers:", error);
-      res.status(500).json({ message: "Failed to fetch delivery drivers", error: error.message });
     }
   });
 
