@@ -877,9 +877,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard> {
+    // CRITICAL: Garantir que campos null sejam aplicados (importante para reset de cards permanentes)
+    const updateData = { 
+      ...salesCard as any, 
+      updatedAt: new Date() 
+    };
+    
+    // Log para debug de reset de cards permanentes
+    if (salesCard.status === 'pending' && 
+        'omieOrderId' in salesCard && 
+        salesCard.omieOrderId === null) {
+      console.log('🧹 [RESET] Limpando campos do Omie no card:', id);
+      console.log('   - omieOrderId:', salesCard.omieOrderId);
+      console.log('   - omieSyncStatus:', salesCard.omieSyncStatus);
+      console.log('   - omieOrderNumber:', salesCard.omieOrderNumber);
+    }
+    
     const [updatedSalesCard] = await db
       .update(salesCards)
-      .set({ ...salesCard as any, updatedAt: new Date() })
+      .set(updateData)
       .where(eq(salesCards.id, id))
       .returning();
     return updatedSalesCard;

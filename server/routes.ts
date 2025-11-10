@@ -3175,11 +3175,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Sobrescrever nextVisitDate com o valor calculado acima (mais preciso)
             resetData.nextVisitDate = scheduleResult.nextDate;
             
+            // Log detalhado para debug
+            console.log(`🧹 [RESET] Aplicando reset no card ${id}:`);
+            console.log(`   - Campos Omie/NF:`, {
+              omieOrderId: resetData.omieOrderId,
+              omieOrderNumber: resetData.omieOrderNumber,
+              omieSyncStatus: resetData.omieSyncStatus,
+              omieSentAt: resetData.omieSentAt,
+              omieErrorMessage: resetData.omieErrorMessage,
+              invoiceNumber: resetData.invoiceNumber
+            });
+            
             // Atualizar permanent card com dados de reset completo
             salesCard = await storage.updateSalesCard(id, resetData);
             
             console.log(`✅ Permanent card RESETADO - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
-            console.log(`🧹 Dados temporários limpos: produtos, valores, check-in/out, delivery, telemarketing`);
+            console.log(`🧹 Dados temporários limpos: produtos, valores, check-in/out, delivery, telemarketing, Omie/NF`);
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);
