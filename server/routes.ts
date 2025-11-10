@@ -1815,7 +1815,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: existingLead.latitude,
         longitude: existingLead.longitude,
         sellerId: existingLead.sellerId,
-        fantasyName: customerData.fantasyName || existingLead.fantasyName,
+        fantasyName: customerData.fantasyName || existingLead.name, // Usar lead.name como fallback
         phone: customerData.phone || existingLead.phone,
       };
       

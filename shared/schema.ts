@@ -1289,9 +1289,9 @@ export const leadStatusEnum = pgEnum('lead_status', [
 // Leads table - prospects without recurring visits
 export const leads = pgTable("leads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  fantasyName: varchar("fantasy_name").notNull(), // Nome fantasia do prospect
-  contactName: varchar("contact_name").notNull(), // Nome da pessoa de contato
+  name: varchar("name").notNull(), // Nome do prospect (simplificado)
   phone: varchar("phone").notNull(),
+  address: varchar("address"), // Endereço do prospect
   
   // Geolocalização
   latitude: decimal("latitude", { precision: 9, scale: 6 }),
@@ -1299,6 +1299,9 @@ export const leads = pgTable("leads", {
   
   // Foto do local/prospect (base64)
   photoUrl: text("photo_url"), // Foto capturada da câmera em base64
+  
+  // Observações/Notas
+  notes: text("notes"), // Observações gerais sobre o lead
   
   // Data agendada para visita (inclusão na rota) - timestamp para integração com sistema de rotas
   scheduledDate: timestamp("scheduled_date"),
