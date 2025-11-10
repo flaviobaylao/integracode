@@ -7,7 +7,7 @@ import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } 
 
 // Código da categoria fiscal para vendas (fixo, não configurável)
 // Categoria: "Clientes - Venda de Mercadoria Fabricadas"
-const OMIE_SALES_CATEGORY_CODE = "1.01.02";
+const OMIE_SALES_CATEGORY_CODE = "1.01.01";
 
 // ============================================================
 
