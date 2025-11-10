@@ -449,6 +449,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Helper function to format user name
+  const formatUserName = (user: any): string => {
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+    return fullName || user.email;
+  };
+
   // User routes
   app.get('/api/users', authenticateUser, async (req: any, res) => {
     try {
@@ -460,7 +466,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         users = users.filter(user => user.role === role);
       }
       
-      res.json(users);
+      // Adicionar computed field 'name' para compatibilidade com frontend
+      const usersWithName = users.map(user => ({
+        ...user,
+        name: formatUserName(user)
+      }));
+      
+      res.json(usersWithName);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
