@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
 
+// ============================================================
+// CONSTANTES DE CONFIGURAÇÃO OMIE
+// ============================================================
+
+// Código da categoria fiscal para vendas (fixo, não configurável)
+// Categoria: "Clientes - Venda de Mercadoria Fabricadas"
+const OMIE_SALES_CATEGORY_CODE = "1.01.02";
+
+// ============================================================
+
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
   codigo_cliente_omie: z.number(),
@@ -2482,7 +2492,7 @@ export class OmieService {
           modalidade: "9" // Sem ocorrência de transporte
         },
         informacoes_adicionais: {
-          codigo_categoria: "1.01.03", // Categoria fiscal
+          codigo_categoria: OMIE_SALES_CATEGORY_CODE, // Categoria fiscal fixa
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
           enviar_email: "N"
@@ -4332,7 +4342,7 @@ export async function createOmieOrder(orderData: {
         modalidade: "9" // Sem ocorrência de transporte
       },
       informacoes_adicionais: {
-        codigo_categoria: "1.01.03", // Categoria fiscal
+        codigo_categoria: OMIE_SALES_CATEGORY_CODE, // Categoria fiscal fixa
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
         enviar_email: "N",
