@@ -1677,6 +1677,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
+      console.log('🆕 [CREATE LEAD] Recebendo requisição...');
+      console.log('   Body recebido:', JSON.stringify(req.body, null, 2));
+      console.log('   Usuário:', user.email, '- Role:', user.role);
+      
       // Apenas admin, coordinator, administrative e vendedor podem criar leads
       if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied" });
@@ -1692,20 +1696,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : null,
       };
       
+      console.log('   Dados após limpeza:', JSON.stringify(cleanedData, null, 2));
+      console.log('   Validando com insertLeadSchema...');
+      
       const data = insertLeadSchema.parse(cleanedData);
+      
+      console.log('   ✅ Validação passou! Dados:', JSON.stringify(data, null, 2));
       
       // Vendedores só podem criar leads para si mesmos
       if (user.role === 'vendedor' && data.sellerId !== user.id) {
         return res.status(403).json({ message: "Vendedores só podem criar leads para si mesmos" });
       }
       
+      console.log('   Criando lead no banco...');
       const lead = await storage.createLead(data);
+      console.log('   ✅✅✅ Lead criado com sucesso! ID:', lead.id);
+      
       res.status(201).json(lead);
     } catch (error) {
-      console.error("Error creating lead:", error);
+      console.error("❌ [CREATE LEAD] Erro ao criar lead:", error);
       if (error instanceof z.ZodError) {
+        console.error('   Erros de validação Zod:', JSON.stringify(error.errors, null, 2));
         return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
       }
+      console.error('   Stack trace:', (error as Error).stack);
       res.status(500).json({ message: "Failed to create lead" });
     }
   });
