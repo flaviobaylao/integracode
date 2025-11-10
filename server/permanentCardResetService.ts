@@ -78,11 +78,27 @@ export function calculatePermanentCardReset(
   customer: Customer,
   latestHistory: OrderHistory
 ): ResetPermanentCardData {
+  // Parse weekdays se vier como string JSON do banco
+  let weekdays: string[] = [];
+  if (customer.weekdays) {
+    if (typeof customer.weekdays === 'string') {
+      try {
+        weekdays = JSON.parse(customer.weekdays);
+      } catch {
+        weekdays = [];
+      }
+    } else {
+      weekdays = customer.weekdays as string[];
+    }
+  }
+  
   // Calcular próxima visita baseada na periodicidade do cliente
-  const nextVisitDate = calculateNextVisitDate(
-    customer.weekdays || [],
-    customer.visitPeriodicity || 'semanal'
-  );
+  const scheduleResult = calculateNextVisitDate({
+    weekdays: weekdays,
+    periodicity: customer.visitPeriodicity || 'semanal',
+    lastCompletedDate: latestHistory.orderDate,
+    referenceDate: new Date()
+  });
   
   // lastVisitDate é a data da visita que acabou de ser concluída
   const lastVisitDate = latestHistory.orderDate;
@@ -137,7 +153,7 @@ export function calculatePermanentCardReset(
     
     // Atualizar datas de visita
     lastVisitDate,
-    nextVisitDate,
+    nextVisitDate: scheduleResult.nextDate,
     daysOverdue,
     
     updatedAt: new Date()

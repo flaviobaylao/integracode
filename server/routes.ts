@@ -3068,41 +3068,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // NOVA ARQUITETURA: Permanent cards não fecham/criam novos - atualizam order_history
       let salesCard;
+      console.log(`🔍 [DEBUG PUT] Card ${id}: data.status = ${data.status}, checking if final status...`);
+      
       if (data.status && ['completed', 'no_sale', 'failed'].includes(data.status)) {
+        console.log(`🔍 [DEBUG PUT] Status is final (${data.status}), fetching card...`);
+        
         // Buscar card atual para verificar se é permanent
         const currentCard = await storage.getSalesCard(id);
         
         if (!currentCard) {
+          console.log(`❌ [DEBUG PUT] Card ${id} not found!`);
           return res.status(404).json({ message: "Sales card not found" });
         }
         
+        console.log(`🔍 [DEBUG PUT] Card ${id} found, isPermanent = ${currentCard.isPermanent}`);
+        
         if (currentCard.isPermanent) {
-          // PERMANENT CARD: criar order_history e recalcular nextVisitDate
-          console.log(`🔄 Permanent card - Criando order_history e recalculando próxima visita`);
+          // PERMANENT CARD: criar order_history e aplicar reset completo
+          console.log(`🔄 [PERMANENT RESET] Starting reset flow for card ${id}...`);
           
-          // 1. Criar registro em order_history
-          const orderData = {
-            salesCardId: id,
-            orderDate: new Date(),
-            products: data.products || currentCard.products || [],
-            totalValue: data.saleValue || currentCard.saleValue || '0',
-            status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
-            notes: data.notes || (data.status === 'no_sale' ? `Sem venda - ${data.noSaleReason || 'não informado'}` : null),
-            checkInTime: data.checkInTime,
-            checkInLatitude: data.checkInLatitude,
-            checkInLongitude: data.checkInLongitude,
-            checkOutTime: data.checkOutTime,
-            checkOutLatitude: data.checkOutLatitude,
-            checkOutLongitude: data.checkOutLongitude,
-            completedAt: data.status === 'completed' ? new Date() : null
-          };
-          
-          await storage.createOrderHistory(orderData);
-          console.log(`✅ Order history criado`);
-          
-          // 2. Atualizar lastVisitDate e recalcular nextVisitDate
-          const { calculateNextVisitDate } = await import('../shared/visitSchedule');
           const customer = await storage.getCustomer(currentCard.customerId);
+          
+          console.log(`🔍 [DEBUG] Customer data:`, {
+            exists: !!customer,
+            weekdays: customer?.weekdays,
+            periodicity: customer?.visitPeriodicity
+          });
           
           if (customer && customer.weekdays && customer.visitPeriodicity) {
             // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
@@ -3156,33 +3147,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Criar objeto order_history com data atual para passar ao serviço de reset
             const latestHistoryMock = {
-              id: '', // Não usado no cálculo
               salesCardId: id,
               orderDate: lastVisitDate,
               products: data.products || currentCard.products || [],
               totalValue: data.saleValue || currentCard.saleValue || '0',
               status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
-              notes: data.notes || null,
-              checkInTime: data.checkInTime || null,
-              checkInLatitude: data.checkInLatitude || null,
-              checkInLongitude: data.checkInLongitude || null,
-              checkOutTime: data.checkOutTime || null,
-              checkOutLatitude: data.checkOutLatitude || null,
-              checkOutLongitude: data.checkOutLongitude || null,
-              distanceToCustomer: null,
-              checkInPhotoUrl: null,
-              deliveryStatus: 'pending' as const,
-              deliveryScheduledDate: null,
-              deliveryCompletedDate: null,
-              deliveryNotes: null,
-              trackingCode: null,
-              omieOrderId: null,
-              invoiceNumber: null,
-              createdAt: new Date(),
-              updatedAt: new Date()
+              notes: data.notes || currentCard.notes || null,
+              checkInTime: currentCard.checkInTime || null,
+              checkInLatitude: currentCard.checkInLatitude || null,
+              checkInLongitude: currentCard.checkInLongitude || null,
+              checkOutTime: currentCard.checkOutTime || null,
+              checkOutLatitude: currentCard.checkOutLatitude || null,
+              checkOutLongitude: currentCard.checkOutLongitude || null,
+              distanceToCustomer: currentCard.distanceToCustomer || null,
+              checkInPhotoUrl: currentCard.checkInPhotoUrl || null,
+              deliveryStatus: currentCard.deliveryStatus || 'pending',
+              deliveryScheduledDate: currentCard.deliveryScheduledDate || null,
+              deliveryCompletedDate: currentCard.deliveryCompletedDate || null,
+              deliveryNotes: currentCard.deliveryNotes || null,
+              trackingCode: currentCard.trackingCode || null,
+              omieOrderId: currentCard.omieOrderId || null,
+              invoiceNumber: currentCard.invoiceNumber || null
             };
             
-            const resetData = calculatePermanentCardReset(customer, latestHistoryMock);
+            // SALVAR no banco de dados para preservar histórico completo
+            console.log(`📝 [HISTORY] Criando order_history para card ${id}...`);
+            const savedHistory = await storage.createOrderHistory(latestHistoryMock);
+            console.log(`✅ [HISTORY] Order history criado: ID ${savedHistory.id}`);
+            
+            const resetData = calculatePermanentCardReset(customer, savedHistory);
             
             // Sobrescrever nextVisitDate com o valor calculado acima (mais preciso)
             resetData.nextVisitDate = scheduleResult.nextDate;
