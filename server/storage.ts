@@ -1593,16 +1593,36 @@ export class DatabaseStorage implements IStorage {
           ? and(
               eq(salesCards.sellerId, sellerId),
               eq(salesCards.routeDay, routeDay),
-              gte(salesCards.scheduledDate, startDate),
-              lte(salesCards.scheduledDate, endDate)
+              or(
+                and(
+                  isNotNull(salesCards.scheduledDate),
+                  gte(salesCards.scheduledDate, startDate),
+                  lte(salesCards.scheduledDate, endDate)
+                ),
+                and(
+                  isNotNull(salesCards.nextVisitDate),
+                  gte(salesCards.nextVisitDate, startDate),
+                  lte(salesCards.nextVisitDate, endDate)
+                )
+              )
             )
           : and(
               eq(salesCards.routeDay, routeDay),
-              gte(salesCards.scheduledDate, startDate),
-              lte(salesCards.scheduledDate, endDate)
+              or(
+                and(
+                  isNotNull(salesCards.scheduledDate),
+                  gte(salesCards.scheduledDate, startDate),
+                  lte(salesCards.scheduledDate, endDate)
+                ),
+                and(
+                  isNotNull(salesCards.nextVisitDate),
+                  gte(salesCards.nextVisitDate, startDate),
+                  lte(salesCards.nextVisitDate, endDate)
+                )
+              )
             )
       )
-      .orderBy(salesCards.scheduledDate)
+      .orderBy(sql`COALESCE(${salesCards.nextVisitDate}, ${salesCards.scheduledDate})`)
       .limit(limit)
       .offset(offset);
 
