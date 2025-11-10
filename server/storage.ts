@@ -1593,33 +1593,19 @@ export class DatabaseStorage implements IStorage {
           ? and(
               eq(salesCards.sellerId, sellerId),
               eq(salesCards.routeDay, routeDay),
-              or(
-                and(
-                  isNotNull(salesCards.scheduledDate),
-                  gte(salesCards.scheduledDate, startDate),
-                  lte(salesCards.scheduledDate, endDate)
-                ),
-                and(
-                  isNotNull(salesCards.nextVisitDate),
-                  gte(salesCards.nextVisitDate, startDate),
-                  lte(salesCards.nextVisitDate, endDate)
-                )
-              )
+              sql`(
+                (${salesCards.scheduledDate} IS NOT NULL AND ${salesCards.scheduledDate} >= ${startDate} AND ${salesCards.scheduledDate} <= ${endDate})
+                OR
+                (${salesCards.nextVisitDate} IS NOT NULL AND ${salesCards.nextVisitDate} >= ${startDate} AND ${salesCards.nextVisitDate} <= ${endDate})
+              )`
             )
           : and(
               eq(salesCards.routeDay, routeDay),
-              or(
-                and(
-                  isNotNull(salesCards.scheduledDate),
-                  gte(salesCards.scheduledDate, startDate),
-                  lte(salesCards.scheduledDate, endDate)
-                ),
-                and(
-                  isNotNull(salesCards.nextVisitDate),
-                  gte(salesCards.nextVisitDate, startDate),
-                  lte(salesCards.nextVisitDate, endDate)
-                )
-              )
+              sql`(
+                (${salesCards.scheduledDate} IS NOT NULL AND ${salesCards.scheduledDate} >= ${startDate} AND ${salesCards.scheduledDate} <= ${endDate})
+                OR
+                (${salesCards.nextVisitDate} IS NOT NULL AND ${salesCards.nextVisitDate} >= ${startDate} AND ${salesCards.nextVisitDate} <= ${endDate})
+              )`
             )
       )
       .orderBy(sql`COALESCE(${salesCards.nextVisitDate}, ${salesCards.scheduledDate})`)
