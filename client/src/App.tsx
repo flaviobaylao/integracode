@@ -143,7 +143,7 @@ function Router() {
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
-          <Route path="/daily-route" component={DailyRouteView} />
+          <Route path="/daily-routes" component={DailyRouteView} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
           <Route path="/check-in-audit" component={CheckInAudit} />

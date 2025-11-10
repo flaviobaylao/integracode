@@ -59,7 +59,7 @@ import {
   insertDeliveryDriverSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
+import { eq, and, desc, gte, lte, lt, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
