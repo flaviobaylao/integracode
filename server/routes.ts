@@ -3014,6 +3014,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  console.log('🔥 [STARTUP] Registrando PUT /api/sales-cards/:id com suporte a reset de cards permanentes');
+  
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
