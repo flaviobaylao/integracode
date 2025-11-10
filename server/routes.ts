@@ -3139,15 +3139,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
               referenceDate: new Date()
             });
             
-            // Atualizar permanent card
-            salesCard = await storage.updateSalesCard(id, {
-              ...data,
-              lastVisitDate: lastVisitDate,  // Sempre atualiza (qualquer visita)
-              nextVisitDate: scheduleResult.nextDate,
-              status: 'pending' // Permanent card sempre volta para pending
-            });
+            // RESETAR permanent card: limpar dados temporários e recalcular datas
+            const { calculatePermanentCardReset } = await import('./permanentCardResetService');
             
-            console.log(`✅ Permanent card atualizado - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+            // Criar objeto order_history com data atual para passar ao serviço de reset
+            const latestHistoryMock = {
+              id: '', // Não usado no cálculo
+              salesCardId: id,
+              orderDate: lastVisitDate,
+              products: data.products || currentCard.products || [],
+              totalValue: data.saleValue || currentCard.saleValue || '0',
+              status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
+              notes: data.notes || null,
+              checkInTime: data.checkInTime || null,
+              checkInLatitude: data.checkInLatitude || null,
+              checkInLongitude: data.checkInLongitude || null,
+              checkOutTime: data.checkOutTime || null,
+              checkOutLatitude: data.checkOutLatitude || null,
+              checkOutLongitude: data.checkOutLongitude || null,
+              distanceToCustomer: null,
+              checkInPhotoUrl: null,
+              deliveryStatus: 'pending' as const,
+              deliveryScheduledDate: null,
+              deliveryCompletedDate: null,
+              deliveryNotes: null,
+              trackingCode: null,
+              omieOrderId: null,
+              invoiceNumber: null,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            const resetData = calculatePermanentCardReset(customer, latestHistoryMock);
+            
+            // Sobrescrever nextVisitDate com o valor calculado acima (mais preciso)
+            resetData.nextVisitDate = scheduleResult.nextDate;
+            
+            // Atualizar permanent card com dados de reset completo
+            salesCard = await storage.updateSalesCard(id, resetData);
+            
+            console.log(`✅ Permanent card RESETADO - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+            console.log(`🧹 Dados temporários limpos: produtos, valores, check-in/out, delivery, telemarketing`);
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);
