@@ -3177,27 +3177,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const savedHistory = await storage.createOrderHistory(latestHistoryMock);
             console.log(`✅ [HISTORY] Order history criado: ID ${savedHistory.id}`);
             
-            const resetData = calculatePermanentCardReset(customer, savedHistory);
-            
-            // Sobrescrever nextVisitDate com o valor calculado acima (mais preciso)
-            resetData.nextVisitDate = scheduleResult.nextDate;
-            
-            // Log detalhado para debug
-            console.log(`🧹 [RESET] Aplicando reset no card ${id}:`);
-            console.log(`   - Campos Omie/NF:`, {
-              omieOrderId: resetData.omieOrderId,
-              omieOrderNumber: resetData.omieOrderNumber,
-              omieSyncStatus: resetData.omieSyncStatus,
-              omieSentAt: resetData.omieSentAt,
-              omieErrorMessage: resetData.omieErrorMessage,
-              invoiceNumber: resetData.invoiceNumber
+            // MARCAR CARD ATUAL COMO FINALIZADO (completed/no_sale/failed)
+            salesCard = await storage.updateSalesCard(id, {
+              status: data.status,
+              completedDate: lastVisitDate,
+              ...(data.products && { products: data.products }),
+              ...(data.saleValue && { saleValue: data.saleValue }),
+              ...(data.notes && { notes: data.notes })
             });
             
-            // Atualizar permanent card com dados de reset completo
-            salesCard = await storage.updateSalesCard(id, resetData);
+            console.log(`✅ Card ${id} marcado como ${data.status}`);
             
-            console.log(`✅ Permanent card RESETADO - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
-            console.log(`🧹 Dados temporários limpos: produtos, valores, check-in/out, delivery, telemarketing, Omie/NF`);
+            // CRIAR NOVO CARD PERMANENTE PARA PRÓXIMA VISITA
+            const newCardData: any = {
+              customerId: currentCard.customerId,
+              sellerId: currentCard.sellerId,
+              isPermanent: true,
+              status: 'pending',
+              nextVisitDate: scheduleResult.nextDate,
+              lastVisitDate: lastVisitDate,
+              routeDay: parsedWeekdays[0] || '',
+              products: [],
+              saleValue: '0',
+              notes: null,
+              // Copiar configurações do card anterior
+              deliveryWeekdays: currentCard.deliveryWeekdays,
+              deliveryTimeSlots: currentCard.deliveryTimeSlots,
+              deliverySaturdayTimeSlots: currentCard.deliverySaturdayTimeSlots,
+              boletoDays: currentCard.boletoDays,
+              paymentMethod: currentCard.paymentMethod,
+              operationType: currentCard.operationType,
+              source: 'system'
+            };
+            
+            const newCard = await storage.createSalesCard(newCardData);
+            
+            console.log(`✅ NOVO CARD CRIADO - ID: ${newCard.id}`);
+            console.log(`   Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}`);
+            console.log(`   Próxima visita: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);
