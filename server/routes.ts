@@ -1689,9 +1689,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Processar scheduledDate para timezone Brasil
       const cleanedData = {
         ...req.body,
-        latitude: req.body.latitude === '' ? null : req.body.latitude,
-        longitude: req.body.longitude === '' ? null : req.body.longitude,
-        scheduledDate: req.body.scheduledDate 
+        latitude: (req.body.latitude === '' || req.body.latitude === undefined) ? null : req.body.latitude,
+        longitude: (req.body.longitude === '' || req.body.longitude === undefined) ? null : req.body.longitude,
+        scheduledDate: (req.body.scheduledDate && req.body.scheduledDate !== '')
           ? fromZonedTime(`${req.body.scheduledDate}T00:00:00`, 'America/Sao_Paulo')
           : null,
       };
