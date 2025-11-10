@@ -652,11 +652,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem editar dados de clientes." });
       }
       
-      // Check if customer exists
+      // Check if customer exists and capture previous state for recurrence detection
       const existingCustomer = await storage.getCustomer(id);
       if (!existingCustomer) {
         return res.status(404).json({ message: "Cliente não encontrado" });
       }
+      
+      // Capture previous state for recurrence comparison
+      const previousState = {
+        sellerId: existingCustomer.sellerId || undefined,
+        weekdays: existingCustomer.weekdays || undefined,
+        visitPeriodicity: existingCustomer.visitPeriodicity || undefined
+      };
       
       // Clean data: transform empty strings to null for numeric fields
       const cleanedData: any = {};
@@ -679,6 +686,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         visitPeriodicity: updatedCustomer.visitPeriodicity,
         sellerId: updatedCustomer.sellerId
       });
+      
+      // Detect recurrence changes
+      const normalizeWeekdays = (wd: any): string[] => {
+        if (!wd) return [];
+        if (Array.isArray(wd)) return wd;
+        if (typeof wd === 'string') {
+          try {
+            return JSON.parse(wd);
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+      
+      const previousWeekdays = normalizeWeekdays(previousState.weekdays);
+      const newWeekdays = normalizeWeekdays(updatedCustomer.weekdays);
+      const weekdaysChanged = JSON.stringify(previousWeekdays.sort()) !== JSON.stringify(newWeekdays.sort());
+      const periodicityChanged = previousState.visitPeriodicity !== updatedCustomer.visitPeriodicity;
+      const sellerChanged = previousState.sellerId !== updatedCustomer.sellerId;
+      
+      // Apply recurrence changes if any recurrence field changed
+      if (weekdaysChanged || periodicityChanged || sellerChanged) {
+        try {
+          console.log(`🔄 Detectadas mudanças de recorrência para cliente ${updatedCustomer.fantasyName || updatedCustomer.name}...`);
+          const recurrenceResult = await applyCustomerRecurrenceChange(id, {
+            weekdays: newWeekdays.length > 0 ? newWeekdays : undefined,
+            visitPeriodicity: updatedCustomer.visitPeriodicity || undefined,
+            sellerId: updatedCustomer.sellerId || undefined
+          }, {
+            sellerId: previousState.sellerId,
+            weekdays: previousWeekdays.length > 0 ? previousWeekdays : undefined,
+            visitPeriodicity: previousState.visitPeriodicity
+          });
+          
+          if (recurrenceResult.success) {
+            console.log(`✅ Recorrência atualizada: ${recurrenceResult.invalidatedRoutes.length} rotas invalidadas`);
+          } else {
+            console.warn(`⚠️ Falha ao atualizar recorrência: ${recurrenceResult.message}`);
+          }
+        } catch (recurrenceError: any) {
+          console.error('⚠️ Erro ao aplicar mudanças de recorrência:', recurrenceError);
+        }
+      }
       
       // Atualizar automaticamente os salesCards futuros com os novos dados do cliente
       try {
