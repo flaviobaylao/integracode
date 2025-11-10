@@ -3086,18 +3086,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🔍 [DEBUG PUT] Card ${id} found, isPermanent = ${currentCard.isPermanent}`);
         
         if (currentCard.isPermanent) {
-          // PERMANENT CARD: criar order_history e aplicar reset completo
-          console.log(`🔄 [PERMANENT RESET] Starting reset flow for card ${id}...`);
+          // PERMANENT CARD: criar order_history e criar novo card
+          console.log(`🆕 [NEW CARD] Starting new card creation flow for permanent card ${id}...`);
           
           const customer = await storage.getCustomer(currentCard.customerId);
           
           console.log(`🔍 [DEBUG] Customer data:`, {
             exists: !!customer,
+            customerId: currentCard.customerId,
             weekdays: customer?.weekdays,
+            weekdaysType: typeof customer?.weekdays,
             periodicity: customer?.visitPeriodicity
           });
           
           if (customer && customer.weekdays && customer.visitPeriodicity) {
+            console.log(`✅ [DEBUG] Customer has valid recurrence config, proceeding...`);
             // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
             const lastVisitDate = new Date();
             
@@ -3189,6 +3192,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`✅ Card ${id} marcado como ${data.status}`);
             
             // CRIAR NOVO CARD PERMANENTE PARA PRÓXIMA VISITA
+            console.log(`🆕 [NEW CARD] Preparando dados para novo card...`);
+            console.log(`   - customerId: ${currentCard.customerId}`);
+            console.log(`   - sellerId: ${currentCard.sellerId}`);
+            console.log(`   - nextVisitDate: ${scheduleResult.nextDate.toISOString()}`);
+            console.log(`   - routeDay: ${parsedWeekdays[0]}`);
+            
             const newCardData: any = {
               customerId: currentCard.customerId,
               sellerId: currentCard.sellerId,
@@ -3210,11 +3219,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
               source: 'system'
             };
             
-            const newCard = await storage.createSalesCard(newCardData);
-            
-            console.log(`✅ NOVO CARD CRIADO - ID: ${newCard.id}`);
-            console.log(`   Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}`);
-            console.log(`   Próxima visita: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+            console.log(`🔥 [NEW CARD] Chamando storage.createSalesCard...`);
+            try {
+              const newCard = await storage.createSalesCard(newCardData);
+              console.log(`✅✅✅ NOVO CARD CRIADO COM SUCESSO!`);
+              console.log(`   - ID: ${newCard.id}`);
+              console.log(`   - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}`);
+              console.log(`   - Próxima visita: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+            } catch (createError: any) {
+              console.error(`❌ ERRO ao criar novo card:`, createError.message);
+              console.error(`   Stack:`, createError.stack);
+              throw createError;
+            }
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);
