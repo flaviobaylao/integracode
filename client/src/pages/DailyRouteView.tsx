@@ -881,7 +881,44 @@ export default function DailyRouteView() {
               visits={orderedVisits}
               optimizedOrder={effectiveOptimizedOrder}
               checkpoints={route.checkpoints || []}
+              userRole={user?.role?.toLowerCase()}
               onPhotoClick={(photoData) => setSelectedPhoto(photoData)}
+              onLockCoordinates={async (customerId, latitude, longitude) => {
+                try {
+                  // Validar coordenadas antes de enviar
+                  const lat = parseFloat(latitude);
+                  const lon = parseFloat(longitude);
+                  
+                  if (isNaN(lat) || isNaN(lon)) {
+                    toast({
+                      variant: "destructive",
+                      title: "Coordenadas inválidas",
+                      description: "As coordenadas do checkpoint são inválidas. Não é possível travar.",
+                    });
+                    return;
+                  }
+                  
+                  await apiRequest('PUT', `/api/customers/${customerId}`, {
+                    latitude: lat,
+                    longitude: lon
+                  });
+                  
+                  toast({
+                    title: "Coordenadas travadas com sucesso!",
+                    description: "As coordenadas do cliente foram atualizadas com base no PIN de check-in.",
+                  });
+                  
+                  // Invalidar cache para atualizar dados do cliente e rotas
+                  queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+                  queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+                } catch (error: any) {
+                  toast({
+                    variant: "destructive",
+                    title: "Erro ao travar coordenadas",
+                    description: error.message || "Não foi possível atualizar as coordenadas do cliente.",
+                  });
+                }
+              }}
             />
           )}
         </CardContent>

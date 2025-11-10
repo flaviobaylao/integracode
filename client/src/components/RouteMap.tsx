@@ -20,11 +20,14 @@ interface RouteMapProps {
   optimizedOrder: string[];
   checkpoints?: Array<{
     visitId: string;
+    customerId?: string;
+    customerName?: string;
     checkpointLatitude: string;
     checkpointLongitude: string;
     checkpointTime: string;
     checkpointType: string;
   }>;
+  userRole?: string;
   onPhotoClick?: (photoData: {
     url: string;
     customerName: string;
@@ -32,9 +35,10 @@ interface RouteMapProps {
     latitude: string;
     longitude: string;
   }) => void;
+  onLockCoordinates?: (customerId: string, latitude: string, longitude: string) => void;
 }
 
-export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
+export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], userRole, onPhotoClick, onLockCoordinates }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
@@ -306,15 +310,63 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
         });
       }
 
-      // Popup com informações
-      const popupContent = hasPhoto 
-        ? `<strong>📸 ${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}<br>
-           <em style="color: #9333ea;">Clique no ícone para ver a foto</em>`
-        : `<strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
+      // Popup com informações (incluindo nome fantasia e botão de lock para admins)
+      const customerDisplayName = checkpoint.customerName || correspondingVisit?.customerName || 'Cliente';
+      const isAdminUser = userRole && ['admin', 'coordinator', 'administrative'].includes(userRole);
+      const lockButtonId = `lock-coords-${checkpoint.visitId}-${checkpoint.checkpointType}`;
+      
+      let popupContent = `<div style="min-width: 200px;">
+        <strong>${customerDisplayName}</strong><br>
+        <em>${checkpoint.checkpointType === 'check_in' ? '📍 Check-in' : '🔴 Check-out'}</em><br>
+        ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
+      
+      if (hasPhoto) {
+        popupContent += `<br><em style="color: #9333ea;">Clique no ícone para ver a foto</em>`;
+      }
+      
+      if (isAdminUser && checkpoint.customerId && onLockCoordinates) {
+        popupContent += `<br><br>
+          <button 
+            id="${lockButtonId}"
+            style="
+              background: #10b981; 
+              color: white; 
+              border: none; 
+              padding: 6px 12px; 
+              border-radius: 4px; 
+              cursor: pointer;
+              font-size: 12px;
+              width: 100%;
+              margin-top: 4px;
+            "
+            onmouseover="this.style.background='#059669'"
+            onmouseout="this.style.background='#10b981'"
+          >
+            🔒 Travar Coordenadas
+          </button>`;
+      }
+      
+      popupContent += `</div>`;
 
-      marker.bindPopup(popupContent);
+      const popup = L.popup().setContent(popupContent);
+      marker.bindPopup(popup);
+      
+      // Adicionar listener para o botão de lock após o popup abrir
+      if (isAdminUser && checkpoint.customerId && onLockCoordinates) {
+        marker.on('popupopen', () => {
+          const lockButton = document.getElementById(lockButtonId);
+          if (lockButton) {
+            lockButton.addEventListener('click', () => {
+              onLockCoordinates(
+                checkpoint.customerId!,
+                checkpoint.checkpointLatitude,
+                checkpoint.checkpointLongitude
+              );
+              marker.closePopup();
+            });
+          }
+        });
+      }
     });
 
     // Desenhar rota executada em vermelho (baseado em check-ins)
