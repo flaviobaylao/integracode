@@ -2189,38 +2189,36 @@ export class DatabaseStorage implements IStorage {
     overdueClients: number;
     conversionRate: number;
   }> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Usar timezone Brasil (America/Sao_Paulo)
+    const { fromZonedTime } = await import('date-fns-tz');
+    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = fromZonedTime(`${todayStr}T00:00:00`, 'America/Sao_Paulo');
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    // Today's sales
-    let todaySalesQuery = db
-      .select({ value: sql<number>`COALESCE(SUM(${salesCards.saleValue}), 0)` })
-      .from(salesCards)
-      .where(
-        and(
-          gte(salesCards.completedDate, today),
-          lte(salesCards.completedDate, tomorrow),
-          eq(salesCards.status, 'completed')
-        )
-      );
+    // Today's sales - Buscar de BILLINGS (fonte de verdade do Omie)
+    // Incluir apenas vendas não canceladas (billing_type = 'venda', is_cancelled = false)
+    let todaySalesConditions = and(
+      gte(billings.invoiceDate, today),
+      lt(billings.invoiceDate, tomorrow),
+      eq(billings.billingType, 'venda'),
+      eq(billings.isCancelled, false)
+    );
     
     if (sellerId) {
-      todaySalesQuery = db
-        .select({ value: sql<number>`COALESCE(SUM(${salesCards.saleValue}), 0)` })
-        .from(salesCards)
-        .where(
-          and(
-            gte(salesCards.completedDate, today),
-            lte(salesCards.completedDate, tomorrow),
-            eq(salesCards.status, 'completed'),
-            eq(salesCards.sellerId, sellerId)
-          )
-        );
+      todaySalesConditions = and(
+        gte(billings.invoiceDate, today),
+        lt(billings.invoiceDate, tomorrow),
+        eq(billings.billingType, 'venda'),
+        eq(billings.isCancelled, false),
+        eq(billings.sellerId, sellerId)
+      );
     }
     
-    const [todaySalesResult] = await todaySalesQuery;
+    const [todaySalesResult] = await db
+      .select({ value: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)` })
+      .from(billings)
+      .where(todaySalesConditions);
     
     // Today's clients
     let todayClientsQuery = db

@@ -2546,7 +2546,7 @@ export class OmieService {
 
       // Se queremos incluir inativos, adicionar filtro específico
       if (includeInactive) {
-        requestParams.clientesFiltrar = {
+        requestParams.clientesFiltro = {
           inativo: 'S'
         };
       }
