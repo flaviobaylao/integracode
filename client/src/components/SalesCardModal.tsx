@@ -131,7 +131,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
 
   useEffect(() => {
     if (editingCard) {
-      const scheduledDate = new Date(editingCard.scheduledDate);
+      const scheduledDate = editingCard.scheduledDate ? new Date(editingCard.scheduledDate) : new Date();
       setFormData({
         customerId: editingCard.customerId,
         sellerId: editingCard.sellerId,
@@ -478,7 +478,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && allSellers ? (
+                  {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && Array.isArray(allSellers) ? (
                     // Mostrar todos os vendedores para administrativos (filtrar apenas role='vendedor')
                     allSellers
                       .filter((seller: any) => seller.role === 'vendedor')

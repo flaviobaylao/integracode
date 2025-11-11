@@ -2530,22 +2530,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Verificar se já existe um card ativo para este cliente
-      // Cards ativos são aqueles com status 'pending' ou 'telemarketing'
-      const ACTIVE_STATUSES = ['pending', 'telemarketing'];
-      const existingCards = await storage.getSalesCards(processedData.sellerId);
-      const activeCard = existingCards.find(card => 
-        card.customerId === processedData.customerId && 
-        ACTIVE_STATUSES.includes(card.status)
-      );
-      
-      if (activeCard) {
-        const statusLabel = activeCard.status === 'pending' ? 'pendente' : 'em telemarketing';
-        return res.status(400).json({ 
-          message: `Este cliente já possui um card de vendas ativo (${statusLabel}). Por favor, utilize o card existente antes de criar um novo.` 
-        });
-      }
-      
       const salesCard = await storage.createSalesCard(processedData);
       
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
