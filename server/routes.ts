@@ -812,7 +812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         defaults: {
           customerId: customerId,
           sellerId: sellerId || customer.sellerId || user.id,
-          scheduledDate: scheduleDateTime.toISOString(),
+          scheduledDate: scheduleDateTime.toISOString().split('T')[0], // Formato yyyy-MM-dd para input type="date"
           scheduledTime: scheduledTime || '09:00', // Default time if not provided
         },
       });
@@ -9267,7 +9267,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { 
         items, 
         totalValue, 
-        orderNumber, 
+        orderNumber: providedOrderNumber, 
         paymentMethod, 
         operationType, 
         shouldBlock,
@@ -9281,6 +9281,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Use items as products for backward compatibility
       const products = items || req.body.products;
+
+      // Gerar orderNumber se não fornecido pelo frontend
+      const orderNumber = providedOrderNumber || `ORD-${Date.now()}-${id}`;
 
       console.log('Finalizing sale for card:', id);
       console.log('Sale data:', { products, totalValue, orderNumber, operationType });
@@ -9481,7 +9484,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
 
           } catch (omieApiError: any) {
-            console.error('Omie API Error:', omieApiError);
+            console.error('❌ [OMIE-SEND] Erro ao enviar pedido para Omie:', {
+              error: omieApiError,
+              message: omieApiError.message,
+              stack: omieApiError.stack,
+              orderNumber,
+              cardId: id,
+              customerId: fullCard.customer.id
+            });
             
             // Marcar como completed mesmo com erro no Omie
             const fallbackOrderId = `FALLBACK-${orderNumber}`;
@@ -9489,6 +9499,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               omieOrderId: fallbackOrderId,
               status: 'completed'
             });
+
+            console.log(`⚠️ [OMIE-SEND] Card ${id} marcado como completed com fallback ID: ${fallbackOrderId}`);
 
             res.json({
               success: true,
