@@ -3068,6 +3068,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cardBefore = await storage.getSalesCard(id);
       console.log(`   📋 ANTES - routeDay:`, cardBefore?.routeDay);
       
+      // 🔒 VALIDAÇÃO: Impedir manipulação de cards já finalizados
+      if (cardBefore && ['completed', 'no_sale', 'failed'].includes(cardBefore.status)) {
+        // Permitir APENAS se for admin tentando corrigir algo específico (ex: atualizar Omie IDs)
+        const isAdminCorrection = user?.role === 'admin' && (
+          data.omieOrderId || 
+          data.omieOrderNumber || 
+          data.omieSyncStatus ||
+          data.invoiceNumber
+        );
+        
+        if (!isAdminCorrection) {
+          console.log(`🔒 [BLOQUEIO] Card ${id} já finalizado (${cardBefore.status}) - impedindo manipulação`);
+          return res.status(403).json({ 
+            message: `Este card já foi finalizado (${cardBefore.status === 'completed' ? 'concluído' : cardBefore.status === 'no_sale' ? 'sem venda' : 'falhou'}) e não pode mais ser editado. Um novo card foi criado automaticamente para a próxima visita.`,
+            blocked: true,
+            reason: 'card_already_finalized',
+            cardStatus: cardBefore.status
+          });
+        } else {
+          console.log(`✅ [ADMIN] Permitindo correção administrativa no card ${id}`);
+        }
+      }
+      
       // Se coordenadas GPS foram capturadas, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
         try {
@@ -8026,6 +8049,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!card) {
         return res.status(404).json({ message: 'Card não encontrado' });
+      }
+      
+      // 🔒 VALIDAÇÃO: Permitir envio APENAS para cards com status 'completed'
+      if (card.status !== 'completed') {
+        console.log(`🔒 [BLOQUEIO] Card ${cardId} tem status ${card.status} - somente cards 'completed' podem ser enviados ao Omie`);
+        const statusMessages: Record<string, string> = {
+          'pending': 'pendente de execução',
+          'in_progress': 'em andamento',
+          'no_sale': 'sem venda',
+          'failed': 'falhou'
+        };
+        const statusLabel = statusMessages[card.status] || card.status;
+        
+        return res.status(403).json({ 
+          message: `Este card não pode ser enviado ao Omie porque está "${statusLabel}". Apenas vendas finalizadas e concluídas podem ser enviadas ao faturamento.`,
+          blocked: true,
+          reason: 'invalid_status_for_billing',
+          cardStatus: card.status
+        });
       }
       
       if (!card.saleValue || parseFloat(card.saleValue) === 0) {

@@ -1387,6 +1387,22 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
 
         {/* Botões de Ação */}
         <div className="space-y-3 pt-6 border-t">
+          {/* 🔒 Aviso de Card Finalizado */}
+          {card && ['completed', 'no_sale', 'failed'].includes(card.status) && (
+            <div className="bg-gray-100 border border-gray-300 rounded-lg p-4">
+              <p className="text-sm text-gray-700 font-medium">
+                🔒 <strong>Card Finalizado:</strong> Este card já foi {
+                  card.status === 'completed' ? 'concluído' : 
+                  card.status === 'no_sale' ? 'marcado como "sem venda"' : 
+                  'marcado como "falhou"'
+                }.
+              </p>
+              <p className="text-xs text-gray-600 mt-1">
+                Um novo card foi criado automaticamente para a próxima visita. Este card não pode mais ser editado.
+              </p>
+            </div>
+          )}
+          
           {/* Linha 1: Botões de PDF e Check-out */}
           <div className="flex justify-between space-x-3">
             <div className="flex space-x-2">
@@ -1399,82 +1415,90 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 Cancelar
               </Button>
               
-              <Button 
-                variant="outline" 
-                onClick={handleNoSale}
-                disabled={isSubmitting}
-                className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
-                data-testid="button-no-sale"
-              >
-                <XCircle className="h-4 w-4 mr-2" />
-                Venda Não Realizada
-              </Button>
+              {/* Só mostrar "Venda Não Realizada" se card ainda não foi finalizado */}
+              {card && !['completed', 'no_sale', 'failed'].includes(card.status) && (
+                <Button 
+                  variant="outline" 
+                  onClick={handleNoSale}
+                  disabled={isSubmitting}
+                  className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
+                  data-testid="button-no-sale"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Venda Não Realizada
+                </Button>
+              )}
             </div>
             
-            <div className="flex space-x-2">
-              <Button 
-                variant="outline" 
-                onClick={generateOrderPDF}
-                disabled={products.length === 0}
-                className="bg-blue-50 hover:bg-blue-100"
-                data-testid="button-generate-pdf"
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                Gerar PDF
-              </Button>
-              
-              <Button 
-                variant="outline" 
-                onClick={sendPDFToWhatsApp}
-                disabled={products.length === 0}
-                className="bg-green-50 hover:bg-green-100"
-                data-testid="button-send-whatsapp"
-              >
-                <MessageCircle className="h-4 w-4 mr-2" />
-                Enviar WhatsApp
-              </Button>
-            </div>
+            {/* Botões PDF e WhatsApp - APENAS para cards não finalizados */}
+            {card && !['completed', 'no_sale', 'failed'].includes(card.status) && (
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={generateOrderPDF}
+                  disabled={products.length === 0}
+                  className="bg-blue-50 hover:bg-blue-100"
+                  data-testid="button-generate-pdf"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Gerar PDF
+                </Button>
+                
+                <Button 
+                  variant="outline" 
+                  onClick={sendPDFToWhatsApp}
+                  disabled={products.length === 0}
+                  className="bg-green-50 hover:bg-green-100"
+                  data-testid="button-send-whatsapp"
+                >
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Enviar WhatsApp
+                </Button>
+              </div>
+            )}
           </div>
           
-          {/* Botões de Ação - Salvar e Finalizar */}
-          <div className="border-t pt-4 space-y-3">
-            {/* Botão Salvar e Sair (sem finalizar) */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-              <p className="text-sm text-yellow-800 mb-2">
-                💡 <strong>Salvar e Sair:</strong> Os produtos serão salvos para finalizar depois. Você pode fazer check-out e voltar mais tarde.
-              </p>
-              <Button 
-                variant="outline" 
-                onClick={handleCheckOut}
-                disabled={products.length === 0}
-                className="w-full bg-yellow-100 hover:bg-yellow-200 border-yellow-300 text-yellow-800"
-                data-testid="button-save-and-checkout"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Salvar Produtos e Fazer Check-out
-              </Button>
-            </div>
+          {/* Botões de Ação - Salvar e Finalizar (APENAS para cards não finalizados) */}
+          {card && !['completed', 'no_sale', 'failed'].includes(card.status) && (
+            <div className="border-t pt-4 space-y-3">
+              {/* Botão Salvar e Sair (sem finalizar) */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <p className="text-sm text-yellow-800 mb-2">
+                  💡 <strong>Salvar e Sair:</strong> Os produtos serão salvos para finalizar depois. Você pode fazer check-out e voltar mais tarde.
+                </p>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCheckOut}
+                  disabled={products.length === 0}
+                  className="w-full bg-yellow-100 hover:bg-yellow-200 border-yellow-300 text-yellow-800"
+                  data-testid="button-save-and-checkout"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Salvar Produtos e Fazer Check-out
+                </Button>
+              </div>
 
-            {/* Botão de Finalizar e Enviar para Faturamento */}
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-              <p className="text-sm text-orange-800 mb-2">
-                ✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.
-              </p>
-              <Button 
-                onClick={handleSendToFaturamento}
-                disabled={isSubmitting || products.length === 0}
-                className="w-full bg-orange-500 hover:bg-orange-600"
-                data-testid="button-finalize-billing"
-              >
-                {isSubmitting ? (
-                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                ) : (
-                  <DollarSign className="h-4 w-4 mr-2" />
-                )}
-                Finalizar e Enviar p/ Faturamento
-              </Button>
+              {/* Botão de Finalizar e Enviar para Faturamento */}
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="text-sm text-orange-800 mb-2">
+                  ✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.
+                </p>
+                <Button 
+                  onClick={handleSendToFaturamento}
+                  disabled={isSubmitting || products.length === 0}
+                  className="w-full bg-orange-500 hover:bg-orange-600"
+                  data-testid="button-finalize-billing"
+                >
+                  {isSubmitting ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                  ) : (
+                    <DollarSign className="h-4 w-4 mr-2" />
+                  )}
+                  Finalizar e Enviar p/ Faturamento
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
