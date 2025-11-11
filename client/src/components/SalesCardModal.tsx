@@ -239,8 +239,48 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
     setErrors({});
 
     try {
+      // Validar campos obrigatórios
+      const validationErrors: Record<string, string> = {};
+      
+      if (!formData.customerId) {
+        validationErrors.customerId = "Cliente é obrigatório";
+      }
+      
+      if (!formData.sellerId) {
+        validationErrors.sellerId = "Vendedor é obrigatório";
+      }
+      
+      if (!formData.scheduledDate) {
+        validationErrors.scheduledDate = "Data é obrigatória";
+      }
+      
+      if (!formData.scheduledTime) {
+        validationErrors.scheduledTime = "Horário é obrigatório";
+      }
+      
+      // Se houver erros de validação, mostrar e retornar
+      if (Object.keys(validationErrors).length > 0) {
+        setErrors(validationErrors);
+        toast({
+          title: "Campos obrigatórios faltando",
+          description: "Por favor, preencha todos os campos obrigatórios.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
       // Combine date and time into a single DateTime
       const scheduledDateTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`);
+      
+      // Validar se a data é válida
+      if (isNaN(scheduledDateTime.getTime())) {
+        toast({
+          title: "Data/hora inválida",
+          description: "Por favor, insira uma data e hora válidas.",
+          variant: "destructive",
+        });
+        return;
+      }
       
       const dataToSubmit = {
         customerId: formData.customerId,
@@ -266,15 +306,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
       // Não usar validação Zod aqui - deixar o backend validar
       createSalesCardMutation.mutate(dataToSubmit);
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        const fieldErrors: Record<string, string> = {};
-        error.errors.forEach((err) => {
-          if (err.path[0]) {
-            fieldErrors[err.path[0] as string] = err.message;
-          }
-        });
-        setErrors(fieldErrors);
-      }
+      console.error("Erro no handleSubmit:", error);
+      toast({
+        title: "Erro ao salvar",
+        description: error instanceof Error ? error.message : "Erro desconhecido ao criar card",
+        variant: "destructive",
+      });
     }
   };
 
