@@ -22,6 +22,7 @@ import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SalesCardModal from "@/components/SalesCardModal";
+import SaleModal from "@/components/SaleModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 interface DailyRoute {
@@ -86,6 +87,10 @@ export default function DailyRouteView() {
     scheduledDate?: string;
     scheduledTime?: string;
   } | null>(null);
+  
+  // Estado para modal de venda (produto selection)
+  const [showSaleModal, setShowSaleModal] = useState(false);
+  const [salesCardForSale, setSalesCardForSale] = useState<any>(null);
   
   // Estado para modal de foto
   const [selectedPhoto, setSelectedPhoto] = useState<{
@@ -475,6 +480,22 @@ export default function DailyRouteView() {
         description: error.message || "Não foi possível preparar o card de vendas.",
       });
     }
+  };
+
+  // Handler para iniciar venda (abrir SaleModal)
+  const handleStartSale = (card: SalesCardWithRelations) => {
+    setShowCardModal(false); // Fechar modal de detalhes
+    setSalesCardForSale(card); // Definir card para venda
+    setShowSaleModal(true); // Abrir modal de seleção de produtos
+  };
+
+  // Handler para marcar como "Não Venda"
+  const handleStartNoSale = async (card: SalesCardWithRelations) => {
+    // Implementação será adicionada conforme necessidade
+    toast({
+      title: "Função em desenvolvimento",
+      description: "A funcionalidade 'Não Venda' será implementada em breve.",
+    });
   };
 
   // Função para abrir modal de foto
@@ -1369,6 +1390,8 @@ export default function DailyRouteView() {
           refetch();
         }}
         card={selectedCard}
+        onStartSale={handleStartSale}
+        onStartNoSale={handleStartNoSale}
       />
 
       {/* Modal de Edição do Card de Vendas */}
@@ -1394,6 +1417,18 @@ export default function DailyRouteView() {
         }}
         initialValues={initialCardValues || undefined}
         editingCard={editingCard}
+      />
+
+      {/* Modal de Seleção de Produtos (Venda) */}
+      <SaleModal
+        isOpen={showSaleModal}
+        onClose={() => {
+          setShowSaleModal(false);
+          setSalesCardForSale(null);
+          // Recarregar rota após fechar modal
+          refetch();
+        }}
+        salesCard={salesCardForSale}
       />
 
       {/* Modal de Visualização de Foto */}
