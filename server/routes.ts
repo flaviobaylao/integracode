@@ -700,6 +700,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Duplicate complete order from last order
+  app.post('/api/customers/:customerId/duplicate-last-order', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const { scheduledDate, scheduledTime, sellerId } = req.body;
+      const user = req.currentUser;
+      
+      // Validate required fields
+      if (!scheduledDate) {
+        return res.status(400).json({ message: "scheduledDate is required" });
+      }
+      
+      // Get customer to check access
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      
+      // Check if vendedor can access this customer
+      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Get last order
+      const lastOrder = await storage.getLastCustomerOrder(customerId);
+      
+      if (!lastOrder) {
+        return res.status(404).json({ message: "No previous order found for this customer" });
+      }
+      
+      // Prepare schedule datetime
+      const scheduleDateTime = scheduledTime 
+        ? new Date(`${scheduledDate}T${scheduledTime}:00`)
+        : new Date(scheduledDate);
+      
+      // Create new sales card with duplicated data
+      const newCard = await storage.createSalesCard({
+        customerId: customerId,
+        sellerId: sellerId || customer.sellerId || user.id,
+        scheduledDate: scheduleDateTime,
+        products: lastOrder.products || [],
+        paymentMethod: lastOrder.paymentMethod || 'a_vista',
+        operationType: lastOrder.operationType || 'venda',
+        notes: lastOrder.notes || '',
+        freight: lastOrder.freight || 0,
+        discount: lastOrder.discount || 0,
+        saleValue: lastOrder.saleValue || 0,
+        isPermanent: false, // Duplicated cards are not permanent
+        status: 'pending',
+      });
+      
+      // Fetch complete card with relations
+      const fullCard = await storage.getSalesCard(newCard.id);
+      
+      if (!fullCard) {
+        return res.status(500).json({ message: "Card created but failed to fetch complete data" });
+      }
+      
+      console.log(`✅ Card duplicado com sucesso para cliente ${customer.fantasyName || customer.name}: ${newCard.id}`);
+      res.json(fullCard);
+    } catch (error: any) {
+      console.error("Error duplicating last order:", error);
+      res.status(500).json({ message: error.message || "Failed to duplicate last order" });
+    }
+  });
+
   app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;

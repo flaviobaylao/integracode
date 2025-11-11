@@ -25,6 +25,13 @@ interface SalesCardModalProps {
     sellerId?: string;
     scheduledDate?: string;
     scheduledTime?: string;
+    products?: any[];
+    paymentMethod?: string;
+    operationType?: string;
+    notes?: string;
+    freight?: number;
+    discount?: number;
+    saleValue?: number;
   };
 }
 

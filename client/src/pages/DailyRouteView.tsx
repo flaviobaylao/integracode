@@ -410,54 +410,65 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para abrir novo card de venda na rota (duplicando último pedido)
+  // Função para duplicar último pedido e abrir card
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      // Determinar valores iniciais para o novo card
+      // Determinar valores para o novo card
       const routeDate = route?.routeDate || selectedDate;
       const currentTime = format(new Date(), 'HH:mm');
       const sellerId = selectedSellerId || user?.id || '';
       
-      // Buscar último pedido do cliente para duplicação
-      const lastOrder = await apiRequest('GET', `/api/customers/${customerId}/last-order`);
+      toast({
+        title: "Duplicando pedido",
+        description: "Criando card com dados do último pedido...",
+      });
       
-      // Se houver pedido anterior, duplicar TODOS os dados
-      if (lastOrder) {
-        setInitialCardValues({
-          customerId: customerId,
-          sellerId: sellerId,
-          scheduledDate: routeDate,
-          scheduledTime: currentTime,
-          // Duplicar TODOS os dados do último pedido
-          products: lastOrder.products,
-          paymentMethod: lastOrder.paymentMethod,
-          operationType: lastOrder.operationType,
-          notes: lastOrder.notes,
-          freight: lastOrder.freight,
-          discount: lastOrder.discount,
-          saleValue: lastOrder.saleValue,
+      // Duplicar último pedido criando card completo no backend
+      const duplicatedCard = await apiRequest('POST', `/api/customers/${customerId}/duplicate-last-order`, {
+        scheduledDate: routeDate,
+        scheduledTime: currentTime,
+        sellerId: sellerId,
+      });
+      
+      // Abrir modal de detalhes com o card duplicado
+      setSelectedCard(duplicatedCard);
+      setShowCardModal(true);
+      
+      toast({
+        title: "Card duplicado",
+        description: "Card criado com produtos do último pedido! Edite conforme necessário.",
+      });
+    } catch (error: any) {
+      console.error('Erro ao duplicar card:', error);
+      
+      // Se não houver pedido anterior (404), abrir modal de criação vazio
+      if (error.message?.includes("No previous order") || error.message?.includes("404")) {
+        toast({
+          title: "Primeiro pedido",
+          description: "Cliente sem pedidos anteriores. Abrindo formulário em branco.",
         });
-      } else {
-        // Se não houver pedido anterior, apenas pré-preencher campos básicos
+        
+        const routeDate = route?.routeDate || selectedDate;
+        const currentTime = format(new Date(), 'HH:mm');
+        const sellerId = selectedSellerId || user?.id || '';
+        
         setInitialCardValues({
           customerId: customerId,
           sellerId: sellerId,
           scheduledDate: routeDate,
           scheduledTime: currentTime,
+        });
+        
+        setEditingCard(null);
+        setShowEditModal(true);
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Erro ao duplicar card",
+          description: error.message || "Não foi possível duplicar o card de vendas.",
         });
       }
-      
-      // Abrir modal de novo card (editingCard=null)
-      setEditingCard(null);
-      setShowEditModal(true);
-    } catch (error: any) {
-      console.error('Erro ao abrir card:', error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao abrir card",
-        description: error.message || "Não foi possível abrir o card de vendas.",
-      });
     }
   };
 
