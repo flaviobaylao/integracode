@@ -3035,7 +3035,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       
       console.log(`\n🔧 [PUT /api/sales-cards/${id}] Iniciando atualização de card`);
+      console.log(`   📥 req.body completo:`, JSON.stringify(req.body, null, 2));
       console.log(`   📥 req.body.routeDay:`, req.body.routeDay);
+      console.log(`   📥 req.body.status:`, req.body.status);
+      console.log(`   📥 req.body.products:`, req.body.products);
       console.log(`   📥 req.body Omie campos:`, {
         omieSyncStatus: req.body.omieSyncStatus,
         omieOrderId: req.body.omieOrderId,
