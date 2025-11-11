@@ -410,65 +410,70 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para duplicar último pedido e abrir card
+  // Função para preparar venda: verifica card existente ou cria novo
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      // Determinar valores para o novo card
+      // Determinar valores para requisição
       const routeDate = route?.routeDate || selectedDate;
       const currentTime = format(new Date(), 'HH:mm');
       const sellerId = selectedSellerId || user?.id || '';
       
       toast({
-        title: "Duplicando pedido",
-        description: "Criando card com dados do último pedido...",
+        title: "Preparando venda",
+        description: "Verificando card do cliente...",
       });
       
-      // Duplicar último pedido criando card completo no backend
-      const duplicatedCard = await apiRequest('POST', `/api/customers/${customerId}/duplicate-last-order`, {
+      // Chamar endpoint unificado que verifica/cria card
+      const response = await apiRequest('POST', `/api/customers/${customerId}/prepare-sale`, {
         scheduledDate: routeDate,
         scheduledTime: currentTime,
         sellerId: sellerId,
       });
       
-      // Abrir modal de detalhes com o card duplicado
-      setSelectedCard(duplicatedCard);
-      setShowCardModal(true);
-      
-      toast({
-        title: "Card duplicado",
-        description: "Card criado com produtos do último pedido! Edite conforme necessário.",
-      });
-    } catch (error: any) {
-      console.error('Erro ao duplicar card:', error);
-      
-      // Se não houver pedido anterior (404), abrir modal de criação vazio
-      if (error.message?.includes("No previous order") || error.message?.includes("404")) {
+      if (response.status === 'existing') {
+        // Card ativo virgem encontrado - abrir direto
+        toast({
+          title: "Card encontrado",
+          description: "Abrindo card existente para execução da venda.",
+        });
+        setSelectedCard(response.card);
+        setShowCardModal(true);
+        
+      } else if (response.status === 'duplicated') {
+        // Card criado por duplicação - abrir com dados
+        toast({
+          title: "Card duplicado",
+          description: "Card criado com produtos do último pedido! Edite conforme necessário.",
+        });
+        setSelectedCard(response.card);
+        setShowCardModal(true);
+        
+      } else if (response.status === 'create-manual') {
+        // Sem pedido anterior - abrir modal de criação manual
         toast({
           title: "Primeiro pedido",
           description: "Cliente sem pedidos anteriores. Abrindo formulário em branco.",
         });
         
-        const routeDate = route?.routeDate || selectedDate;
-        const currentTime = format(new Date(), 'HH:mm');
-        const sellerId = selectedSellerId || user?.id || '';
-        
         setInitialCardValues({
-          customerId: customerId,
-          sellerId: sellerId,
-          scheduledDate: routeDate,
-          scheduledTime: currentTime,
+          customerId: response.defaults.customerId,
+          sellerId: response.defaults.sellerId,
+          scheduledDate: response.defaults.scheduledDate,
+          scheduledTime: response.defaults.scheduledTime,
         });
         
         setEditingCard(null);
         setShowEditModal(true);
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Erro ao duplicar card",
-          description: error.message || "Não foi possível duplicar o card de vendas.",
-        });
       }
+      
+    } catch (error: any) {
+      console.error('Erro ao preparar venda:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao preparar venda",
+        description: error.message || "Não foi possível preparar o card de vendas.",
+      });
     }
   };
 
@@ -1377,6 +1382,15 @@ export default function DailyRouteView() {
           queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
           queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
           refetch();
+        }}
+        onSuccess={(createdCard) => {
+          // Fechar modal de criação
+          setShowEditModal(false);
+          setEditingCard(null);
+          setInitialCardValues(null);
+          // Abrir modal de detalhes com o card criado
+          setSelectedCard(createdCard);
+          setShowCardModal(true);
         }}
         initialValues={initialCardValues || undefined}
         editingCard={editingCard}

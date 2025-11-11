@@ -21,6 +21,7 @@ interface SalesCardModalProps {
   isOpen: boolean;
   onClose: () => void;
   editingCard: SalesCardWithRelations | null;
+  onSuccess?: (card: SalesCardWithRelations) => void;
   initialValues?: {
     customerId?: string;
     sellerId?: string;
@@ -36,7 +37,7 @@ interface SalesCardModalProps {
   };
 }
 
-export default function SalesCardModal({ isOpen, onClose, editingCard, initialValues }: SalesCardModalProps) {
+export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess, initialValues }: SalesCardModalProps) {
   const [formData, setFormData] = useState({
     customerId: '',
     sellerId: '',
@@ -182,20 +183,30 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
   const createSalesCardMutation = useMutation({
     mutationFn: async (data: any) => {
       if (editingCard) {
-        await apiRequest('PUT', `/api/sales-cards/${editingCard.id}`, data);
+        const updated = await apiRequest('PUT', `/api/sales-cards/${editingCard.id}`, data);
+        return updated;
       } else {
-        await apiRequest('POST', '/api/sales-cards', data);
+        const created = await apiRequest('POST', '/api/sales-cards', data);
+        return created;
       }
     },
-    onSuccess: () => {
+    onSuccess: (createdCard) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      onClose();
+      
       toast({
         title: "Sucesso",
         description: editingCard 
           ? "Card atualizado com sucesso!" 
           : "Card criado com sucesso!",
       });
+      
+      // Se houver callback onSuccess, chamar com o card criado
+      if (onSuccess && createdCard) {
+        onSuccess(createdCard);
+      } else {
+        // Comportamento padrão: apenas fechar modal
+        onClose();
+      }
     },
     onError: (error: any) => {
       toast({
