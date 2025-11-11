@@ -114,6 +114,7 @@ export interface IStorage {
   // Sales card operations
   getSalesCards(sellerId?: string, filters?: { routeDay?: string; status?: string }): Promise<SalesCardWithRelations[]>;
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
+  getActiveSalesCard(customerId: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
   deleteSalesCard(id: string): Promise<void>;
@@ -2001,6 +2002,32 @@ export class DatabaseStorage implements IStorage {
       .limit(1);
     
     return card;
+  }
+
+  async getActiveSalesCard(customerId: string): Promise<SalesCardWithRelations | undefined> {
+    const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
+    
+    const [card] = await db
+      .select()
+      .from(salesCards)
+      .leftJoin(customers, eq(salesCards.customerId, customers.id))
+      .leftJoin(users, eq(salesCards.sellerId, users.id))
+      .where(
+        and(
+          eq(salesCards.customerId, customerId),
+          not(inArray(salesCards.status, FINAL_STATUSES))
+        )
+      )
+      .orderBy(desc(salesCards.createdAt))
+      .limit(1);
+    
+    if (!card) return undefined;
+    
+    return {
+      ...card.sales_cards,
+      customer: card.customers || undefined,
+      seller: card.users || undefined,
+    };
   }
 
   // ==================== ORDER HISTORY OPERATIONS ====================

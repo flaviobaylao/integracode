@@ -701,6 +701,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Duplicate complete order from last order
+  app.post('/api/customers/:customerId/prepare-sale', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const { scheduledDate, scheduledTime, sellerId } = req.body;
+      const user = req.currentUser;
+      
+      // Validate required fields
+      if (!scheduledDate) {
+        return res.status(400).json({ message: "scheduledDate is required" });
+      }
+      
+      // Get customer to check access
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      
+      // Check if vendedor can access this customer
+      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // STEP 1: Check if there's already an active card for this customer
+      const activeCard = await storage.getActiveSalesCard(customerId);
+      
+      if (activeCard) {
+        console.log(`✅ Card ativo encontrado para ${customer.fantasyName || customer.name}: ${activeCard.id} (${activeCard.status})`);
+        return res.json({
+          status: 'existing',
+          card: activeCard,
+        });
+      }
+      
+      // STEP 2: No active card - try to duplicate last order
+      const lastOrder = await storage.getLastCustomerOrder(customerId);
+      
+      if (lastOrder) {
+        // Prepare schedule datetime
+        const scheduleDateTime = scheduledTime 
+          ? new Date(`${scheduledDate}T${scheduledTime}:00`)
+          : new Date(scheduledDate);
+        
+        // Create new sales card with duplicated data
+        const newCard = await storage.createSalesCard({
+          customerId: customerId,
+          sellerId: sellerId || customer.sellerId || user.id,
+          scheduledDate: scheduleDateTime,
+          products: lastOrder.products || [],
+          paymentMethod: lastOrder.paymentMethod || 'a_vista',
+          operationType: lastOrder.operationType || 'venda',
+          notes: lastOrder.notes || '',
+          freight: lastOrder.freight || 0,
+          discount: lastOrder.discount || 0,
+          saleValue: lastOrder.saleValue || 0,
+          isPermanent: false,
+          status: 'pending',
+        });
+        
+        // Fetch complete card with relations
+        const fullCard = await storage.getSalesCard(newCard.id);
+        
+        if (!fullCard) {
+          return res.status(500).json({ message: "Card created but failed to fetch complete data" });
+        }
+        
+        console.log(`✅ Card duplicado para ${customer.fantasyName || customer.name}: ${newCard.id}`);
+        return res.json({
+          status: 'duplicated',
+          card: fullCard,
+        });
+      }
+      
+      // STEP 3: No previous order - return manual creation signal with defaults
+      const scheduleDateTime = scheduledTime 
+        ? new Date(`${scheduledDate}T${scheduledTime}:00`)
+        : new Date(scheduledDate);
+      
+      console.log(`ℹ️ Sem pedidos anteriores para ${customer.fantasyName || customer.name}, retornando defaults para criação manual`);
+      return res.json({
+        status: 'create-manual',
+        defaults: {
+          customerId: customerId,
+          sellerId: sellerId || customer.sellerId || user.id,
+          scheduledDate: scheduleDateTime.toISOString(),
+          scheduledTime: scheduledTime || format(scheduleDateTime, 'HH:mm'),
+        },
+      });
+    } catch (error: any) {
+      console.error("Error preparing sale:", error);
+      res.status(500).json({ message: error.message || "Failed to prepare sale" });
+    }
+  });
+
   app.post('/api/customers/:customerId/duplicate-last-order', authenticateUser, async (req: any, res) => {
     try {
       const { customerId } = req.params;
