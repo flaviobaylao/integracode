@@ -4245,20 +4245,30 @@ export async function createOmieOrder(orderData: {
   operationType?: string;
   boletoDays?: number;
 }) {
+  console.log('🔥 [CREATE-OMIE-ORDER] Iniciando criação de pedido no Omie');
+  console.log('📋 [CREATE-OMIE-ORDER] OrderNumber:', orderData.orderNumber);
+  console.log('📋 [CREATE-OMIE-ORDER] Cliente:', orderData.customer.document, '-', orderData.customer.name);
+  console.log('📋 [CREATE-OMIE-ORDER] Produtos:', orderData.products.length);
+  console.log('📋 [CREATE-OMIE-ORDER] Valor Total:', orderData.totalValue);
+  console.log('📋 [CREATE-OMIE-ORDER] Seller ID:', orderData.sellerId);
+  console.log('📋 [CREATE-OMIE-ORDER] Payment Method:', orderData.paymentMethod);
+  
   const omieService = OmieService.createFromEnv();
 
   try {
     // 1. Buscar ou criar cliente no Omie
     let omieCustomerId;
     try {
+      console.log('🔍 [CREATE-OMIE-ORDER] Buscando cliente no Omie:', orderData.customer.document);
       const existingCustomer = await omieService.getClientByCnpjCpf(orderData.customer.document);
       if (existingCustomer) {
         omieCustomerId = existingCustomer.codigo_cliente_omie;
-        console.log('Cliente encontrado no Omie:', omieCustomerId);
+        console.log('✅ [CREATE-OMIE-ORDER] Cliente encontrado no Omie:', omieCustomerId);
       } else {
         throw new Error('Cliente não encontrado');
       }
     } catch (error) {
+      console.log('⚠️ [CREATE-OMIE-ORDER] Cliente não encontrado, será criado novo:', error);
       // Cliente não existe, criar novo
       console.log('Criando novo cliente no Omie...');
       // Criar cliente diretamente via API
@@ -4388,7 +4398,12 @@ export async function createOmieOrder(orderData: {
     };
 
   } catch (error: any) {
-    console.error('Erro ao criar pedido no Omie:', error);
+    console.error('❌ [CREATE-OMIE-ORDER] ERRO FATAL ao criar pedido no Omie');
+    console.error('❌ [CREATE-OMIE-ORDER] Error Type:', error.constructor.name);
+    console.error('❌ [CREATE-OMIE-ORDER] Error Message:', error.message);
+    console.error('❌ [CREATE-OMIE-ORDER] Error Stack:', error.stack);
+    console.error('❌ [CREATE-OMIE-ORDER] OrderNumber que falhou:', orderData.orderNumber);
+    console.error('❌ [CREATE-OMIE-ORDER] Cliente que falhou:', orderData.customer.document);
     throw new Error(`Falha na integração Omie: ${error.message}`);
   }
 }
