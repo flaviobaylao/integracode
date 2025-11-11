@@ -785,7 +785,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerId: customerId,
           sellerId: sellerId || customer.sellerId || user.id,
           scheduledDate: scheduleDateTime.toISOString(),
-          scheduledTime: scheduledTime || format(scheduleDateTime, 'HH:mm'),
+          scheduledTime: scheduledTime || '09:00', // Default time if not provided
         },
       });
     } catch (error: any) {
