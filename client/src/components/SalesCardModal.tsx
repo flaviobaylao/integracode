@@ -20,9 +20,15 @@ interface SalesCardModalProps {
   isOpen: boolean;
   onClose: () => void;
   editingCard: SalesCardWithRelations | null;
+  initialValues?: {
+    customerId?: string;
+    sellerId?: string;
+    scheduledDate?: string;
+    scheduledTime?: string;
+  };
 }
 
-export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCardModalProps) {
+export default function SalesCardModal({ isOpen, onClose, editingCard, initialValues }: SalesCardModalProps) {
   const [formData, setFormData] = useState({
     customerId: '',
     sellerId: '',
@@ -118,10 +124,10 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
       const currentTime = now.toTimeString().slice(0, 5);
       
       setFormData({
-        customerId: '',
-        sellerId: (currentUser as any)?.id || '',
-        scheduledDate: today,
-        scheduledTime: currentTime,
+        customerId: initialValues?.customerId || '',
+        sellerId: initialValues?.sellerId || (currentUser as any)?.id || '',
+        scheduledDate: initialValues?.scheduledDate || today,
+        scheduledTime: initialValues?.scheduledTime || currentTime,
         notes: '',
         routeDay: '',
         recurrenceType: 'semanal',

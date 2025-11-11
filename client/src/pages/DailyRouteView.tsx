@@ -80,6 +80,12 @@ export default function DailyRouteView() {
   // Estado para modal de edição do card
   const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [initialCardValues, setInitialCardValues] = useState<{
+    customerId?: string;
+    sellerId?: string;
+    scheduledDate?: string;
+    scheduledTime?: string;
+  } | null>(null);
   
   // Estado para modal de foto
   const [selectedPhoto, setSelectedPhoto] = useState<{
@@ -404,49 +410,32 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para abrir card na rota (duplica automaticamente)
+  // Função para abrir novo card de venda na rota
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      // Buscar sales_cards da data da rota filtrados por este cliente
+      // Determinar valores iniciais para o novo card
       const routeDate = route?.routeDate || selectedDate;
-      const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
+      const currentTime = format(new Date(), 'HH:mm');
+      const sellerId = selectedSellerId || user?.id || '';
       
-      if (!response || !response.cards) {
-        throw new Error('Nenhum card encontrado para esta data');
-      }
-      
-      // Filtrar pelo customerId
-      const card = response.cards.find((c: any) => c.customerId === customerId);
-      
-      if (!card) {
-        toast({
-          variant: "destructive",
-          title: "Card não encontrado",
-          description: "Não há card de vendas para este cliente na data selecionada.",
-        });
-        return;
-      }
-      
-      // Duplicar o card para a mesma data
-      const duplicateResponse = await apiRequest('POST', `/api/sales-cards/${card.id}/duplicate`, {
-        newDate: routeDate
+      // Configurar valores iniciais para o modal
+      setInitialCardValues({
+        customerId: customerId,
+        sellerId: sellerId,
+        scheduledDate: routeDate,
+        scheduledTime: currentTime,
       });
       
-      // Abrir modal de edição com o card duplicado
-      setEditingCard(duplicateResponse);
+      // Abrir modal de novo card (editingCard=null)
+      setEditingCard(null);
       setShowEditModal(true);
-      
-      toast({
-        title: "Card duplicado",
-        description: "Um novo card foi criado com os dados do card original.",
-      });
     } catch (error: any) {
-      console.error('Erro ao duplicar card:', error);
+      console.error('Erro ao abrir card:', error);
       toast({
         variant: "destructive",
-        title: "Erro ao duplicar card",
-        description: error.message || "Não foi possível duplicar o card.",
+        title: "Erro ao abrir card",
+        description: error.message || "Não foi possível abrir o card de vendas.",
       });
     }
   };
@@ -1351,11 +1340,13 @@ export default function DailyRouteView() {
         onClose={() => {
           setShowEditModal(false);
           setEditingCard(null);
+          setInitialCardValues(null); // Limpar valores iniciais
           // Invalidar queries de rotas e cards para recarregar dados atualizados
           queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
           queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
           refetch();
         }}
+        initialValues={initialCardValues || undefined}
         editingCard={editingCard}
       />
 
