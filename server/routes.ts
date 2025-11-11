@@ -700,7 +700,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Duplicate complete order from last order
+  // Prepare sale: ALWAYS creates a new card by duplicating last order or returns defaults
   app.post('/api/customers/:customerId/prepare-sale', authenticateUser, async (req: any, res) => {
     try {
       const { customerId } = req.params;
@@ -730,21 +730,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      // STEP 1: Check if there's already an active card for this customer
-      console.log(`🔍 [PREPARE-SALE] Buscando card ativo para ${customerId}...`);
-      const activeCard = await storage.getActiveSalesCard(customerId);
+      // NOVA LÓGICA: SEMPRE criar um novo card, nunca reutilizar cards existentes
+      console.log(`🔄 [PREPARE-SALE] SEMPRE criando novo card (sem verificar cards ativos)`);
       
-      if (activeCard) {
-        console.log(`✅ [PREPARE-SALE] Card ativo encontrado para ${customer.fantasyName || customer.name}: ${activeCard.id} (status=${activeCard.status})`);
-        return res.json({
-          status: 'existing',
-          card: activeCard,
-        });
-      }
-      
-      console.log(`ℹ️ [PREPARE-SALE] Nenhum card ativo encontrado. Tentando duplicar último pedido...`);
-      
-      // STEP 2: No active card - try to duplicate last order
+      // Try to duplicate last order
       const lastOrder = await storage.getLastCustomerOrder(customerId);
       
       if (lastOrder) {
@@ -790,12 +779,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // STEP 3: No previous order - return manual creation signal with defaults
+      // No previous order - return manual creation signal with defaults
       console.log(`ℹ️ [PREPARE-SALE] Nenhum pedido anterior encontrado. Retornando defaults para criação manual.`);
       
-      const scheduleDateTime = scheduledTime 
-        ? new Date(`${scheduledDate}T${scheduledTime}:00`)
-        : new Date(scheduledDate);
+      // Parse scheduledDate corretamente
+      let scheduleDateTime: Date;
+      try {
+        // Se scheduledDate já é uma string ISO completa
+        if (typeof scheduledDate === 'string' && scheduledDate.includes('T')) {
+          scheduleDateTime = new Date(scheduledDate);
+        } else if (scheduledTime) {
+          // Se tem scheduledTime, combinar data + hora
+          scheduleDateTime = new Date(`${scheduledDate}T${scheduledTime}:00`);
+        } else {
+          // Apenas data, sem hora específica
+          scheduleDateTime = new Date(scheduledDate);
+        }
+        
+        // Validar se a data é válida
+        if (isNaN(scheduleDateTime.getTime())) {
+          throw new Error(`Data inválida: ${scheduledDate}`);
+        }
+      } catch (dateError) {
+        console.error(`❌ [PREPARE-SALE] Erro ao processar data: ${scheduledDate}`, dateError);
+        // Fallback para data atual
+        scheduleDateTime = new Date();
+      }
       
       console.log(`✅ [PREPARE-SALE] Retornando defaults para ${customer.fantasyName || customer.name}`);
       return res.json({
@@ -2646,38 +2655,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Verificar se já existe um card ativo (não-finalizado) para este cliente
-      // Permitir se:
-      // - O card sendo criado é do sistema (source='system') - criação automática de cards permanentes
-      // - Não existe nenhum card ativo anterior
-      const isSystemCreation = processedData.source === 'system';
-      
-      if (!isSystemCreation) {
-        const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
-        const existingCards = await storage.getSalesCards();
-        const activeCard = existingCards.find(card => 
-          card.customerId === processedData.customerId && 
-          !FINAL_STATUSES.includes(card.status)
-        );
-
-        if (activeCard) {
-          const statusLabels: Record<string, string> = {
-            'pending': 'pendente',
-            'in_progress': 'em andamento',
-            'telemarketing': 'em telemarketing',
-            'overdue': 'atrasado',
-            'invoiced': 'faturado',
-            'transferred': 'transferido'
-          };
-          const statusLabel = statusLabels[activeCard.status] || activeCard.status;
-          
-          return res.status(400).json({ 
-            message: `Este cliente já possui um card de vendas ${statusLabel}. Para criar um novo card, você precisa primeiro finalizar o card anterior marcando-o como "Concluído" ou "Sem Venda".`,
-            existingCardId: activeCard.id,
-            existingCardStatus: activeCard.status
-          });
-        }
-      }
+      // BLOQUEIO DE DUPLICAÇÃO REMOVIDO:
+      // O sistema agora permite criar múltiplos cards ativos para o mesmo cliente
+      // Cada clique em "efetuar venda" cria um novo card, sem verificar cards existentes
+      console.log(`✅ [CREATE-CARD] Criando novo card para cliente ${processedData.customerId} sem verificar cards ativos`);
       
       const salesCard = await storage.createSalesCard(processedData);
       

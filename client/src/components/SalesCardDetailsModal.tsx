@@ -418,8 +418,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Nome</p>
-                  <p className="font-semibold text-lg">{card.customer.fantasyName || card.customer.name}</p>
-                  {card.customer.fantasyName && card.customer.companyName && (
+                  <p className="font-semibold text-lg">{card.customer?.fantasyName || card.customer?.name || 'Cliente não encontrado'}</p>
+                  {card.customer?.fantasyName && card.customer?.companyName && (
                     <p className="text-xs text-gray-500 mt-1">Razão Social: {card.customer.companyName}</p>
                   )}
                 </div>
@@ -429,13 +429,14 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 </div>
               </div>
               
+              {card.customer?.phone && (
               <div className="flex items-center space-x-2 text-gray-700">
                 <Phone className="h-4 w-4" />
                 <span>{card.customer.phone}</span>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
+                  onClick={() => handleOpenWhatsApp(card.customer!.phone, card.customer!.fantasyName || card.customer!.name)}
                   className="ml-2 text-green-600 hover:text-green-700"
                   data-testid="button-whatsapp"
                 >
@@ -443,8 +444,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   WhatsApp
                 </Button>
               </div>
+              )}
               
               {/* Botão de Tipo de Atendimento */}
+              {card.customer?.id && (
               <div className="flex items-center space-x-2">
                 <div className="text-sm text-gray-600">Tipo de Atendimento:</div>
                 <Button
@@ -460,7 +463,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                       return;
                     }
                     toggleServiceTypeMutation.mutate({
-                      customerId: card.customer.id,
+                      customerId: card.customer!.id,
                       virtualService: !localVirtualService
                     });
                   }}
@@ -485,7 +488,9 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   )}
                 </Button>
               </div>
+              )}
               
+              {card.customer?.address && (
               <div className="flex items-start space-x-2 text-gray-700">
                 <MapPin className="h-4 w-4 mt-1" />
                 <span>{card.customer.address}</span>
@@ -500,6 +505,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   Waze
                 </Button>
               </div>
+              )}
             </CardContent>
           </Card>
 

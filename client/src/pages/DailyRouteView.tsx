@@ -429,26 +429,17 @@ export default function DailyRouteView() {
         description: "Verificando card do cliente...",
       });
       
-      // Chamar endpoint unificado que verifica/cria card
+      // Chamar endpoint unificado que SEMPRE cria novo card
       const response = await apiRequest('POST', `/api/customers/${customerId}/prepare-sale`, {
         scheduledDate: routeDate,
         scheduledTime: currentTime,
         sellerId: sellerId,
       });
       
-      if (response.status === 'existing') {
-        // Card ativo virgem encontrado - abrir direto
-        toast({
-          title: "Card encontrado",
-          description: "Abrindo card existente para execução da venda.",
-        });
-        setSelectedCard(response.card);
-        setShowCardModal(true);
-        
-      } else if (response.status === 'duplicated') {
+      if (response.status === 'duplicated') {
         // Card criado por duplicação - abrir com dados
         toast({
-          title: "Card duplicado",
+          title: "Novo card criado",
           description: "Card criado com produtos do último pedido! Edite conforme necessário.",
         });
         setSelectedCard(response.card);
