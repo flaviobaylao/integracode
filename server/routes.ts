@@ -9452,6 +9452,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const { createOmieOrder } = await import('./omieIntegration');
           
           try {
+            // Buscar dados completos dos produtos do banco para incluir código Omie
+            const allProducts = await storage.getProducts();
+            const productsWithOmieCode = products.map((p: any) => {
+              // Buscar produto no banco pelo ID ou nome
+              const dbProduct = allProducts.find(
+                (dbP) => dbP.id === p.id || dbP.name === p.name
+              );
+              
+              // Log de aviso se produto não tiver código Omie
+              if (!dbProduct?.omieCodigoProduto) {
+                console.warn(`⚠️ Produto "${p.name}" (ID: ${p.id}) não tem código Omie! Pedido pode falhar.`);
+              }
+              
+              return {
+                description: p.name,
+                quantity: p.quantity,
+                unitPrice: p.unitPrice,
+                totalPrice: p.totalPrice,
+                omieCodigoProduto: dbProduct?.omieCodigoProduto || undefined
+              };
+            });
+            
             const omieResult = await createOmieOrder({
               customer: {
                 document: fullCard.customer.cnpj || fullCard.customer.cpf || '',
@@ -9460,12 +9482,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 phone: fullCard.customer.phone || '',
                 address: fullCard.customer.address || ''
               },
-              products: products.map((p: any) => ({
-                description: p.name,
-                quantity: p.quantity,
-                unitPrice: p.unitPrice,
-                totalPrice: p.totalPrice
-              })),
+              products: productsWithOmieCode,
               totalValue,
               orderNumber,
               sellerId: fullCard.sellerId,

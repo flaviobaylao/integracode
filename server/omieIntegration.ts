@@ -4237,6 +4237,7 @@ export async function createOmieOrder(orderData: {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    omieCodigoProduto?: string | number;
   }>;
   totalValue: number;
   orderNumber: string;
@@ -4338,16 +4339,31 @@ export async function createOmieOrder(orderData: {
         origem_pedido: 'CRM-HonestSucos',
         ...(vendorCode && { codigo_vendedor: vendorCode }) // Adicionar vendedor se disponível
       },
-      det: orderData.products.map((product, index) => ({
-        ide: {
-          codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`
-        },
-        produto: {
-          descricao: product.description,
-          quantidade: product.quantity,
-          valor_unitario: product.unitPrice
+      det: orderData.products.map((product, index) => {
+        // Converter omieCodigoProduto para número se disponível
+        const codigoProduto = product.omieCodigoProduto 
+          ? (typeof product.omieCodigoProduto === 'string' 
+              ? parseInt(product.omieCodigoProduto, 10) 
+              : product.omieCodigoProduto)
+          : undefined;
+        
+        // Log de aviso se produto não tiver código Omie
+        if (!codigoProduto) {
+          console.warn(`⚠️ Produto "${product.description}" não tem código Omie! Pedido pode falhar.`);
         }
-      })),
+        
+        return {
+          ide: {
+            codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`,
+            ...(codigoProduto && { codigo_produto: codigoProduto }) // Incluir codigo_produto se disponível
+          },
+          produto: {
+            descricao: product.description,
+            quantidade: product.quantity,
+            valor_unitario: product.unitPrice
+          }
+        };
+      }),
       frete: {
         modalidade: "9" // Sem ocorrência de transporte
       },
