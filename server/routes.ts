@@ -707,41 +707,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { scheduledDate, scheduledTime, sellerId } = req.body;
       const user = req.currentUser;
       
+      console.log(`📋 [PREPARE-SALE] Iniciando para customerId=${customerId}, user=${user.email}, scheduledDate=${scheduledDate}`);
+      
       // Validate required fields
       if (!scheduledDate) {
+        console.error(`❌ [PREPARE-SALE] scheduledDate não fornecido`);
         return res.status(400).json({ message: "scheduledDate is required" });
       }
       
       // Get customer to check access
       const customer = await storage.getCustomer(customerId);
       if (!customer) {
+        console.error(`❌ [PREPARE-SALE] Cliente não encontrado: ${customerId}`);
         return res.status(404).json({ message: "Customer not found" });
       }
       
+      console.log(`✅ [PREPARE-SALE] Cliente encontrado: ${customer.fantasyName || customer.name} (${customerId})`);
+      
       // Check if vendedor can access this customer
       if (user.role === 'vendedor' && customer.sellerId !== user.id) {
+        console.error(`❌ [PREPARE-SALE] Acesso negado: vendedor ${user.id} tentando acessar cliente de outro vendedor`);
         return res.status(403).json({ message: "Access denied" });
       }
       
       // STEP 1: Check if there's already an active card for this customer
+      console.log(`🔍 [PREPARE-SALE] Buscando card ativo para ${customerId}...`);
       const activeCard = await storage.getActiveSalesCard(customerId);
       
       if (activeCard) {
-        console.log(`✅ Card ativo encontrado para ${customer.fantasyName || customer.name}: ${activeCard.id} (${activeCard.status})`);
+        console.log(`✅ [PREPARE-SALE] Card ativo encontrado para ${customer.fantasyName || customer.name}: ${activeCard.id} (status=${activeCard.status})`);
         return res.json({
           status: 'existing',
           card: activeCard,
         });
       }
       
+      console.log(`ℹ️ [PREPARE-SALE] Nenhum card ativo encontrado. Tentando duplicar último pedido...`);
+      
       // STEP 2: No active card - try to duplicate last order
       const lastOrder = await storage.getLastCustomerOrder(customerId);
       
       if (lastOrder) {
+        console.log(`✅ [PREPARE-SALE] Último pedido encontrado para ${customer.fantasyName || customer.name}: ${lastOrder.id || 'ID desconhecido'}`);
+        
         // Prepare schedule datetime
         const scheduleDateTime = scheduledTime 
           ? new Date(`${scheduledDate}T${scheduledTime}:00`)
           : new Date(scheduledDate);
+        
+        console.log(`📝 [PREPARE-SALE] Criando novo card duplicado com scheduledDate=${scheduleDateTime.toISOString()}`);
         
         // Create new sales card with duplicated data
         const newCard = await storage.createSalesCard({
@@ -759,14 +773,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'pending',
         });
         
+        console.log(`✅ [PREPARE-SALE] Card criado: ${newCard.id}`);
+        
         // Fetch complete card with relations
         const fullCard = await storage.getSalesCard(newCard.id);
         
         if (!fullCard) {
+          console.error(`❌ [PREPARE-SALE] Card criado mas falha ao buscar dados completos: ${newCard.id}`);
           return res.status(500).json({ message: "Card created but failed to fetch complete data" });
         }
         
-        console.log(`✅ Card duplicado para ${customer.fantasyName || customer.name}: ${newCard.id}`);
+        console.log(`✅ [PREPARE-SALE] Card duplicado com sucesso para ${customer.fantasyName || customer.name}: ${newCard.id}`);
         return res.json({
           status: 'duplicated',
           card: fullCard,
@@ -774,11 +791,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // STEP 3: No previous order - return manual creation signal with defaults
+      console.log(`ℹ️ [PREPARE-SALE] Nenhum pedido anterior encontrado. Retornando defaults para criação manual.`);
+      
       const scheduleDateTime = scheduledTime 
         ? new Date(`${scheduledDate}T${scheduledTime}:00`)
         : new Date(scheduledDate);
       
-      console.log(`ℹ️ Sem pedidos anteriores para ${customer.fantasyName || customer.name}, retornando defaults para criação manual`);
+      console.log(`✅ [PREPARE-SALE] Retornando defaults para ${customer.fantasyName || customer.name}`);
       return res.json({
         status: 'create-manual',
         defaults: {
@@ -789,8 +808,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error: any) {
-      console.error("Error preparing sale:", error);
-      res.status(500).json({ message: error.message || "Failed to prepare sale" });
+      console.error("❌ [PREPARE-SALE] Erro inesperado:", error);
+      console.error("❌ [PREPARE-SALE] Stack trace:", error.stack);
+      res.status(500).json({ 
+        message: error.message || "Failed to prepare sale",
+        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   });
 
