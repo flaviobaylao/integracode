@@ -655,6 +655,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get last order for duplication
+  app.get('/api/customers/:customerId/last-order', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const user = req.currentUser;
+      
+      // Get customer to check access
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      
+      // Check if vendedor can access this customer
+      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Get last order
+      const lastOrder = await storage.getLastCustomerOrder(customerId);
+      
+      if (!lastOrder) {
+        return res.json(null); // No previous order
+      }
+      
+      // Sanitize order data for duplication (exclude ID, timestamps, Omie fields, etc)
+      const duplicatedData = {
+        customerId: lastOrder.customerId,
+        sellerId: lastOrder.sellerId,
+        products: lastOrder.products,
+        paymentMethod: lastOrder.paymentMethod,
+        operationType: lastOrder.operationType,
+        notes: lastOrder.notes,
+        freight: lastOrder.freight,
+        discount: lastOrder.discount,
+        saleValue: lastOrder.saleValue,
+        // DO NOT include: id, omieOrderId, completedDate, status, sync fields, delivery fields
+      };
+      
+      res.json(duplicatedData);
+    } catch (error) {
+      console.error("Error fetching last order:", error);
+      res.status(500).json({ message: "Failed to fetch last order" });
+    }
+  });
+
   app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;

@@ -410,7 +410,7 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para abrir novo card de venda na rota
+  // Função para abrir novo card de venda na rota (duplicando último pedido)
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
@@ -419,13 +419,34 @@ export default function DailyRouteView() {
       const currentTime = format(new Date(), 'HH:mm');
       const sellerId = selectedSellerId || user?.id || '';
       
-      // Configurar valores iniciais para o modal
-      setInitialCardValues({
-        customerId: customerId,
-        sellerId: sellerId,
-        scheduledDate: routeDate,
-        scheduledTime: currentTime,
-      });
+      // Buscar último pedido do cliente para duplicação
+      const lastOrder = await apiRequest('GET', `/api/customers/${customerId}/last-order`);
+      
+      // Se houver pedido anterior, duplicar TODOS os dados
+      if (lastOrder) {
+        setInitialCardValues({
+          customerId: customerId,
+          sellerId: sellerId,
+          scheduledDate: routeDate,
+          scheduledTime: currentTime,
+          // Duplicar TODOS os dados do último pedido
+          products: lastOrder.products,
+          paymentMethod: lastOrder.paymentMethod,
+          operationType: lastOrder.operationType,
+          notes: lastOrder.notes,
+          freight: lastOrder.freight,
+          discount: lastOrder.discount,
+          saleValue: lastOrder.saleValue,
+        });
+      } else {
+        // Se não houver pedido anterior, apenas pré-preencher campos básicos
+        setInitialCardValues({
+          customerId: customerId,
+          sellerId: sellerId,
+          scheduledDate: routeDate,
+          scheduledTime: currentTime,
+        });
+      }
       
       // Abrir modal de novo card (editingCard=null)
       setEditingCard(null);
