@@ -2530,6 +2530,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Verificar se já existe um card ativo (não-finalizado) para este cliente
+      // Permitir se:
+      // - O card sendo criado é do sistema (source='system') - criação automática de cards permanentes
+      // - Não existe nenhum card ativo anterior
+      const isSystemCreation = processedData.source === 'system';
+      
+      if (!isSystemCreation) {
+        const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
+        const existingCards = await storage.getSalesCards();
+        const activeCard = existingCards.find(card => 
+          card.customerId === processedData.customerId && 
+          !FINAL_STATUSES.includes(card.status)
+        );
+
+        if (activeCard) {
+          const statusLabels: Record<string, string> = {
+            'pending': 'pendente',
+            'in_progress': 'em andamento',
+            'telemarketing': 'em telemarketing',
+            'overdue': 'atrasado',
+            'invoiced': 'faturado',
+            'transferred': 'transferido'
+          };
+          const statusLabel = statusLabels[activeCard.status] || activeCard.status;
+          
+          return res.status(400).json({ 
+            message: `Este cliente já possui um card de vendas ${statusLabel}. Para criar um novo card, você precisa primeiro finalizar o card anterior marcando-o como "Concluído" ou "Sem Venda".`,
+            existingCardId: activeCard.id,
+            existingCardStatus: activeCard.status
+          });
+        }
+      }
+      
       const salesCard = await storage.createSalesCard(processedData);
       
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
