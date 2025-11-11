@@ -128,6 +128,7 @@ export interface IStorage {
   createOrderHistory(order: InsertOrderHistory): Promise<OrderHistory>;
   getOrderHistoryByCard(salesCardId: string): Promise<OrderHistory[]>;
   getOrderHistoryById(id: string): Promise<OrderHistory | undefined>;
+  getLastCustomerOrder(customerId: string): Promise<OrderHistory | undefined>;
   updateOrderHistory(id: string, order: Partial<InsertOrderHistory>): Promise<OrderHistory>;
   deleteOrderHistory(id: string): Promise<void>;
   
@@ -2048,6 +2049,40 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOrderHistory(id: string): Promise<void> {
     await db.delete(orderHistory).where(eq(orderHistory.id, id));
+  }
+
+  /**
+   * Busca a última venda (completed) de um cliente com produtos
+   * Para pré-preencher novos cards com produtos da última compra
+   */
+  async getLastCustomerOrder(customerId: string): Promise<OrderHistory | undefined> {
+    // Buscar todos os sales cards do cliente
+    const customerCards = await db
+      .select({ id: salesCards.id })
+      .from(salesCards)
+      .where(eq(salesCards.customerId, customerId));
+    
+    if (customerCards.length === 0) {
+      return undefined;
+    }
+    
+    const cardIds = customerCards.map(c => c.id);
+    
+    // Buscar última venda completa com produtos
+    const [lastOrder] = await db
+      .select()
+      .from(orderHistory)
+      .where(
+        and(
+          inArray(orderHistory.salesCardId, cardIds),
+          eq(orderHistory.status, 'completed'),
+          sql`${orderHistory.products} IS NOT NULL AND jsonb_array_length(${orderHistory.products}) > 0`
+        )
+      )
+      .orderBy(desc(orderHistory.orderDate))
+      .limit(1);
+    
+    return lastOrder;
   }
 
   // Função helper para calcular distância entre dois pontos (Haversine formula)

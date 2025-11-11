@@ -404,7 +404,7 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para abrir modal de edição do card
+  // Função para abrir card na rota (duplica automaticamente)
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
@@ -428,14 +428,25 @@ export default function DailyRouteView() {
         return;
       }
       
-      setEditingCard(card);
+      // Duplicar o card para a mesma data
+      const duplicateResponse = await apiRequest('POST', `/api/sales-cards/${card.id}/duplicate`, {
+        newDate: routeDate
+      });
+      
+      // Abrir modal de edição com o card duplicado
+      setEditingCard(duplicateResponse);
       setShowEditModal(true);
+      
+      toast({
+        title: "Card duplicado",
+        description: "Um novo card foi criado com os dados do card original.",
+      });
     } catch (error: any) {
-      console.error('Erro ao carregar card:', error);
+      console.error('Erro ao duplicar card:', error);
       toast({
         variant: "destructive",
-        title: "Erro ao carregar card",
-        description: error.message || "Não foi possível carregar os detalhes do card.",
+        title: "Erro ao duplicar card",
+        description: error.message || "Não foi possível duplicar o card.",
       });
     }
   };
@@ -956,7 +967,7 @@ export default function DailyRouteView() {
               return (
                 <div 
                   key={visit.id}
-                  onClick={() => handleOpenCardDetails(visit.id)}
+                  onClick={(e) => handleEditCard(visit.customerId, e)}
                   className={`flex items-start p-4 rounded-lg border cursor-pointer transition-all hover:shadow-md ${
                     status === 'completed' 
                       ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-900/30'
