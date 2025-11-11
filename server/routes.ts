@@ -9262,6 +9262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Route to finalize sale with Omie integration
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
+    console.log('\n\n🔥🔥🔥 [FINALIZE] ROTA CHAMADA! ID:', req.params.id, '\n\n');
     try {
       const { id } = req.params;
       const { 
