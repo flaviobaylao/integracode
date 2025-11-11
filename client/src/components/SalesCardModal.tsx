@@ -15,6 +15,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { insertSalesCardSchema, type SalesCardWithRelations, type CustomerWithSeller } from "@shared/schema";
 import { z } from "zod";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 interface SalesCardModalProps {
   isOpen: boolean;
@@ -60,6 +61,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+
+  // Verificar se usuário é administrativo (pode editar rota e periodicidade)
+  const isAdminUser = useMemo(() => {
+    return user && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  }, [user]);
 
   const { data: customers } = useQuery<any[]>({
     queryKey: ['/api/customers'],
@@ -72,9 +79,10 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
   // Encontrar cliente selecionado
   const selectedCustomer = customers?.find((c: any) => c.id === formData.customerId);
 
-  // Pre-carregar localização do cliente quando selecionado
+  // Pre-carregar localização, rota e periodicidade do cliente quando selecionado
   useEffect(() => {
     if (selectedCustomer && (!editingCard)) { // Apenas para novos cards
+      // Localização
       if (selectedCustomer.latitude && selectedCustomer.longitude) {
         setFormData(prev => ({
           ...prev,
@@ -87,6 +95,24 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
           customerLatitude: '',
           customerLongitude: '',
         }));
+      }
+
+      // Rota e Periodicidade (do cadastro do cliente)
+      try {
+        const customerWeekdays = selectedCustomer.weekdays 
+          ? JSON.parse(selectedCustomer.weekdays) 
+          : [];
+        
+        // Usar o primeiro dia da semana do cliente como routeDay
+        const firstWeekday = customerWeekdays.length > 0 ? customerWeekdays[0] : '';
+        
+        setFormData(prev => ({
+          ...prev,
+          routeDay: firstWeekday,
+          recurrenceType: selectedCustomer.visitPeriodicity || 'semanal',
+        }));
+      } catch (error) {
+        console.error('Erro ao parsear weekdays do cliente:', error);
       }
     }
   }, [selectedCustomer, editingCard]);
@@ -504,12 +530,23 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
           {/* Campos obrigatórios para recorrência */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="routeDay">Rota (Dia da Semana) *</Label>
+              <Label htmlFor="routeDay">
+                Rota (Dia da Semana) *
+                {!isAdminUser && <span className="text-xs text-muted-foreground ml-2">(Definido no cadastro do cliente)</span>}
+              </Label>
               <Select 
                 value={formData.routeDay} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, routeDay: value }))}
+                onValueChange={(value) => {
+                  // Bloquear mudanças se não for admin
+                  if (!isAdminUser) return;
+                  setFormData(prev => ({ ...prev, routeDay: value }));
+                }}
+                disabled={!isAdminUser}
               >
-                <SelectTrigger className={errors.routeDay ? "border-red-500" : ""}>
+                <SelectTrigger 
+                  className={cn(errors.routeDay && "border-red-500", !isAdminUser && "opacity-60")} 
+                  data-testid="select-route-day"
+                >
                   <SelectValue placeholder="Selecione o dia" />
                 </SelectTrigger>
                 <SelectContent>
@@ -526,12 +563,23 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, initialVa
             </div>
 
             <div>
-              <Label htmlFor="recurrenceType">Tipo de Recorrência *</Label>
+              <Label htmlFor="recurrenceType">
+                Tipo de Recorrência *
+                {!isAdminUser && <span className="text-xs text-muted-foreground ml-2">(Definido no cadastro do cliente)</span>}
+              </Label>
               <Select 
                 value={formData.recurrenceType} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, recurrenceType: value }))}
+                onValueChange={(value) => {
+                  // Bloquear mudanças se não for admin
+                  if (!isAdminUser) return;
+                  setFormData(prev => ({ ...prev, recurrenceType: value }));
+                }}
+                disabled={!isAdminUser}
               >
-                <SelectTrigger className={errors.recurrenceType ? "border-red-500" : ""}>
+                <SelectTrigger 
+                  className={cn(errors.recurrenceType && "border-red-500", !isAdminUser && "opacity-60")} 
+                  data-testid="select-recurrence-type"
+                >
                   <SelectValue placeholder="Frequência" />
                 </SelectTrigger>
                 <SelectContent>
