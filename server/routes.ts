@@ -9285,8 +9285,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Gerar orderNumber se não fornecido pelo frontend
       const orderNumber = providedOrderNumber || `ORD-${Date.now()}-${id}`;
 
-      console.log('Finalizing sale for card:', id);
-      console.log('Sale data:', { products, totalValue, orderNumber, operationType });
+      console.log('🔥 [FINALIZE] Iniciando finalização de venda');
+      console.log('📋 [FINALIZE] Card ID:', id);
+      console.log('📋 [FINALIZE] providedOrderNumber:', providedOrderNumber);
+      console.log('📋 [FINALIZE] generated orderNumber:', orderNumber);
+      console.log('📋 [FINALIZE] Products:', products?.length || 0, 'items');
+      console.log('📋 [FINALIZE] Total Value:', totalValue);
+      console.log('📋 [FINALIZE] Payment Method:', paymentMethod);
+      console.log('📋 [FINALIZE] Operation Type:', operationType);
 
       // Check if order should be blocked
       let shouldBlockOrder = shouldBlock || false; // Use from frontend
