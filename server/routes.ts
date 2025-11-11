@@ -13813,6 +13813,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota de limpeza manual de sales cards antigos (ADMIN ONLY)
+  app.post('/api/admin/cleanup-old-cards', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      console.log('🧹 [MANUAL-CLEANUP] Iniciando limpeza manual de sales cards antigos...');
+      
+      const { manualCleanup } = await import('./salesCardCleanupService');
+      const result = await manualCleanup(storage);
+      
+      console.log(`✅ [MANUAL-CLEANUP] Limpeza concluída: ${result.removed} removidos, ${result.kept} mantidos`);
+      
+      res.json({
+        success: true,
+        message: 'Limpeza concluída com sucesso',
+        removed: result.removed,
+        kept: result.kept,
+        skippedInvalidDate: result.skippedInvalidDate,
+        total: result.total
+      });
+
+    } catch (error: any) {
+      console.error('❌ [MANUAL-CLEANUP] Erro na limpeza manual:', error);
+      res.status(500).json({ 
+        message: 'Erro ao executar limpeza',
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
