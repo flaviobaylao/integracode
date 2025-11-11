@@ -2007,7 +2007,7 @@ export class DatabaseStorage implements IStorage {
   async getActiveSalesCard(customerId: string): Promise<SalesCardWithRelations | undefined> {
     const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
     
-    const [card] = await db
+    const result = await db
       .select()
       .from(salesCards)
       .leftJoin(customers, eq(salesCards.customerId, customers.id))
@@ -2015,14 +2015,27 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(salesCards.customerId, customerId),
-          not(inArray(salesCards.status, FINAL_STATUSES))
+          not(inArray(salesCards.status, FINAL_STATUSES)),
+          // Excluir defensivamente cards que já foram usados (têm produtos ou valor de venda)
+          // Cards "virgens" não devem ter nenhum produto nem valor registrado
+          or(
+            isNull(salesCards.products),
+            sql`${salesCards.products} = '[]'::jsonb`,
+            sql`jsonb_array_length(${salesCards.products}) = 0`
+          ),
+          or(
+            isNull(salesCards.saleValue),
+            eq(salesCards.saleValue, 0)
+          )
         )
       )
       .orderBy(desc(salesCards.createdAt))
       .limit(1);
     
-    if (!card) return undefined;
+    // Retornar undefined se nenhum card foi encontrado
+    if (!result || result.length === 0) return undefined;
     
+    const card = result[0];
     return {
       ...card.sales_cards,
       customer: card.customers || undefined,

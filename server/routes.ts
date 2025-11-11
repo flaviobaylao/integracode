@@ -13602,6 +13602,201 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Limpeza de cards poluídos (com produtos/valores mas status ativo)
+  app.post('/api/admin/cleanup-polluted-cards', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { 
+        dryRun = true, 
+        limit = 1000, 
+        skipRecentMinutes = 10,
+        cardIds = null 
+      } = req.body;
+
+      console.log('🧹 Iniciando limpeza de cards poluídos...');
+      console.log(`   - Modo: ${dryRun ? 'DRY-RUN (apenas diagnóstico)' : 'EXECUÇÃO REAL'}`);
+      console.log(`   - Limite: ${limit} cards`);
+      console.log(`   - Pular cards editados nos últimos ${skipRecentMinutes} minutos`);
+
+      const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
+      const skipTimestamp = new Date(Date.now() - skipRecentMinutes * 60 * 1000);
+
+      // Construir query para detectar cards poluídos
+      let query = db
+        .select()
+        .from(salesCards)
+        .where(
+          and(
+            not(inArray(salesCards.status, FINAL_STATUSES)),
+            or(
+              // Cards com produtos
+              sql`jsonb_array_length(${salesCards.products}) > 0`,
+              // Cards com valor de venda
+              sql`${salesCards.saleValue} > 0`,
+              // Cards com invoice number
+              isNotNull(salesCards.invoiceNumber),
+              // Cards com Omie IDs
+              isNotNull(salesCards.omieOrderId),
+              // Cards com check-in (foram visitados)
+              isNotNull(salesCards.checkInTime)
+            )
+          )
+        );
+
+      // Filtrar cards específicos se fornecidos
+      if (cardIds && Array.isArray(cardIds) && cardIds.length > 0) {
+        query = query.where(inArray(salesCards.id, cardIds));
+      }
+
+      // Aplicar limite
+      query = query.limit(limit);
+
+      const pollutedCards = await query;
+
+      // Filtrar cards editados recentemente
+      const cardsToProcess = pollutedCards.filter(card => {
+        const updatedAt = card.updatedAt || card.createdAt;
+        return new Date(updatedAt) < skipTimestamp;
+      });
+
+      const skippedRecent = pollutedCards.length - cardsToProcess.length;
+
+      console.log(`📊 Análise:`);
+      console.log(`   - Cards poluídos encontrados: ${pollutedCards.length}`);
+      console.log(`   - Cards pulados (editados recentemente): ${skippedRecent}`);
+      console.log(`   - Cards a processar: ${cardsToProcess.length}`);
+
+      // Se dry-run, apenas reportar
+      if (dryRun) {
+        const summary = cardsToProcess.map(c => ({
+          id: c.id,
+          customerId: c.customerId,
+          sellerId: c.sellerId,
+          status: c.status,
+          saleValue: c.saleValue || 0,
+          productCount: (c.products as any[])?.length || 0,
+          isPermanent: c.isPermanent || false,
+          hasInvoice: !!c.invoiceNumber,
+          hasOmieId: !!c.omieOrderId,
+          hasCheckIn: !!c.checkInTime,
+          updatedAt: c.updatedAt,
+          proposedStatus: (c.saleValue || 0) > 0 ? 'completed' : 'no_sale',
+        }));
+
+        return res.json({
+          dryRun: true,
+          totalFound: pollutedCards.length,
+          skippedRecent,
+          toProcess: cardsToProcess.length,
+          cards: summary,
+          byStatus: {
+            completed: summary.filter(c => c.proposedStatus === 'completed').length,
+            no_sale: summary.filter(c => c.proposedStatus === 'no_sale').length,
+          },
+          byType: {
+            permanent: summary.filter(c => c.isPermanent).length,
+            regular: summary.filter(c => !c.isPermanent).length,
+          },
+        });
+      }
+
+      // EXECUÇÃO REAL
+      const results = {
+        processed: 0,
+        completed: 0,
+        no_sale: 0,
+        resetted: 0,
+        errors: [] as any[],
+      };
+
+      // Processar em batches de 100 com transação
+      const batchSize = 100;
+      for (let i = 0; i < cardsToProcess.length; i += batchSize) {
+        const batch = cardsToProcess.slice(i, i + batchSize);
+        
+        console.log(`   → Processando batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(cardsToProcess.length / batchSize)}...`);
+
+        for (const card of batch) {
+          try {
+            // Determinar novo status
+            const newStatus = (card.saleValue || 0) > 0 ? 'completed' : 'no_sale';
+            
+            // Atualizar status e completedDate
+            await db
+              .update(salesCards)
+              .set({
+                status: newStatus,
+                completedDate: new Date(),
+              })
+              .where(eq(salesCards.id, card.id));
+
+            results.processed++;
+            if (newStatus === 'completed') results.completed++;
+            else results.no_sale++;
+
+            // Se for permanent card, verificar order_history e resetar
+            if (card.isPermanent) {
+              // Verificar se já existe order_history
+              const existingHistory = await db
+                .select()
+                .from(orderHistory)
+                .where(eq(orderHistory.salesCardId, card.id))
+                .limit(1);
+
+              // Se não existe, criar um entry mínimo
+              if (existingHistory.length === 0 && card.saleValue && (card.saleValue > 0)) {
+                await db.insert(orderHistory).values({
+                  id: `order-${card.id}-cleanup`,
+                  salesCardId: card.id,
+                  customerId: card.customerId,
+                  sellerId: card.sellerId,
+                  orderDate: card.completedDate || new Date(),
+                  products: card.products || [],
+                  saleValue: card.saleValue,
+                  paymentMethod: card.paymentMethod || 'a_vista',
+                  operationType: card.operationType || 'venda',
+                  notes: `Histórico criado automaticamente pelo script de limpeza`,
+                });
+              }
+
+              // Disparar reset service
+              await resetPermanentCard(card.id);
+              results.resetted++;
+            }
+
+          } catch (error: any) {
+            console.error(`   ❌ Erro ao processar card ${card.id}:`, error.message);
+            results.errors.push({
+              cardId: card.id,
+              error: error.message,
+            });
+          }
+        }
+      }
+
+      console.log(`✅ Limpeza concluída:`);
+      console.log(`   - Cards processados: ${results.processed}`);
+      console.log(`   - Marcados como 'completed': ${results.completed}`);
+      console.log(`   - Marcados como 'no_sale': ${results.no_sale}`);
+      console.log(`   - Permanent cards resetados: ${results.resetted}`);
+      console.log(`   - Erros: ${results.errors.length}`);
+
+      res.json({
+        success: true,
+        dryRun: false,
+        totalFound: pollutedCards.length,
+        skippedRecent,
+        ...results,
+      });
+
+    } catch (error: any) {
+      console.error("❌ Erro na limpeza de cards:", error);
+      res.status(500).json({ 
+        message: "Falha na limpeza de cards",
+        error: error.message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
