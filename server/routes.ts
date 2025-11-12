@@ -9204,9 +9204,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar cards do dia usando lógica BRT (igual a /api/sales-cards/by-date)
-      // Passar Date object que getSalesCardsByDate converte para BRT internamente
+      // IMPORTANTE: getSalesCardsByDate usa date.toISOString().split('T')[0] internamente
+      // Precisamos passar uma data que quando convertida para ISO dê a data correta em BRT
       console.log(`🔍 [DEBUG] Buscando cards do dia usando getSalesCardsByDate para ${date}`);
-      const dateForCards = new Date(date); // Parse simples, getSalesCardsByDate faz conversão BRT
+      
+      // Criar Date object com hora do meio-dia BRT para evitar problemas de timezone
+      // Quando converter para UTC/ISO, ainda será o mesmo dia
+      const [year, month, day] = date.split('-').map(Number);
+      const dateForCards = new Date(year, month - 1, day, 12, 0, 0); // Meio-dia BRT
+      
       const allCards = await storage.getSalesCardsByDate(dateForCards, sellerId);
       
       console.log(`✅ [DEBUG] getSalesCardsByDate retornou ${allCards.length} cards`);
