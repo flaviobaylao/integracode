@@ -40,7 +40,7 @@ export default function RotaDoDia() {
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
-    if (!route || !route.sellerHome) return { plannedDistance: 0, executedDistance: 0 };
+    if (!route || !route.sellerHome) return { plannedDistance: 0, executedDistance: 0, averageVisitTime: 0 };
 
     const plannedCoords: Array<{ lat: number; lng: number }> = [];
     const executedCoords: Array<{ lat: number; lng: number }> = [];
@@ -78,9 +78,42 @@ export default function RotaDoDia() {
       });
     }
 
+    // Calcular tempo médio de visita
+    let totalVisitTime = 0;
+    let visitCount = 0;
+
+    route.visits?.forEach(visit => {
+      const checkIn = route.checkpoints?.find(
+        cp => cp.visitId === visit.id && cp.checkpointType === 'check_in'
+      );
+      const checkOut = route.checkpoints?.find(
+        cp => cp.visitId === visit.id && cp.checkpointType === 'check_out'
+      );
+
+      if (checkIn) {
+        let visitTimeMinutes = 0;
+        
+        if (checkOut) {
+          // Visita completa: calcular diferença real
+          const checkInTime = new Date(checkIn.checkpointTime).getTime();
+          const checkOutTime = new Date(checkOut.checkpointTime).getTime();
+          visitTimeMinutes = (checkOutTime - checkInTime) / (1000 * 60); // converter para minutos
+        } else {
+          // Apenas check-in: considerar 30 minutos
+          visitTimeMinutes = 30;
+        }
+
+        totalVisitTime += visitTimeMinutes;
+        visitCount++;
+      }
+    });
+
+    const averageVisitTime = visitCount > 0 ? Math.round(totalVisitTime / visitCount) : 0;
+
     return {
       plannedDistance: calculateRouteDistance(plannedCoords),
-      executedDistance: calculateRouteDistance(executedCoords)
+      executedDistance: calculateRouteDistance(executedCoords),
+      averageVisitTime
     };
   }, [route]);
 
@@ -210,7 +243,7 @@ export default function RotaDoDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
                     <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -236,6 +269,15 @@ export default function RotaDoDia() {
                   <div>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
                     <p className="text-2xl font-bold">{route.totalVisits - route.completedVisits}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
+                    <Clock className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Tempo Médio</p>
+                    <p className="text-2xl font-bold">{routeMetrics.averageVisitTime} min</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
