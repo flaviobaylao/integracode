@@ -9389,15 +9389,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // NOVA ARQUITETURA: Buscar dados direto de customers
-      console.log(`🔍 [DEBUG] Buscando clientes para ${date}`);
+      // NOVA ARQUITETURA COM VISITSTOPS: Resolver stops (customers + leads)
+      console.log(`🔍 [DEBUG] Resolvendo stops (customers + leads) para ${date}`);
       
-      // Buscar todos os customers que estão na optimizedOrder
-      const customerIds = route.optimizedOrder || [];
-      const { customers } = await import('../shared/schema');
+      const optimizedOrder = route.optimizedOrder || [];
+      const visitStops = (route.visitStops as any) || {};
+      
+      // Separar customerIds e leadIds
+      const customerIds: string[] = [];
+      const leadIds: string[] = [];
+      
+      optimizedOrder.forEach((stopId: string) => {
+        // Se tem prefixo, usar visitStops; caso contrário, assumir customer (fallback)
+        if (stopId.includes(':')) {
+          const stopMeta = visitStops[stopId];
+          if (stopMeta) {
+            if (stopMeta.entityType === 'customer') {
+              customerIds.push(stopMeta.entityId);
+            } else if (stopMeta.entityType === 'lead') {
+              leadIds.push(stopMeta.entityId);
+            }
+          }
+        } else {
+          // Fallback retrocompatível: IDs sem prefixo são customers
+          customerIds.push(stopId);
+        }
+      });
+      
+      const { customers, leads } = await import('../shared/schema');
       const { inArray } = await import('drizzle-orm');
       const { db } = await import('./db');
       
+      // Buscar customers
       let customersData: any[] = [];
       if (customerIds.length > 0) {
         customersData = await db
@@ -9406,30 +9429,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(inArray(customers.id, customerIds));
       }
       
-      console.log(`✅ [DEBUG] Encontrados ${customersData.length} clientes`);
+      // Buscar leads
+      let leadsData: any[] = [];
+      if (leadIds.length > 0) {
+        leadsData = await db
+          .select()
+          .from(leads)
+          .where(inArray(leads.id, leadIds));
+      }
       
-      // Criar mapa de customers por ID para lookup rápido
+      console.log(`✅ [DEBUG] Encontrados ${customersData.length} customers + ${leadsData.length} leads`);
+      
+      // Criar mapas para lookup rápido
       const customersByCustomerId = new Map<string, any>();
       customersData.forEach(customer => {
         customersByCustomerId.set(customer.id, customer);
       });
       
-      // Montar visitas na ordem do optimizedOrder
+      const leadsByLeadId = new Map<string, any>();
+      leadsData.forEach(lead => {
+        leadsByLeadId.set(lead.id, lead);
+      });
+      
+      // Montar visitas na ordem do optimizedOrder com suporte a customers e leads
       const visits = (route.optimizedOrder || [])
-        .map((customerId: string) => {
-          const customer = customersByCustomerId.get(customerId);
-          if (!customer) return null;
+        .map((stopId: string) => {
+          // Resolver stopId
+          let visitType: 'customer' | 'lead' = 'customer';
+          let entityId: string = stopId;
           
-          return {
-            id: customerId, // Usar customer ID como visit ID
-            customerId: customer.id,
-            customerName: customer.fantasyName || customer.name,
-            customerLatitude: customer.latitude,
-            customerLongitude: customer.longitude,
-            customerAddress: customer.address,
-            scheduledDate: route.routeDate,
-            isVirtual: customer.virtualService
-          };
+          if (stopId.includes(':')) {
+            const stopMeta = visitStops[stopId];
+            if (stopMeta) {
+              visitType = stopMeta.entityType;
+              entityId = stopMeta.entityId;
+            }
+          }
+          
+          // Buscar dados da entidade
+          if (visitType === 'customer') {
+            const customer = customersByCustomerId.get(entityId);
+            if (!customer) return null;
+            
+            return {
+              id: stopId, // Usar stopId como visit ID
+              visitType: 'customer' as const,
+              entityId: customer.id,
+              customerId: customer.id,
+              customerName: customer.fantasyName || customer.name,
+              customerLatitude: customer.latitude,
+              customerLongitude: customer.longitude,
+              customerAddress: customer.address,
+              scheduledDate: route.routeDate,
+              isVirtual: customer.virtualService
+            };
+          } else {
+            // Lead
+            const lead = leadsByLeadId.get(entityId);
+            if (!lead) return null;
+            
+            return {
+              id: stopId, // Usar stopId como visit ID
+              visitType: 'lead' as const,
+              entityId: lead.id,
+              leadId: lead.id,
+              customerName: lead.fantasyName, // Nome do lead
+              customerLatitude: lead.latitude,
+              customerLongitude: lead.longitude,
+              customerAddress: null, // Leads não têm endereço completo
+              scheduledDate: route.routeDate,
+              isVirtual: false
+            };
+          }
         })
         .filter(Boolean);
       
