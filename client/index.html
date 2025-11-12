@@ -30,7 +30,6 @@
       // 🔥 DESABILITAR Service Worker completamente em development!
       (async function() {
         if ('serviceWorker' in navigator) {
-          const swWasActive = !!navigator.serviceWorker.controller;
           const reloadFlag = 'sw_cleanup_reload_done';
           
           // Se já fizemos reload, não fazer novamente (evitar loop)
@@ -56,12 +55,14 @@
           console.log('✅ Service Worker DESABILITADO em development');
           console.log('🎯 POST requests agora chegarão ao servidor normalmente!');
           
-          // Se havia SW ativo, fazer reload ÚNICO para aplicar mudanças
-          if (swWasActive && registrations.length > 0) {
-            console.log('🔄 Fazendo reload para aplicar limpeza...');
-            sessionStorage.setItem(reloadFlag, 'true');
-            window.location.reload();
-          }
+          // SEMPRE fazer reload com cache-busting para forçar refetch de TODOS os módulos
+          console.log('🔄 Fazendo reload com cache-busting para limpar HTTP cache...');
+          sessionStorage.setItem(reloadFlag, 'true');
+          
+          // Adicionar query parameter único para cache-busting
+          const url = new URL(window.location.href);
+          url.searchParams.set('cachebuster', Date.now().toString());
+          window.location.replace(url.toString());
         }
       })();
     </script>
