@@ -9803,6 +9803,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Marcar horário de almoço
+  app.post('/api/daily-routes/:routeId/lunch-break', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Vendedor só pode marcar almoço em sua própria rota
+      if (user.role === 'vendedor' && route.sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+      
+      // Se já foi ativado, retornar sucesso (idempotente)
+      if (route.lunchBreakActivatedAt) {
+        return res.json({
+          success: true,
+          message: 'Horário de almoço já estava marcado',
+          lunchBreakActivatedAt: route.lunchBreakActivatedAt
+        });
+      }
+      
+      // Verificar se o vendedor já fez pelo menos 1 check-in
+      const checkpoints = await db
+        .select()
+        .from(routeCheckpoints)
+        .where(eq(routeCheckpoints.dailyRouteId, routeId))
+        .orderBy(routeCheckpoints.checkpointTime);
+      
+      const hasCheckin = checkpoints.some(cp => cp.checkpointType === 'checkin');
+      
+      if (!hasCheckin) {
+        return res.status(400).json({ 
+          message: 'Você precisa fazer pelo menos um check-in antes de marcar o horário de almoço' 
+        });
+      }
+      
+      // Marcar horário de almoço com timestamp atual
+      const now = new Date();
+      await storage.updateDailyRoute(routeId, {
+        lunchBreakActivatedAt: now
+      });
+      
+      console.log(`✅ Horário de almoço marcado para rota ${routeId} às ${now.toISOString()}`);
+      
+      res.json({
+        success: true,
+        message: 'Horário de almoço marcado com sucesso',
+        lunchBreakActivatedAt: now
+      });
+    } catch (error: any) {
+      console.error('Erro ao marcar horário de almoço:', error);
+      res.status(500).json({ 
+        message: 'Erro ao marcar horário de almoço',
+        error: error.message 
+      });
+    }
+  });
+
   // Validar visita fora da rota (admin apenas)
   app.post('/api/daily-routes/checkpoints/:checkpointId/validate', authenticateUser, async (req: any, res) => {
     try {
