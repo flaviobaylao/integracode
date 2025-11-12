@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -21,6 +22,8 @@ export default function RotaDoDia() {
   const [selectedCard, setSelectedCard] = useState<any>(null);
   const [showCardModal, setShowCardModal] = useState(false);
   const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -100,6 +103,12 @@ export default function RotaDoDia() {
     } finally {
       setLoadingCardId(null);
     }
+  };
+
+  const handlePhotoClick = (photoUrl: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedPhoto(photoUrl);
+    setShowPhotoModal(true);
   };
 
   return (
@@ -352,7 +361,11 @@ export default function RotaDoDia() {
                                 {visit.customerName}
                               </p>
                               {checkInCheckpoint && checkInCheckpoint.photoUrl && (
-                                <Camera className="h-4 w-4 text-purple-500" data-testid={`camera-icon-${visit.customerId}`} />
+                                <Camera 
+                                  className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
+                                  data-testid={`camera-icon-${visit.customerId}`}
+                                  onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
+                                />
                               )}
                             </div>
                             
@@ -399,9 +412,8 @@ export default function RotaDoDia() {
                 })}
 
                 {route.checkpoints && (() => {
-                  const plannedVisitIds = new Set(route.visits?.map(v => v.id) || []);
                   const offsiteCheckIns = route.checkpoints.filter(
-                    cp => cp.checkpointType === 'check_in' && cp.visitId && !plannedVisitIds.has(cp.visitId)
+                    cp => cp.checkpointType === 'check_in' && cp.isOffRoute === true
                   );
 
                   if (offsiteCheckIns.length === 0) return null;
@@ -431,7 +443,10 @@ export default function RotaDoDia() {
                                   {checkpoint.customerName || 'Cliente não identificado'}
                                 </p>
                                 {checkpoint.photoUrl && (
-                                  <Camera className="h-4 w-4 text-purple-500" />
+                                  <Camera 
+                                    className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
+                                    onClick={(e) => handlePhotoClick(checkpoint.photoUrl!, e)}
+                                  />
                                 )}
                               </div>
                               <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
@@ -466,6 +481,24 @@ export default function RotaDoDia() {
           card={selectedCard}
         />
       )}
+
+      <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Foto do Check-in</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            {selectedPhoto && (
+              <img 
+                src={selectedPhoto} 
+                alt="Foto do check-in" 
+                className="w-full h-auto rounded-lg"
+                data-testid="checkin-photo"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
