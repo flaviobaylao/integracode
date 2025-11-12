@@ -9029,8 +9029,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🔄 Rota existente encontrada: ${existingRoute.id} - regenerando com permanent cards...`);
         
         // Usar função helper para planejar nova rota (sem salvar)
+        console.log(`🔍 DEBUG: Antes de importar planDailyRoute - sellerId: ${targetSellerId}, date: ${routeDate.toISOString()}`);
         const { planDailyRoute } = await import('./routeOptimizationService');
+        console.log(`🔍 DEBUG: Antes de chamar planDailyRoute`);
         const plan = await planDailyRoute(storage, targetSellerId, routeDate);
+        console.log(`🔍 DEBUG: Após planDailyRoute - plan.optimizedOrder.length: ${plan.optimizedOrder.length}`);
         
         // Atualizar rota existente com novos dados (PRESERVA ID e checkpoints)
         const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
@@ -9067,7 +9070,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Gerar nova rota
+      console.log(`🆕 DEBUG: Nenhuma rota existente - gerando nova rota para sellerId: ${targetSellerId}, date: ${routeDate.toISOString()}`);
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
+      console.log(`✅ DEBUG: generateDailyRoute retornou - routeId: ${result.routeId}, totalVisits: ${result.totalVisits}`);
       
       res.json({
         success: true,

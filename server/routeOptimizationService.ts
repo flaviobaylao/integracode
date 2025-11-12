@@ -521,7 +521,9 @@ export async function generateDailyRoute(
     routeStatus: 'pending'
   };
 
+  console.log(`🔍 DEBUG: Antes de createDailyRoute - routeData:`, JSON.stringify(routeData, null, 2));
   const route = await storage.createDailyRoute(routeData);
+  console.log(`✅ DEBUG: Após createDailyRoute - route.id: ${route.id}`);
 
   return {
     routeId: route.id,

@@ -700,23 +700,24 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
     
-    // Query para pegar última visita de cada cliente
+    // Query para pegar última visita de cada cliente usando salesCards
+    // Usa completedDate se disponível, senão scheduledDate (para compatibilidade)
     const lastVisits = await db
       .select({
-        customerId: orderHistory.customerId,
-        lastCompletedDate: sql<Date>`MAX(${orderHistory.visitDate})`.as('last_completed_date')
+        customerId: salesCards.customerId,
+        lastCompletedDate: sql<Date>`MAX(COALESCE(${salesCards.completedDate}, ${salesCards.scheduledDate}))`.as('last_completed_date')
       })
-      .from(orderHistory)
+      .from(salesCards)
       .where(
         and(
-          inArray(orderHistory.customerId, customerIds),
+          inArray(salesCards.customerId, customerIds),
           or(
-            eq(orderHistory.status, 'completed'),
-            eq(orderHistory.status, 'sale')
+            eq(salesCards.status, 'completed'),
+            eq(salesCards.status, 'invoiced')
           )
         )
       )
-      .groupBy(orderHistory.customerId);
+      .groupBy(salesCards.customerId);
     
     const lastVisitMap = new Map(
       lastVisits.map(v => [v.customerId, v.lastCompletedDate])
