@@ -152,16 +152,26 @@ export default function DailyRouteView() {
   const { data: routeData, isLoading, refetch } = useQuery({
     queryKey: ['/api/daily-routes', selectedSellerId, selectedDate],
     queryFn: async () => {
-      if (!selectedSellerId || !selectedDate) return null;
+      console.log('🔍 [QUERY] Buscando rota:', { selectedSellerId, selectedDate });
+      if (!selectedSellerId || !selectedDate) {
+        console.log('⚠️ [QUERY] Valores vazios, retornando null');
+        return null;
+      }
       // Adicionar timestamp para quebrar cache do navegador
       const cacheBuster = Date.now();
-      const response = await apiRequest('GET', `/api/daily-routes/${selectedSellerId}/date/${selectedDate}?t=${cacheBuster}`);
+      const url = `/api/daily-routes/${selectedSellerId}/date/${selectedDate}?t=${cacheBuster}`;
+      console.log('🌐 [QUERY] URL:', url);
+      const response = await apiRequest('GET', url);
+      console.log('✅ [QUERY] Resposta:', response);
       return response;
     },
     enabled: !!selectedSellerId && !!selectedDate,
     staleTime: 0, // Sempre considerar dados como stale para forçar refetch
     gcTime: 0, // Não cachear no React Query (TanStack Query v5)
   });
+  
+  // Log debug
+  console.log('🔍 [STATE] selectedSellerId:', selectedSellerId, 'selectedDate:', selectedDate, 'enabled:', !!selectedSellerId && !!selectedDate);
 
   const route: DailyRoute | null = routeData?.route || null;
 
