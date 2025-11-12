@@ -193,7 +193,7 @@ export default function RotaDoDia() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>
-                  {formatInTimeZone(route.routeDate, 'America/Sao_Paulo', "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                  {formatInTimeZone(new Date(selectedDate + 'T12:00:00.000Z'), 'America/Sao_Paulo', "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
                 </span>
                 <Badge variant={route.routeStatus === 'completed' ? 'default' : 'secondary'}>
                   {route.routeStatus === 'completed' ? 'Concluída' : 'Em andamento'}
