@@ -408,7 +408,7 @@ export default function RotaDoDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
                     <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -461,6 +461,17 @@ export default function RotaDoDia() {
                   <div>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Rota Executada</p>
                     <p className="text-xl font-bold">{formatDistance(routeMetrics.executedDistance)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-teal-100 dark:bg-teal-900 rounded-lg">
+                    <Clock className="h-6 w-6 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Carga Horária</p>
+                    <p className="text-xl font-bold" data-testid="worked-hours">
+                      {(route.progress as any)?.workedHours?.formatted || '-'}
+                    </p>
                   </div>
                 </div>
               </div>
