@@ -118,12 +118,21 @@ export default function DailyRouteView() {
 
   const sellers = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
 
+  // DEBUG: Log sellers data
+  useEffect(() => {
+    if (sellers.length > 0) {
+      console.log('🔍 [DEBUG] Sellers loaded:', sellers.map((s: any) => ({ id: s.id, name: `${s.firstName} ${s.lastName}` })));
+    }
+  }, [sellers]);
+
   // Inicializar sellerId quando os vendedores forem carregados ou quando user mudar
   useEffect(() => {
     if (isAdmin && sellers.length > 0 && !selectedSellerId) {
+      console.log('🔍 [DEBUG] Setting first seller ID:', sellers[0].id);
       setSelectedSellerId(sellers[0].id);
     } else if (!isAdmin && user?.id && !selectedSellerId) {
       // Se for vendedor, usar seu próprio ID
+      console.log('🔍 [DEBUG] Setting user ID:', user.id);
       setSelectedSellerId(user.id);
     }
   }, [isAdmin, sellers, user?.id, selectedSellerId]);
