@@ -728,7 +728,6 @@ export class DatabaseStorage implements IStorage {
     // Filtrar clientes que devem ser visitados na data alvo
     const customersToVisit: Customer[] = [];
     
-    let debugCount = 0;
     for (const customer of activeCustomers) {
       try {
         // Pegar última visita (se existir)
@@ -767,19 +766,6 @@ export class DatabaseStorage implements IStorage {
         // Precisamos comparar datas no mesmo formato (início do dia BRT)
         const nextDateStr = scheduleResult.nextDate.toISOString().split('T')[0];
         const nextDateBRT = fromZonedTime(new Date(`${nextDateStr}T00:00:00`), BRAZIL_TZ);
-        
-        // DEBUG: Log primeiros 5 clientes
-        if (debugCount < 5) {
-          console.log(`🔍 DEBUG Cliente ${customer.fantasyName}:
-            - weekdays: ${JSON.stringify(customer.weekdays)}
-            - lastVisit: ${lastCompletedDate ? lastCompletedDate.toISOString() : 'NUNCA'}
-            - scheduleResult.nextDate: ${scheduleResult.nextDate.toISOString()}
-            - nextDateBRT: ${nextDateBRT.toISOString()}
-            - targetDateBRT: ${targetDateBRT.toISOString()}
-            - nextDateBRT <= targetDateBRT? ${nextDateBRT.getTime() <= targetDateBRT.getTime()}
-          `);
-          debugCount++;
-        }
         
         // Incluir visitas atrasadas e da data alvo (nextVisitDate <= targetDate)
         if (nextDateBRT.getTime() <= targetDateBRT.getTime()) {
