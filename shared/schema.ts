@@ -1280,6 +1280,53 @@ export const insertSyncStatusSchema = createInsertSchema(syncStatus).omit({ id: 
 export type SyncStatus = typeof syncStatus.$inferSelect;
 export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
 
+// Lead status enum
+export const leadStatusEnum = pgEnum('lead_status', ['pending', 'contacted', 'converted', 'cancelled']);
+
+// Leads table - prospective customers to be contacted by sellers
+export const leads = pgTable("leads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fantasyName: varchar("fantasy_name").notNull(),
+  latitude: decimal("latitude", { precision: 9, scale: 6 }).notNull(),
+  longitude: decimal("longitude", { precision: 10, scale: 6 }).notNull(),
+  contact: varchar("contact"),
+  phone: varchar("phone"),
+  photo: varchar("photo"), // URL da foto capturada no check-in
+  observation: text("observation"),
+  status: leadStatusEnum("status").notNull().default('pending'),
+  
+  // Quem criou o lead (admin)
+  createdBy: varchar("created_by").notNull(),
+  
+  // Quem está atendendo o lead (vendedor)
+  assignedTo: varchar("assigned_to"),
+  
+  // Informações de check-in/check-out
+  lastCheckInAt: timestamp("last_check_in_at"),
+  lastCheckOutAt: timestamp("last_check_out_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeadSchema = createInsertSchema(leads).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  lastCheckInAt: true,
+  lastCheckOutAt: true 
+}).extend({
+  latitude: z.string().or(z.number()),
+  longitude: z.string().or(z.number()),
+  fantasyName: z.string().min(1, "Nome fantasia é obrigatório"),
+  contact: z.string().optional(),
+  phone: z.string().optional(),
+  observation: z.string().optional(),
+});
+
+export type Lead = typeof leads.$inferSelect;
+export type InsertLead = z.infer<typeof insertLeadSchema>;
+
 // Daily Attendance Performance types - for HR tracking of visit completion rates
 export type DailyAttendanceData = {
   date: string; // ISO date string (YYYY-MM-DD)
