@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -142,6 +142,27 @@ export default function RotaDoDia() {
         variant: "destructive",
         title: "Erro ao otimizar rota",
         description: error.message || "Ocorreu um erro ao otimizar a rota",
+      });
+    },
+  });
+
+  const markLunchBreakMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/lunch-break`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Horário de almoço marcado",
+        description: "O horário de almoço foi registrado com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao marcar horário de almoço",
+        description: error.message || "Ocorreu um erro ao marcar o horário de almoço",
       });
     },
   });
@@ -398,17 +419,68 @@ export default function RotaDoDia() {
         <>
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+              <CardTitle className="flex items-center justify-between flex-wrap gap-3">
                 <span>
                   {formatInTimeZone(new Date(selectedDate + 'T12:00:00.000Z'), 'America/Sao_Paulo', "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
                 </span>
-                <Badge variant={route.routeStatus === 'completed' ? 'default' : 'secondary'}>
-                  {route.routeStatus === 'completed' ? 'Concluída' : 'Em andamento'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const hasCheckins = route.checkpoints?.some((cp: any) => cp.checkpointType === 'check_in');
+                    const lunchBreakActivated = !!route.lunchBreakActivatedAt;
+                    const lunchBreak = (route.progress as any)?.lunchBreak;
+                    const canMarkLunch = hasCheckins && !lunchBreakActivated;
+                    
+                    if (!lunchBreakActivated && canMarkLunch) {
+                      return (
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={() => markLunchBreakMutation.mutate(route.id)}
+                          disabled={markLunchBreakMutation.isPending}
+                          className="bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800"
+                          data-testid="button-lunch-break"
+                        >
+                          <UtensilsCrossed className="mr-2 h-4 w-4" />
+                          {markLunchBreakMutation.isPending ? 'Marcando...' : 'Iniciar Almoço'}
+                        </Button>
+                      );
+                    } else if (lunchBreak?.status === 'pending') {
+                      return (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled
+                          className="bg-amber-100 dark:bg-amber-900 border-amber-300 dark:border-amber-700"
+                          data-testid="button-lunch-break-pending"
+                        >
+                          <UtensilsCrossed className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" />
+                          Aguardando Retorno
+                        </Button>
+                      );
+                    } else if (lunchBreak?.status === 'completed') {
+                      return (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled
+                          className="bg-green-100 dark:bg-green-900 border-green-300 dark:border-green-700"
+                          data-testid="button-lunch-break-completed"
+                        >
+                          <UtensilsCrossed className="mr-2 h-4 w-4 text-green-600 dark:text-green-400" />
+                          Almoço Concluído
+                        </Button>
+                      );
+                    }
+                    return null;
+                  })()}
+                  <Badge variant={route.routeStatus === 'completed' ? 'default' : 'secondary'}>
+                    {route.routeStatus === 'completed' ? 'Concluída' : 'Em andamento'}
+                  </Badge>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
                     <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -471,6 +543,19 @@ export default function RotaDoDia() {
                     <p className="text-sm text-gray-600 dark:text-gray-400">Carga Horária</p>
                     <p className="text-xl font-bold" data-testid="worked-hours">
                       {(route.progress as any)?.workedHours?.formatted || '-'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-red-100 dark:bg-red-900 rounded-lg">
+                    <UtensilsCrossed className="h-6 w-6 text-red-600 dark:text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Tempo de Almoço</p>
+                    <p className="text-xl font-bold" data-testid="lunch-time">
+                      {(route.progress as any)?.lunchBreak
+                        ? (route.progress as any).lunchBreak.formatted
+                        : '1h 30min (padrão)'}
                     </p>
                   </div>
                 </div>
