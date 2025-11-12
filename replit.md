@@ -58,8 +58,10 @@
     - Uses Haversine formula for accurate geodesic calculations
   - Full TypeScript type safety using Zod schemas from `@shared/schema`
   - **Timezone Handling**: ALL dates use UTC for storage but display in Brazil/São Paulo timezone (BRT/GMT-3)
-    - Fixed critical date bug where selecting date in calendar was off by one day
+    - Fixed critical date bug where selecting date in calendar was off by one day (Nov 12, 2025)
     - Changed `setHours` to `setUTCHours` in `getDailyRouteBySellerAndDate()` for proper UTC range queries
+    - Fixed date header display using midday UTC anchor (T12:00:00.000Z) to prevent timezone conversion from shifting displayed date
+    - Frontend now uses `selectedDate` directly with stable UTC offset instead of backend's `routeDate` to ensure calendar selection matches displayed date
   - Integrated menu navigation replacing legacy DailyRouteView
   - API endpoint: `GET /api/daily-routes/:sellerId/date/:date` returns `DailyRouteResponse` with `sellerHome` coordinates and checkpoint data
 - **Visit Schedule Management (Nov 12, 2025 - Direct Customer-Based Architecture)**: Route generation now queries **customers table directly** as the single source of truth. Visit scheduling is calculated on-demand using `calculateNextVisitDate()` from customer's `weekdays`, `visitPeriodicity`, and last visit from `order_history`. Sales cards (`sales_cards` table) are used ONLY for recording sales transactions and outcomes, NOT for route scheduling.
