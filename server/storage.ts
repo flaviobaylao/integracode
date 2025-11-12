@@ -53,6 +53,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
+import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
@@ -4160,8 +4161,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDailyRouteBySellerAndDate(sellerId: string, date: Date): Promise<any | undefined> {
+    // Input date is in UTC (e.g., 2025-11-12T00:00:00.000Z)
+    // Create start/end of that calendar day in UTC
     const startOfDay = new Date(date);
     startOfDay.setHours(0, 0, 0, 0);
+    
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 

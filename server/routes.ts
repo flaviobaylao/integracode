@@ -8957,10 +8957,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Data é obrigatória' });
       }
 
-      // Converter data string para timezone do Brasil (America/Sao_Paulo)
-      // IMPORTANTE: new Date('2025-11-10') interpreta como UTC midnight, que em BRT é 21h do dia anterior!
-      // Usar fromZonedTime garante que 2025-11-10 seja interpretado como 2025-11-10 00:00 BRT
-      const routeDate = fromZonedTime(`${date}T00:00:00`, 'America/Sao_Paulo');
+      // Parse date string as UTC midnight (simple and consistent)
+      // This matches how dates are stored in the database
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
       
       // Verificar se já existe rota para este dia
       const existingRoute = await storage.getDailyRouteBySellerAndDate(targetSellerId, routeDate);
@@ -8984,6 +8983,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Preservar status atual (in_progress, paused, etc)
           routeStatus: existingRoute.routeStatus || 'pending'
         });
+        
+        // CRÍTICO: Verificar se a atualização foi bem-sucedida
+        if (!updatedRoute) {
+          console.error(`❌ ERRO: updateDailyRoute retornou undefined para ID ${existingRoute.id}`);
+          return res.status(500).json({
+            success: false,
+            message: 'Erro ao atualizar rota no banco de dados'
+          });
+        }
         
         console.log(`✅ Rota ${existingRoute.id} atualizada: ${plan.totalVisits} visitas, ${plan.totalDistance.toFixed(2)}km`);
         
