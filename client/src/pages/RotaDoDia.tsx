@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 
 export default function RotaDoDia() {
   const { user } = useAuth();
@@ -34,6 +35,51 @@ export default function RotaDoDia() {
   const route = response?.route;
 
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
+
+  const routeMetrics = useMemo(() => {
+    if (!route || !route.sellerHome) return { plannedDistance: 0, executedDistance: 0 };
+
+    const plannedCoords: Array<{ lat: number; lng: number }> = [];
+    const executedCoords: Array<{ lat: number; lng: number }> = [];
+
+    plannedCoords.push({
+      lat: parseFloat(route.sellerHome.lat),
+      lng: parseFloat(route.sellerHome.lng)
+    });
+
+    route.optimizedOrder?.forEach(customerId => {
+      const visit = route.visits?.find(v => v.customerId === customerId);
+      if (visit && visit.customerLatitude && visit.customerLongitude) {
+        plannedCoords.push({
+          lat: parseFloat(String(visit.customerLatitude)),
+          lng: parseFloat(String(visit.customerLongitude))
+        });
+      }
+    });
+
+    plannedCoords.push({
+      lat: parseFloat(route.sellerHome.lat),
+      lng: parseFloat(route.sellerHome.lng)
+    });
+
+    if (route.checkpoints && route.checkpoints.length > 0) {
+      const checkIns = route.checkpoints
+        .filter(cp => cp.checkpointType === 'check_in' && cp.latitude && cp.longitude)
+        .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+      
+      checkIns.forEach(cp => {
+        executedCoords.push({
+          lat: parseFloat(cp.latitude),
+          lng: parseFloat(cp.longitude)
+        });
+      });
+    }
+
+    return {
+      plannedDistance: calculateRouteDistance(plannedCoords),
+      executedDistance: calculateRouteDistance(executedCoords)
+    };
+  }, [route]);
 
   const handleVisitClick = async (customerId: string) => {
     try {
@@ -155,7 +201,7 @@ export default function RotaDoDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
                     <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -181,6 +227,24 @@ export default function RotaDoDia() {
                   <div>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
                     <p className="text-2xl font-bold">{route.totalVisits - route.completedVisits}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-lg">
+                    <Navigation className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Rota Planejada</p>
+                    <p className="text-xl font-bold">{formatDistance(routeMetrics.plannedDistance)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                    <Navigation className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Rota Executada</p>
+                    <p className="text-xl font-bold">{formatDistance(routeMetrics.executedDistance)}</p>
                   </div>
                 </div>
               </div>
@@ -212,7 +276,7 @@ export default function RotaDoDia() {
               <CardTitle>Lista de Visitas</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {route.visits?.map((visit, index) => {
                   const checkInCheckpoint = route.checkpoints?.find(
                     cp => cp.visitId === visit.id && cp.checkpointType === 'check_in'
@@ -221,78 +285,171 @@ export default function RotaDoDia() {
                     cp => cp.visitId === visit.id && cp.checkpointType === 'check_out'
                   );
 
+                  const customerLat = parseFloat(String(visit.customerLatitude || 0));
+                  const customerLng = parseFloat(String(visit.customerLongitude || 0));
+
+                  let checkInDistance = null;
+                  let checkOutDistance = null;
+                  let checkInOffsite = false;
+                  let checkOutOffsite = false;
+
+                  if (checkInCheckpoint && checkInCheckpoint.latitude && checkInCheckpoint.longitude && customerLat && customerLng) {
+                    checkInDistance = calculateDistance(
+                      customerLat,
+                      customerLng,
+                      parseFloat(checkInCheckpoint.latitude),
+                      parseFloat(checkInCheckpoint.longitude)
+                    );
+                    checkInOffsite = checkInDistance > 100;
+                  }
+
+                  if (checkOutCheckpoint && checkOutCheckpoint.latitude && checkOutCheckpoint.longitude && customerLat && customerLng) {
+                    checkOutDistance = calculateDistance(
+                      customerLat,
+                      customerLng,
+                      parseFloat(checkOutCheckpoint.latitude),
+                      parseFloat(checkOutCheckpoint.longitude)
+                    );
+                    checkOutOffsite = checkOutDistance > 100;
+                  }
+
+                  const hasOffsite = checkInOffsite || checkOutOffsite;
                   const isCompleted = !!checkOutCheckpoint;
                   const isInProgress = !!checkInCheckpoint && !checkOutCheckpoint;
+
+                  let statusColor = 'text-gray-600 dark:text-gray-400';
+                  let borderColor = 'border-gray-200 dark:border-gray-700';
+                  
+                  if (hasOffsite) {
+                    statusColor = 'text-red-600 dark:text-red-400';
+                    borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
+                  } else if (isCompleted) {
+                    statusColor = 'text-green-600 dark:text-green-400';
+                    borderColor = 'border-green-200 dark:border-green-800';
+                  } else if (isInProgress) {
+                    statusColor = 'text-blue-600 dark:text-blue-400';
+                    borderColor = 'border-blue-200 dark:border-blue-800';
+                  }
 
                   return (
                     <div
                       key={visit.customerId}
                       onClick={() => handleVisitClick(visit.customerId)}
-                      className="p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                      className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${borderColor}`}
                       data-testid={`visit-${visit.customerId}`}
                     >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-4">
-                          <div className={`flex-shrink-0 w-8 h-8 rounded-full text-white flex items-center justify-center font-semibold ${
-                            isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1">
+                          <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
+                            hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
                             {index + 1}
                           </div>
-                          <div>
-                            <p className="font-semibold text-gray-800 dark:text-white">
-                              {visit.customerName}
-                            </p>
-                            <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                          
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className={`font-semibold ${statusColor}`}>
+                                {visit.customerName}
+                              </p>
+                              {checkInCheckpoint && checkInCheckpoint.photoUrl && (
+                                <Camera className="h-4 w-4 text-purple-500" data-testid={`camera-icon-${visit.customerId}`} />
+                              )}
+                            </div>
+                            
+                            <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-2">
                               <MapPin className="h-3 w-3" />
                               {visit.customerAddress || 'Endereço não informado'}
                             </p>
-                          </div>
-                        </div>
-                        <Badge
-                          variant={isCompleted ? "default" : isInProgress ? "secondary" : "outline"}
-                          data-testid={`badge-status-${visit.customerId}`}
-                        >
-                          {isCompleted ? '✅ Concluída' : isInProgress ? '🔄 Em andamento' : 'Pendente'}
-                        </Badge>
-                      </div>
 
-                      {(checkInCheckpoint || checkOutCheckpoint) && (
-                        <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                          <div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Check-in</p>
-                            {checkInCheckpoint ? (
-                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300" data-testid={`checkin-time-${visit.customerId}`}>
-                                {formatInTimeZone(
-                                  checkInCheckpoint.checkpointTime,
-                                  'America/Sao_Paulo',
-                                  'HH:mm',
-                                  { locale: ptBR }
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <span className="text-gray-500">Check-in: </span>
+                                {checkInCheckpoint ? (
+                                  <span className={`font-medium ${checkInOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkin-time-${visit.customerId}`}>
+                                    {formatInTimeZone(checkInCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                    {checkInOffsite && ` ⚠️ ${formatDistance(checkInDistance!)}`}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
                                 )}
-                              </p>
-                            ) : (
-                              <p className="text-sm text-gray-400">—</p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Check-out</p>
-                            {checkOutCheckpoint ? (
-                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300" data-testid={`checkout-time-${visit.customerId}`}>
-                                {formatInTimeZone(
-                                  checkOutCheckpoint.checkpointTime,
-                                  'America/Sao_Paulo',
-                                  'HH:mm',
-                                  { locale: ptBR }
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Check-out: </span>
+                                {checkOutCheckpoint ? (
+                                  <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
+                                    {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                    {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
                                 )}
-                              </p>
-                            ) : (
-                              <p className="text-sm text-gray-400">—</p>
+                              </div>
+                            </div>
+
+                            {hasOffsite && (
+                              <div className="mt-2 text-xs text-red-600 dark:text-red-400 font-medium">
+                                ⚠️ {checkInOffsite && 'Check-in fora do local'}{checkInOffsite && checkOutOffsite && ' | '}{checkOutOffsite && 'Check-out fora do local'}
+                              </div>
                             )}
                           </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
+
+                {route.checkpoints && (() => {
+                  const plannedVisitIds = new Set(route.visits?.map(v => v.id) || []);
+                  const offsiteCheckIns = route.checkpoints.filter(
+                    cp => cp.checkpointType === 'check_in' && cp.visitId && !plannedVisitIds.has(cp.visitId)
+                  );
+
+                  if (offsiteCheckIns.length === 0) return null;
+
+                  return (
+                    <>
+                      <div className="my-4 border-t-2 border-orange-300 dark:border-orange-700 pt-4">
+                        <h3 className="text-sm font-semibold text-orange-600 dark:text-orange-400 mb-2 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Check-ins Fora da Rota Planejada ({offsiteCheckIns.length})
+                        </h3>
+                      </div>
+
+                      {offsiteCheckIns.map((checkpoint, index) => (
+                        <div
+                          key={checkpoint.id}
+                          className="p-3 border border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950 rounded-lg"
+                          data-testid={`offsite-visit-${checkpoint.id}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex-shrink-0 w-7 h-7 rounded-full bg-orange-600 text-white flex items-center justify-center text-sm font-semibold">
+                              !
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-semibold text-orange-600 dark:text-orange-400">
+                                  {checkpoint.customerName || 'Cliente não identificado'}
+                                </p>
+                                {checkpoint.photoUrl && (
+                                  <Camera className="h-4 w-4 text-purple-500" />
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                                Check-in realizado fora da rota programada
+                              </p>
+                              <div className="text-xs">
+                                <span className="text-gray-500">Horário: </span>
+                                <span className="font-medium text-orange-600 dark:text-orange-400">
+                                  {formatInTimeZone(checkpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  );
+                })()}
               </div>
             </CardContent>
           </Card>
