@@ -78,6 +78,13 @@
     5. Includes visits where `nextVisitDate <= targetDate` (same-day + overdue visits)
     6. Uses `fromZonedTime()` from date-fns-tz for proper BRT normalization without timezone shift bugs
   - **Route Planning**: `planDailyRoute()` helper function separates route planning logic from database persistence, enabling both generation and regeneration to use the same customer-based query logic. `optimizedOrder` contains customer IDs for route sequencing.
+  - **serviceStartDate Fallback Logic (Nov 12, 2025)**: Implemented runtime fallback for customers without `serviceStartDate` field:
+    - **Priority order**: Uses `lastCompletedDate` (from sales_cards) → `serviceStartDate` → `customer.createdAt` → current date
+    - **Defensive parsing**: Added `JSON.parse()` for `weekdays` field (stored as VARCHAR JSON string) with fallback to array type
+    - **Compilation fix**: Removed duplicate 'sábado' key in `visitSchedule.ts` that caused "object literal cannot have multiple properties" error and 404 on /rota-do-dia
+    - **Impact**: Increased route generation from 32 to 161 visits for Nov 15, 2025 (all 1,168 active customers lack serviceStartDate)
+    - **Logging**: Tracks count of customers using fallback via console warning for future data backfill planning
+    - **Architect recommendation**: Monitor fallback usage, plan data backfill with stakeholder validation
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Sales Card Configuration**: Role-based propagation system for sales card configuration changes, including automatic recurrence change propagation.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data (including "Positivação"). Customer inactivation feature with confirmation of consequences. Improved client search across multiple fields (fantasy name, corporate name, CPF/CNPJ, phone). "Última Atividade" column displays last sale date. "Gestão de Clientes" (customers table) is the single source of truth for all sales operations and route generation. All customer displays prioritize `fantasyName` over `name` (corporate name) throughout the system.
