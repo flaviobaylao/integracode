@@ -356,10 +356,10 @@ export default function RotaDoDia() {
               <div className="space-y-2">
                 {route.visits?.map((visit, index) => {
                   const checkInCheckpoint = route.checkpoints?.find(
-                    cp => cp.visitId === visit.id && cp.checkpointType === 'check_in'
+                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
                   );
                   const checkOutCheckpoint = route.checkpoints?.find(
-                    cp => cp.visitId === visit.id && cp.checkpointType === 'check_out'
+                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_out'
                   );
 
                   const customerLat = parseFloat(String(visit.customerLatitude || 0));
