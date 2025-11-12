@@ -13129,11 +13129,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ROUTES
   // ========================================
   
-  // Listar todos os leads (admin e vendedores)
+  // Listar leads com filtros opcionais (admin e vendedores)
   app.get('/api/leads', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
-      const leads = await storage.getLeads();
+      const { status, sellerId } = req.query;
+      
+      let leads = await storage.getLeads();
+      
+      // Filtrar por status
+      if (status) {
+        leads = leads.filter((lead: any) => lead.status === status);
+      }
+      
+      // Filtrar leads disponíveis para um vendedor específico
+      // (leads sem atribuição ou atribuídos ao vendedor selecionado)
+      if (sellerId) {
+        leads = leads.filter((lead: any) => 
+          !lead.assignedTo || lead.assignedTo === sellerId
+        );
+      }
+      
       res.json(leads);
     } catch (error) {
       console.error('Erro ao buscar leads:', error);

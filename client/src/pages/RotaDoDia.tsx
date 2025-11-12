@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -32,6 +33,8 @@ export default function RotaDoDia() {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showAddVisitModal, setShowAddVisitModal] = useState(false);
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [addVisitTab, setAddVisitTab] = useState<'customer' | 'lead'>('customer');
+  const [leadSearchQuery, setLeadSearchQuery] = useState('');
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -40,7 +43,12 @@ export default function RotaDoDia() {
 
   const { data: customers } = useQuery<any[]>({
     queryKey: ['/api/customers'],
-    enabled: isAdmin && showAddVisitModal,
+    enabled: isAdmin && showAddVisitModal && addVisitTab === 'customer',
+  });
+
+  const { data: leads } = useQuery<any[]>({
+    queryKey: ['/api/leads', 'available', selectedSellerId],
+    enabled: isAdmin && showAddVisitModal && addVisitTab === 'lead' && !!selectedSellerId,
   });
 
   const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
@@ -122,6 +130,29 @@ export default function RotaDoDia() {
         variant: "destructive",
         title: "Erro ao adicionar visita",
         description: error.message || "Ocorreu um erro ao adicionar a visita",
+      });
+    },
+  });
+
+  const addLeadMutation = useMutation({
+    mutationFn: async ({ routeId, leadId }: { routeId: string; leadId: string }) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/leads`, { leadId });
+    },
+    onSuccess: (data) => {
+      const leadName = data?.lead?.name || 'Lead';
+      toast({
+        title: "Lead adicionado",
+        description: `${leadName} adicionado à rota com sucesso`,
+      });
+      setShowAddVisitModal(false);
+      setLeadSearchQuery('');
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao adicionar lead",
+        description: error.message || "Ocorreu um erro ao adicionar o lead",
       });
     },
   });
@@ -655,11 +686,27 @@ export default function RotaDoDia() {
                   const hasOffsite = checkInOffsite || checkOutOffsite;
                   const isCompleted = !!checkOutCheckpoint;
                   const isInProgress = !!checkInCheckpoint && !checkOutCheckpoint;
+                  const isLead = (visit as any).visitType === 'lead';
 
                   let statusColor = 'text-gray-600 dark:text-gray-400';
                   let borderColor = 'border-gray-200 dark:border-gray-700';
                   
-                  if (hasOffsite) {
+                  if (isLead) {
+                    // LEADs sempre aparecem em roxo, com variações baseadas no status
+                    if (hasOffsite) {
+                      statusColor = 'text-red-600 dark:text-red-400';
+                      borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
+                    } else if (isCompleted) {
+                      statusColor = 'text-purple-700 dark:text-purple-300';
+                      borderColor = 'border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950';
+                    } else if (isInProgress) {
+                      statusColor = 'text-purple-600 dark:text-purple-400';
+                      borderColor = 'border-purple-400 dark:border-purple-600 bg-purple-50 dark:bg-purple-950';
+                    } else {
+                      statusColor = 'text-purple-600 dark:text-purple-400';
+                      borderColor = 'border-purple-500 dark:border-purple-700';
+                    }
+                  } else if (hasOffsite) {
                     statusColor = 'text-red-600 dark:text-red-400';
                     borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
                   } else if (isCompleted) {
@@ -689,9 +736,15 @@ export default function RotaDoDia() {
                           
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1">
-                              <p className={`font-semibold ${statusColor}`}>
+                              <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
+                                {isLead && <Target className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
                                 {visit.customerName}
                               </p>
+                              {isLead && (
+                                <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 dark:text-purple-400">
+                                  Lead
+                                </Badge>
+                              )}
                               {checkInCheckpoint && checkInCheckpoint.photoUrl && (
                                 <Camera 
                                   className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
@@ -849,50 +902,112 @@ export default function RotaDoDia() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showAddVisitModal} onOpenChange={setShowAddVisitModal}>
+      <Dialog open={showAddVisitModal} onOpenChange={(open) => {
+        setShowAddVisitModal(open);
+        if (!open) {
+          setCustomerSearchQuery('');
+          setLeadSearchQuery('');
+          setAddVisitTab('customer');
+        }
+      }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Adicionar Cliente à Rota</DialogTitle>
+            <DialogTitle>Adicionar à Rota</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Input
-                placeholder="Buscar cliente por nome ou CNPJ/CPF..."
-                value={customerSearchQuery}
-                onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                data-testid="input-customer-search"
-              />
-            </div>
-            <div className="max-h-96 overflow-y-auto border rounded-lg">
-              {filteredCustomers && filteredCustomers.length > 0 ? (
-                filteredCustomers.map((customer: any) => (
-                  <div
-                    key={customer.id}
-                    className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                      addVisitMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                    onClick={() => {
-                      if (route?.id && !addVisitMutation.isPending) {
-                        addVisitMutation.mutate({ routeId: route.id, customerId: customer.id });
-                      }
-                    }}
-                    data-testid={`customer-option-${customer.id}`}
-                  >
-                    <div className="font-medium">{customer.fantasyName || customer.name}</div>
-                    <div className="text-sm text-gray-500">{customer.cnpj || customer.cpf}</div>
-                    <div className="text-xs text-gray-400">{customer.address}</div>
+          <Tabs value={addVisitTab} onValueChange={(value) => setAddVisitTab(value as 'customer' | 'lead')}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="customer" data-testid="tab-customers">Clientes</TabsTrigger>
+              <TabsTrigger value="lead" data-testid="tab-leads">Leads</TabsTrigger>
+            </TabsList>
+            <TabsContent value="customer" className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Buscar cliente por nome ou CNPJ/CPF..."
+                  value={customerSearchQuery}
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  data-testid="input-customer-search"
+                />
+              </div>
+              <div className="max-h-96 overflow-y-auto border rounded-lg">
+                {filteredCustomers && filteredCustomers.length > 0 ? (
+                  filteredCustomers.map((customer: any) => (
+                    <div
+                      key={customer.id}
+                      className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                        addVisitMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                      onClick={() => {
+                        if (route?.id && !addVisitMutation.isPending) {
+                          addVisitMutation.mutate({ routeId: route.id, customerId: customer.id });
+                        }
+                      }}
+                      data-testid={`customer-option-${customer.id}`}
+                    >
+                      <div className="font-medium">{customer.fantasyName || customer.name}</div>
+                      <div className="text-sm text-gray-500">{customer.cnpj || customer.cpf}</div>
+                      <div className="text-xs text-gray-400">{customer.address}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-gray-500">
+                    {customerSearchQuery ? 'Nenhum cliente encontrado' : 'Digite para buscar clientes'}
                   </div>
-                ))
-              ) : (
-                <div className="p-4 text-center text-gray-500">
-                  {customerSearchQuery ? 'Nenhum cliente encontrado' : 'Digite para buscar clientes'}
-                </div>
+                )}
+              </div>
+              {addVisitMutation.isPending && (
+                <div className="text-center text-sm text-gray-500">Adicionando cliente à rota...</div>
               )}
-            </div>
-            {addVisitMutation.isPending && (
-              <div className="text-center text-sm text-gray-500">Adicionando cliente à rota...</div>
-            )}
-          </div>
+            </TabsContent>
+            <TabsContent value="lead" className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Buscar lead por nome..."
+                  value={leadSearchQuery}
+                  onChange={(e) => setLeadSearchQuery(e.target.value)}
+                  data-testid="input-lead-search"
+                />
+              </div>
+              <div className="max-h-96 overflow-y-auto border rounded-lg">
+                {leads && leads.length > 0 ? (
+                  leads.filter((lead: any) => {
+                    if (!leadSearchQuery) return true;
+                    const query = leadSearchQuery.toLowerCase();
+                    return lead.fantasyName?.toLowerCase().includes(query);
+                  }).map((lead: any) => (
+                    <div
+                      key={lead.id}
+                      className={`p-3 border-b last:border-b-0 hover:bg-purple-50 dark:hover:bg-purple-950 ${
+                        addLeadMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                      onClick={() => {
+                        if (route?.id && !addLeadMutation.isPending) {
+                          addLeadMutation.mutate({ routeId: route.id, leadId: lead.id });
+                        }
+                      }}
+                      data-testid={`lead-option-${lead.id}`}
+                    >
+                      <div className="font-medium flex items-center gap-2">
+                        <Target className="h-4 w-4 text-purple-600" />
+                        {lead.fantasyName}
+                      </div>
+                      {lead.contact && <div className="text-sm text-gray-500">{lead.contact}</div>}
+                      {lead.phone && <div className="text-xs text-gray-400">{lead.phone}</div>}
+                      <div className="text-xs text-purple-600 mt-1">
+                        Status: {lead.status === 'pending' ? 'Pendente' : lead.status}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-gray-500">
+                    {leadSearchQuery ? 'Nenhum lead encontrado' : 'Nenhum lead disponível'}
+                  </div>
+                )}
+              </div>
+              {addLeadMutation.isPending && (
+                <div className="text-center text-sm text-gray-500">Adicionando lead à rota...</div>
+              )}
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
     </div>
