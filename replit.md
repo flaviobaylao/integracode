@@ -7,6 +7,18 @@
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
 
+## Emergency Workaround for React Query Cache Issues
+- **Issue**: Browser HTTP cache conflict between React Query bundle versions causes "No QueryClient set" errors.
+- **Root Cause**: QueryClientProvider v=4fb5bec1 vs useAuth v=fb4f0956 bundle mismatch - not resolvable programmatically.
+- **Permanent Solution**: Emergency order page at `/criar-pedido-emergencia` bypasses all React Query dependencies.
+- **Implementation**:
+  - Early route bypass in `App.tsx` renders emergency page BEFORE `useAuth()` call
+  - Emergency page uses pure `fetch()` API for all HTTP requests (no React Query)
+  - Authentication check via `fetch('/api/user')` with sessionStorage-based redirect flow
+  - Login page no longer calls `queryClient.invalidateQueries()` to prevent cache conflicts
+  - Post-login redirect reads `sessionStorage.redirectAfterLogin` and navigates to saved URL
+- **Access**: Vendors can create sales cards at `/criar-pedido-emergencia` without React Query errors.
+
 # System Architecture
 
 ## UI/UX Decisions
