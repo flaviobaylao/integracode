@@ -4,12 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ChevronDown, ChevronRight, Menu } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
+import { useToast } from "@/hooks/use-toast";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -19,6 +20,7 @@ interface LayoutProps {
 }
 
 export default function Layout({ children, activeView, setActiveView, user }: LayoutProps) {
+  const { toast } = useToast();
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
   const isVendedor = user?.role === 'vendedor';
@@ -27,6 +29,21 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handleSessionExpired = (event: CustomEvent) => {
+      toast({
+        title: "Sessão Expirada",
+        description: event.detail.message || "Sua sessão expirou. Redirecionando para login...",
+        variant: "destructive",
+      });
+    };
+
+    window.addEventListener('session-expired', handleSessionExpired as EventListener);
+    return () => {
+      window.removeEventListener('session-expired', handleSessionExpired as EventListener);
+    };
+  }, [toast]);
 
   // Buscar contagem de pedidos bloqueados (atualiza a cada 30 segundos)
   const { data: blockedOrdersData } = useQuery<any[]>({

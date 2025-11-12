@@ -1,7 +1,17 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryFunction, QueryCache, MutationCache } from "@tanstack/react-query";
+
+export class UnauthorizedError extends Error {
+  constructor(message: string = "Sessão expirada. Por favor, faça login novamente.") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new UnauthorizedError();
+    }
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
@@ -52,7 +62,36 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+let unauthorizedHandlerRegistered = false;
+function handleUnauthorizedError() {
+  if (unauthorizedHandlerRegistered) return;
+  unauthorizedHandlerRegistered = true;
+  
+  const event = new CustomEvent('session-expired', {
+    detail: { message: 'Sua sessão expirou. Por favor, faça login novamente.' }
+  });
+  window.dispatchEvent(event);
+  
+  setTimeout(() => {
+    window.location.href = '/login';
+  }, 2000);
+}
+
 export const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => {
+      if (error instanceof UnauthorizedError) {
+        handleUnauthorizedError();
+      }
+    },
+  }),
+  mutationCache: new MutationCache({
+    onError: (error) => {
+      if (error instanceof UnauthorizedError) {
+        handleUnauthorizedError();
+      }
+    },
+  }),
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
