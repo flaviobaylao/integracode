@@ -9204,6 +9204,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? Math.round((completedVisits / totalVisits) * 100) 
         : 0;
 
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
+      let workedHours = null;
+      const checkIns = checkpoints.filter(cp => cp.checkpointType === 'check_in');
+      const checkOuts = checkpoints.filter(cp => cp.checkpointType === 'check_out');
+      
+      if (checkIns.length > 0 && checkOuts.length > 0) {
+        // Ordenar por tempo para garantir primeiro e último
+        checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        
+        const firstCheckIn = new Date(checkIns[0].checkpointTime);
+        const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        
+        // Calcular diferença em milissegundos e converter para horas e minutos
+        const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
+        const diffMinutes = Math.floor(diffMs / (1000 * 60));
+        const hours = Math.floor(diffMinutes / 60);
+        const minutes = diffMinutes % 60;
+        
+        workedHours = {
+          hours,
+          minutes,
+          total: diffMinutes,
+          formatted: `${hours}h ${minutes}min`
+        };
+      }
+
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.setHeader('Pragma', 'no-cache');
@@ -9225,7 +9252,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Converter de km para metros (banco salva em km, frontend espera metros)
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
-            percentComplete
+            percentComplete,
+            workedHours
           }
         }
       });
@@ -9387,6 +9415,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? Math.round((completedVisits / totalVisits) * 100) 
         : 0;
 
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
+      let workedHours = null;
+      const checkIns = checkpoints.filter(cp => cp.checkpointType === 'check_in');
+      const checkOuts = checkpoints.filter(cp => cp.checkpointType === 'check_out');
+      
+      if (checkIns.length > 0 && checkOuts.length > 0) {
+        // Ordenar por tempo para garantir primeiro e último
+        checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        
+        const firstCheckIn = new Date(checkIns[0].checkpointTime);
+        const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        
+        // Calcular diferença em milissegundos e converter para horas e minutos
+        const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
+        const diffMinutes = Math.floor(diffMs / (1000 * 60));
+        const hours = Math.floor(diffMinutes / 60);
+        const minutes = diffMinutes % 60;
+        
+        workedHours = {
+          hours,
+          minutes,
+          total: diffMinutes,
+          formatted: `${hours}h ${minutes}min`
+        };
+      }
+
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.setHeader('Pragma', 'no-cache');
@@ -9408,7 +9463,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Converter de km para metros (banco salva em km, frontend espera metros)
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
-            percentComplete
+            percentComplete,
+            workedHours
           }
         }
       });
