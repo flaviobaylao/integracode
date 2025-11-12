@@ -166,9 +166,10 @@ export default function DailyRouteView() {
   const effectiveOptimizedOrder = localOptimizedOrder || route?.optimizedOrder || [];
   
   // Reordenar visitas de acordo com a ordem efetiva
+  // optimizedOrder contém customer IDs, não visit IDs
   const orderedVisits = route?.visits && effectiveOptimizedOrder.length > 0
     ? effectiveOptimizedOrder
-        .map(id => route.visits.find((v: any) => v.id === id))
+        .map(id => route.visits.find((v: any) => v.customerId === id))
         .filter(Boolean)
     : route?.visits || [];
 
