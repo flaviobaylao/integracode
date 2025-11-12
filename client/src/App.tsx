@@ -33,6 +33,7 @@ import CheckInAudit from "@/pages/CheckInAudit";
 import ClearCache from "@/pages/ClearCache";
 import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
+import LeadsManagement from "@/pages/LeadsManagement";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -150,6 +151,7 @@ function Router() {
           <Route path="/rh" component={HRManagement} />
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
+          <Route path="/leads" component={LeadsManagement} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
