@@ -4256,12 +4256,12 @@ export class DatabaseStorage implements IStorage {
 
   async getDailyRouteBySellerAndDate(sellerId: string, date: Date): Promise<any | undefined> {
     // Input date is in UTC (e.g., 2025-11-12T00:00:00.000Z)
-    // Create start/end of that calendar day in UTC
+    // Create start/end of that calendar day in UTC using UTC methods
     const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
+    startOfDay.setUTCHours(0, 0, 0, 0);
     
     const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    endOfDay.setUTCHours(23, 59, 59, 999);
 
     const [route] = await db
       .select()
