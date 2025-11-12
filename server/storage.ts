@@ -728,6 +728,8 @@ export class DatabaseStorage implements IStorage {
     // Filtrar clientes que devem ser visitados na data alvo
     const customersToVisit: Customer[] = [];
     
+    let clientsWithoutServiceStartDate = 0;
+    
     for (const customer of activeCustomers) {
       try {
         // Pegar última visita (se existir)
@@ -753,11 +755,28 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
-        // Calcular próxima visita usando targetDateBRT como referência
+        // FALLBACK para serviceStartDate: usar createdAt ou data atual se não tiver
+        // Isso garante que clientes sem data inicial ainda sejam incluídos nas rotas
+        let effectiveStartDate: Date | undefined = lastCompletedDate;
+        
+        if (!effectiveStartDate) {
+          // Sem última visita - usar serviceStartDate se disponível
+          if (customer.serviceStartDate) {
+            effectiveStartDate = customer.serviceStartDate;
+          } else {
+            // Log para identificar clientes sem serviceStartDate
+            clientsWithoutServiceStartDate++;
+            
+            // Fallback: usar createdAt ou data atual
+            effectiveStartDate = customer.createdAt || new Date();
+          }
+        }
+        
+        // Calcular próxima visita usando effectiveStartDate como base
         const scheduleResult = calculateNextVisitDate({
           weekdays: weekdaysArray,
           periodicity: customer.visitPeriodicity || 'semanal',
-          lastCompletedDate: lastCompletedDate || undefined,
+          lastCompletedDate: effectiveStartDate,
           referenceDate: targetDateBRT
         });
         
@@ -774,6 +793,10 @@ export class DatabaseStorage implements IStorage {
       } catch (error: any) {
         console.warn(`⚠️ Erro ao calcular próxima visita para cliente ${customer.fantasyName}: ${error.message}`);
       }
+    }
+    
+    if (clientsWithoutServiceStartDate > 0) {
+      console.warn(`⚠️ ${clientsWithoutServiceStartDate} clientes sem serviceStartDate (usando createdAt ou data atual como fallback)`);
     }
     
     console.log(`✅ getCustomersForDate: ${customersToVisit.length} clientes devem ser visitados em ${targetDateBRT.toLocaleDateString('pt-BR')}`);
