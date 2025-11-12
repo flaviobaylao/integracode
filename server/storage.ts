@@ -20,6 +20,7 @@ import {
   deliveryRoutes,
   deliveryRouteStops,
   syncStatus,
+  leads,
   type User,
   type UpsertUser,
   type Route,
@@ -49,6 +50,8 @@ import {
   type ExportedReport,
   type SyncStatus,
   type InsertSyncStatus,
+  type Lead,
+  type InsertLead,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -267,6 +270,13 @@ export interface IStorage {
     message?: string; 
     recordsProcessed?: number;
   }): Promise<SyncStatus>;
+  
+  // Lead operations
+  getLeads(): Promise<Lead[]>;
+  getLead(id: string): Promise<Lead | undefined>;
+  createLead(lead: InsertLead): Promise<Lead>;
+  updateLead(id: string, lead: Partial<InsertLead>): Promise<Lead>;
+  deleteLead(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -4727,6 +4737,34 @@ export class DatabaseStorage implements IStorage {
 
   async getSyncStatuses(): Promise<SyncStatus[]> {
     return await db.select().from(syncStatus);
+  }
+  
+  // Lead operations
+  async getLeads(): Promise<Lead[]> {
+    return await db.select().from(leads).orderBy(desc(leads.createdAt));
+  }
+  
+  async getLead(id: string): Promise<Lead | undefined> {
+    const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+    return lead;
+  }
+  
+  async createLead(leadData: InsertLead): Promise<Lead> {
+    const [lead] = await db.insert(leads).values(leadData).returning();
+    return lead;
+  }
+  
+  async updateLead(id: string, leadData: Partial<InsertLead>): Promise<Lead> {
+    const [lead] = await db
+      .update(leads)
+      .set({ ...leadData, updatedAt: new Date() })
+      .where(eq(leads.id, id))
+      .returning();
+    return lead;
+  }
+  
+  async deleteLead(id: string): Promise<void> {
+    await db.delete(leads).where(eq(leads.id, id));
   }
 }
 
