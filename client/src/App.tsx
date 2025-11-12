@@ -37,6 +37,11 @@ import LeadManagement from "@/pages/LeadManagement";
 import CriarPedidoEmergencia from "@/pages/CriarPedidoEmergencia";
 
 function Router() {
+  // EMERGENCY ROUTE: Bypass useAuth for emergency order page
+  if (window.location.pathname === '/criar-pedido-emergencia') {
+    return <CriarPedidoEmergencia />;
+  }
+
   const { isAuthenticated, isLoading, isError, error } = useAuth();
 
   // Se estiver carregando, mostra um loading spinner para evitar tela branca

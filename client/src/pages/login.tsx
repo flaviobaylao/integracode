@@ -46,9 +46,17 @@ export default function Login() {
         description: 'Bem-vindo ao sistema Honest Sucos!',
       });
       
-      queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+      // Comentado: queryClient pode estar quebrado devido a cache do browser
+      // queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
       
-      window.location.href = '/';
+      // Redirecionar para URL salva ou página inicial
+      const redirectUrl = sessionStorage.getItem('redirectAfterLogin');
+      if (redirectUrl) {
+        sessionStorage.removeItem('redirectAfterLogin');
+        window.location.href = redirectUrl;
+      } else {
+        window.location.href = '/';
+      }
     },
     onError: (error: any) => {
       console.error('Erro no login:', error);

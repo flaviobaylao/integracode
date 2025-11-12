@@ -11,33 +11,62 @@ export default function CriarPedidoEmergencia() {
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
+  const [authError, setAuthError] = useState(false);
   const { toast } = useToast();
 
   // Carregar usuário logado
   useEffect(() => {
     fetch('/api/user', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => setUser(data))
+      .then(async (res) => {
+        if (res.status === 401) {
+          setAuthError(true);
+          // Salvar URL de destino antes de redirecionar para login
+          sessionStorage.setItem('redirectAfterLogin', '/criar-pedido-emergencia');
+          window.location.href = '/login';
+          return;
+        }
+        const data = await res.json();
+        setUser(data);
+      })
       .catch(() => {
-        toast({ title: "Erro", description: "Não foi possível carregar usuário", variant: "destructive" });
+        setAuthError(true);
+        // Salvar URL de destino antes de redirecionar para login
+        sessionStorage.setItem('redirectAfterLogin', '/criar-pedido-emergencia');
+        window.location.href = '/login';
       });
   }, []);
 
   // Carregar clientes e produtos
   useEffect(() => {
+    if (!user) return; // Só carrega se usuário estiver autenticado
+    
+    setDataLoading(true);
     Promise.all([
-      fetch('/api/customers', { credentials: 'include' }).then(r => r.json()),
-      fetch('/api/products', { credentials: 'include' }).then(r => r.json())
+      fetch('/api/customers', { credentials: 'include' }).then(async r => {
+        if (!r.ok) throw new Error('Erro ao carregar clientes');
+        return r.json();
+      }),
+      fetch('/api/products', { credentials: 'include' }).then(async r => {
+        if (!r.ok) throw new Error('Erro ao carregar produtos');
+        return r.json();
+      })
     ])
       .then(([customersData, productsData]) => {
-        setCustomers(customersData);
-        setProducts(productsData);
+        setCustomers(Array.isArray(customersData) ? customersData : []);
+        setProducts(Array.isArray(productsData) ? productsData : []);
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('Erro ao carregar dados:', error);
         toast({ title: "Erro", description: "Não foi possível carregar dados", variant: "destructive" });
+        setCustomers([]);
+        setProducts([]);
+      })
+      .finally(() => {
+        setDataLoading(false);
       });
-  }, []);
+  }, [user]);
 
   const handleCreateOrder = async () => {
     if (!selectedCustomer) {
@@ -92,6 +121,22 @@ export default function CriarPedidoEmergencia() {
       setLoading(false);
     }
   };
+
+  // Mostrar loading enquanto carrega dados
+  if (dataLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-4 flex items-center justify-center">
+        <Card className="max-w-md w-full">
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-green-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Carregando dados...</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-4">
