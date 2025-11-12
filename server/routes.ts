@@ -9195,28 +9195,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
+      // Buscar detalhes das visitas na ordem otimizada (sales_cards permanentes + customers)
       console.log(`🔍 [DEBUG] Buscando ${route.optimizedOrder?.length || 0} visitas do optimizedOrder`);
       console.log(`🔍 [DEBUG] Primeiros 3 customer IDs: ${(route.optimizedOrder || []).slice(0, 3).join(', ')}`);
       
       const visits = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
-          // optimizedOrder agora contém IDs de clientes, não de sales_cards
-          const [customer] = await db.select({
-            id: customers.id,
-            customerId: customers.id,
+          // Buscar sales_card permanente do cliente + dados do customer (JOIN)
+          const [visit] = await db.select({
+            id: salesCards.id,
+            customerId: salesCards.customerId,
             customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
             customerLatitude: customers.latitude,
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
             scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
-            isVirtual: customers.virtualService
+            isVirtual: customers.virtualService,
+            cardStatus: salesCards.status,
+            isPermanent: salesCards.isPermanent
           })
-            .from(customers)
-            .where(eq(customers.id, customerId))
+            .from(salesCards)
+            .innerJoin(customers, eq(salesCards.customerId, customers.id))
+            .where(and(
+              eq(salesCards.customerId, customerId),
+              eq(salesCards.isPermanent, true),
+              eq(salesCards.sellerId, sellerId)
+            ))
             .limit(1);
           
-          return customer;
+          return visit;
         })
       );
       
