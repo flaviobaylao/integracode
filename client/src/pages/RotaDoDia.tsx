@@ -188,34 +188,85 @@ export default function RotaDoDia() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {route.visits?.map((visit, index) => (
-                  <div
-                    key={visit.customerId}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                    data-testid={`visit-${visit.customerId}`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-semibold">
-                        {index + 1}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-800 dark:text-white">
-                          {visit.customerName}
-                        </p>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {visit.customerAddress || 'Endereço não informado'}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      data-testid={`badge-status-${visit.customerId}`}
+                {route.visits?.map((visit, index) => {
+                  const checkInCheckpoint = route.checkpoints?.find(
+                    cp => cp.visitId === visit.id && cp.checkpointType === 'check_in'
+                  );
+                  const checkOutCheckpoint = route.checkpoints?.find(
+                    cp => cp.visitId === visit.id && cp.checkpointType === 'check_out'
+                  );
+
+                  const isCompleted = !!checkOutCheckpoint;
+                  const isInProgress = !!checkInCheckpoint && !checkOutCheckpoint;
+
+                  return (
+                    <div
+                      key={visit.customerId}
+                      className="p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                      data-testid={`visit-${visit.customerId}`}
                     >
-                      Pendente
-                    </Badge>
-                  </div>
-                ))}
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-4">
+                          <div className={`flex-shrink-0 w-8 h-8 rounded-full text-white flex items-center justify-center font-semibold ${
+                            isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                          }`}>
+                            {index + 1}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-800 dark:text-white">
+                              {visit.customerName}
+                            </p>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {visit.customerAddress || 'Endereço não informado'}
+                            </p>
+                          </div>
+                        </div>
+                        <Badge
+                          variant={isCompleted ? "default" : isInProgress ? "secondary" : "outline"}
+                          data-testid={`badge-status-${visit.customerId}`}
+                        >
+                          {isCompleted ? '✅ Concluída' : isInProgress ? '🔄 Em andamento' : 'Pendente'}
+                        </Badge>
+                      </div>
+
+                      {(checkInCheckpoint || checkOutCheckpoint) && (
+                        <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                          <div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Check-in</p>
+                            {checkInCheckpoint ? (
+                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300" data-testid={`checkin-time-${visit.customerId}`}>
+                                {formatInTimeZone(
+                                  checkInCheckpoint.checkpointTime,
+                                  'America/Sao_Paulo',
+                                  'HH:mm',
+                                  { locale: ptBR }
+                                )}
+                              </p>
+                            ) : (
+                              <p className="text-sm text-gray-400">—</p>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Check-out</p>
+                            {checkOutCheckpoint ? (
+                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300" data-testid={`checkout-time-${visit.customerId}`}>
+                                {formatInTimeZone(
+                                  checkOutCheckpoint.checkpointTime,
+                                  'America/Sao_Paulo',
+                                  'HH:mm',
+                                  { locale: ptBR }
+                                )}
+                              </p>
+                            ) : (
+                              <p className="text-sm text-gray-400">—</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
