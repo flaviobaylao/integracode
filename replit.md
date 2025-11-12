@@ -38,6 +38,7 @@
     - Photo markers (purple camera icons) for visits with check-in photos
   - **Smart Visit List with Inline Check-in/Check-out**:
     - Check-in/check-out times displayed inline on each visit row (Brazil/São Paulo timezone)
+    - **Critical Bug Fix (Nov 12, 2025)**: Corrected checkpoint-to-visit association logic to use `customerId` instead of `visitId`. Previously, checkpoints were not displaying on visits because the frontend was looking for `cp.visitId === visit.id`, but visits use `id = customerId` while checkpoints have a separate UUID `visitId`. Now uses `cp.customerId === visit.customerId` for correct matching.
     - **Color-coded status system:**
       - 🟢 **Green**: Visit completed (check-in + check-out)
       - 🔵 **Blue**: Visit in progress (check-in only)
