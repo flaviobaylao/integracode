@@ -37,6 +37,12 @@
     - Real-time status: ✅ Concluída (green), 🔄 Em andamento (blue), or Pendente (gray)
     - Check-in and check-out times formatted in BRT timezone
     - Customer name and address with sequential numbering
+    - Click-to-open sales card functionality for immediate order registration
+  - **Sales Card Integration**: Click any visit to open SalesCardDetailsModal for that customer/date
+    - Auto-creates sales card if none exists for that date
+    - API endpoint: `GET /api/customers/:customerId/sales-card/:date` returns or creates sales card
+    - New cards created with `source: 'rota_do_dia'`
+    - Seamless order registration workflow from route visualization
   - Full TypeScript type safety using Zod schemas from `@shared/schema`
   - Correct timezone handling using `formatInTimeZone` for Brazil/São Paulo timezone (BRT)
   - Integrated menu navigation replacing legacy DailyRouteView
