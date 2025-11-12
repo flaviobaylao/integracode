@@ -9203,39 +9203,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar detalhes das visitas na ordem otimizada (sales_cards permanentes + customers)
-      console.log(`🔍 [DEBUG] Buscando ${route.optimizedOrder?.length || 0} visitas do optimizedOrder`);
-      console.log(`🔍 [DEBUG] Primeiros 3 customer IDs: ${(route.optimizedOrder || []).slice(0, 3).join(', ')}`);
+      // Buscar cards do dia usando lógica BRT (igual a /api/sales-cards/by-date)
+      // Passar Date object que getSalesCardsByDate converte para BRT internamente
+      console.log(`🔍 [DEBUG] Buscando cards do dia usando getSalesCardsByDate para ${date}`);
+      const dateForCards = new Date(date); // Parse simples, getSalesCardsByDate faz conversão BRT
+      const allCards = await storage.getSalesCardsByDate(dateForCards, sellerId);
       
-      const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (customerId: string) => {
-          // Buscar sales_card permanente do cliente + dados do customer (JOIN)
-          const [visit] = await db.select({
-            id: salesCards.id,
-            customerId: salesCards.customerId,
-            customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
-            customerLatitude: customers.latitude,
-            customerLongitude: customers.longitude,
-            customerAddress: customers.address,
-            scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
-            isVirtual: customers.virtualService,
-            cardStatus: salesCards.status,
-            isPermanent: salesCards.isPermanent
-          })
-            .from(salesCards)
-            .innerJoin(customers, eq(salesCards.customerId, customers.id))
-            .where(and(
-              eq(salesCards.customerId, customerId),
-              eq(salesCards.isPermanent, true),
-              eq(salesCards.sellerId, sellerId)
-            ))
-            .limit(1);
+      console.log(`✅ [DEBUG] getSalesCardsByDate retornou ${allCards.length} cards`);
+      
+      // Criar mapa de cards por customerId para lookup rápido
+      const cardsByCustomerId = new Map<string, any>();
+      allCards.forEach(card => {
+        cardsByCustomerId.set(card.customerId, card);
+      });
+      
+      // Montar visitas na ordem do optimizedOrder
+      const visits = (route.optimizedOrder || [])
+        .map((customerId: string) => {
+          const card = cardsByCustomerId.get(customerId);
+          if (!card || !card.customer) return null;
           
-          return visit;
+          return {
+            id: card.id,
+            customerId: card.customerId,
+            customerName: card.customer.fantasyName || card.customer.name,
+            customerLatitude: card.customer.latitude,
+            customerLongitude: card.customer.longitude,
+            customerAddress: card.customer.address,
+            scheduledDate: route.routeDate,
+            isVirtual: card.customer.virtualService,
+            cardStatus: card.status,
+            isPermanent: card.isPermanent
+          };
         })
-      );
+        .filter(Boolean);
       
-      console.log(`✅ [DEBUG] ${visits.filter(v => v).length} visitas encontradas, ${visits.filter(v => !v).length} não encontradas`);
+      console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
