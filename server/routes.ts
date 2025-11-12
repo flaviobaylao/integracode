@@ -9181,8 +9181,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      const routeDate = new Date(date);
-      routeDate.setHours(0, 0, 0, 0);
+      // Parse date string as UTC midnight (matches how routes are stored)
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
       
       const route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
       
