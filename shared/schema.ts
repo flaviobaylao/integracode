@@ -642,6 +642,9 @@ export const dailyRoutes = pgTable("daily_routes", {
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
   
+  // Horário de almoço
+  lunchBreakActivatedAt: timestamp("lunch_break_activated_at"), // Quando o vendedor marcou início do almoço
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
