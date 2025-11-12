@@ -10,12 +10,16 @@ import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
 import RouteMap from "@/components/RouteMap";
+import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 
 export default function RotaDoDia() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator';
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
+  const [selectedCard, setSelectedCard] = useState<any>(null);
+  const [showCardModal, setShowCardModal] = useState(false);
+  const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -30,6 +34,27 @@ export default function RotaDoDia() {
   const route = response?.route;
 
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
+
+  const handleVisitClick = async (customerId: string) => {
+    try {
+      setLoadingCardId(customerId);
+      const response = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Falha ao buscar card de vendas');
+      }
+      
+      const card = await response.json();
+      setSelectedCard(card);
+      setShowCardModal(true);
+    } catch (error) {
+      console.error('Erro ao abrir card de vendas:', error);
+    } finally {
+      setLoadingCardId(null);
+    }
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -202,7 +227,8 @@ export default function RotaDoDia() {
                   return (
                     <div
                       key={visit.customerId}
-                      className="p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                      onClick={() => handleVisitClick(visit.customerId)}
+                      className="p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
                       data-testid={`visit-${visit.customerId}`}
                     >
                       <div className="flex items-center justify-between mb-3">
@@ -271,6 +297,17 @@ export default function RotaDoDia() {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {showCardModal && selectedCard && (
+        <SalesCardDetailsModal
+          isOpen={showCardModal}
+          onClose={() => {
+            setShowCardModal(false);
+            setSelectedCard(null);
+          }}
+          card={selectedCard}
+        />
       )}
     </div>
   );

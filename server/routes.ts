@@ -2722,6 +2722,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to get/create permanent card" });
     }
   });
+
+  // Get or create sales card for a specific customer on a specific date
+  app.get('/api/customers/:customerId/sales-card/:date', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId, date } = req.params;
+      const user = req.currentUser;
+      
+      if (!user) {
+        return res.status(401).json({ message: "User not authenticated" });
+      }
+
+      // Parse date string to Date object (UTC midnight)
+      const targetDate = new Date(`${date}T00:00:00.000Z`);
+      
+      // Buscar todos os sales cards daquele dia
+      const cardsOnDate = await storage.getSalesCardsByDate(targetDate);
+      
+      // Filtrar pelo customerId
+      const existingCard = cardsOnDate.find(card => card.customerId === customerId);
+      
+      if (existingCard) {
+        return res.json(existingCard);
+      }
+
+      // Se não existe, criar um novo sales card para aquele dia
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+
+      // Determinar sellerId - usar o do cliente ou o usuário atual se for vendedor
+      let sellerId = customer.sellerId || user.id;
+      
+      // Se o usuário é vendedor, forçar usar o próprio ID
+      if (user.role === 'vendedor') {
+        sellerId = user.id;
+      }
+
+      // Criar novo sales card com campos obrigatórios
+      const newCard = await storage.createSalesCard({
+        customerId,
+        sellerId,
+        scheduledDate: targetDate,
+        status: 'open',
+        source: 'rota_do_dia',
+        routeDay: 'Seg', // Default
+        recurrenceType: 'semanal',
+        exclusiveVehicle: false,
+        vehicleTypes: [],
+      });
+
+      // Buscar card completo com relações
+      const fullCard = await storage.getSalesCard(newCard.id);
+      
+      res.json(fullCard);
+    } catch (error) {
+      console.error("Error getting/creating sales card for date:", error);
+      res.status(500).json({ message: "Failed to get/create sales card" });
+    }
+  });
   
   // Create new order in history
   app.post('/api/order-history', authenticateUser, async (req: any, res) => {
