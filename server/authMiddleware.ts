@@ -7,18 +7,26 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     let userId: string | null = null;
     let userEmail: string | null = null;
     
+    console.log(`🔐 [AUTH] ${req.method} ${req.path}`);
+    console.log(`🔐 [AUTH] Session exists: ${!!req.session}`);
+    console.log(`🔐 [AUTH] Session user: ${!!(req.session as any)?.user}`);
+    console.log(`🔐 [AUTH] isAuthenticated: ${req.isAuthenticated?.()}`);
+    
     // Verificar sessão local primeiro (para admin Flavio)
     if ((req.session as any)?.user?.claims?.sub) {
       userId = (req.session as any).user.claims.sub;
       userEmail = (req.session as any).user.claims.email;
+      console.log(`✅ [AUTH] Local session: ${userEmail}`);
     }
     // Verificar autenticação Replit
     else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
       userId = (req.user as any).claims.sub;
       userEmail = (req.user as any).claims.email;
+      console.log(`✅ [AUTH] Replit auth: ${userEmail}`);
     }
     
     if (!userId) {
+      console.log(`❌ [AUTH] No userId found`);
       return res.status(401).json({ message: "Unauthorized" });
     }
     
