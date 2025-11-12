@@ -1,5 +1,5 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v12-2025-11-07-force-refresh';
+const CACHE_NAME = 'integra-v13-2025-11-12-fix-js-cache';
 const urlsToCache = [
   '/manifest.json'
 ];
@@ -44,13 +44,20 @@ self.addEventListener('fetch', (event) => {
   const url = event.request.url;
   const isNavigationRequest = event.request.mode === 'navigate';
   const isHTMLRequest = event.request.headers.get('accept')?.includes('text/html');
+  const isScriptRequest = event.request.destination === 'script' || 
+                          event.request.headers.get('accept')?.includes('javascript') ||
+                          url.includes('/src/') || // Vite dev modules
+                          url.endsWith('.js') || 
+                          url.endsWith('.jsx') || 
+                          url.endsWith('.ts') || 
+                          url.endsWith('.tsx');
   
-  // NUNCA cacheia: Navegação, API, HTML, ou JavaScript
+  // NUNCA cacheia: Navegação, API, HTML, ou JavaScript (incluindo módulos Vite /src/)
   if (isNavigationRequest || 
       isHTMLRequest ||
+      isScriptRequest ||
       url.includes('/api/') || 
-      url.endsWith('.html') || 
-      (url.includes('/assets/') && url.endsWith('.js'))) {
+      url.endsWith('.html')) {
     
     console.log('[SW] Bypass cache para:', url);
     
