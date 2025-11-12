@@ -27,33 +27,43 @@
     
     <!-- Script para FORÇAR atualização do Service Worker -->
     <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js').then((registration) => {
-          console.log('✅ Service Worker registrado');
+      // 🔥 DESABILITAR Service Worker completamente em development!
+      (async function() {
+        if ('serviceWorker' in navigator) {
+          const swWasActive = !!navigator.serviceWorker.controller;
+          const reloadFlag = 'sw_cleanup_reload_done';
           
-          // Verifica por atualizações a cada 3 segundos
-          setInterval(() => {
-            registration.update();
-          }, 3000);
+          // Se já fizemos reload, não fazer novamente (evitar loop)
+          if (sessionStorage.getItem(reloadFlag)) {
+            console.log('✅ Service Worker já foi limpo anteriormente');
+            return;
+          }
           
-          // Quando encontra uma atualização, RECARREGA IMEDIATAMENTE
-          registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated') {
-                console.log('🔄 Nova versão detectada - Recarregando...');
-                window.location.reload();
-              }
-            });
-          });
-        });
-        
-        // Escuta mensagens do Service Worker
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          console.log('🔄 Service Worker atualizado - Recarregando...');
-          window.location.reload();
-        });
-      }
+          // PRIMEIRO: Desregistrar TODOS os service workers existentes
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map(reg => {
+            console.log('🧹 Desregistrando Service Worker:', reg.scope);
+            return reg.unregister();
+          }));
+          
+          // SEGUNDO: Limpar TODOS os caches
+          const cacheKeys = await caches.keys();
+          await Promise.all(cacheKeys.map(key => {
+            console.log('🧹 Limpando cache:', key);
+            return caches.delete(key);
+          }));
+          
+          console.log('✅ Service Worker DESABILITADO em development');
+          console.log('🎯 POST requests agora chegarão ao servidor normalmente!');
+          
+          // Se havia SW ativo, fazer reload ÚNICO para aplicar mudanças
+          if (swWasActive && registrations.length > 0) {
+            console.log('🔄 Fazendo reload para aplicar limpeza...');
+            sessionStorage.setItem(reloadFlag, 'true');
+            window.location.reload();
+          }
+        }
+      })();
     </script>
     
     <script type="module" src="/src/main.tsx?v=20251031-fix"></script>
