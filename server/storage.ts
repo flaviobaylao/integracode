@@ -728,14 +728,35 @@ export class DatabaseStorage implements IStorage {
     // Filtrar clientes que devem ser visitados na data alvo
     const customersToVisit: Customer[] = [];
     
+    let debugCount = 0;
     for (const customer of activeCustomers) {
       try {
         // Pegar última visita (se existir)
         const lastCompletedDate = lastVisitMap.get(customer.id);
         
+        // Normalizar weekdays: pode vir como string JSON ou array
+        let weekdaysArray: string[] = [];
+        if (customer.weekdays) {
+          if (typeof customer.weekdays === 'string') {
+            try {
+              weekdaysArray = JSON.parse(customer.weekdays);
+            } catch {
+              console.warn(`⚠️ weekdays inválido para cliente ${customer.fantasyName}: ${customer.weekdays}`);
+              continue; // Pular cliente com dados inválidos
+            }
+          } else if (Array.isArray(customer.weekdays)) {
+            weekdaysArray = customer.weekdays;
+          }
+        }
+        
+        if (weekdaysArray.length === 0) {
+          console.warn(`⚠️ Cliente ${customer.fantasyName} sem dias da semana configurados`);
+          continue;
+        }
+        
         // Calcular próxima visita usando targetDateBRT como referência
         const scheduleResult = calculateNextVisitDate({
-          weekdays: customer.weekdays || [],
+          weekdays: weekdaysArray,
           periodicity: customer.visitPeriodicity || 'semanal',
           lastCompletedDate: lastCompletedDate || undefined,
           referenceDate: targetDateBRT
@@ -746,6 +767,19 @@ export class DatabaseStorage implements IStorage {
         // Precisamos comparar datas no mesmo formato (início do dia BRT)
         const nextDateStr = scheduleResult.nextDate.toISOString().split('T')[0];
         const nextDateBRT = fromZonedTime(new Date(`${nextDateStr}T00:00:00`), BRAZIL_TZ);
+        
+        // DEBUG: Log primeiros 5 clientes
+        if (debugCount < 5) {
+          console.log(`🔍 DEBUG Cliente ${customer.fantasyName}:
+            - weekdays: ${JSON.stringify(customer.weekdays)}
+            - lastVisit: ${lastCompletedDate ? lastCompletedDate.toISOString() : 'NUNCA'}
+            - scheduleResult.nextDate: ${scheduleResult.nextDate.toISOString()}
+            - nextDateBRT: ${nextDateBRT.toISOString()}
+            - targetDateBRT: ${targetDateBRT.toISOString()}
+            - nextDateBRT <= targetDateBRT? ${nextDateBRT.getTime() <= targetDateBRT.getTime()}
+          `);
+          debugCount++;
+        }
         
         // Incluir visitas atrasadas e da data alvo (nextVisitDate <= targetDate)
         if (nextDateBRT.getTime() <= targetDateBRT.getTime()) {
