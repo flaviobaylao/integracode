@@ -1,0 +1,55 @@
+
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-4272859644', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+daily-route:1 <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes">
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+index-D7bdI8Jv.js:812 🔍 [QUERY] Buscando rota: 
+{selectedSellerId: 'omie-vendor-3882132483', selectedDate: '2025-11-12'}
+index-D7bdI8Jv.js:812 🌐 [QUERY] URL: /api/daily-routes/omie-vendor-3882132483/date/2025-11-12?t=1762955958200
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+index-D7bdI8Jv.js:812 ✅ [QUERY] Resposta: 
+{route: {…}}
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [STATE] selectedSellerId: omie-vendor-3882132483 selectedDate: 2025-11-12 enabled: true
+index-D7bdI8Jv.js:812 🔍 [DEBUG] Sellers loaded: 
+(11) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+index-D7bdI8Jv.js:812 🔍 [EFFECT] Executando useEffect: 
+{isAdmin: true, sellersLength: 11, selectedSellerId: 'omie-vendor-3882132483', userId: 'admin-flavio', userRole: 'admin'}
+index-D7bdI8Jv.js:812 ❌ [EFFECT] Nenhuma condição atendida!
+﻿
+
+Press ctrl i to turn on code suggestions. Press ctrl x to disable code suggestions.
+ctrl
+i
+ to turn on code suggestions. Don't show again NEW
+

@@ -20,6 +20,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { format } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
@@ -694,7 +695,7 @@ export default function DailyRouteView() {
             {isAdmin ? 'Rotas dos Vendedores' : 'Minha Rota do Dia'}
           </h1>
           <p className="text-gray-600 dark:text-gray-400">
-            {format(new Date(route.routeDate), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+            {formatInTimeZone(route.routeDate, 'America/Sao_Paulo', "EEEE, dd 'de' MMMM", { locale: ptBR })}
             {isAdmin && currentSeller && ` - ${currentSeller.firstName} ${currentSeller.lastName || ''}`}
           </p>
         </div>
