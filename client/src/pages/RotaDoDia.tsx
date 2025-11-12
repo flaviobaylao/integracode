@@ -43,8 +43,8 @@ export default function RotaDoDia() {
     const executedCoords: Array<{ lat: number; lng: number }> = [];
 
     plannedCoords.push({
-      lat: parseFloat(route.sellerHome.lat),
-      lng: parseFloat(route.sellerHome.lng)
+      lat: route.sellerHome.latitude,
+      lng: route.sellerHome.longitude
     });
 
     route.optimizedOrder?.forEach(customerId => {
@@ -58,8 +58,8 @@ export default function RotaDoDia() {
     });
 
     plannedCoords.push({
-      lat: parseFloat(route.sellerHome.lat),
-      lng: parseFloat(route.sellerHome.lng)
+      lat: route.sellerHome.latitude,
+      lng: route.sellerHome.longitude
     });
 
     if (route.checkpoints && route.checkpoints.length > 0) {

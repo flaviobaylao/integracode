@@ -26,25 +26,40 @@
 - **Rota do Dia (Nov 12, 2025)**: New simplified daily route visualization page accessible via `/rota-do-dia`. Features include:
   - Clean, user-friendly interface for viewing daily routes
   - Date and seller selection filters (admin/coordinator access)
-  - Route metrics summary: total visits, completed visits, pending visits
+  - **Route Metrics Dashboard**: Displays total visits, completed, pending, plus planned distance and executed distance calculations
   - **Interactive Map**: Leaflet-based route visualization showing:
     - Seller's home location (start/end point) with green house icon
     - Sequential numbered markers for each customer visit
     - Optimized route path connecting all points (home → visits → home)
     - Actual executed route overlay (red line) based on checkpoints
     - Photo markers (purple camera icons) for visits with check-in photos
-  - **Visit List with Checkpoints**: Each visit displays:
-    - Real-time status: ✅ Concluída (green), 🔄 Em andamento (blue), or Pendente (gray)
-    - Check-in and check-out times formatted in BRT timezone
+  - **Smart Visit List with Inline Check-in/Check-out**:
+    - Check-in/check-out times displayed inline on each visit row (Brazil/São Paulo timezone)
+    - **Color-coded status system:**
+      - 🟢 **Green**: Visit completed (check-in + check-out)
+      - 🔵 **Blue**: Visit in progress (check-in only)
+      - 🔴 **Red**: Location validation issue (check-in/check-out >100m from registered address)
+      - ⚪ **Gray**: Pending (no check-in)
+    - **Location Validation**: Haversine distance calculation compares check-in/check-out GPS coordinates with customer's registered address
+      - Alerts displayed when distance exceeds 100 meters with exact distance shown
+      - Red warning: "Check-in fora do local" or "Check-out fora do local"
+    - **Photo Indicator**: Purple camera icon when visit has check-in photo
     - Customer name and address with sequential numbering
     - Click-to-open sales card functionality for immediate order registration
+  - **Off-Route Check-ins Section**: Separate section at bottom showing check-ins performed on customers not in the planned route (orange highlight)
   - **Sales Card Integration**: Click any visit to open SalesCardDetailsModal for that customer/date
     - Auto-creates sales card if none exists for that date
     - API endpoint: `GET /api/customers/:customerId/sales-card/:date` returns or creates sales card
     - New cards created with `source: 'rota_do_dia'`
     - Seamless order registration workflow from route visualization
+  - **Distance Calculations**:
+    - Planned route distance: Sum of distances from home → all visits (optimized order) → home
+    - Executed route distance: Sum of distances between sequential check-in coordinates
+    - Uses Haversine formula for accurate geodesic calculations
   - Full TypeScript type safety using Zod schemas from `@shared/schema`
-  - Correct timezone handling using `formatInTimeZone` for Brazil/São Paulo timezone (BRT)
+  - **Timezone Handling**: ALL dates use UTC for storage but display in Brazil/São Paulo timezone (BRT/GMT-3)
+    - Fixed critical date bug where selecting date in calendar was off by one day
+    - Changed `setHours` to `setUTCHours` in `getDailyRouteBySellerAndDate()` for proper UTC range queries
   - Integrated menu navigation replacing legacy DailyRouteView
   - API endpoint: `GET /api/daily-routes/:sellerId/date/:date` returns `DailyRouteResponse` with `sellerHome` coordinates and checkpoint data
 - **Visit Schedule Management (Nov 12, 2025 - Direct Customer-Based Architecture)**: Route generation now queries **customers table directly** as the single source of truth. Visit scheduling is calculated on-demand using `calculateNextVisitDate()` from customer's `weekdays`, `visitPeriodicity`, and last visit from `order_history`. Sales cards (`sales_cards` table) are used ONLY for recording sales transactions and outcomes, NOT for route scheduling.
