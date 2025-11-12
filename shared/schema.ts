@@ -628,8 +628,17 @@ export const dailyRoutes = pgTable("daily_routes", {
   startLongitude: decimal("start_longitude", { precision: 11, scale: 8 }).notNull(),
   startAddress: text("start_address"),
   
-  // Rota otimizada (array de IDs de visitas na ordem)
-  optimizedOrder: jsonb("optimized_order").$type<string[]>().notNull(), // Array de visit IDs
+  // Rota otimizada (array de stopIds na ordem: "customer:<visitId>" ou "lead:<leadId>")
+  optimizedOrder: jsonb("optimized_order").$type<string[]>().notNull(), // Array de stop IDs
+  
+  // Metadata de stops (lookup para cada stopId)
+  visitStops: jsonb("visit_stops").$type<{
+    [stopId: string]: {
+      entityType: 'customer' | 'lead';
+      entityId: string;
+      visitId?: string; // Para customers, referencia visit_agenda
+    };
+  }>(),
   
   // Estatísticas da rota
   totalEstimatedDistance: decimal("total_estimated_distance", { precision: 10, scale: 2 }), // km
@@ -655,8 +664,11 @@ export const dailyRoutes = pgTable("daily_routes", {
 // Zod schemas for Daily Routes API responses
 export const dailyRouteVisitSchema = z.object({
   id: z.string(),
-  customerId: z.string(),
-  customerName: z.string(),
+  visitType: z.enum(['customer', 'lead']).default('customer'), // Tipo de visita
+  entityId: z.string(), // customerId ou leadId
+  customerId: z.string().optional(), // Mantido para compatibilidade
+  leadId: z.string().optional(), // ID do lead, se aplicável
+  customerName: z.string(), // Nome fantasia (customer ou lead)
   customerLatitude: z.union([z.string(), z.number()]).nullable(),
   customerLongitude: z.union([z.string(), z.number()]).nullable(),
   customerAddress: z.string().nullable(),

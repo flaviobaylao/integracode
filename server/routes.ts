@@ -10239,6 +10239,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Adicionar LEAD à rota (admin apenas)
+  app.post('/api/daily-routes/:routeId/leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      const { leadId } = req.body;
+      
+      // Apenas administradores podem adicionar leads
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem adicionar leads.' });
+      }
+      
+      if (!leadId) {
+        return res.status(400).json({ message: 'leadId é obrigatório' });
+      }
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Buscar lead para validar
+      const lead = await storage.getLead(leadId);
+      
+      if (!lead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+      
+      // Criar stopId prefixado para o lead
+      const stopId = `lead:${lead.id}`;
+      
+      // Obter visitStops atual (ou criar novo objeto se não existir)
+      const currentVisitStops = (route.visitStops as any) || {};
+      
+      // Adicionar metadata do lead
+      currentVisitStops[stopId] = {
+        entityType: 'lead',
+        entityId: lead.id
+      };
+      
+      // Adicionar stopId ao optimizedOrder
+      const currentOrder = (route.optimizedOrder as string[]) || [];
+      const newOrder = [...currentOrder, stopId];
+      
+      // Atualizar rota
+      await storage.updateDailyRoute(routeId, {
+        optimizedOrder: newOrder,
+        visitStops: currentVisitStops,
+        totalVisits: newOrder.length
+      });
+      
+      // Atribuir lead ao vendedor da rota
+      await storage.updateLead(leadId, {
+        assignedTo: route.sellerId
+      });
+      
+      console.log(`➕ Lead ${lead.fantasyName} adicionado à rota ${routeId} (${currentOrder.length} → ${newOrder.length} visitas)`);
+      
+      res.json({
+        success: true,
+        message: 'Lead adicionado à rota com sucesso',
+        newTotalVisits: newOrder.length,
+        lead: {
+          id: lead.id,
+          name: lead.fantasyName
+        }
+      });
+    } catch (error: any) {
+      console.error('Erro ao adicionar lead à rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao adicionar lead à rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar distância real percorrida (baseado em checkpoints)
   app.get('/api/daily-routes/:routeId/actual-distance', authenticateUser, async (req: any, res) => {
     try {
