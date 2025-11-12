@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
+import RouteMap from "@/components/RouteMap";
 
 export default function RotaDoDia() {
   const { user } = useAuth();
@@ -160,6 +161,26 @@ export default function RotaDoDia() {
               </div>
             </CardContent>
           </Card>
+
+          {route.sellerHome && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Mapa da Rota</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <RouteMap
+                  homeLocation={route.sellerHome}
+                  visits={(route.visits || []).map(visit => ({
+                    ...visit,
+                    customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
+                    customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
+                  }))}
+                  optimizedOrder={route.optimizedOrder || []}
+                  checkpoints={route.checkpoints || []}
+                />
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
