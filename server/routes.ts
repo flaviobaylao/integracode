@@ -9174,7 +9174,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { sellerId, date } = req.params;
       
+      console.log(`\n========================================`);
       console.log(`📡 [API REQUEST] GET /api/daily-routes/${sellerId}/date/${date}`);
+      console.log(`========================================\n`);
       
       // Vendedor só pode ver sua própria rota
       if (user.role === 'vendedor' && sellerId !== user.id) {
