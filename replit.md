@@ -17,7 +17,9 @@
   - Authentication check via `fetch('/api/user')` with sessionStorage-based redirect flow
   - Login page no longer calls `queryClient.invalidateQueries()` to prevent cache conflicts
   - Post-login redirect reads `sessionStorage.redirectAfterLogin` and navigates to saved URL
+  - CustomerDetailsModal "Criar Card de Venda" button converted to `fetch()` API (temporary fix)
 - **Access**: Vendors can create sales cards at `/criar-pedido-emergencia` without React Query errors.
+- **TODO**: Implement service worker cleanup and build-version detection to resolve root cause permanently.
 
 # System Architecture
 
