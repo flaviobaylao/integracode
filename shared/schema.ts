@@ -695,6 +695,10 @@ export const dailyRouteWithDataSchema = z.object({
   updatedAt: z.string(),
   visits: z.array(dailyRouteVisitSchema),
   segments: z.array(routeSegmentSchema),
+  sellerHome: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+  }),
   progress: routeProgressSchema,
   checkpoints: z.array(z.any()),
 });

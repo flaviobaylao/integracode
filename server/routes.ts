@@ -9149,6 +9149,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visits: visits.filter(Boolean),
           checkpoints,
           segments,
+          sellerHome: {
+            latitude: parseFloat(route.startLatitude),
+            longitude: parseFloat(route.startLongitude)
+          },
           progress: {
             totalVisits,
             completedVisits,
@@ -9328,6 +9332,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visits: visits.filter(Boolean),
           checkpoints,
           segments,
+          sellerHome: {
+            latitude: parseFloat(route.startLatitude),
+            longitude: parseFloat(route.startLongitude)
+          },
           progress: {
             totalVisits,
             completedVisits,
