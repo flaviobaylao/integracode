@@ -34,6 +34,7 @@ import ClearCache from "@/pages/ClearCache";
 import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
 import LeadManagement from "@/pages/LeadManagement";
+import CriarPedidoEmergencia from "@/pages/CriarPedidoEmergencia";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -121,6 +122,7 @@ function Router() {
 
   return (
     <Switch>
+      <Route path="/criar-pedido-emergencia" component={CriarPedidoEmergencia} />
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
