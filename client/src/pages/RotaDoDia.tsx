@@ -17,7 +17,7 @@ export default function RotaDoDia() {
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
 
   const { data: sellers } = useQuery<any[]>({
-    queryKey: ['/api/sellers'],
+    queryKey: ['/api/users', { role: 'vendedor' }],
     enabled: isAdmin,
   });
 
