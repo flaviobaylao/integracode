@@ -649,6 +649,68 @@ export const dailyRoutes = pgTable("daily_routes", {
   unique("unique_daily_route_seller_date").on(table.sellerId, table.routeDate),
 ]);
 
+// Zod schemas for Daily Routes API responses
+export const dailyRouteVisitSchema = z.object({
+  id: z.string(),
+  customerId: z.string(),
+  customerName: z.string(),
+  customerLatitude: z.union([z.string(), z.number()]).nullable(),
+  customerLongitude: z.union([z.string(), z.number()]).nullable(),
+  customerAddress: z.string().nullable(),
+  scheduledDate: z.string(),
+  isVirtual: z.boolean().nullable(),
+});
+
+export const routeSegmentSchema = z.object({
+  visitId: z.string(),
+  from: z.string(),
+  to: z.string(),
+  distance: z.number(), // metros
+});
+
+export const routeProgressSchema = z.object({
+  totalVisits: z.number(),
+  completedVisits: z.number(),
+  totalEstimatedDistance: z.number(),
+  totalActualDistance: z.number(),
+  percentComplete: z.number(),
+});
+
+export const dailyRouteWithDataSchema = z.object({
+  id: z.string(),
+  sellerId: z.string(),
+  routeDate: z.string(),
+  startLatitude: z.string(),
+  startLongitude: z.string(),
+  startAddress: z.string().nullable(),
+  optimizedOrder: z.array(z.string()),
+  totalEstimatedDistance: z.string().nullable(),
+  totalActualDistance: z.string().nullable(),
+  totalVisits: z.number(),
+  completedVisits: z.number(),
+  routeStatus: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  visits: z.array(dailyRouteVisitSchema),
+  segments: z.array(routeSegmentSchema),
+  progress: routeProgressSchema,
+  checkpoints: z.array(z.any()),
+});
+
+export const dailyRouteResponseSchema = z.object({
+  message: z.string().optional(),
+  route: dailyRouteWithDataSchema.nullable(),
+});
+
+// TypeScript types inferred from Zod schemas
+export type DailyRouteVisit = z.infer<typeof dailyRouteVisitSchema>;
+export type RouteSegment = z.infer<typeof routeSegmentSchema>;
+export type RouteProgress = z.infer<typeof routeProgressSchema>;
+export type DailyRouteWithData = z.infer<typeof dailyRouteWithDataSchema>;
+export type DailyRouteResponse = z.infer<typeof dailyRouteResponseSchema>;
+
 // Route Checkpoints table - registra cada ponto da rota (check-in/check-out)
 export const routeCheckpoints = pgTable("route_checkpoints", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

@@ -20,7 +20,7 @@ import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
-import DailyRouteView from "@/pages/DailyRouteView";
+import RotaDoDia from "@/pages/RotaDoDia";
 import RoutesManagement from "@/pages/RoutesManagement";
 import UserManagementPage from "@/pages/UserManagementPage";
 import BankAccountsDebug from "@/pages/BankAccountsDebug";
@@ -142,7 +142,7 @@ function Router() {
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
-          <Route path="/daily-route" component={DailyRouteView} />
+          <Route path="/rota-do-dia" component={RotaDoDia} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
           <Route path="/check-in-audit" component={CheckInAudit} />

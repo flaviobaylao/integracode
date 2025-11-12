@@ -73,8 +73,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true, badge: null },
     { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
     { 
-      id: 'daily-route', 
-      label: isVendedor ? 'Minha Rota do Dia' : 'Rotas dos Vendedores', 
+      id: 'rota-do-dia', 
+      label: isVendedor ? 'Minha Rota do Dia' : 'Rota do Dia', 
       icon: 'fas fa-map-marked-alt', 
       available: isVendedor || canAccessReports,
       badge: null
@@ -175,7 +175,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     console.log('🖱️ Menu item clicado:', itemId);
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
