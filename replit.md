@@ -48,6 +48,7 @@
     - Customer name and address with sequential numbering
     - Click-to-open sales card functionality for immediate order registration
   - **Off-Route Check-ins Section**: Separate section at bottom showing check-ins performed on customers not in the planned route (orange highlight)
+    - **Critical Bug Fix (Nov 12, 2025)**: Corrected `isOffRoute` detection logic in `registerCheckpoint()` to compare `customerId` instead of `visitId` against `optimizedOrder`. Previously, ALL visits were incorrectly marked as off-route because `optimizedOrder` contains customer IDs, not visit IDs. Now only check-ins for customers NOT in the planned route appear in this section.
   - **Sales Card Integration**: Click any visit to open SalesCardDetailsModal for that customer/date
     - Auto-creates sales card if none exists for that date
     - API endpoint: `GET /api/customers/:customerId/sales-card/:date` returns or creates sales card

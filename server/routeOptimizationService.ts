@@ -563,9 +563,9 @@ export async function registerCheckpoint(
   // Buscar a rota para verificar se é visita off-route
   const route = await storage.getDailyRoute(dailyRouteId);
   
-  // Verificar se o visitId está na rota planejada (optimizedOrder)
+  // Verificar se o customerId está na rota planejada (optimizedOrder)
   const isOffRoute = route && route.optimizedOrder 
-    ? !route.optimizedOrder.includes(visitId)
+    ? !route.optimizedOrder.includes(customerId)
     : false;
   
   if (isOffRoute) {
