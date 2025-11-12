@@ -281,9 +281,27 @@ cron.schedule('0 0 * * *', async () => {
 });
 */
 
+// Auto check-out: processar visitas com check-in há mais de 30 minutos sem check-out
+// Executa a cada 5 minutos das 6h às 23h
+cron.schedule('*/5 6-23 * * *', async () => {
+  try {
+    const { processAutoCheckouts } = await import('./autoCheckoutService');
+    const result = await processAutoCheckouts(storage);
+    
+    if (result.processed > 0) {
+      console.log(`🤖 [AUTO-CHECKOUT] ${result.processed} visita(s) com check-out automático, ${result.errors} erro(s)`);
+    }
+  } catch (error: any) {
+    console.error('❌ [AUTO-CHECKOUT] Erro no processamento:', error.message);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
+
 console.log('✅ Agendador configurado:');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
+console.log('   - Auto check-out de visitas (30+ min sem check-out) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
 console.log('');
 console.log('⚠️  Jobs desativados após migração para cards permanentes:');
 console.log('   ✗ Sincronização de agenda futura (não necessário com cards permanentes)');
