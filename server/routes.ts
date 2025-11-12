@@ -1045,7 +1045,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (!isNaN(numericCode)) {
             console.log(`🔄 Sincronizando inativação com Omie para cliente ${numericCode}...`);
-            const omieResult = await omieIntegration.inactivateClient(numericCode);
+            const omieService = getOmieService();
+            const omieResult = await omieService.inactivateClient(numericCode);
             omieInactivationResult = omieResult;
             
             if (omieResult.success) {
