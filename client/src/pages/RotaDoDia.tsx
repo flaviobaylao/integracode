@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function RotaDoDia() {
   const { user } = useAuth();
@@ -36,6 +37,40 @@ export default function RotaDoDia() {
     queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate],
     enabled: !!selectedSellerId && !!selectedDate,
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
+  });
+
+  const generateRouteMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/daily-routes/generate', {
+        sellerId: selectedSellerId,
+        date: selectedDate
+      });
+      
+      return response;
+    },
+    onSuccess: (data) => {
+      if (data.regenerated) {
+        toast({
+          title: "Rota atualizada com sucesso!",
+          description: `Rota regenerada com ${data.totalVisits || 0} visitas.`,
+        });
+      } else {
+        toast({
+          title: "Rota gerada com sucesso!",
+          description: `Rota criada com ${data.totalVisits || 0} visitas.`,
+        });
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao gerar rota",
+        description: error.message || "Ocorreu um erro ao gerar a rota",
+      });
+    },
   });
 
   const handleManualRefresh = async () => {
@@ -248,9 +283,23 @@ export default function RotaDoDia() {
               Não há visitas programadas para esta data
             </p>
             {isAdmin && (
-              <Button variant="default" data-testid="button-generate-route">
-                <Route className="mr-2 h-4 w-4" />
-                Gerar Rota
+              <Button 
+                variant="default" 
+                data-testid="button-generate-route"
+                onClick={() => generateRouteMutation.mutate()}
+                disabled={generateRouteMutation.isPending || !selectedSellerId}
+              >
+                {generateRouteMutation.isPending ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Gerando...
+                  </>
+                ) : (
+                  <>
+                    <Route className="mr-2 h-4 w-4" />
+                    Gerar Rota
+                  </>
+                )}
               </Button>
             )}
           </CardContent>
