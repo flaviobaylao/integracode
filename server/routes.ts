@@ -12976,6 +12976,132 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========================================
+  // LEADS ROUTES
+  // ========================================
+  
+  // Listar todos os leads (admin e vendedores)
+  app.get('/api/leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const leads = await storage.getLeads();
+      res.json(leads);
+    } catch (error) {
+      console.error('Erro ao buscar leads:', error);
+      res.status(500).json({ message: 'Erro ao buscar leads' });
+    }
+  });
+  
+  // Buscar um lead específico
+  app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const lead = await storage.getLead(id);
+      
+      if (!lead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+      
+      res.json(lead);
+    } catch (error) {
+      console.error('Erro ao buscar lead:', error);
+      res.status(500).json({ message: 'Erro ao buscar lead' });
+    }
+  });
+  
+  // Criar novo lead (apenas admin, coordinator, administrative)
+  app.post('/api/leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Verificar permissão (apenas admin/coordinator/administrative podem criar)
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ 
+          message: 'Acesso negado. Apenas usuários administrativos podem criar leads.' 
+        });
+      }
+      
+      const leadData = req.body;
+      
+      // Adicionar o createdBy
+      const lead = await storage.createLead({
+        ...leadData,
+        createdBy: user.id
+      });
+      
+      console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
+      res.status(201).json(lead);
+    } catch (error) {
+      console.error('Erro ao criar lead:', error);
+      res.status(500).json({ message: 'Erro ao criar lead' });
+    }
+  });
+  
+  // Atualizar lead
+  app.patch('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const updateData = req.body;
+      
+      // Buscar lead atual
+      const existingLead = await storage.getLead(id);
+      if (!existingLead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+      
+      // Admin pode atualizar tudo
+      // Vendedor pode atualizar apenas o lead atribuído a ele (e apenas certos campos)
+      if (user.role === 'vendedor') {
+        // Vendedor só pode atualizar se está atribuído a ele
+        if (existingLead.assignedTo !== user.id) {
+          return res.status(403).json({ 
+            message: 'Acesso negado. Você só pode atualizar leads atribuídos a você.' 
+          });
+        }
+        
+        // Vendedor pode atualizar apenas: photo, observation, status, lastCheckInAt, lastCheckOutAt
+        const allowedFields = ['photo', 'observation', 'status', 'lastCheckInAt', 'lastCheckOutAt'];
+        const requestedFields = Object.keys(updateData);
+        const hasDisallowedField = requestedFields.some(field => !allowedFields.includes(field));
+        
+        if (hasDisallowedField) {
+          return res.status(403).json({ 
+            message: 'Acesso negado. Vendedores podem atualizar apenas: foto, observação e status.' 
+          });
+        }
+      }
+      
+      const lead = await storage.updateLead(id, updateData);
+      res.json(lead);
+    } catch (error) {
+      console.error('Erro ao atualizar lead:', error);
+      res.status(500).json({ message: 'Erro ao atualizar lead' });
+    }
+  });
+  
+  // Deletar lead (apenas admin)
+  app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      
+      // Apenas admin pode deletar
+      if (user.role !== 'admin') {
+        return res.status(403).json({ 
+          message: 'Acesso negado. Apenas administradores podem deletar leads.' 
+        });
+      }
+      
+      await storage.deleteLead(id);
+      console.log(`✅ Lead deletado: ${id} por ${user.email}`);
+      res.json({ message: 'Lead deletado com sucesso' });
+    } catch (error) {
+      console.error('Erro ao deletar lead:', error);
+      res.status(500).json({ message: 'Erro ao deletar lead' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
