@@ -1794,18 +1794,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Se o usuário não é administrativo, forçar o sellerId para o ID do próprio usuário
       const sellerId = isAdministrative ? req.body.sellerId : user.id;
       
-      // Validar que o sellerId existe no banco de dados e é um vendedor
+      // Validar que o sellerId existe no banco de dados e pode fazer vendas
       if (sellerId) {
         const seller = await storage.getUserById(sellerId);
         if (!seller) {
           return res.status(400).json({ 
-            message: "Vendedor não encontrado. Por favor, selecione um vendedor válido." 
+            message: "Usuário não encontrado. Por favor, selecione um usuário válido." 
           });
         }
-        // Verificar se o usuário selecionado é realmente um vendedor
-        if (seller.role !== 'vendedor') {
+        // Permitir criação de cards para qualquer usuário que possa fazer vendas
+        const canSell = ['vendedor', 'coordinator', 'administrative', 'admin'].includes(seller.role);
+        if (!canSell) {
           return res.status(400).json({ 
-            message: "O usuário selecionado não é um vendedor. Por favor, selecione um vendedor válido." 
+            message: "O usuário selecionado não tem permissão para fazer vendas. Por favor, selecione um vendedor ou administrativo." 
           });
         }
       }

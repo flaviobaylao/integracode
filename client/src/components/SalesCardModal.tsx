@@ -403,9 +403,9 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                 </SelectTrigger>
                 <SelectContent>
                   {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && allSellers ? (
-                    // Mostrar todos os vendedores para administrativos (filtrar apenas role='vendedor')
+                    // Mostrar todos os usuários que podem fazer vendas para administrativos
                     allSellers
-                      .filter((seller: any) => seller.role === 'vendedor')
+                      .filter((seller: any) => ['vendedor', 'coordinator', 'administrative', 'admin'].includes(seller.role))
                       .map((seller: any) => (
                         <SelectItem key={seller.id} value={seller.id} data-testid={`option-seller-${seller.id}`}>
                           {seller.firstName} {seller.lastName} ({seller.email})
