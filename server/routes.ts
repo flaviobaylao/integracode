@@ -66,6 +66,34 @@ async function saveSyncStatus(
   }
 }
 
+// Helper function to determine if a visit is a LEAD (requires mandatory photo)
+async function isLeadVisit(customerId: string, dailyRoute: any): Promise<boolean> {
+  try {
+    // First check visitStops for "lead:{id}" format
+    if (dailyRoute?.visitStops?.stopIds) {
+      const leadStop = dailyRoute.visitStops.stopIds.find((stopId: string) => 
+        stopId.startsWith('lead:') && stopId === `lead:${customerId}`
+      );
+      if (leadStop) {
+        console.log(`🎯 Visit ${customerId} identified as LEAD via visitStops`);
+        return true;
+      }
+    }
+    
+    // Fallback: Query leads table directly (handles converted leads or ad-hoc cards)
+    const lead = await storage.getLead(customerId);
+    if (lead) {
+      console.log(`🎯 Visit ${customerId} identified as LEAD via direct query`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`❌ Error checking if visit ${customerId} is LEAD:`, error);
+    return false; // Fail-safe: treat as customer if check fails
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -8027,6 +8055,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Verificar se é LEAD e se foto é obrigatória
+      if (currentCard.customerId) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dailyRoute = currentCard.sellerId 
+          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today)
+          : null;
+        
+        const isLead = await isLeadVisit(currentCard.customerId, dailyRoute);
+        if (isLead && !req.file) {
+          return res.status(400).json({
+            message: "Lead exige foto para check-in",
+            isLead: true,
+            requiresPhoto: true
+          });
+        }
+      }
+
       // Calcular distância até o cliente usando Haversine
       let checkInDistance = null;
       if (currentCard.customerLatitude && currentCard.customerLongitude) {
@@ -8286,6 +8332,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar dados do card para calcular distância até o cliente
       const currentCard = await storage.getSalesCard(id);
+      
+      if (!currentCard) {
+        return res.status(404).json({ message: "Sales card not found" });
+      }
+
+      // Verificar se é LEAD e se foto de check-in existe
+      if (currentCard.customerId) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dailyRoute = currentCard.sellerId 
+          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today)
+          : null;
+        
+        const isLead = await isLeadVisit(currentCard.customerId, dailyRoute);
+        if (isLead && !currentCard.checkInPhotoUrl) {
+          return res.status(400).json({
+            message: "Lead exige foto de check-in para realizar check-out",
+            isLead: true,
+            requiresPhoto: true,
+            missingCheckInPhoto: true
+          });
+        }
+      }
+      
       let checkOutDistance = null;
 
       if (currentCard && currentCard.customerLatitude && currentCard.customerLongitude) {
