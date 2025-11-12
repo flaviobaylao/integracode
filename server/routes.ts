@@ -9226,20 +9226,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
           // Almoço completo: calcular duração medida
-          const lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
-          const lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
-          const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
-          const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
-          const lunchHours = Math.floor(lunchMinutes / 60);
-          const lunchMins = lunchMinutes % 60;
+          let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
+          let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
           
-          lunchBreak = {
-            status: 'completed',
-            startTime: lunchStart,
-            endTime: lunchEnd,
-            minutes: lunchMinutes,
-            formatted: `${lunchHours}h ${lunchMins}min`
-          };
+          // Validar timestamps para evitar NaN
+          if (!isNaN(lunchStart.getTime()) && !isNaN(lunchEnd.getTime())) {
+            // Normalizar timestamps que cruzam a meia-noite
+            // Se lunchEnd < lunchStart, assumir que cruzou meia-noite e adicionar 24h
+            if (lunchEnd < lunchStart) {
+              lunchEnd = new Date(lunchEnd.getTime() + 24 * 60 * 60 * 1000);
+            }
+            
+            const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
+            const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
+            const lunchHours = Math.floor(lunchMinutes / 60);
+            const lunchMins = lunchMinutes % 60;
+            
+            lunchBreak = {
+              status: 'completed',
+              startTime: lunchStart,
+              endTime: lunchEnd,
+              minutes: lunchMinutes,
+              formatted: `${lunchHours}h ${lunchMins}min`
+            };
+          } else {
+            // Timestamps inválidos (NaN): marcar como pendente
+            lunchBreak = {
+              status: 'pending',
+              startTime: lunchStart,
+              endTime: null,
+              minutes: null,
+              formatted: 'Aguardando retorno'
+            };
+          }
         } else if (checkoutsBeforeLunch.length > 0) {
           // Almoço pendente: ativado mas ainda não voltou
           lunchBreak = {
@@ -9506,20 +9525,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
           // Almoço completo: calcular duração medida
-          const lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
-          const lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
-          const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
-          const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
-          const lunchHours = Math.floor(lunchMinutes / 60);
-          const lunchMins = lunchMinutes % 60;
+          let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
+          let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
           
-          lunchBreak = {
-            status: 'completed',
-            startTime: lunchStart,
-            endTime: lunchEnd,
-            minutes: lunchMinutes,
-            formatted: `${lunchHours}h ${lunchMins}min`
-          };
+          // Validar timestamps para evitar NaN
+          if (!isNaN(lunchStart.getTime()) && !isNaN(lunchEnd.getTime())) {
+            // Normalizar timestamps que cruzam a meia-noite
+            // Se lunchEnd < lunchStart, assumir que cruzou meia-noite e adicionar 24h
+            if (lunchEnd < lunchStart) {
+              lunchEnd = new Date(lunchEnd.getTime() + 24 * 60 * 60 * 1000);
+            }
+            
+            const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
+            const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
+            const lunchHours = Math.floor(lunchMinutes / 60);
+            const lunchMins = lunchMinutes % 60;
+            
+            lunchBreak = {
+              status: 'completed',
+              startTime: lunchStart,
+              endTime: lunchEnd,
+              minutes: lunchMinutes,
+              formatted: `${lunchHours}h ${lunchMins}min`
+            };
+          } else {
+            // Timestamps inválidos (NaN): marcar como pendente
+            lunchBreak = {
+              status: 'pending',
+              startTime: lunchStart,
+              endTime: null,
+              minutes: null,
+              formatted: 'Aguardando retorno'
+            };
+          }
         } else if (checkoutsBeforeLunch.length > 0) {
           // Almoço pendente: ativado mas ainda não voltou
           lunchBreak = {
@@ -9975,7 +10013,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(routeCheckpoints.dailyRouteId, routeId))
         .orderBy(routeCheckpoints.checkpointTime);
       
-      const hasCheckin = checkpoints.some(cp => cp.checkpointType === 'checkin');
+      const hasCheckin = checkpoints.some(cp => cp.checkpointType === 'check_in');
       
       if (!hasCheckin) {
         return res.status(400).json({ 

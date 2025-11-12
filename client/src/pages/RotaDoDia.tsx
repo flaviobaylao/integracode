@@ -426,11 +426,11 @@ export default function RotaDoDia() {
                 <div className="flex items-center gap-2">
                   {(() => {
                     const hasCheckins = route.checkpoints?.some((cp: any) => cp.checkpointType === 'check_in');
-                    const lunchBreakActivated = !!route.lunchBreakActivatedAt;
                     const lunchBreak = (route.progress as any)?.lunchBreak;
-                    const canMarkLunch = hasCheckins && !lunchBreakActivated;
+                    const lunchStatus = lunchBreak?.status || null;
+                    const canMarkLunch = hasCheckins && !lunchStatus;
                     
-                    if (!lunchBreakActivated && canMarkLunch) {
+                    if (!lunchStatus && canMarkLunch) {
                       return (
                         <Button
                           size="sm"
@@ -444,7 +444,7 @@ export default function RotaDoDia() {
                           {markLunchBreakMutation.isPending ? 'Marcando...' : 'Iniciar Almoço'}
                         </Button>
                       );
-                    } else if (lunchBreak?.status === 'pending') {
+                    } else if (lunchStatus === 'pending') {
                       return (
                         <Button
                           size="sm"
@@ -457,7 +457,7 @@ export default function RotaDoDia() {
                           Aguardando Retorno
                         </Button>
                       );
-                    } else if (lunchBreak?.status === 'completed') {
+                    } else if (lunchStatus === 'completed') {
                       return (
                         <Button
                           size="sm"
