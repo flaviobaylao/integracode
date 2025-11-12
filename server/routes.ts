@@ -9204,11 +9204,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? Math.round((completedVisits / totalVisits) * 100) 
         : 0;
 
-      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
+      // Calcular horário de almoço e carga horária trabalhada
+      let lunchBreak = null;
       let workedHours = null;
       const checkIns = checkpoints.filter(cp => cp.checkpointType === 'check_in');
       const checkOuts = checkpoints.filter(cp => cp.checkpointType === 'check_out');
       
+      // Calcular lunch break se foi ativado
+      if (route.lunchBreakActivatedAt) {
+        const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
+        
+        // Encontrar último checkout antes da ativação do almoço
+        const checkoutsBeforeLunch = checkOuts
+          .filter(cp => new Date(cp.checkpointTime).getTime() < lunchActivationTime)
+          .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
+        
+        // Encontrar primeiro checkin após a ativação do almoço
+        const checkinsAfterLunch = checkIns
+          .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
+          .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        
+        if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
+          // Almoço completo: calcular duração medida
+          const lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
+          const lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
+          const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
+          const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
+          const lunchHours = Math.floor(lunchMinutes / 60);
+          const lunchMins = lunchMinutes % 60;
+          
+          lunchBreak = {
+            status: 'completed',
+            startTime: lunchStart,
+            endTime: lunchEnd,
+            minutes: lunchMinutes,
+            formatted: `${lunchHours}h ${lunchMins}min`
+          };
+        } else if (checkoutsBeforeLunch.length > 0) {
+          // Almoço pendente: ativado mas ainda não voltou
+          lunchBreak = {
+            status: 'pending',
+            startTime: new Date(checkoutsBeforeLunch[0].checkpointTime),
+            endTime: null,
+            minutes: null,
+            formatted: 'Aguardando retorno'
+          };
+        } else {
+          // Ativado mas sem checkout antes (caso raro)
+          lunchBreak = {
+            status: 'pending',
+            startTime: null,
+            endTime: null,
+            minutes: null,
+            formatted: 'Aguardando início'
+          };
+        }
+      }
+      
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
       if (checkIns.length > 0 && checkOuts.length > 0) {
         // Ordenar por tempo para garantir primeiro e último
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
@@ -9217,16 +9270,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
         const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
         
-        // Calcular diferença em milissegundos e converter para horas e minutos
+        // Calcular diferença em milissegundos e converter para minutos
         const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
-        const diffMinutes = Math.floor(diffMs / (1000 * 60));
-        const hours = Math.floor(diffMinutes / 60);
-        const minutes = diffMinutes % 60;
+        const totalMinutes = Math.floor(diffMs / (1000 * 60));
+        
+        // Descontar almoço APENAS se foi ativado
+        let lunchDeduction = 0; // Padrão: sem dedução
+        if (route.lunchBreakActivatedAt) {
+          // Se ativado: deduz 90min por padrão
+          lunchDeduction = 90;
+          
+          // Se medido: usa tempo medido
+          if (lunchBreak && lunchBreak.status === 'completed' && lunchBreak.minutes) {
+            lunchDeduction = lunchBreak.minutes;
+          }
+        }
+        
+        // Calcular tempo trabalhado efetivo (mínimo 0)
+        const workedMinutes = Math.max(0, totalMinutes - lunchDeduction);
+        const hours = Math.floor(workedMinutes / 60);
+        const minutes = workedMinutes % 60;
         
         workedHours = {
           hours,
           minutes,
-          total: diffMinutes,
+          total: workedMinutes,
           formatted: `${hours}h ${minutes}min`
         };
       }
@@ -9253,7 +9321,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete,
-            workedHours
+            workedHours,
+            lunchBreak
           }
         }
       });
@@ -9415,11 +9484,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? Math.round((completedVisits / totalVisits) * 100) 
         : 0;
 
-      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
+      // Calcular horário de almoço e carga horária trabalhada
+      let lunchBreak = null;
       let workedHours = null;
       const checkIns = checkpoints.filter(cp => cp.checkpointType === 'check_in');
       const checkOuts = checkpoints.filter(cp => cp.checkpointType === 'check_out');
       
+      // Calcular lunch break se foi ativado
+      if (route.lunchBreakActivatedAt) {
+        const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
+        
+        // Encontrar último checkout antes da ativação do almoço
+        const checkoutsBeforeLunch = checkOuts
+          .filter(cp => new Date(cp.checkpointTime).getTime() < lunchActivationTime)
+          .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
+        
+        // Encontrar primeiro checkin após a ativação do almoço
+        const checkinsAfterLunch = checkIns
+          .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
+          .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        
+        if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
+          // Almoço completo: calcular duração medida
+          const lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
+          const lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
+          const lunchDiffMs = lunchEnd.getTime() - lunchStart.getTime();
+          const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
+          const lunchHours = Math.floor(lunchMinutes / 60);
+          const lunchMins = lunchMinutes % 60;
+          
+          lunchBreak = {
+            status: 'completed',
+            startTime: lunchStart,
+            endTime: lunchEnd,
+            minutes: lunchMinutes,
+            formatted: `${lunchHours}h ${lunchMins}min`
+          };
+        } else if (checkoutsBeforeLunch.length > 0) {
+          // Almoço pendente: ativado mas ainda não voltou
+          lunchBreak = {
+            status: 'pending',
+            startTime: new Date(checkoutsBeforeLunch[0].checkpointTime),
+            endTime: null,
+            minutes: null,
+            formatted: 'Aguardando retorno'
+          };
+        } else {
+          // Ativado mas sem checkout antes (caso raro)
+          lunchBreak = {
+            status: 'pending',
+            startTime: null,
+            endTime: null,
+            minutes: null,
+            formatted: 'Aguardando início'
+          };
+        }
+      }
+      
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
       if (checkIns.length > 0 && checkOuts.length > 0) {
         // Ordenar por tempo para garantir primeiro e último
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
@@ -9428,16 +9550,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
         const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
         
-        // Calcular diferença em milissegundos e converter para horas e minutos
+        // Calcular diferença em milissegundos e converter para minutos
         const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
-        const diffMinutes = Math.floor(diffMs / (1000 * 60));
-        const hours = Math.floor(diffMinutes / 60);
-        const minutes = diffMinutes % 60;
+        const totalMinutes = Math.floor(diffMs / (1000 * 60));
+        
+        // Descontar almoço APENAS se foi ativado
+        let lunchDeduction = 0; // Padrão: sem dedução
+        if (route.lunchBreakActivatedAt) {
+          // Se ativado: deduz 90min por padrão
+          lunchDeduction = 90;
+          
+          // Se medido: usa tempo medido
+          if (lunchBreak && lunchBreak.status === 'completed' && lunchBreak.minutes) {
+            lunchDeduction = lunchBreak.minutes;
+          }
+        }
+        
+        // Calcular tempo trabalhado efetivo (mínimo 0)
+        const workedMinutes = Math.max(0, totalMinutes - lunchDeduction);
+        const hours = Math.floor(workedMinutes / 60);
+        const minutes = workedMinutes % 60;
         
         workedHours = {
           hours,
           minutes,
-          total: diffMinutes,
+          total: workedMinutes,
           formatted: `${hours}h ${minutes}min`
         };
       }
@@ -9464,7 +9601,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete,
-            workedHours
+            workedHours,
+            lunchBreak
           }
         }
       });
