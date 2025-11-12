@@ -89,6 +89,7 @@ export interface IStorage {
   deleteCustomer(id: string): Promise<void>;
   getCustomersByRoute(route: string): Promise<Customer[]>;
   getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]>;
+  getCustomersForDate(sellerId: string, date: Date): Promise<Customer[]>;
   
   // Product operations
   getProducts(): Promise<Product[]>;
@@ -664,6 +665,99 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(customers)
       .where(whereConditions);
+  }
+
+  async getCustomersForDate(sellerId: string, date: Date): Promise<Customer[]> {
+    const BRAZIL_TZ = 'America/Sao_Paulo';
+    
+    // Construir data BRT corretamente (sem deslocamento)
+    // Se date é "2025-11-12T00:00:00.000Z", queremos 2025-11-12 00:00 em BRT
+    const dateStr = date.toISOString().split('T')[0]; // "2025-11-12"
+    // fromZonedTime converte "2025-11-12 00:00:00" BRT → "2025-11-12T03:00:00.000Z" UTC
+    const targetDateBRT = fromZonedTime(new Date(`${dateStr}T00:00:00`), BRAZIL_TZ);
+    
+    // Buscar clientes ativos do vendedor com coordenadas
+    const activeCustomers = await db
+      .select()
+      .from(customers)
+      .where(
+        and(
+          eq(customers.sellerId, sellerId),
+          eq(customers.omieStatus, 'ativo'),
+          isNotNull(customers.latitude),
+          isNotNull(customers.longitude),
+          isNotNull(customers.weekdays),
+          isNotNull(customers.visitPeriodicity)
+        )
+      );
+    
+    console.log(`📅 getCustomersForDate: Encontrados ${activeCustomers.length} clientes ativos com coordenadas para vendedor ${sellerId}`);
+    
+    // Buscar última visita completada de cada cliente
+    const customerIds = activeCustomers.map(c => c.id);
+    
+    if (customerIds.length === 0) {
+      return [];
+    }
+    
+    // Query para pegar última visita de cada cliente
+    const lastVisits = await db
+      .select({
+        customerId: orderHistory.customerId,
+        lastCompletedDate: sql<Date>`MAX(${orderHistory.visitDate})`.as('last_completed_date')
+      })
+      .from(orderHistory)
+      .where(
+        and(
+          inArray(orderHistory.customerId, customerIds),
+          or(
+            eq(orderHistory.status, 'completed'),
+            eq(orderHistory.status, 'sale')
+          )
+        )
+      )
+      .groupBy(orderHistory.customerId);
+    
+    const lastVisitMap = new Map(
+      lastVisits.map(v => [v.customerId, v.lastCompletedDate])
+    );
+    
+    console.log(`📊 getCustomersForDate: Encontradas ${lastVisits.length} últimas visitas completadas`);
+    
+    // Filtrar clientes que devem ser visitados na data alvo
+    const customersToVisit: Customer[] = [];
+    
+    for (const customer of activeCustomers) {
+      try {
+        // Pegar última visita (se existir)
+        const lastCompletedDate = lastVisitMap.get(customer.id);
+        
+        // Calcular próxima visita usando targetDateBRT como referência
+        const scheduleResult = calculateNextVisitDate({
+          weekdays: customer.weekdays || [],
+          periodicity: customer.visitPeriodicity || 'semanal',
+          lastCompletedDate: lastCompletedDate || undefined,
+          referenceDate: targetDateBRT
+        });
+        
+        // Normalizar nextDate para início do dia BRT para comparação justa
+        // scheduleResult.nextDate pode estar em horário arbitrário (ex: 08:00 UTC)
+        // Precisamos comparar datas no mesmo formato (início do dia BRT)
+        const nextDateStr = scheduleResult.nextDate.toISOString().split('T')[0];
+        const nextDateBRT = fromZonedTime(new Date(`${nextDateStr}T00:00:00`), BRAZIL_TZ);
+        
+        // Incluir visitas atrasadas e da data alvo (nextVisitDate <= targetDate)
+        if (nextDateBRT.getTime() <= targetDateBRT.getTime()) {
+          customersToVisit.push(customer);
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ Erro ao calcular próxima visita para cliente ${customer.fantasyName}: ${error.message}`);
+      }
+    }
+    
+    console.log(`✅ getCustomersForDate: ${customersToVisit.length} clientes devem ser visitados em ${targetDateBRT.toLocaleDateString('pt-BR')}`);
+    
+    return customersToVisit;
   }
 
   // Product operations

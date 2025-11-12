@@ -342,80 +342,35 @@ export async function planDailyRoute(
     throw new Error('Vendedor não possui coordenadas de residência cadastradas');
   }
 
-  const startOfDay = new Date(routeDate);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(routeDate);
-  endOfDay.setHours(23, 59, 59, 999);
-
   // Descobrir qual dia da semana é a data alvo
   const daysOfWeekFull = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
   const targetWeekdayFull = daysOfWeekFull[routeDate.getDay()];
   
   console.log(`📅 Planejando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // NOVA ARQUITETURA: Buscar PERMANENT CARDS cuja nextVisitDate é HOJE ou está ATRASADA
-  const { db } = await import('./db');
-  const { salesCards, customers } = await import('../shared/schema');
-  const { eq, and, lte } = await import('drizzle-orm');
-  
-  const salesCardsWithCustomers = await db.select({
-    cardId: salesCards.id,
-    customerId: salesCards.customerId,
-    customerName: customers.name,
-    customerFantasyName: customers.fantasyName,
-    customerAddress: customers.address,
-    customerLatitude: customers.latitude,
-    customerLongitude: customers.longitude,
-    customerVirtualService: customers.virtualService,
-    cardStatus: salesCards.status,
-    nextVisitDate: salesCards.nextVisitDate,
-    lastVisitDate: salesCards.lastVisitDate,
-    isPermanent: salesCards.isPermanent
-  })
-    .from(salesCards)
-    .innerJoin(customers, eq(salesCards.customerId, customers.id))
-    .where(
-      and(
-        eq(salesCards.sellerId, sellerId),
-        eq(salesCards.isPermanent, true),
-        lte(salesCards.nextVisitDate, endOfDay)
-      )
-    );
+  // NOVA ARQUITETURA: Buscar clientes direto da tabela customers
+  // Usa calculateNextVisitDate() com weekdays, periodicity e lastCompletedDate
+  const customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
 
-  console.log(`   📋 ${salesCardsWithCustomers.length} clientes com visita agendada/atrasada encontrados`);
+  console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
-  // DEBUG: Log detalhado dos status dos cards
-  const statusBreakdown: Record<string, number> = {};
-  const virtualServiceCount = salesCardsWithCustomers.filter((sc: any) => sc.customerVirtualService).length;
-  
-  salesCardsWithCustomers.forEach((sc: any) => {
-    statusBreakdown[sc.cardStatus] = (statusBreakdown[sc.cardStatus] || 0) + 1;
-  });
-  
-  console.log(`   🔍 DEBUG - Breakdown de status:`, statusBreakdown);
-  console.log(`   🔍 DEBUG - Virtual service: ${virtualServiceCount} cards`);
-  
-  // Filtrar apenas visitas presenciais com status válido
-  const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {
-    if (!['pending', 'open'].includes(sc.cardStatus)) return false;
-    if (sc.customerVirtualService) return false;
-    return true;
-  });
+  // Filtrar apenas visitas presenciais (não virtuais)
+  const customersToVisit = customersScheduled.filter(c => !c.virtualService);
 
-  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas (após filtro de status + virtual)`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais (após filtro de virtual)`);
 
   // Filtrar apenas clientes com coordenadas válidas
-  const validCustomers = customersToVisit.filter((c: any) => 
-    c.customerLatitude && 
-    c.customerLongitude &&
-    !isNaN(parseFloat(c.customerLatitude as any)) &&
-    !isNaN(parseFloat(c.customerLongitude as any))
+  const validCustomers = customersToVisit.filter(c => 
+    c.latitude && 
+    c.longitude &&
+    !isNaN(parseFloat(c.latitude as any)) &&
+    !isNaN(parseFloat(c.longitude as any))
   );
 
-  const customersWithoutCoords = customersToVisit.filter((c: any) => 
-    !c.customerLatitude || !c.customerLongitude ||
-    isNaN(parseFloat(c.customerLatitude as any)) ||
-    isNaN(parseFloat(c.customerLongitude as any))
+  const customersWithoutCoords = customersToVisit.filter(c => 
+    !c.latitude || !c.longitude ||
+    isNaN(parseFloat(c.latitude as any)) ||
+    isNaN(parseFloat(c.longitude as any))
   );
 
   console.log(`   🔍 DEBUG - Clientes com coordenadas válidas: ${validCustomers.length}/${customersToVisit.length}`);
@@ -424,7 +379,7 @@ export async function planDailyRoute(
     console.log(`   ⚠️  ${customersWithoutCoords.length} clientes SEM coordenadas válidas`);
     // Log dos primeiros 5 clientes sem coordenadas para debug
     customersWithoutCoords.slice(0, 5).forEach((c: any) => {
-      console.log(`      - ${c.customerFantasyName || c.customerName} (ID: ${c.customerId}): lat=${c.customerLatitude}, lon=${c.customerLongitude}`);
+      console.log(`      - ${c.fantasyName || c.name} (ID: ${c.id}): lat=${c.latitude}, lon=${c.longitude}`);
     });
   }
 
@@ -434,17 +389,17 @@ export async function planDailyRoute(
   const customersWithSuspiciousCoords: any[] = [];
   
   validCustomers.forEach((c: any) => {
-    const customerLat = parseFloat(c.customerLatitude as any);
-    const customerLon = parseFloat(c.customerLongitude as any);
+    const customerLat = parseFloat(c.latitude as any);
+    const customerLon = parseFloat(c.longitude as any);
     const distance = calculateHaversineDistance(sellerLat, sellerLon, customerLat, customerLon);
     
     if (distance > 100) {
       customersWithSuspiciousCoords.push({
-        id: c.customerId,
-        name: c.customerFantasyName || c.customerName,
+        id: c.id,
+        name: c.fantasyName || c.name,
         distance: Math.round(distance),
-        latitude: c.customerLatitude,
-        longitude: c.customerLongitude
+        latitude: c.latitude,
+        longitude: c.longitude
       });
     }
   });
@@ -470,11 +425,11 @@ export async function planDailyRoute(
 
   // Converter clientes para pontos de rota
   const routePoints = validCustomers.map((c: any) => ({
-    id: c.customerId,
-    latitude: parseFloat(c.customerLatitude as any),
-    longitude: parseFloat(c.customerLongitude as any),
-    customerName: c.customerFantasyName || c.customerName,
-    customerAddress: c.customerAddress || ''
+    id: c.id,
+    latitude: parseFloat(c.latitude as any),
+    longitude: parseFloat(c.longitude as any),
+    customerName: c.fantasyName || c.name,
+    customerAddress: c.address || ''
   }));
 
   console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);

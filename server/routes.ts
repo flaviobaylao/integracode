@@ -9203,43 +9203,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar cards do dia usando lógica BRT (igual a /api/sales-cards/by-date)
-      // IMPORTANTE: getSalesCardsByDate usa date.toISOString().split('T')[0] internamente
-      // Precisamos passar uma data que quando convertida para ISO dê a data correta em BRT
-      console.log(`🔍 [DEBUG] Buscando cards do dia usando getSalesCardsByDate para ${date}`);
+      // NOVA ARQUITETURA: Buscar dados direto de customers
+      console.log(`🔍 [DEBUG] Buscando clientes para ${date}`);
       
-      // Criar Date object com hora do meio-dia BRT para evitar problemas de timezone
-      // Quando converter para UTC/ISO, ainda será o mesmo dia
-      const [year, month, day] = date.split('-').map(Number);
-      const dateForCards = new Date(year, month - 1, day, 12, 0, 0); // Meio-dia BRT
+      // Buscar todos os customers que estão na optimizedOrder
+      const customerIds = route.optimizedOrder || [];
+      const { customers } = await import('../shared/schema');
+      const { inArray } = await import('drizzle-orm');
+      const { db } = await import('./db');
       
-      const allCards = await storage.getSalesCardsByDate(dateForCards, sellerId);
+      let customersData: any[] = [];
+      if (customerIds.length > 0) {
+        customersData = await db
+          .select()
+          .from(customers)
+          .where(inArray(customers.id, customerIds));
+      }
       
-      console.log(`✅ [DEBUG] getSalesCardsByDate retornou ${allCards.length} cards`);
+      console.log(`✅ [DEBUG] Encontrados ${customersData.length} clientes`);
       
-      // Criar mapa de cards por customerId para lookup rápido
-      const cardsByCustomerId = new Map<string, any>();
-      allCards.forEach(card => {
-        cardsByCustomerId.set(card.customerId, card);
+      // Criar mapa de customers por ID para lookup rápido
+      const customersByCustomerId = new Map<string, any>();
+      customersData.forEach(customer => {
+        customersByCustomerId.set(customer.id, customer);
       });
       
       // Montar visitas na ordem do optimizedOrder
       const visits = (route.optimizedOrder || [])
         .map((customerId: string) => {
-          const card = cardsByCustomerId.get(customerId);
-          if (!card || !card.customer) return null;
+          const customer = customersByCustomerId.get(customerId);
+          if (!customer) return null;
           
           return {
-            id: card.id,
-            customerId: card.customerId,
-            customerName: card.customer.fantasyName || card.customer.name,
-            customerLatitude: card.customer.latitude,
-            customerLongitude: card.customer.longitude,
-            customerAddress: card.customer.address,
+            id: customerId, // Usar customer ID como visit ID
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            customerLatitude: customer.latitude,
+            customerLongitude: customer.longitude,
+            customerAddress: customer.address,
             scheduledDate: route.routeDate,
-            isVirtual: card.customer.virtualService,
-            cardStatus: card.status,
-            isPermanent: card.isPermanent
+            isVirtual: customer.virtualService
           };
         })
         .filter(Boolean);
