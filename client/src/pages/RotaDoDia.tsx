@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -19,7 +22,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const isAdmin = user?.role === 'admin' || user?.role === 'coordinator';
+  const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
   const [selectedCard, setSelectedCard] = useState<any>(null);
@@ -27,10 +30,17 @@ export default function RotaDoDia() {
   const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [showAddVisitModal, setShowAddVisitModal] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
     enabled: isAdmin && !!user,
+  });
+
+  const { data: customers } = useQuery<any[]>({
+    queryKey: ['/api/customers'],
+    enabled: isAdmin && showAddVisitModal,
   });
 
   const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
@@ -73,6 +83,69 @@ export default function RotaDoDia() {
     },
   });
 
+  const deleteVisitMutation = useMutation({
+    mutationFn: async ({ routeId, customerId }: { routeId: string; customerId: string }) => {
+      return await apiRequest('DELETE', `/api/daily-routes/${routeId}/visits/${customerId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita removida",
+        description: "A visita foi removida da rota com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao remover visita",
+        description: error.message || "Ocorreu um erro ao remover a visita",
+      });
+    },
+  });
+
+  const addVisitMutation = useMutation({
+    mutationFn: async ({ routeId, customerId }: { routeId: string; customerId: string }) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/visits`, { customerId });
+    },
+    onSuccess: (data) => {
+      const customerName = data?.customer?.name || 'Cliente';
+      toast({
+        title: "Visita adicionada",
+        description: `${customerName} adicionado a rota com sucesso`,
+      });
+      setShowAddVisitModal(false);
+      setCustomerSearchQuery('');
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao adicionar visita",
+        description: error.message || "Ocorreu um erro ao adicionar a visita",
+      });
+    },
+  });
+
+  const optimizeRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/optimize`);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Rota otimizada!",
+        description: data.message || "A rota foi otimizada com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao otimizar rota",
+        description: error.message || "Ocorreu um erro ao otimizar a rota",
+      });
+    },
+  });
+
   const handleManualRefresh = async () => {
     await refetch();
     toast({
@@ -80,6 +153,23 @@ export default function RotaDoDia() {
       description: "Os dados foram atualizados com sucesso",
     });
   };
+
+  const filteredCustomers = useMemo(() => {
+    if (!customers || !customerSearchQuery) return customers || [];
+    const query = customerSearchQuery.toLowerCase();
+    return customers.filter((customer: any) => {
+      const fantasyName = customer.fantasyName?.toLowerCase() || '';
+      const name = customer.name?.toLowerCase() || '';
+      const cnpj = customer.cnpj?.replace(/\D/g, '') || '';
+      const cpf = customer.cpf?.replace(/\D/g, '') || '';
+      const queryClean = query.replace(/\D/g, '');
+      
+      return fantasyName.includes(query) ||
+             name.includes(query) ||
+             cnpj.includes(queryClean) ||
+             cpf.includes(queryClean);
+    });
+  }, [customers, customerSearchQuery]);
 
   const route = response?.route;
 
@@ -399,7 +489,34 @@ export default function RotaDoDia() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Lista de Visitas</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Lista de Visitas</CardTitle>
+                {isAdmin && route.id && (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowAddVisitModal(true)}
+                      className="flex items-center gap-2"
+                      data-testid="button-add-visit"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Adicionar Visita
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => optimizeRouteMutation.mutate(route.id)}
+                      disabled={optimizeRouteMutation.isPending}
+                      className="flex items-center gap-2"
+                      data-testid="button-optimize-route"
+                    >
+                      <Zap className="h-4 w-4" />
+                      {optimizeRouteMutation.isPending ? 'Otimizando...' : 'Otimizar Rota'}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -460,12 +577,14 @@ export default function RotaDoDia() {
                   return (
                     <div
                       key={visit.customerId}
-                      onClick={() => handleVisitClick(visit.customerId)}
-                      className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${borderColor}`}
+                      className={`p-3 border rounded-lg hover:shadow-md transition-all ${borderColor}`}
                       data-testid={`visit-${visit.customerId}`}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 flex-1">
+                        <div 
+                          className="flex items-start gap-3 flex-1 cursor-pointer"
+                          onClick={() => handleVisitClick(visit.customerId)}
+                        >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
@@ -523,6 +642,23 @@ export default function RotaDoDia() {
                             )}
                           </div>
                         </div>
+                        {isAdmin && route.id && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Deseja realmente remover ${visit.customerName} desta rota?`)) {
+                                deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId });
+                              }
+                            }}
+                            disabled={deleteVisitMutation.isPending}
+                            data-testid={`button-delete-visit-${visit.customerId}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -612,6 +748,53 @@ export default function RotaDoDia() {
                 className="w-full h-auto rounded-lg"
                 data-testid="checkin-photo"
               />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAddVisitModal} onOpenChange={setShowAddVisitModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Adicionar Cliente à Rota</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Input
+                placeholder="Buscar cliente por nome ou CNPJ/CPF..."
+                value={customerSearchQuery}
+                onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                data-testid="input-customer-search"
+              />
+            </div>
+            <div className="max-h-96 overflow-y-auto border rounded-lg">
+              {filteredCustomers && filteredCustomers.length > 0 ? (
+                filteredCustomers.map((customer: any) => (
+                  <div
+                    key={customer.id}
+                    className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                      addVisitMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                    }`}
+                    onClick={() => {
+                      if (route?.id && !addVisitMutation.isPending) {
+                        addVisitMutation.mutate({ routeId: route.id, customerId: customer.id });
+                      }
+                    }}
+                    data-testid={`customer-option-${customer.id}`}
+                  >
+                    <div className="font-medium">{customer.fantasyName || customer.name}</div>
+                    <div className="text-sm text-gray-500">{customer.cnpj || customer.cpf}</div>
+                    <div className="text-xs text-gray-400">{customer.address}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-gray-500">
+                  {customerSearchQuery ? 'Nenhum cliente encontrado' : 'Digite para buscar clientes'}
+                </div>
+              )}
+            </div>
+            {addVisitMutation.isPending && (
+              <div className="text-center text-sm text-gray-500">Adicionando cliente à rota...</div>
             )}
           </div>
         </DialogContent>
