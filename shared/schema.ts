@@ -122,9 +122,6 @@ export const customers = pgTable("customers", {
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
   omieClientCode: varchar("omie_client_code"), // Código numérico do cliente no Omie (codigo_cliente_omie)
   
-  // Tags para classificação de clientes (ex: "NAO CLIENTE" para excluir de operações de vendas)
-  tags: text("tags").array().default(sql`ARRAY[]::text[]`), // Array de tags - apenas admin/coordinator/administrative podem usar "NAO CLIENTE"
-  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -199,13 +196,6 @@ export const blockedOrderStatusEnum = pgEnum('blocked_order_status', [
   'sent_to_omie'  // Enviado para Omie
 ]);
 
-// Omie sync status enum - Para rastrear envio de pedidos do hotsite ao Omie
-export const omieSyncStatusEnum = pgEnum('omie_sync_status', [
-  'aguardando_omie',  // Aguardando envio ao Omie
-  'enviado_omie',     // Enviado com sucesso ao Omie
-  'erro_omie'         // Erro ao enviar ao Omie
-]);
-
 // Delivery failure reasons enum
 export const deliveryFailureReasonEnum = pgEnum('delivery_failure_reason', [
   'customer_absent',     // Cliente ausente
@@ -271,14 +261,8 @@ export const salesCards = pgTable("sales_cards", {
   trackingCode: varchar("tracking_code"),
   
   // Integração com Omie ERP
-  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP (deprecated, usar omieOrderNumber)
+  omieOrderId: varchar("omie_order_id"), // ID do pedido no Omie ERP
   invoiceNumber: varchar("invoice_number"), // Número da nota fiscal emitida
-  
-  // Hotsite → Omie sync tracking (Nov 2025)
-  omieOrderNumber: varchar("omie_order_number"), // Número do pedido retornado pelo Omie ao criar pedido
-  omieSyncStatus: omieSyncStatusEnum("omie_sync_status"), // Status de sincronização com Omie (apenas para pedidos do hotsite)
-  omieSentAt: timestamp("omie_sent_at"), // Data/hora de envio ao Omie
-  omieErrorMessage: text("omie_error_message"), // Mensagem de erro caso envio falhe
   
   // Novas funcionalidades - Pagamento e Operação
   paymentMethod: paymentMethodEnum("payment_method").notNull().default('a_vista'),
@@ -497,7 +481,7 @@ export const overdueDebts = pgTable("overdue_debts", {
 });
 
 // Billing type enum  
-export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra', 'devolucao', 'entrada']);
+export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra']);
 
 // Billing/Invoice table - Pedidos e notas fiscais do Omie
 export const billings = pgTable("billings", {
@@ -551,25 +535,6 @@ export const syncStates = pgTable("sync_states", {
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-// Omie sync attempts - Log de tentativas de envio de pedidos do hotsite ao Omie (Nov 2025)
-export const omieSyncAttempts = pgTable("omie_sync_attempts", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  salesCardId: varchar("sales_card_id").notNull().references(() => salesCards.id, { onDelete: 'cascade' }),
-  status: omieSyncStatusEnum("status").notNull(), // aguardando_omie, enviado_omie, erro_omie
-  attemptedBy: varchar("attempted_by").notNull(), // ID do usuário que tentou enviar
-  
-  // Payload enviado ao Omie
-  requestPayload: jsonb("request_payload").$type<any>(), // Dados do pedido enviado
-  
-  // Resposta do Omie
-  responsePayload: jsonb("response_payload").$type<any>(), // Resposta completa do Omie
-  omieOrderNumber: varchar("omie_order_number"), // Número do pedido retornado
-  errorMessage: text("error_message"), // Mensagem de erro detalhada
-  
-  attemptedAt: timestamp("attempted_at").defaultNow(),
-  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Blocked orders table - para pedidos bloqueados
@@ -1105,18 +1070,6 @@ export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteSto
   customerLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
 });
 
-export const insertDeliveryDriverSchema = createInsertSchema(deliveryDrivers).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-}).extend({
-  name: z.string().min(1, "Nome é obrigatório"),
-  phone: z.string().min(1, "Telefone é obrigatório"),
-  vehicleType: z.string().min(1, "Tipo de veículo é obrigatório"),
-  licensePlate: z.string().optional().nullable(),
-  isActive: z.boolean().default(true),
-});
-
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -1152,7 +1105,7 @@ export type SalesCardWithRelations = SalesCard & {
 };
 
 export type DeliveryDriver = typeof deliveryDrivers.$inferSelect;
-export type InsertDeliveryDriver = z.infer<typeof insertDeliveryDriverSchema>;
+export type InsertDeliveryDriver = typeof deliveryDrivers.$inferInsert;
 
 export type OverdueDebt = typeof overdueDebts.$inferSelect;
 export type InsertOverdueDebt = typeof overdueDebts.$inferInsert;
@@ -1276,61 +1229,3 @@ export type SellerAttendancePerformance = {
   totalCompleted: number; // Total de visitas completadas no mês
   overallPercentage: number; // Percentual geral do mês
 };
-
-// Lead status enum - tracks prospect lifecycle
-export const leadStatusEnum = pgEnum('lead_status', [
-  'pending',      // Aguardando contato inicial
-  'scheduled',    // Visita agendada
-  'visited',      // Visita realizada
-  'converted',    // Convertido em cliente
-  'discarded'     // Descartado/Desqualificado
-]);
-
-// Leads table - prospects without recurring visits
-export const leads = pgTable("leads", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name").notNull(), // Nome do prospect (simplificado)
-  phone: varchar("phone").notNull(),
-  address: varchar("address"), // Endereço do prospect
-  
-  // Geolocalização
-  latitude: decimal("latitude", { precision: 9, scale: 6 }),
-  longitude: decimal("longitude", { precision: 10, scale: 6 }),
-  
-  // Foto do local/prospect (base64)
-  photoUrl: text("photo_url"), // Foto capturada da câmera em base64
-  
-  // Observações/Notas
-  notes: text("notes"), // Observações gerais sobre o lead
-  
-  // Data agendada para visita (inclusão na rota) - timestamp para integração com sistema de rotas
-  scheduledDate: timestamp("scheduled_date"),
-  
-  // Vendedor responsável
-  sellerId: varchar("seller_id").notNull(),
-  
-  // Status do lead no pipeline
-  status: leadStatusEnum("status").notNull().default('pending'),
-  
-  // Rastreamento de conversão
-  convertedCustomerId: varchar("converted_customer_id"), // ID do cliente criado quando convertido
-  convertedAt: timestamp("converted_at"), // Data da conversão
-  
-  // Rastreamento de descarte
-  discardReason: text("discard_reason"), // Motivo de descarte (se status = discarded)
-  discardedAt: timestamp("discarded_at"), // Data do descarte
-  
-  isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const insertLeadSchema = createInsertSchema(leads).omit({ 
-  id: true, 
-  createdAt: true, 
-  updatedAt: true,
-  convertedAt: true,
-  discardedAt: true
-});
-export type Lead = typeof leads.$inferSelect;
-export type InsertLead = z.infer<typeof insertLeadSchema>;

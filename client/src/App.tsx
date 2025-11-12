@@ -33,15 +33,8 @@ import CheckInAudit from "@/pages/CheckInAudit";
 import ClearCache from "@/pages/ClearCache";
 import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
-import LeadManagement from "@/pages/LeadManagement";
-import CriarPedidoEmergencia from "@/pages/CriarPedidoEmergencia";
 
 function Router() {
-  // EMERGENCY ROUTE: Bypass useAuth for emergency order page
-  if (window.location.pathname === '/criar-pedido-emergencia') {
-    return <CriarPedidoEmergencia />;
-  }
-
   const { isAuthenticated, isLoading, isError, error } = useAuth();
 
   // Se estiver carregando, mostra um loading spinner para evitar tela branca
@@ -127,7 +120,6 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/criar-pedido-emergencia" component={CriarPedidoEmergencia} />
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
@@ -150,14 +142,12 @@ function Router() {
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
-          <Route path="/daily-routes" component={DailyRouteView} />
           <Route path="/daily-route" component={DailyRouteView} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
           <Route path="/check-in-audit" component={CheckInAudit} />
           <Route path="/auditoria-checkins" component={CheckInAudit} />
           <Route path="/rh" component={HRManagement} />
-          <Route path="/leads" component={LeadManagement} />
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/admin/users" component={UserManagementPage} />

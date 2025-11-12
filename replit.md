@@ -1,25 +1,11 @@
 # Overview
 
-"Sistema Integra" is a comprehensive CRM and sales management system designed for Honest Sucos. Its core purpose is to optimize business operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system aims to enhance efficiency, improve customer service, and expand market reach through features like robust sales tracking, reporting, route optimization, and fine-grained access control. It also includes an e-commerce platform ("Hotsite Instagram") for direct sales and integrates real-time billing data from Omie ERP for accurate customer "positivation" status.
+"Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos. Its primary purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system aims to enhance business efficiency, improve customer service, and expand market reach. Key capabilities include robust sales tracking, reporting, route optimization, and fine-grained access control. It also features an e-commerce platform ("Hotsite Instagram") for direct sales and integrates real-time billing data from Omie ERP for accurate customer "positivation" status.
 
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
 - **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
-
-## Emergency Workaround for React Query Cache Issues
-- **Issue**: Browser HTTP cache conflict between React Query bundle versions causes "No QueryClient set" errors.
-- **Root Cause**: QueryClientProvider v=4fb5bec1 vs useAuth v=fb4f0956 bundle mismatch - not resolvable programmatically.
-- **Permanent Solution**: Emergency order page at `/criar-pedido-emergencia` bypasses all React Query dependencies.
-- **Implementation**:
-  - Early route bypass in `App.tsx` renders emergency page BEFORE `useAuth()` call
-  - Emergency page uses pure `fetch()` API for all HTTP requests (no React Query)
-  - Authentication check via `fetch('/api/user')` with sessionStorage-based redirect flow
-  - Login page no longer calls `queryClient.invalidateQueries()` to prevent cache conflicts
-  - Post-login redirect reads `sessionStorage.redirectAfterLogin` and navigates to saved URL
-  - CustomerDetailsModal "Criar Card de Venda" button converted to `fetch()` API (temporary fix)
-- **Access**: Vendors can create sales cards at `/criar-pedido-emergencia` without React Query errors.
-- **TODO**: Implement service worker cleanup and build-version detection to resolve root cause permanently.
 
 # System Architecture
 
@@ -33,42 +19,30 @@
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing).
-- **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo for all date comparisons in queries. Includes CPF/CNPJ validation, bulk data imports, customer display prioritization, and weekday normalization. Critical timezone fixes ensure accurate date parsing for route generation.
-- **Sales & Financial Management**: Sales card tracking with source field, conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking, order release functionality, and customer "positivation" based on Omie billings. Sales goals dashboard with individual seller metrics.
-- **Delivery & Route Optimization**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, visual mapping, checkpoint registration, and performance dashboards. Supports multi-vehicle planning, check-in/check-out, and distance tracking. Includes automatic coordinate validation and admin diagnostic tools.
-- **Visit Schedule Management**: Permanent sales card architecture with reusable `sales_card` per customer, storing visit results in `order_history`. `nextVisitDate` is calculated from customer's recurrence settings (weekdays, periodicity) and updated automatically upon changes. Route generation queries accurately use the Brazil timezone. Automatic route synchronization recalculates `nextVisitDate` and removes customers from outdated routes upon customer recurrence or seller data edits.
-- **Automatic Card Reset System**: When permanent cards are completed, the system automatically creates an `order_history` entry, clears temporary fields (products, saleValue, notes, completedDate, check-in/out data, delivery fields, telemarketing fields, and all Omie/invoice identifiers), recalculates `nextVisitDate`, and resets the card status to 'pending' for reuse.
+- **Data Handling**: ISO UTC for dates with **timezone conversion to America/Sao_Paulo** for all date comparisons in queries, CPF/CNPJ validation, bulk data imports, customer displays prioritizing `fantasy_name`, and normalization of weekday formats.
+  - **Critical Timezone Fix (Nov 2025)**: Route regeneration endpoint now uses `fromZonedTime()` from date-fns-tz to parse incoming date strings (e.g., "2025-11-10") as Brazil local time (America/Sao_Paulo) instead of UTC. Previously, `new Date("2025-11-10")` interpreted dates as UTC midnight, which converted to 21:00 BRT the previous day, causing weekday mismatches that permanently removed scheduled visits. The fix ensures `routeDate.getDay()` returns correct weekday values and prevents visits from disappearing when clicking "Atualizar Rota".
+- **Sales & Financial Management**: Sales card tracking with source field, conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking with release functionality, and customer "positivation" based on Omie billings. Sales goals dashboard with individual seller metrics.
+- **Delivery & Route Optimization**: Scheduled daily route generation for sellers using Nearest Neighbor + 2-opt algorithm with OSRM API, visual mapping, checkpoint registration, performance dashboards. Supports multi-vehicle route planning, check-in/check-out system, and checkpoint distance tracking. Includes automatic coordinate validation with warnings for suspicious distances (>100km) and critical route lengths (>500km). Admin diagnostic tool available at `/api/admin/diagnose-coordinates`.
+- **Visit Schedule Management**: Implemented a permanent sales card architecture where each active customer has one reusable `sales_card`. All visit results are stored in `order_history`. `nextVisitDate` is calculated from customer's `weekdays` and `visitPeriodicity`. Updates to customer weekdays or periodicity trigger recalculation of `nextVisitDate`. Route generation queries for `isPermanent=true` and `nextVisitDate` within the current day using **Brazil timezone (America/Sao_Paulo)** for accurate date matching.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
-- **Sales Card Configuration**: Role-based propagation for configuration changes and automatic recurrence change propagation.
-    - **Always-Create-New Architecture**: System ALWAYS creates a new sales card when vendor clicks on customer, duplicating the last order. Never reuses existing cards. Allows multiple active cards per customer.
-    - **Automatic Card Cleanup**: Daily scheduled service (03:00 AM) removes pending/draft cards older than 30 days, preventing agenda pollution. Manual cleanup endpoint `/api/admin/cleanup-old-cards` available for administrators. Ignores cards with invalid dates (before 2020-01-01).
-    - **Complete Order Duplication from Route**: Allows vendors to duplicate a customer's last order (including products, quantities, prices, payment, freight, discount) into a new `sales_card` directly from the daily route view, streamlining repeat sales. If no previous orders exist, a blank sales card is provided.
-    - **Smart Prepare-Sale Workflow**: Unified endpoint `/api/customers/:customerId/prepare-sale` ALWAYS creates new card by duplicating last order or returns defaults for manual creation. No card reuse logic. Returns `scheduledDate` in yyyy-MM-dd format for HTML5 date inputs. Automatic `orderNumber` generation if not provided by frontend.
-    - **Defensive Frontend**: SalesCardDetailsModal uses optional chaining for all customer references to prevent crashes when customer data is missing.
-- **Customer Management**: Client-side search and filtering for sales schedules and customer data, including "Positivação". Features customer inactivation, improved multi-field client search, "Última Atividade" column, and a centralized "Gestão de Clientes" table.
-- **Data Validation & Integrity**: 3-layer protection for sales card scheduling, automated seller validation, and admin tools for diagnosis.
-- **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices.
-    - **Sales Category Code**: Uses a fixed fiscal category `OMIE_SALES_CATEGORY_CODE = "1.01.01"` for all order submissions to Omie.
-    - **Automatic Vendor Sync**: Automatically updates the responsible vendor in Omie ERP when a customer's seller is changed in "Gestão de Clientes" for Omie-sourced customers and vendors.
-    - **CFOP Fallback Mechanism**: Implemented ConsultarNF API fallback with concurrency control to retrieve missing CFOPs from invoices, significantly reducing null values.
-    - **Enhanced CFOP Classification**: Defines five billing types ('venda', 'devolucao', 'entrada', 'amostra', 'troca') for accurate sales metrics, where `vendas_líquidas = vendas - devoluções`.
-    - **Cancelled Invoice Handling**: Correctly identifies and excludes cancelled invoices from sales calculations based on SEFAZ status, order stage, or direct invoice cancellation flags. All cancelled invoices are saved with `is_cancelled = true` for audit.
-- **HR Management (RH)**: HR tracking system for seller performance (monthly mileage, work hours, daily attendance).
+- **Sales Card Configuration**: Role-based propagation system for sales card configuration changes, including automatic recurrence change propagation.
+- **Customer Management**: Client-side search and filtering for sales schedules and customer data (including "Positivação"). Customer inactivation feature with confirmation of consequences. Improved client search across multiple fields (fantasy name, corporate name, CPF/CNPJ, phone). "Última Atividade" column displays last sale date. "Gestão de Clientes" (customers table) is the single source of truth for all sales operations and route generation.
+- **Data Validation & Integrity**: 3-layer protection for sales card scheduling, automated seller validation, and admin tools for diagnosis and correction. Critical audit identified 362 active customers without coordinates, which impacts route generation.
+- **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices, including product mapping and customer registration. Sync status tracking.
+- **HR Management (RH)**: HR tracking system for seller performance (monthly mileage, work hours management, and daily attendance percentage).
 - **E-commerce Platform (Hotsite Instagram)**:
-    - **Access**: Publicly accessible at `/shop`.
+    - **Access**: Available at `/shop` with public API routes.
     - **Structure**: Standalone React SPA with mobile-first design.
-    - **Customer Type Selection & Validation**: Interactive flow for pricing, CPF validation for consumers, and automatic CNPJ verification via Receita Federal API for resellers.
-    - **Customer Recognition & Registration**: Triple-layer lookup for data autofill and duplicate prevention. New hotsite customers are automatically registered in Omie ERP.
+    - **Customer Type Selection & Validation**: Interactive flow for pricing, pre-checkout CPF validation for consumers, automatic data retrieval from Receita Federal API for reseller CNPJ verification.
+    - **Customer Recognition & Registration**: Triple-layer lookup to prevent duplicates and auto-fill data. New hotsite customers automatically registered in Omie ERP.
     - **Dynamic Pricing**: Five price tables based on customer type.
-    - **Security**: Server-side price and stock validation, enforced CPF/CNPJ.
-    - **Integration**: Hotsite orders are automatically registered in Sistema Integra as `sales_cards` with `source: 'hotsite'`.
-    - **Payment Methods**: Accepts only PIX and Boleto Bancário with a 7-day payment term.
-    - **Product Features**: Gallery system with multiple images, touch-swipe navigation, and zoom. Admin interface for image upload.
+    - **Security**: Server-side price validation, stock verification, and validated CPF/CNPJ enforcement.
+    - **Integration**: Orders automatically registered in Sistema Integra as `sales_cards` with `source: 'hotsite'`.
+    - **Payment Methods**: Supports Pix, Credit/Debit Card, and Boleto (PJ only).
+    - **Product Features**: Gallery system with multiple images, touch-swipe navigation, zoom, and admin interface for image upload.
     - **Review System**: Customer product reviews with ratings, comments, and admin approval.
     - **Stock Management**: Accepts orders regardless of inventory levels.
     - **Order Management**: Dedicated page for managing hotsite orders with filtering and notification badges.
-    - **Omie Submission Workflow**: Hotsite orders can be reviewed and manually sent to Omie ERP from a dedicated management interface, tracking sync status and errors.
-    - **Payment Gateway Integration**: Pending implementation with Efí Bank (formerly Gerencianet) for PIX QR Code generation, card tokenization, boleto generation, and webhook notifications.
 
 # External Dependencies
 
@@ -85,4 +59,3 @@
 - **Omie ERP**
 - **App Entregas Honest**
 - **OSRM API**
-- **Efí Bank (formerly Gerencianet)**

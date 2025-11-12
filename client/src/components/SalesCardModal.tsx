@@ -15,29 +15,14 @@ import { apiRequest } from "@/lib/queryClient";
 import { insertSalesCardSchema, type SalesCardWithRelations, type CustomerWithSeller } from "@shared/schema";
 import { z } from "zod";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/hooks/useAuth";
 
 interface SalesCardModalProps {
   isOpen: boolean;
   onClose: () => void;
   editingCard: SalesCardWithRelations | null;
-  onSuccess?: (card: SalesCardWithRelations) => void;
-  initialValues?: {
-    customerId?: string;
-    sellerId?: string;
-    scheduledDate?: string;
-    scheduledTime?: string;
-    products?: any[];
-    paymentMethod?: string;
-    operationType?: string;
-    notes?: string;
-    freight?: number;
-    discount?: number;
-    saleValue?: number;
-  };
 }
 
-export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess, initialValues }: SalesCardModalProps) {
+export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCardModalProps) {
   const [formData, setFormData] = useState({
     customerId: '',
     sellerId: '',
@@ -62,12 +47,6 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-
-  // Verificar se usuário é administrativo (pode editar rota e periodicidade)
-  const isAdminUser = useMemo(() => {
-    return user && ['admin', 'coordinator', 'administrative'].includes(user.role);
-  }, [user]);
 
   const { data: customers } = useQuery<any[]>({
     queryKey: ['/api/customers'],
@@ -80,10 +59,9 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
   // Encontrar cliente selecionado
   const selectedCustomer = customers?.find((c: any) => c.id === formData.customerId);
 
-  // Pre-carregar localização, rota e periodicidade do cliente quando selecionado
+  // Pre-carregar localização do cliente quando selecionado
   useEffect(() => {
     if (selectedCustomer && (!editingCard)) { // Apenas para novos cards
-      // Localização
       if (selectedCustomer.latitude && selectedCustomer.longitude) {
         setFormData(prev => ({
           ...prev,
@@ -96,24 +74,6 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
           customerLatitude: '',
           customerLongitude: '',
         }));
-      }
-
-      // Rota e Periodicidade (do cadastro do cliente)
-      try {
-        const customerWeekdays = selectedCustomer.weekdays 
-          ? JSON.parse(selectedCustomer.weekdays) 
-          : [];
-        
-        // Usar o primeiro dia da semana do cliente como routeDay
-        const firstWeekday = customerWeekdays.length > 0 ? customerWeekdays[0] : '';
-        
-        setFormData(prev => ({
-          ...prev,
-          routeDay: firstWeekday,
-          recurrenceType: selectedCustomer.visitPeriodicity || 'semanal',
-        }));
-      } catch (error) {
-        console.error('Erro ao parsear weekdays do cliente:', error);
       }
     }
   }, [selectedCustomer, editingCard]);
@@ -132,7 +92,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
 
   useEffect(() => {
     if (editingCard) {
-      const scheduledDate = editingCard.scheduledDate ? new Date(editingCard.scheduledDate) : new Date();
+      const scheduledDate = new Date(editingCard.scheduledDate);
       setFormData({
         customerId: editingCard.customerId,
         sellerId: editingCard.sellerId,
@@ -158,10 +118,10 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
       const currentTime = now.toTimeString().slice(0, 5);
       
       setFormData({
-        customerId: initialValues?.customerId || '',
-        sellerId: initialValues?.sellerId || (currentUser as any)?.id || '',
-        scheduledDate: initialValues?.scheduledDate || today,
-        scheduledTime: initialValues?.scheduledTime || currentTime,
+        customerId: '',
+        sellerId: (currentUser as any)?.id || '',
+        scheduledDate: today,
+        scheduledTime: currentTime,
         notes: '',
         routeDay: '',
         recurrenceType: 'semanal',
@@ -183,30 +143,20 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
   const createSalesCardMutation = useMutation({
     mutationFn: async (data: any) => {
       if (editingCard) {
-        const updated = await apiRequest('PUT', `/api/sales-cards/${editingCard.id}`, data);
-        return updated;
+        await apiRequest('PUT', `/api/sales-cards/${editingCard.id}`, data);
       } else {
-        const created = await apiRequest('POST', '/api/sales-cards', data);
-        return created;
+        await apiRequest('POST', '/api/sales-cards', data);
       }
     },
-    onSuccess: (createdCard) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      
+      onClose();
       toast({
         title: "Sucesso",
         description: editingCard 
           ? "Card atualizado com sucesso!" 
           : "Card criado com sucesso!",
       });
-      
-      // Se houver callback onSuccess, chamar com o card criado
-      if (onSuccess && createdCard) {
-        onSuccess(createdCard);
-      } else {
-        // Comportamento padrão: apenas fechar modal
-        onClose();
-      }
     },
     onError: (error: any) => {
       toast({
@@ -276,48 +226,8 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
     setErrors({});
 
     try {
-      // Validar campos obrigatórios
-      const validationErrors: Record<string, string> = {};
-      
-      if (!formData.customerId) {
-        validationErrors.customerId = "Cliente é obrigatório";
-      }
-      
-      if (!formData.sellerId) {
-        validationErrors.sellerId = "Vendedor é obrigatório";
-      }
-      
-      if (!formData.scheduledDate) {
-        validationErrors.scheduledDate = "Data é obrigatória";
-      }
-      
-      if (!formData.scheduledTime) {
-        validationErrors.scheduledTime = "Horário é obrigatório";
-      }
-      
-      // Se houver erros de validação, mostrar e retornar
-      if (Object.keys(validationErrors).length > 0) {
-        setErrors(validationErrors);
-        toast({
-          title: "Campos obrigatórios faltando",
-          description: "Por favor, preencha todos os campos obrigatórios.",
-          variant: "destructive",
-        });
-        return;
-      }
-      
       // Combine date and time into a single DateTime
       const scheduledDateTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`);
-      
-      // Validar se a data é válida
-      if (isNaN(scheduledDateTime.getTime())) {
-        toast({
-          title: "Data/hora inválida",
-          description: "Por favor, insira uma data e hora válidas.",
-          variant: "destructive",
-        });
-        return;
-      }
       
       const dataToSubmit = {
         customerId: formData.customerId,
@@ -343,12 +253,15 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
       // Não usar validação Zod aqui - deixar o backend validar
       createSalesCardMutation.mutate(dataToSubmit);
     } catch (error) {
-      console.error("Erro no handleSubmit:", error);
-      toast({
-        title: "Erro ao salvar",
-        description: error instanceof Error ? error.message : "Erro desconhecido ao criar card",
-        variant: "destructive",
-      });
+      if (error instanceof z.ZodError) {
+        const fieldErrors: Record<string, string> = {};
+        error.errors.forEach((err) => {
+          if (err.path[0]) {
+            fieldErrors[err.path[0] as string] = err.message;
+          }
+        });
+        setErrors(fieldErrors);
+      }
     }
   };
 
@@ -489,7 +402,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && Array.isArray(allSellers) ? (
+                  {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && allSellers ? (
                     // Mostrar todos os vendedores para administrativos (filtrar apenas role='vendedor')
                     allSellers
                       .filter((seller: any) => seller.role === 'vendedor')
@@ -541,23 +454,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
           {/* Campos obrigatórios para recorrência */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="routeDay">
-                Rota (Dia da Semana) *
-                {!isAdminUser && <span className="text-xs text-muted-foreground ml-2">(Definido no cadastro do cliente)</span>}
-              </Label>
+              <Label htmlFor="routeDay">Rota (Dia da Semana) *</Label>
               <Select 
                 value={formData.routeDay} 
-                onValueChange={(value) => {
-                  // Bloquear mudanças se não for admin
-                  if (!isAdminUser) return;
-                  setFormData(prev => ({ ...prev, routeDay: value }));
-                }}
-                disabled={!isAdminUser}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, routeDay: value }))}
               >
-                <SelectTrigger 
-                  className={cn(errors.routeDay && "border-red-500", !isAdminUser && "opacity-60")} 
-                  data-testid="select-route-day"
-                >
+                <SelectTrigger className={errors.routeDay ? "border-red-500" : ""}>
                   <SelectValue placeholder="Selecione o dia" />
                 </SelectTrigger>
                 <SelectContent>
@@ -574,23 +476,12 @@ export default function SalesCardModal({ isOpen, onClose, editingCard, onSuccess
             </div>
 
             <div>
-              <Label htmlFor="recurrenceType">
-                Tipo de Recorrência *
-                {!isAdminUser && <span className="text-xs text-muted-foreground ml-2">(Definido no cadastro do cliente)</span>}
-              </Label>
+              <Label htmlFor="recurrenceType">Tipo de Recorrência *</Label>
               <Select 
                 value={formData.recurrenceType} 
-                onValueChange={(value) => {
-                  // Bloquear mudanças se não for admin
-                  if (!isAdminUser) return;
-                  setFormData(prev => ({ ...prev, recurrenceType: value }));
-                }}
-                disabled={!isAdminUser}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, recurrenceType: value }))}
               >
-                <SelectTrigger 
-                  className={cn(errors.recurrenceType && "border-red-500", !isAdminUser && "opacity-60")} 
-                  data-testid="select-recurrence-type"
-                >
+                <SelectTrigger className={errors.recurrenceType ? "border-red-500" : ""}>
                   <SelectValue placeholder="Frequência" />
                 </SelectTrigger>
                 <SelectContent>

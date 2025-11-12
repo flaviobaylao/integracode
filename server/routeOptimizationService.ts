@@ -346,116 +346,68 @@ export async function generateDailyRoute(
   
   console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // ============================================================
-  // FONTE ÚNICA DA VERDADE: TABELA CUSTOMERS
-  // ============================================================
-  // Geração de rotas lê APENAS da tabela customers (Gestão de Clientes)
-  // Campos utilizados: sellerId, weekdays, visitPeriodicity, isActive, virtualService
-  // Sales cards são criados DEPOIS que a rota é gerada
-  // ============================================================
-  
+  // NOVA ARQUITETURA: Buscar PERMANENT CARDS cuja nextVisitDate é HOJE ou está ATRASADA
+  // Permanent cards = 1 card por cliente com isPermanent=true, nextVisitDate calculado dinamicamente
   const { db } = await import('./db');
-  const { customers } = await import('../shared/schema');
-  const { eq, and } = await import('drizzle-orm');
+  const { salesCards, customers } = await import('../shared/schema');
+  const { eq, and, lte } = await import('drizzle-orm');
   
-  // Buscar TODOS os clientes ativos deste vendedor
-  const allCustomers = await db.select()
-    .from(customers)
+  const salesCardsWithCustomers = await db.select({
+    cardId: salesCards.id,
+    customerId: salesCards.customerId,
+    customerName: customers.name,
+    customerFantasyName: customers.fantasyName,
+    customerAddress: customers.address,
+    customerLatitude: customers.latitude,
+    customerLongitude: customers.longitude,
+    customerVirtualService: customers.virtualService,
+    cardStatus: salesCards.status,
+    nextVisitDate: salesCards.nextVisitDate,
+    lastVisitDate: salesCards.lastVisitDate,
+    isPermanent: salesCards.isPermanent
+  })
+    .from(salesCards)
+    .innerJoin(customers, eq(salesCards.customerId, customers.id))
     .where(
       and(
-        eq(customers.sellerId, sellerId),
-        eq(customers.isActive, true)
+        eq(salesCards.sellerId, sellerId),
+        eq(salesCards.isPermanent, true),  // Apenas permanent cards
+        lte(salesCards.nextVisitDate, endOfDay)  // nextVisitDate <= hoje (inclui atrasados)
       )
     );
 
-  console.log(`   📋 ${allCustomers.length} clientes ativos encontrados no cadastro`);
+  console.log(`   📋 ${salesCardsWithCustomers.length} clientes com visita agendada/atrasada encontrados`);
   
-  // Mapeamento de abreviações para nomes completos (lowercase)
-  const weekdayAbbrevToFull: Record<string, string> = {
-    'dom': 'domingo',
-    'seg': 'segunda',
-    'ter': 'terca',
-    'qua': 'quarta',
-    'qui': 'quinta',
-    'sex': 'sexta',
-    'sab': 'sabado',
-    // Também aceitar nomes completos
-    'domingo': 'domingo',
-    'segunda': 'segunda',
-    'terca': 'terca',
-    'quarta': 'quarta',
-    'quinta': 'quinta',
-    'sexta': 'sexta',
-    'sabado': 'sabado'
-  };
-
-  // Helper para normalizar weekdays (pode estar como JSON string ou array)
-  // Normaliza abreviações ("Seg", "Qui") para formato completo lowercase ("segunda", "quinta")
-  const parseWeekdays = (weekdays: any): string[] => {
-    if (!weekdays) return [];
+  // Filtrar apenas visitas presenciais com status válido
+  const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {
+    // Apenas cards pending ou open
+    if (!['pending', 'open'].includes(sc.cardStatus)) return false;
     
-    let rawWeekdays: string[] = [];
-    if (Array.isArray(weekdays)) {
-      rawWeekdays = weekdays;
-    } else if (typeof weekdays === 'string') {
-      try {
-        const parsed = JSON.parse(weekdays);
-        rawWeekdays = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    
-    // Normalizar cada dia para formato completo lowercase
-    return rawWeekdays
-      .map(day => {
-        const normalized = day.toLowerCase().substring(0, 3); // Pegar primeiras 3 letras
-        return weekdayAbbrevToFull[normalized] || null;
-      })
-      .filter((day): day is string => day !== null);
-  };
-  
-  // Filtrar clientes que devem ser visitados HOJE baseado em weekdays + periodicidade
-  const customersToVisit = allCustomers.filter((customer: any) => {
-    // 1. Não incluir clientes com atendimento virtual
-    if (customer.virtualService) return false;
-    
-    // 2. Verificar se o dia da semana está nos weekdays do cliente
-    const customerWeekdays = parseWeekdays(customer.weekdays);
-    if (!customerWeekdays.includes(targetWeekdayFull)) return false;
-    
-    // 3. Verificar periodicidade (semanal, quinzenal, mensal, bimestral)
-    // Assinatura: shouldVisitOnDate(periodicity, targetDate, customerWeekdays, serviceStartDate)
-    const shouldVisit = shouldVisitOnDateByPeriodicity(
-      customer.visitPeriodicity ?? 'semanal',  // Padrão: semanal
-      routeDate,
-      customerWeekdays,
-      customer.serviceStartDate
-    );
-    if (!shouldVisit) return false;
+    // Não incluir clientes com atendimento virtual
+    if (sc.customerVirtualService) return false;
     
     return true;
   });
 
-  console.log(`   ✅ ${customersToVisit.length} clientes devem ser visitados hoje (${allCustomers.length - customersToVisit.length} excluídos por dia/periodicidade/virtual)`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas (${salesCardsWithCustomers.length - customersToVisit.length} virtuais ou outros status)`);
 
   // Filtrar apenas clientes com coordenadas válidas
   const validCustomers = customersToVisit.filter((c: any) => 
-    c.latitude && 
-    c.longitude &&
-    !isNaN(parseFloat(c.latitude as any)) &&
-    !isNaN(parseFloat(c.longitude as any))
+    c.customerLatitude && 
+    c.customerLongitude &&
+    !isNaN(parseFloat(c.customerLatitude as any)) &&
+    !isNaN(parseFloat(c.customerLongitude as any))
   );
 
   const customersWithoutCoords = customersToVisit.filter((c: any) => 
-    !c.latitude || !c.longitude ||
-    isNaN(parseFloat(c.latitude as any)) ||
-    isNaN(parseFloat(c.longitude as any))
+    !c.customerLatitude || !c.customerLongitude ||
+    isNaN(parseFloat(c.customerLatitude as any)) ||
+    isNaN(parseFloat(c.customerLongitude as any))
   );
 
   if (customersWithoutCoords.length > 0) {
     console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas:`);
-    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.fantasyName || c.name} (${c.id})`));
+    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.customerFantasyName || c.customerName} (${c.customerId})`));
   }
 
   // 🔍 VALIDAÇÃO DE DISTÂNCIAS ANÔMALAS
@@ -464,8 +416,8 @@ export async function generateDailyRoute(
   const customersWithSuspiciousCoords: any[] = [];
   
   validCustomers.forEach((c: any) => {
-    const customerLat = parseFloat(c.latitude as any);
-    const customerLon = parseFloat(c.longitude as any);
+    const customerLat = parseFloat(c.customerLatitude as any);
+    const customerLon = parseFloat(c.customerLongitude as any);
     
     // Calcular distância em linha reta (Haversine)
     const distance = calculateHaversineDistance(sellerLat, sellerLon, customerLat, customerLon);
@@ -473,12 +425,12 @@ export async function generateDailyRoute(
     // Alertar se distância > 100km (suspeito para rota diária)
     if (distance > 100) {
       customersWithSuspiciousCoords.push({
-        id: c.id,
-        name: c.fantasyName || c.name,
+        id: c.customerId,
+        name: c.customerFantasyName || c.customerName,
         distance: Math.round(distance),
-        latitude: c.latitude,
-        longitude: c.longitude,
-        city: c.address
+        latitude: c.customerLatitude,
+        longitude: c.customerLongitude,
+        city: c.customerAddress
       });
     }
   });
@@ -504,11 +456,11 @@ export async function generateDailyRoute(
 
   // Converter clientes para pontos de rota
   const routePoints: RoutePoint[] = validCustomers.map((c: any) => ({
-    id: c.id, // Usar ID do cliente como identificador da visita
-    latitude: parseFloat(c.latitude as any),
-    longitude: parseFloat(c.longitude as any),
-    customerName: c.fantasyName || c.name,
-    customerAddress: c.address || ''
+    id: c.customerId, // Usar ID do cliente como identificador da visita
+    latitude: parseFloat(c.customerLatitude as any),
+    longitude: parseFloat(c.customerLongitude as any),
+    customerName: c.customerFantasyName || c.customerName,
+    customerAddress: c.customerAddress || ''
   }));
 
   console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);
@@ -594,15 +546,13 @@ export async function registerCheckpoint(
   // Buscar a rota para verificar se é visita off-route
   const route = await storage.getDailyRoute(dailyRouteId);
   
-  // Verificar se o customerId está na rota planejada (optimizedOrder contém IDs de clientes)
+  // Verificar se o visitId está na rota planejada (optimizedOrder)
   const isOffRoute = route && route.optimizedOrder 
-    ? !route.optimizedOrder.includes(customerId)
+    ? !route.optimizedOrder.includes(visitId)
     : false;
   
   if (isOffRoute) {
     console.log(`⚠️  VISITA FORA DA ROTA detectada: Cliente ${customerId}, Visita ${visitId}`);
-  } else {
-    console.log(`✅ Visita na rota confirmada: Cliente ${customerId}, Visita ${visitId}`);
   }
   
   // Buscar último checkpoint

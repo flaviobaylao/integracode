@@ -63,7 +63,7 @@ export default function Home() {
         return <SalesSchedule />;
       case 'visit-routes':
         return <VisitRoutes />;
-      case 'daily-routes':
+      case 'daily-route':
         return <DailyRouteView />;
       case 'overdue-debts':
         return <OverdueDebtsManagement />;

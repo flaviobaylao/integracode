@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,16 +16,14 @@ interface LoginForm {
 
 export default function Login() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>();
 
-  // Usar fetch() puro em vez de React Query (que pode estar quebrado devido a cache do browser)
-  const onSubmit = async (data: LoginForm) => {
-    setIsLoading(true);
-    
-    try {
+  const loginMutation = useMutation({
+    mutationFn: async (data: LoginForm) => {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -39,21 +38,19 @@ export default function Login() {
         throw new Error(error.message || 'Login failed');
       }
       
-      // Login bem-sucedido
+      return response.json();
+    },
+    onSuccess: () => {
       toast({
         title: 'Login realizado com sucesso',
         description: 'Bem-vindo ao sistema Honest Sucos!',
       });
       
-      // Redirecionar para URL salva ou página inicial
-      const redirectUrl = sessionStorage.getItem('redirectAfterLogin');
-      if (redirectUrl) {
-        sessionStorage.removeItem('redirectAfterLogin');
-        window.location.href = redirectUrl;
-      } else {
-        window.location.href = '/';
-      }
-    } catch (error: any) {
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+      
+      window.location.href = '/';
+    },
+    onError: (error: any) => {
       console.error('Erro no login:', error);
       toast({
         title: 'Erro no login',
@@ -63,7 +60,12 @@ export default function Login() {
         variant: 'destructive',
       });
       setIsLoading(false);
-    }
+    },
+  });
+
+  const onSubmit = (data: LoginForm) => {
+    setIsLoading(true);
+    loginMutation.mutate(data);
   };
 
   return (
@@ -136,10 +138,10 @@ export default function Login() {
             <Button 
               type="submit" 
               className="w-full bg-green-600 hover:bg-green-700 text-white"
-              disabled={isLoading}
+              disabled={isLoading || loginMutation.isPending}
               data-testid="button-login"
             >
-              {isLoading ? (
+              {(isLoading || loginMutation.isPending) ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Entrando...

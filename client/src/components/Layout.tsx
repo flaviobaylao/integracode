@@ -56,7 +56,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true, badge: null },
     { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
     { 
-      id: 'daily-routes', 
+      id: 'daily-route', 
       label: isVendedor ? 'Minha Rota do Dia' : 'Rotas dos Vendedores', 
       icon: 'fas fa-map-marked-alt', 
       available: isVendedor || canAccessReports,
@@ -69,7 +69,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: true,
       badge: null
     },
-    { id: 'leads', label: 'LEADs', icon: 'fas fa-user-plus', available: canAccessReports || isVendedor, badge: null },
     { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
     { 
       id: 'sales-goals', 
@@ -159,7 +158,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     console.log('🖱️ Menu item clicado:', itemId);
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-routes', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'leads', 'hotsite-pricing', 'hotsite-orders'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'daily-route', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

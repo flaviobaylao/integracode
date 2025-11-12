@@ -4,7 +4,6 @@ import { setupVite, serveStatic, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
-import { startSalesCardCleanupService } from "./salesCardCleanupService";
 
 const app = express();
 
@@ -73,11 +72,6 @@ app.use((req, res, next) => {
 
   // Inicializar admin padrão se não existir (importante para primeira execução em produção)
   await initializeDefaultAdmin();
-  
-  // Inicializar serviço de limpeza automática de sales cards antigos
-  // Este serviço roda diariamente às 03:00 e remove cards pendentes/rascunho com mais de 30 dias
-  const { storage } = await import('./storage');
-  startSalesCardCleanupService(storage);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

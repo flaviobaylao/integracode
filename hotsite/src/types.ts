@@ -35,7 +35,7 @@ export interface Order {
     unitPrice: number;
   }[];
   totalAmount: number;
-  paymentMethod: 'pix' | 'boleto';
+  paymentMethod: 'pix' | 'card' | 'boleto';
   source: 'hotsite' | 'website';
   priceTable?: 'retail' | 'wholesale' | 'goiania' | 'interior' | 'brasilia';
 }

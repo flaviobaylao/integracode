@@ -19,9 +19,7 @@ import {
   routeCheckpoints,
   deliveryRoutes,
   deliveryRouteStops,
-  deliveryDrivers,
   syncStatus,
-  leads,
   type User,
   type UpsertUser,
   type Route,
@@ -51,15 +49,10 @@ import {
   type ExportedReport,
   type SyncStatus,
   type InsertSyncStatus,
-  type Lead,
-  type InsertLead,
-  type DeliveryDriver,
-  type InsertDeliveryDriver,
   insertSystemSettingSchema,
-  insertDeliveryDriverSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, lt, gt, sql, inArray, or, isNotNull, isNull, ne, like, not } from "drizzle-orm";
+import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
@@ -114,7 +107,6 @@ export interface IStorage {
   // Sales card operations
   getSalesCards(sellerId?: string, filters?: { routeDay?: string; status?: string }): Promise<SalesCardWithRelations[]>;
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
-  getActiveSalesCard(customerId: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
   deleteSalesCard(id: string): Promise<void>;
@@ -129,7 +121,6 @@ export interface IStorage {
   createOrderHistory(order: InsertOrderHistory): Promise<OrderHistory>;
   getOrderHistoryByCard(salesCardId: string): Promise<OrderHistory[]>;
   getOrderHistoryById(id: string): Promise<OrderHistory | undefined>;
-  getLastCustomerOrder(customerId: string): Promise<OrderHistory | undefined>;
   updateOrderHistory(id: string, order: Partial<InsertOrderHistory>): Promise<OrderHistory>;
   deleteOrderHistory(id: string): Promise<void>;
   
@@ -150,21 +141,17 @@ export interface IStorage {
   getPendingDeliveries(): Promise<SalesCard[]>;
   createDeliveryHistory(data: any): Promise<any>;
   getDeliveryHistory(salesCardId: string): Promise<any[]>;
-  
-  // Delivery driver operations
-  getDeliveryDrivers(): Promise<DeliveryDriver[]>;
-  getDeliveryDriver(id: string): Promise<DeliveryDriver | undefined>;
-  getActiveDeliveryDrivers(): Promise<DeliveryDriver[]>;
-  createDeliveryDriver(data: InsertDeliveryDriver): Promise<DeliveryDriver>;
-  updateDeliveryDriver(id: string, data: Partial<InsertDeliveryDriver>): Promise<DeliveryDriver>;
-  updateDriverLocation(driverId: string, location: string): Promise<DeliveryDriver>;
-  getDeliveryDriverStats(): Promise<{ total: number; active: number; inactive: number; lastUpdated: Date }>;
-  
+  getDeliveryDrivers(): Promise<any[]>;
+  getActiveDeliveryDrivers(): Promise<any[]>;
+  createDeliveryDriver(data: any): Promise<any>;
+  updateDeliveryDriver(id: string, data: any): Promise<any>;
+  updateDriverLocation(driverId: string, location: string): Promise<any>;
   getDeliveryStats(period: string): Promise<any>;
   getDeliveryMetrics(period: string): Promise<any>;
   getAllDeliveries(): Promise<any[]>;
   getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any>;
   getDeliveryReportComparison(period: string): Promise<any>;
+  getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
   getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]>;
@@ -278,16 +265,6 @@ export interface IStorage {
     message?: string; 
     recordsProcessed?: number;
   }): Promise<SyncStatus>;
-
-  // Lead operations
-  getLeads(filters?: { sellerId?: string; scheduledDate?: Date; status?: string }): Promise<Lead[]>;
-  getLead(id: string): Promise<Lead | undefined>;
-  createLead(lead: InsertLead): Promise<Lead>;
-  updateLead(id: string, lead: Partial<InsertLead>): Promise<Lead>;
-  deleteLead(id: string): Promise<void>;
-  getLeadsByDate(date: Date, sellerId?: string): Promise<Lead[]>;
-  convertLeadToCustomer(leadId: string, customerId: string): Promise<Lead>;
-  discardLead(leadId: string, reason: string): Promise<Lead>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -671,18 +648,14 @@ export class DatabaseStorage implements IStorage {
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
     let whereConditions = and(
       eq(customers.omieStatus, 'ativo'),
-      sql`${customers.weekdays} LIKE ${`%${weekday}%`}`,
-      // Excluir clientes com TAG "NAO CLIENTE"
-      sql`NOT ('NAO CLIENTE' = ANY(${customers.tags}))`
+      sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
     );
     
     if (sellerId) {
       whereConditions = and(
         eq(customers.omieStatus, 'ativo'),
         eq(customers.sellerId, sellerId),
-        sql`${customers.weekdays} LIKE ${`%${weekday}%`}`,
-        // Excluir clientes com TAG "NAO CLIENTE"
-        sql`NOT ('NAO CLIENTE' = ANY(${customers.tags}))`
+        sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
       );
     }
     
@@ -879,25 +852,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard> {
-    // CRITICAL: Garantir que campos null sejam aplicados (importante para reset de cards permanentes)
-    const updateData = { 
-      ...salesCard as any, 
-      updatedAt: new Date() 
-    };
-    
-    // Log para debug de reset de cards permanentes
-    if (salesCard.status === 'pending' && 
-        'omieOrderId' in salesCard && 
-        salesCard.omieOrderId === null) {
-      console.log('🧹 [RESET] Limpando campos do Omie no card:', id);
-      console.log('   - omieOrderId:', salesCard.omieOrderId);
-      console.log('   - omieSyncStatus:', salesCard.omieSyncStatus);
-      console.log('   - omieOrderNumber:', salesCard.omieOrderNumber);
-    }
-    
     const [updatedSalesCard] = await db
       .update(salesCards)
-      .set(updateData)
+      .set({ ...salesCard as any, updatedAt: new Date() })
       .where(eq(salesCards.id, id))
       .returning();
     return updatedSalesCard;
@@ -1595,22 +1552,16 @@ export class DatabaseStorage implements IStorage {
           ? and(
               eq(salesCards.sellerId, sellerId),
               eq(salesCards.routeDay, routeDay),
-              sql`(
-                (${salesCards.scheduledDate} IS NOT NULL AND ${salesCards.scheduledDate} >= ${startDate} AND ${salesCards.scheduledDate} <= ${endDate})
-                OR
-                (${salesCards.nextVisitDate} IS NOT NULL AND ${salesCards.nextVisitDate} >= ${startDate} AND ${salesCards.nextVisitDate} <= ${endDate})
-              )`
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
             )
           : and(
               eq(salesCards.routeDay, routeDay),
-              sql`(
-                (${salesCards.scheduledDate} IS NOT NULL AND ${salesCards.scheduledDate} >= ${startDate} AND ${salesCards.scheduledDate} <= ${endDate})
-                OR
-                (${salesCards.nextVisitDate} IS NOT NULL AND ${salesCards.nextVisitDate} >= ${startDate} AND ${salesCards.nextVisitDate} <= ${endDate})
-              )`
+              gte(salesCards.scheduledDate, startDate),
+              lte(salesCards.scheduledDate, endDate)
             )
       )
-      .orderBy(sql`COALESCE(${salesCards.nextVisitDate}, ${salesCards.scheduledDate})`)
+      .orderBy(salesCards.scheduledDate)
       .limit(limit)
       .offset(offset);
 
@@ -1737,13 +1688,6 @@ export class DatabaseStorage implements IStorage {
     // Formatar data como YYYY-MM-DD para comparação
     const targetDate = date.toISOString().split('T')[0];
     
-    console.log(`🔍 [getSalesCardsByDate] ============================================`);
-    console.log(`   Buscando cards para data: ${targetDate} (sellerId: ${sellerId || 'todos'})`);
-    console.log(`   - Input date object (UTC): ${date.toISOString()}`);
-    console.log(`   - Input date (local toString): ${date.toString()}`);
-    console.log(`   - SQL targetDate usado na query: ${targetDate}`);
-    console.log(`   - Query SQL irá filtrar: (nextVisitDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}'`);
-    
     // Converter timestamptz para date no timezone de São Paulo
     // Sintaxe correta: (col AT TIME ZONE 'America/Sao_Paulo')::date
     let whereConditions;
@@ -1795,48 +1739,7 @@ export class DatabaseStorage implements IStorage {
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
     
-    console.log(`📊 [getSalesCardsByDate] RESULTADOS:`);
-    console.log(`   - Total de cards encontrados: ${result.length}`);
-    
-    // Log detalhado dos primeiros cards encontrados para debug
-    if (result.length > 0) {
-      console.log(`   📋 Amostra dos primeiros 3 cards:`);
-      result.slice(0, 3).forEach((row, idx) => {
-        const card = row.sales_cards;
-        const customer = row.customers;
-        const nextVisitUTC = card.nextVisitDate ? new Date(card.nextVisitDate) : null;
-        const scheduledUTC = card.scheduledDate ? new Date(card.scheduledDate) : null;
-        
-        console.log(`   ${idx + 1}. Cliente: ${customer?.fantasyName || customer?.name}`);
-        console.log(`      - Card ID: ${card.id}`);
-        console.log(`      - Status: ${card.status}, isPermanent: ${card.isPermanent}`);
-        if (nextVisitUTC) {
-          console.log(`      - nextVisitDate (UTC): ${nextVisitUTC.toISOString()}`);
-          console.log(`      - nextVisitDate (BRT): ${nextVisitUTC.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
-        } else {
-          console.log(`      - nextVisitDate: NULL`);
-        }
-        if (scheduledUTC) {
-          console.log(`      - scheduledDate (UTC): ${scheduledUTC.toISOString()}`);
-          console.log(`      - scheduledDate (BRT): ${scheduledUTC.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
-        } else {
-          console.log(`      - scheduledDate: NULL`);
-        }
-      });
-    } else {
-      console.log(`   ⚠️ NENHUM card encontrado!`);
-      console.log(`   Filtros aplicados na query:`);
-      console.log(`      - targetDate (SQL): '${targetDate}'`);
-      console.log(`      - sellerId: ${sellerId || 'TODOS'}`);
-      console.log(`      - Permanent cards: (nextVisitDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}' AND status IN ('pending', 'open')`);
-      console.log(`      - Legacy cards: (scheduledDate AT TIME ZONE 'America/Sao_Paulo')::date = '${targetDate}'`);
-      console.log(`   Possíveis causas:`);
-      console.log(`      1. nextVisitDate no banco não corresponde a ${targetDate} quando convertido para BRT`);
-      console.log(`      2. Todos os cards deste vendedor/data têm status diferente de 'pending'/'open'`);
-      console.log(`      3. sellerId filtrado não possui cards para esta data`);
-    }
-    console.log(`   ============================================`);
-    
+    console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
     
     return result.map(row => ({
       ...row.sales_cards,
@@ -2004,45 +1907,6 @@ export class DatabaseStorage implements IStorage {
     return card;
   }
 
-  async getActiveSalesCard(customerId: string): Promise<SalesCardWithRelations | undefined> {
-    const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
-    
-    const result = await db
-      .select()
-      .from(salesCards)
-      .leftJoin(customers, eq(salesCards.customerId, customers.id))
-      .leftJoin(users, eq(salesCards.sellerId, users.id))
-      .where(
-        and(
-          eq(salesCards.customerId, customerId),
-          not(inArray(salesCards.status, FINAL_STATUSES)),
-          // Excluir defensivamente cards que já foram usados (têm produtos ou valor de venda)
-          // Cards "virgens" não devem ter nenhum produto nem valor registrado
-          or(
-            isNull(salesCards.products),
-            sql`${salesCards.products} = '[]'::jsonb`,
-            sql`jsonb_array_length(${salesCards.products}) = 0`
-          ),
-          or(
-            isNull(salesCards.saleValue),
-            eq(salesCards.saleValue, 0)
-          )
-        )
-      )
-      .orderBy(desc(salesCards.createdAt))
-      .limit(1);
-    
-    // Retornar undefined se nenhum card foi encontrado
-    if (!result || result.length === 0) return undefined;
-    
-    const card = result[0];
-    return {
-      ...card.sales_cards,
-      customer: card.customers || undefined,
-      seller: card.users || undefined,
-    };
-  }
-
   // ==================== ORDER HISTORY OPERATIONS ====================
 
   async createOrderHistory(order: InsertOrderHistory): Promise<OrderHistory> {
@@ -2089,40 +1953,6 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOrderHistory(id: string): Promise<void> {
     await db.delete(orderHistory).where(eq(orderHistory.id, id));
-  }
-
-  /**
-   * Busca a última venda (completed) de um cliente com produtos
-   * Para pré-preencher novos cards com produtos da última compra
-   */
-  async getLastCustomerOrder(customerId: string): Promise<OrderHistory | undefined> {
-    // Buscar todos os sales cards do cliente
-    const customerCards = await db
-      .select({ id: salesCards.id })
-      .from(salesCards)
-      .where(eq(salesCards.customerId, customerId));
-    
-    if (customerCards.length === 0) {
-      return undefined;
-    }
-    
-    const cardIds = customerCards.map(c => c.id);
-    
-    // Buscar última venda completa com produtos
-    const [lastOrder] = await db
-      .select()
-      .from(orderHistory)
-      .where(
-        and(
-          inArray(orderHistory.salesCardId, cardIds),
-          eq(orderHistory.status, 'completed'),
-          sql`${orderHistory.products} IS NOT NULL AND jsonb_array_length(${orderHistory.products}) > 0`
-        )
-      )
-      .orderBy(desc(orderHistory.orderDate))
-      .limit(1);
-    
-    return lastOrder;
   }
 
   // Função helper para calcular distância entre dois pontos (Haversine formula)
@@ -2286,36 +2116,38 @@ export class DatabaseStorage implements IStorage {
     overdueClients: number;
     conversionRate: number;
   }> {
-    // Usar timezone Brasil (America/Sao_Paulo)
-    const { fromZonedTime } = await import('date-fns-tz');
-    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const today = fromZonedTime(`${todayStr}T00:00:00`, 'America/Sao_Paulo');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    // Today's sales - Buscar de BILLINGS (fonte de verdade do Omie)
-    // Incluir apenas vendas não canceladas (billing_type = 'venda', is_cancelled = false)
-    let todaySalesConditions = and(
-      gte(billings.invoiceDate, today),
-      lt(billings.invoiceDate, tomorrow),
-      eq(billings.billingType, 'venda'),
-      eq(billings.isCancelled, false)
-    );
+    // Today's sales
+    let todaySalesQuery = db
+      .select({ value: sql<number>`COALESCE(SUM(${salesCards.saleValue}), 0)` })
+      .from(salesCards)
+      .where(
+        and(
+          gte(salesCards.completedDate, today),
+          lte(salesCards.completedDate, tomorrow),
+          eq(salesCards.status, 'completed')
+        )
+      );
     
     if (sellerId) {
-      todaySalesConditions = and(
-        gte(billings.invoiceDate, today),
-        lt(billings.invoiceDate, tomorrow),
-        eq(billings.billingType, 'venda'),
-        eq(billings.isCancelled, false),
-        eq(billings.sellerId, sellerId)
-      );
+      todaySalesQuery = db
+        .select({ value: sql<number>`COALESCE(SUM(${salesCards.saleValue}), 0)` })
+        .from(salesCards)
+        .where(
+          and(
+            gte(salesCards.completedDate, today),
+            lte(salesCards.completedDate, tomorrow),
+            eq(salesCards.status, 'completed'),
+            eq(salesCards.sellerId, sellerId)
+          )
+        );
     }
     
-    const [todaySalesResult] = await db
-      .select({ value: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)` })
-      .from(billings)
-      .where(todaySalesConditions);
+    const [todaySalesResult] = await todaySalesQuery;
     
     // Today's clients
     let todayClientsQuery = db
@@ -2540,95 +2372,39 @@ export class DatabaseStorage implements IStorage {
     return result.rows;
   }
 
-  async getDeliveryDrivers(): Promise<DeliveryDriver[]> {
-    return await db.select()
-      .from(deliveryDrivers)
-      .orderBy(desc(deliveryDrivers.createdAt));
+  async getDeliveryDrivers(): Promise<any[]> {
+    const result = await db.execute(sql`
+      SELECT 
+        id,
+        CONCAT(first_name, ' ', last_name) as name,
+        email as phone,
+        'moto' as "vehicleType",
+        '' as "licensePlate",
+        is_active as "isActive"
+      FROM users 
+      WHERE role = 'motorista' AND is_active = true
+      ORDER BY first_name, last_name
+    `);
+    return result.rows;
   }
 
-  async getDeliveryDriver(id: string): Promise<DeliveryDriver | undefined> {
-    const [driver] = await db.select()
-      .from(deliveryDrivers)
-      .where(eq(deliveryDrivers.id, id))
-      .limit(1);
-    return driver;
+  async createDeliveryDriver(data: any): Promise<any> {
+    const result = await db.execute(sql`
+      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, current_location)
+      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${data.currentLocation})
+      RETURNING *
+    `);
+    return result.rows[0];
   }
 
-  async getActiveDeliveryDrivers(): Promise<DeliveryDriver[]> {
-    return await db.select()
-      .from(deliveryDrivers)
-      .where(eq(deliveryDrivers.isActive, true))
-      .orderBy(desc(deliveryDrivers.createdAt));
-  }
-
-  async createDeliveryDriver(data: InsertDeliveryDriver): Promise<DeliveryDriver> {
-    const validated = insertDeliveryDriverSchema.parse(data);
-    const [newDriver] = await db.insert(deliveryDrivers)
-      .values(validated)
-      .returning();
-    return newDriver;
-  }
-
-  async updateDeliveryDriver(id: string, data: Partial<InsertDeliveryDriver>): Promise<DeliveryDriver> {
-    if (Object.keys(data).length === 0) {
-      throw new Error('Pelo menos um campo deve ser atualizado');
-    }
-    
-    const [updatedDriver] = await db.update(deliveryDrivers)
-      .set({
-        ...data,
-        updatedAt: new Date()
-      })
-      .where(eq(deliveryDrivers.id, id))
-      .returning();
-    
-    if (!updatedDriver) {
-      throw new Error('Motorista não encontrado');
-    }
-    
-    return updatedDriver;
-  }
-
-  async updateDriverLocation(driverId: string, location: string): Promise<DeliveryDriver> {
-    const [updatedDriver] = await db.update(deliveryDrivers)
-      .set({
-        currentLocation: location,
-        updatedAt: new Date()
-      })
-      .where(eq(deliveryDrivers.id, driverId))
-      .returning();
-    
-    if (!updatedDriver) {
-      throw new Error('Motorista não encontrado');
-    }
-    
-    return updatedDriver;
-  }
-
-  async getDeliveryDriverStats(): Promise<{ total: number; active: number; inactive: number; lastUpdated: Date }> {
-    const drivers = await this.getDeliveryDrivers();
-    const active = drivers.filter(d => d.isActive).length;
-    const inactive = drivers.filter(d => !d.isActive).length;
-    
-    let lastUpdated = new Date();
-    if (drivers.length > 0) {
-      const validDates = drivers
-        .map(driver => driver.updatedAt || driver.createdAt)
-        .filter((date): date is Date => date !== null);
-      
-      if (validDates.length > 0) {
-        lastUpdated = validDates.reduce((latest, current) => 
-          current > latest ? current : latest
-        );
-      }
-    }
-    
-    return {
-      total: drivers.length,
-      active,
-      inactive,
-      lastUpdated
-    };
+  async updateDriverLocation(driverId: string, location: string): Promise<any> {
+    const result = await db.execute(sql`
+      UPDATE delivery_drivers 
+      SET current_location = ${location}, updated_at = NOW() 
+      WHERE id = ${driverId}
+      RETURNING *
+    `);
+    return result.rows[0];
   }
 
   // ===== SISTEMA DE VENDAS RECORRENTES =====
@@ -3278,7 +3054,7 @@ export class DatabaseStorage implements IStorage {
           AND invoice_date <= ${searchEndDate}
           AND invoice_status = '100'
           AND is_cancelled = false
-          AND billing_type IN ('venda', 'devolucao')
+          AND billing_type IN ('venda', 'devolução')
           ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
       `);
       
@@ -3295,7 +3071,7 @@ export class DatabaseStorage implements IStorage {
       const uniqueCustomers = new Set(monthBillings.rows.map((b: any) => b.customer_document));
       const positivatedCustomers = uniqueCustomers.size;
 
-      // Total de clientes ativos na carteira do vendedor (excluindo TAG "NAO CLIENTE")
+      // Total de clientes ativos na carteira do vendedor
       let totalCustomersInRoute = 0;
       if (prefixedSellerId) {
         const routeCustomersResult = await db.execute(sql`
@@ -3303,7 +3079,6 @@ export class DatabaseStorage implements IStorage {
           WHERE seller_id = ${prefixedSellerId}
             AND omie_status = 'ativo'
             AND virtual_service = false
-            AND NOT ('NAO CLIENTE' = ANY(tags))
         `);
         totalCustomersInRoute = routeCustomersResult.rows.length;
       }
@@ -3344,13 +3119,7 @@ export class DatabaseStorage implements IStorage {
 
       const totalRevenue = validBillings.reduce((sum: number, billing: any) => {
         const value = parseFloat(billing.total_value?.toString() || '0');
-        const numericValue = isNaN(value) ? 0 : value;
-        
-        // SUBTRAIR devoluções, SOMAR vendas (alinhado com relatório Omie)
-        if (billing.billing_type === 'devolucao') {
-          return sum - numericValue;
-        }
-        return sum + numericValue;
+        return sum + (isNaN(value) ? 0 : value);
       }, 0);
 
       const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
@@ -3880,16 +3649,9 @@ export class DatabaseStorage implements IStorage {
       }
       
       // NOVA LÓGICA: Dar etapa "CANCELADO" APENAS para notas realmente canceladas
-      // Verificar cancelamento via status SEFAZ OU via flag enviada
-      const isCancelledViaFlag = billing.isCancelled === true;
-      
-      if (isCanceled || isCancelledViaFlag) {
-        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status: ${invoiceStatus}, flag: ${isCancelledViaFlag})`);
+      if (isCanceled) {
+        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status cancelado: ${invoiceStatus})`);
         billing.invoiceStage = 'CANCELADO';
-        billing.isCancelled = true; // ✅ Marcar como cancelada no banco
-      } else {
-        // Garantir que notas não-canceladas tenham is_cancelled = false
-        billing.isCancelled = false;
       }
       
       // Validação 2: Data da nota fiscal deve ser válida
@@ -4823,124 +4585,6 @@ export class DatabaseStorage implements IStorage {
 
   async getSyncStatuses(): Promise<SyncStatus[]> {
     return await db.select().from(syncStatus);
-  }
-
-  // Lead operations
-  async getLeads(filters?: { sellerId?: string; scheduledDate?: Date; status?: string }): Promise<Lead[]> {
-    let query = db.select().from(leads).where(eq(leads.isActive, true));
-    
-    const conditions = [eq(leads.isActive, true)];
-    
-    if (filters?.sellerId) {
-      conditions.push(eq(leads.sellerId, filters.sellerId));
-    }
-    
-    if (filters?.scheduledDate) {
-      // Convert to Brazil timezone for comparison
-      const { fromZonedTime } = require('date-fns-tz');
-      const dateStr = filters.scheduledDate.toISOString().split('T')[0];
-      const startOfDay = fromZonedTime(`${dateStr}T00:00:00`, 'America/Sao_Paulo');
-      const endOfDay = fromZonedTime(`${dateStr}T23:59:59`, 'America/Sao_Paulo');
-      
-      conditions.push(
-        and(
-          gte(leads.scheduledDate, startOfDay),
-          lte(leads.scheduledDate, endOfDay)
-        ) as any
-      );
-    }
-    
-    if (filters?.status) {
-      conditions.push(eq(leads.status, filters.status as any));
-    }
-    
-    return await db
-      .select()
-      .from(leads)
-      .where(and(...conditions))
-      .orderBy(desc(leads.createdAt));
-  }
-
-  async getLead(id: string): Promise<Lead | undefined> {
-    const [lead] = await db
-      .select()
-      .from(leads)
-      .where(eq(leads.id, id))
-      .limit(1);
-    return lead;
-  }
-
-  async createLead(leadData: InsertLead): Promise<Lead> {
-    const [lead] = await db.insert(leads).values(leadData).returning();
-    return lead;
-  }
-
-  async updateLead(id: string, leadData: Partial<InsertLead>): Promise<Lead> {
-    const [lead] = await db
-      .update(leads)
-      .set({ ...leadData, updatedAt: new Date() })
-      .where(eq(leads.id, id))
-      .returning();
-    return lead;
-  }
-
-  async deleteLead(id: string): Promise<void> {
-    await db
-      .update(leads)
-      .set({ isActive: false, updatedAt: new Date() })
-      .where(eq(leads.id, id));
-  }
-
-  async getLeadsByDate(date: Date, sellerId?: string): Promise<Lead[]> {
-    const { fromZonedTime } = require('date-fns-tz');
-    const dateStr = date.toISOString().split('T')[0];
-    const startOfDay = fromZonedTime(`${dateStr}T00:00:00`, 'America/Sao_Paulo');
-    const endOfDay = fromZonedTime(`${dateStr}T23:59:59`, 'America/Sao_Paulo');
-    
-    const conditions = [
-      eq(leads.isActive, true),
-      gte(leads.scheduledDate, startOfDay),
-      lte(leads.scheduledDate, endOfDay),
-      ne(leads.status, 'converted' as any),
-      ne(leads.status, 'discarded' as any)
-    ];
-    
-    if (sellerId) {
-      conditions.push(eq(leads.sellerId, sellerId));
-    }
-    
-    return await db
-      .select()
-      .from(leads)
-      .where(and(...conditions));
-  }
-
-  async convertLeadToCustomer(leadId: string, customerId: string): Promise<Lead> {
-    const [lead] = await db
-      .update(leads)
-      .set({
-        status: 'converted' as any,
-        convertedCustomerId: customerId,
-        convertedAt: new Date(),
-        updatedAt: new Date()
-      })
-      .where(eq(leads.id, leadId))
-      .returning();
-    return lead;
-  }
-
-  async discardLead(leadId: string, reason: string): Promise<Lead> {
-    const [lead] = await db
-      .update(leads)
-      .set({
-        status: 'discarded' as any,
-        discardReason: reason,
-        discardedAt: new Date(),
-        updatedAt: new Date()
-      })
-      .where(eq(leads.id, leadId))
-      .returning();
-    return lead;
   }
 }
 

@@ -27,44 +27,33 @@
     
     <!-- Script para FORÇAR atualização do Service Worker -->
     <script>
-      // 🔥 DESABILITAR Service Worker completamente em development!
-      (async function() {
-        if ('serviceWorker' in navigator) {
-          const reloadFlag = 'sw_cleanup_reload_done';
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').then((registration) => {
+          console.log('✅ Service Worker registrado');
           
-          // Se já fizemos reload, não fazer novamente (evitar loop)
-          if (sessionStorage.getItem(reloadFlag)) {
-            console.log('✅ Service Worker já foi limpo anteriormente');
-            return;
-          }
+          // Verifica por atualizações a cada 3 segundos
+          setInterval(() => {
+            registration.update();
+          }, 3000);
           
-          // PRIMEIRO: Desregistrar TODOS os service workers existentes
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(registrations.map(reg => {
-            console.log('🧹 Desregistrando Service Worker:', reg.scope);
-            return reg.unregister();
-          }));
-          
-          // SEGUNDO: Limpar TODOS os caches
-          const cacheKeys = await caches.keys();
-          await Promise.all(cacheKeys.map(key => {
-            console.log('🧹 Limpando cache:', key);
-            return caches.delete(key);
-          }));
-          
-          console.log('✅ Service Worker DESABILITADO em development');
-          console.log('🎯 POST requests agora chegarão ao servidor normalmente!');
-          
-          // SEMPRE fazer reload com cache-busting para forçar refetch de TODOS os módulos
-          console.log('🔄 Fazendo reload com cache-busting para limpar HTTP cache...');
-          sessionStorage.setItem(reloadFlag, 'true');
-          
-          // Adicionar query parameter único para cache-busting
-          const url = new URL(window.location.href);
-          url.searchParams.set('cachebuster', Date.now().toString());
-          window.location.replace(url.toString());
-        }
-      })();
+          // Quando encontra uma atualização, RECARREGA IMEDIATAMENTE
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated') {
+                console.log('🔄 Nova versão detectada - Recarregando...');
+                window.location.reload();
+              }
+            });
+          });
+        });
+        
+        // Escuta mensagens do Service Worker
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          console.log('🔄 Service Worker atualizado - Recarregando...');
+          window.location.reload();
+        });
+      }
     </script>
     
     <script type="module" src="/src/main.tsx?v=20251031-fix"></script>

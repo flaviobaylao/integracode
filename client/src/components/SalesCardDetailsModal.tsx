@@ -3,8 +3,6 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 // Removed Separator import as it's not needed
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -35,8 +33,7 @@ import {
   Loader2,
   Monitor,
   Users,
-  Truck,
-  Copy
+  Truck
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import CheckInModal from "./CheckInModal";
@@ -56,8 +53,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [localVirtualService, setLocalVirtualService] = useState(false);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
-  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
-  const [duplicateDate, setDuplicateDate] = useState("");
   
   // Buscar usuário atual para verificar permissões
   const { data: currentUser } = useQuery({
@@ -221,30 +216,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     },
   });
 
-  // Mutation para duplicar card
-  const duplicateCardMutation = useMutation({
-    mutationFn: async ({ cardId, newDate }: { cardId: string, newDate: string }) => {
-      await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, { newDate });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
-      toast({
-        title: "Sucesso",
-        description: "Card duplicado com sucesso!",
-      });
-      setShowDuplicateDialog(false);
-      setDuplicateDate("");
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro ao Duplicar",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   const handleSendToOmie = () => {
     if (!card?.saleValue || parseFloat(card.saleValue) === 0) {
       toast({
@@ -392,7 +363,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   const StatusIcon = statusInfo.icon;
 
   return (
-    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -418,8 +388,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Nome</p>
-                  <p className="font-semibold text-lg">{card.customer?.fantasyName || card.customer?.name || 'Cliente não encontrado'}</p>
-                  {card.customer?.fantasyName && card.customer?.companyName && (
+                  <p className="font-semibold text-lg">{card.customer.fantasyName || card.customer.name}</p>
+                  {card.customer.fantasyName && card.customer.companyName && (
                     <p className="text-xs text-gray-500 mt-1">Razão Social: {card.customer.companyName}</p>
                   )}
                 </div>
@@ -429,14 +399,13 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 </div>
               </div>
               
-              {card.customer?.phone && (
               <div className="flex items-center space-x-2 text-gray-700">
                 <Phone className="h-4 w-4" />
                 <span>{card.customer.phone}</span>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleOpenWhatsApp(card.customer!.phone, card.customer!.fantasyName || card.customer!.name)}
+                  onClick={() => handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
                   className="ml-2 text-green-600 hover:text-green-700"
                   data-testid="button-whatsapp"
                 >
@@ -444,10 +413,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   WhatsApp
                 </Button>
               </div>
-              )}
               
               {/* Botão de Tipo de Atendimento */}
-              {card.customer?.id && (
               <div className="flex items-center space-x-2">
                 <div className="text-sm text-gray-600">Tipo de Atendimento:</div>
                 <Button
@@ -463,7 +430,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                       return;
                     }
                     toggleServiceTypeMutation.mutate({
-                      customerId: card.customer!.id,
+                      customerId: card.customer.id,
                       virtualService: !localVirtualService
                     });
                   }}
@@ -488,9 +455,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   )}
                 </Button>
               </div>
-              )}
               
-              {card.customer?.address && (
               <div className="flex items-start space-x-2 text-gray-700">
                 <MapPin className="h-4 w-4 mt-1" />
                 <span>{card.customer.address}</span>
@@ -505,7 +470,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   Waze
                 </Button>
               </div>
-              )}
             </CardContent>
           </Card>
 
@@ -956,20 +920,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           </div>
         )}
 
-        <div className="flex justify-between items-center space-x-3 pt-4">
-          <div>
-            {isAdministrative && (
-              <Button 
-                variant="outline" 
-                onClick={() => setShowDuplicateDialog(true)}
-                className="border-blue-600 text-blue-600 hover:bg-blue-50"
-                data-testid="button-duplicate-card"
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                Duplicar Card
-              </Button>
-            )}
-          </div>
+        <div className="flex justify-end space-x-3 pt-4">
           <Button variant="outline" onClick={onClose}>
             Fechar
           </Button>
@@ -1001,69 +952,5 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         />
       )}
     </Dialog>
-
-    {/* Diálogo de Duplicação de Card */}
-    <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Duplicar Card</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="duplicate-date">Data da Nova Venda</Label>
-            <Input
-              id="duplicate-date"
-              type="date"
-              value={duplicateDate}
-              onChange={(e) => setDuplicateDate(e.target.value)}
-              data-testid="input-duplicate-date"
-            />
-          </div>
-          <div className="text-sm text-gray-600">
-            <p>Será criado um novo card para o cliente <strong>{card?.customer?.fantasyName}</strong> na data selecionada.</p>
-          </div>
-        </div>
-        <div className="flex justify-end space-x-3">
-          <Button 
-            variant="outline" 
-            onClick={() => {
-              setShowDuplicateDialog(false);
-              setDuplicateDate("");
-            }}
-          >
-            Cancelar
-          </Button>
-          <Button 
-            onClick={() => {
-              if (!duplicateDate) {
-                toast({
-                  title: "Erro",
-                  description: "Selecione uma data para duplicar o card",
-                  variant: "destructive",
-                });
-                return;
-              }
-              if (!card) return;
-              duplicateCardMutation.mutate({ cardId: card.id, newDate: duplicateDate });
-            }}
-            disabled={duplicateCardMutation.isPending}
-            data-testid="button-confirm-duplicate"
-          >
-            {duplicateCardMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Duplicando...
-              </>
-            ) : (
-              <>
-                <Copy className="h-4 w-4 mr-2" />
-                Duplicar
-              </>
-            )}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-    </>
   );
 }

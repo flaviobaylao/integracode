@@ -53,7 +53,8 @@ function normalizeWeekday(day: string): number | null {
     'terça-feira': 2,
     'quarta-feira': 3,
     'quinta-feira': 4,
-    'sexta-feira': 5
+    'sexta-feira': 5,
+    'sábado': 6
   };
   
   if (day in alternativeMap) {

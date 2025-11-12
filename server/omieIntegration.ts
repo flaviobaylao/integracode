@@ -1,16 +1,6 @@
 import { z } from 'zod';
 import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
 
-// ============================================================
-// CONSTANTES DE CONFIGURAÇÃO OMIE
-// ============================================================
-
-// Código da categoria fiscal para vendas (fixo, não configurável)
-// Categoria: "Clientes - Venda de Mercadoria Fabricadas"
-const OMIE_SALES_CATEGORY_CODE = "1.01.01";
-
-// ============================================================
-
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
   codigo_cliente_omie: z.number(),
@@ -206,27 +196,12 @@ export class OmieService {
   }
 
   // Método auxiliar para determinar o tipo de faturamento baseado no CFOP
-  private determineBillingType(cfop: string): 'venda' | 'troca' | 'amostra' | 'devolucao' | 'entrada' {
+  private determineBillingType(cfop: string): 'venda' | 'troca' | 'amostra' | 'devolucao' {
     // Normalizar CFOP (remover pontos)
     const normalizedCfop = cfop?.replace(/\./g, '') || '';
     
-    // CFOPs de entrada/transferência (NÃO afetam vendas)
-    // 1.151 = Transferência para industrialização (entrada entre filiais)
-    // 1.152 = Transferência para comercialização (entrada entre filiais)
-    // 1.213 = Devolução de remessa para demonstração (ato cooperativo)
-    // 2.xxx = Operações interestaduais de entrada/transferência
-    const entradaCfops = ['1151', '1152', '1213', '2151', '2152', '2213'];
-    if (entradaCfops.includes(normalizedCfop)) {
-      return 'entrada';
-    }
-    
-    // CFOPs específicos de devolução DE VENDAS (SUBTRAEM das vendas)
-    // 1.201 = Devolução de Venda de Produção
-    // 1.202, 1.203, 1.204 = Outras devoluções de venda
-    // 1.411 = Devolução de venda de produção do estabelecimento industrializador
-    // 1.556 = Devolução de venda de bem do ativo imobilizado
-    // 2.xxx = Operações interestaduais de devolução de venda
-    const devolucaoCfops = ['1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
+    // CFOPs específicos de devolução (lista precisa)
+    const devolucaoCfops = ['1151', '1201', '1202', '1203', '1204', '1411', '1556', '2201', '2202', '2203', '2204', '2411', '2556'];
     if (devolucaoCfops.includes(normalizedCfop)) {
       return 'devolucao';
     }
@@ -236,10 +211,8 @@ export class OmieService {
       return 'troca';
     }
     
-    // CFOPs de amostra/demonstração/bonificação
-    // 5.911/6.911 = Remessa para demonstração
-    // 5.910/6.910 = Remessa em bonificação, doação ou brinde
-    if (['5910', '5911', '6910', '6911'].includes(normalizedCfop)) {
+    // CFOPs de amostra
+    if (['5911', '6911'].includes(normalizedCfop)) {
       return 'amostra';
     }
     
@@ -416,36 +389,6 @@ export class OmieService {
         success: false,
         omieClientCode: null,
         message: `Erro ao criar cliente no Omie: ${errorMessage}`
-      };
-    }
-  }
-
-  // Atualizar vendedor responsável de um cliente no Omie
-  async updateCustomerVendor(omieClientCode: number, omieVendorCode: number): Promise<{ success: boolean; message: string }> {
-    try {
-      console.log(`🔄 Atualizando vendedor do cliente ${omieClientCode} no Omie para vendedor ${omieVendorCode}...`);
-      
-      const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', {
-        codigo_cliente_omie: omieClientCode,
-        recomendacoes: {
-          codigo_vendedor: omieVendorCode
-        }
-      });
-
-      if (response && response.codigo_cliente_omie) {
-        console.log(`✅ Vendedor do cliente ${omieClientCode} atualizado com sucesso no Omie (vendedor: ${omieVendorCode})`);
-        return {
-          success: true,
-          message: response.descricao_status || 'Vendedor atualizado com sucesso no Omie'
-        };
-      } else {
-        throw new Error('Resposta inválida da API Omie ao atualizar vendedor do cliente');
-      }
-    } catch (error) {
-      console.error(`❌ Erro ao atualizar vendedor do cliente ${omieClientCode} no Omie:`, error);
-      return {
-        success: false,
-        message: `Erro ao atualizar vendedor no Omie: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
       };
     }
   }
@@ -1656,8 +1599,13 @@ export class OmieService {
         }
       }
       
-      // Determinar tipo de faturamento baseado no CFOP (usa função especializada)
-      const billingType = this.determineBillingType(cfop);
+      // Determinar tipo de faturamento
+      let billingType = 'venda';
+      if (order.informacoes_adicionais?.tipo_operacao) {
+        const tipoOp = order.informacoes_adicionais.tipo_operacao.toLowerCase();
+        if (tipoOp.includes('troca')) billingType = 'troca';
+        else if (tipoOp.includes('amostra')) billingType = 'amostra';
+      }
       
       // Produtos do pedido
       const products = (order.det || []).map((item: any) => ({
@@ -2057,55 +2005,6 @@ export class OmieService {
     }
   }
 
-  // Método auxiliar para buscar apenas o CFOP de uma nota fiscal
-  async getInvoiceCFOP(invoiceNumber: string): Promise<string | null> {
-    try {
-      console.log(`📋 Buscando CFOP para NF ${invoiceNumber}...`);
-      
-      const invoiceData = await this.getInvoiceByNumber(invoiceNumber);
-      
-      if (!invoiceData) {
-        console.log(`⚠️ NF ${invoiceNumber}: Resposta vazia da API`);
-        return null;
-      }
-      
-      // Tentar diferentes estruturas de resposta do Omie
-      // Estrutura 1: det direto
-      let det = invoiceData.det;
-      
-      // Estrutura 2: nfe.det
-      if (!det && invoiceData.nfe?.det) {
-        det = invoiceData.nfe.det;
-      }
-      
-      // Estrutura 3: nfCadastro.det
-      if (!det && invoiceData.nfCadastro?.det) {
-        det = invoiceData.nfCadastro.det;
-      }
-      
-      // Validar se det é um array com itens
-      if (!det || !Array.isArray(det) || det.length === 0) {
-        console.log(`⚠️ NF ${invoiceNumber}: Sem itens (det) na resposta`);
-        return null;
-      }
-      
-      // Extrair CFOP do primeiro item da nota
-      const cfop = det[0]?.prod?.CFOP || null;
-      
-      if (cfop) {
-        console.log(`✅ CFOP encontrado para NF ${invoiceNumber}: ${cfop}`);
-      } else {
-        console.log(`⚠️ NF ${invoiceNumber}: CFOP não disponível na API`);
-      }
-      
-      return cfop;
-    } catch (error: any) {
-      console.error(`❌ Erro ao buscar CFOP da NF ${invoiceNumber}:`, error.message);
-      // Retorna null em caso de erro para não interromper o fluxo
-      return null;
-    }
-  }
-
   // Buscar cliente por código interno Omie
   async getClientByCode(codigoCliente: number): Promise<OmieClient | null> {
     try {
@@ -2492,7 +2391,7 @@ export class OmieService {
           modalidade: "9" // Sem ocorrência de transporte
         },
         informacoes_adicionais: {
-          codigo_categoria: OMIE_SALES_CATEGORY_CODE, // Categoria fiscal fixa
+          codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
           enviar_email: "N"
@@ -2546,7 +2445,7 @@ export class OmieService {
 
       // Se queremos incluir inativos, adicionar filtro específico
       if (includeInactive) {
-        requestParams.clientesFiltro = {
+        requestParams.clientesFiltrar = {
           inativo: 'S'
         };
       }
@@ -2672,24 +2571,7 @@ export class OmieService {
         errors: []
       };
 
-      const { applyCustomerRecurrenceChange } = await import('./customerRecurrenceService');
-
       console.log('Iniciando sincronização COMPLETA de clientes (ativos + inativos)...');
-
-      // Helper para normalizar weekdays
-      const normalizeWeekdays = (wd: any): string[] | undefined => {
-        if (!wd) return undefined;
-        if (Array.isArray(wd)) return wd.map(d => d.toLowerCase());
-        if (typeof wd === 'string') {
-          try {
-            const parsed = JSON.parse(wd);
-            return Array.isArray(parsed) ? parsed.map(d => d.toLowerCase()) : undefined;
-          } catch {
-            return undefined;
-          }
-        }
-        return undefined;
-      };
 
       // PRIMEIRA PASSADA: Clientes ATIVOS (padrão)
       console.log('Sincronizando clientes ATIVOS...');
@@ -2699,61 +2581,10 @@ export class OmieService {
       while (hasMorePages) {
         const pageData = await this.getAllClients(currentPage, 100, false); // false = apenas ativos
         
-        for (const omieClient of pageData.clients) {
-          try {
-            result.totalProcessed++;
-            const formatted = this.convertClientToSystemFormat(omieClient);
-            const existing = await this.storage.getCustomer(formatted.id);
-            
-            if (existing) {
-              // Cliente existe - CAPTURAR SNAPSHOT COMPLETO ANTES DE ATUALIZAR
-              const previousSnapshot = {
-                sellerId: existing.sellerId || undefined,
-                weekdays: normalizeWeekdays(existing.weekdays),
-                visitPeriodicity: existing.visitPeriodicity || undefined
-              };
-              
-              // Verificar mudança de vendedor (Omie não fornece weekdays/visitPeriodicity)
-              const sellerChanged = existing.sellerId !== formatted.sellerId;
-              
-              // Atualizar cliente no banco
-              await this.storage.updateCustomer(formatted.id, formatted);
-              result.updated++;
-              
-              // Se houve mudança de vendedor, aplicar correções em rotas e cards
-              if (sellerChanged) {
-                console.log(`🔄 [OMIE-SYNC] Detectada mudança de vendedor para ${formatted.fantasyName || formatted.name}:`, {
-                  previous: previousSnapshot.sellerId,
-                  new: formatted.sellerId
-                });
-                
-                try {
-                  // Estado NOVO: seller do Omie, weekdays/periodicity existentes (Omie não fornece)
-                  const newState = {
-                    sellerId: formatted.sellerId || undefined,
-                    weekdays: previousSnapshot.weekdays,  // Mantém existentes (Omie não fornece)
-                    visitPeriodicity: previousSnapshot.visitPeriodicity  // Mantém existentes
-                  };
-                  
-                  // Estado ANTERIOR: snapshot capturado antes da atualização
-                  await applyCustomerRecurrenceChange(formatted.id, newState, previousSnapshot);
-                  console.log(`✅ [OMIE-SYNC] Vendedor atualizado com sucesso para ${formatted.fantasyName || formatted.name}`);
-                } catch (recErr: any) {
-                  console.error(`⚠️ [OMIE-SYNC] Erro ao atualizar vendedor:`, recErr.message);
-                  const errorMsg = `${formatted.fantasyName || formatted.name}: Erro ao atualizar vendedor`;
-                  (result.errors as string[]).push(errorMsg);
-                }
-              }
-            } else {
-              // Cliente novo - criar
-              await this.storage.createCustomer(formatted);
-              result.imported++;
-            }
-          } catch (clientError: any) {
-            console.error(`❌ [OMIE-SYNC] Erro ao processar cliente ${omieClient.codigo_cliente_omie}:`, clientError.message);
-            const errorMsg = `Cliente ${omieClient.codigo_cliente_omie}: ${clientError.message}`;
-            (result.errors as string[]).push(errorMsg);
-          }
+        for (const client of pageData.clients) {
+          result.totalProcessed++;
+          // Este método retorna apenas os dados formatados
+          // A lógica de salvamento será feita na rota
         }
 
         currentPage++;
@@ -2770,24 +2601,10 @@ export class OmieService {
       while (hasMorePages) {
         const pageData = await this.getAllClients(currentPage, 100, true); // true = apenas inativos
         
-        for (const omieClient of pageData.clients) {
-          try {
-            result.totalProcessed++;
-            const formatted = this.convertClientToSystemFormat(omieClient);
-            const existing = await this.storage.getCustomer(formatted.id);
-            
-            if (existing) {
-              await this.storage.updateCustomer(formatted.id, formatted);
-              result.updated++;
-            } else {
-              await this.storage.createCustomer(formatted);
-              result.imported++;
-            }
-          } catch (clientError: any) {
-            console.error(`❌ [OMIE-SYNC] Erro ao processar cliente inativo ${omieClient.codigo_cliente_omie}:`, clientError.message);
-            const errorMsg = `Cliente inativo ${omieClient.codigo_cliente_omie}: ${clientError.message}`;
-            (result.errors as string[]).push(errorMsg);
-          }
+        for (const client of pageData.clients) {
+          result.totalProcessed++;
+          // Este método retorna apenas os dados formatados
+          // A lógica de salvamento será feita na rota
         }
 
         currentPage++;
@@ -2795,7 +2612,6 @@ export class OmieService {
       }
 
       console.log(`Total de clientes processados (ativos + inativos): ${result.totalProcessed}`);
-      console.log(`✅ Sincronização concluída: ${result.imported} novos, ${result.updated} atualizados, ${result.errors.length} erros`);
 
       return result;
     } catch (error) {
@@ -3188,12 +3004,6 @@ export class OmieService {
     errors: any[];
     isComplete: boolean;
     message: string;
-    cfopFallbackStats?: {
-      attempts: number;
-      successes: number;
-      failures: number;
-      stillMissing: string[];
-    };
   }> {
     try {
       console.log('🔄 Iniciando sincronização de TODAS as notas fiscais históricas (apenas NF-e autorizadas)...');
@@ -3203,15 +3013,6 @@ export class OmieService {
       let updated = 0;
       let skipped = 0;
       const errors: any[] = [];
-      
-      // Cache de CFOPs e estatísticas de fallback
-      const cfopCache = new Map<string, string>();
-      const fallbackStats = {
-        attempts: 0,
-        successes: 0,
-        failures: 0,
-        stillMissing: [] as string[]
-      };
       
       let page = 1;
       let hasMorePages = true;
@@ -3357,42 +3158,14 @@ export class OmieService {
                 }
               }
               
-              // Extrair CFOP do primeiro produto da nota fiscal
-              let cfop = invoice.det?.[0]?.prod?.CFOP || '';
-              
-              // FALLBACK: Se CFOP ausente, buscar via ConsultarNF (com cache)
-              if (!cfop && invoiceNumber) {
-                // Verificar cache primeiro
-                if (cfopCache.has(invoiceNumber)) {
-                  cfop = cfopCache.get(invoiceNumber) || '';
-                  console.log(`📦 CFOP da NF ${invoiceNumber} recuperado do cache: ${cfop}`);
-                } else {
-                  // Buscar via API
-                  console.log(`⚠️ CFOP ausente para NF ${invoiceNumber}, buscando via fallback...`);
-                  fallbackStats.attempts++;
-                  
-                  try {
-                    const fetchedCfop = await this.getInvoiceCFOP(invoiceNumber);
-                    if (fetchedCfop) {
-                      cfop = fetchedCfop;
-                      cfopCache.set(invoiceNumber, cfop);
-                      fallbackStats.successes++;
-                      console.log(`✅ CFOP ${cfop} obtido via fallback para NF ${invoiceNumber}`);
-                    } else {
-                      fallbackStats.failures++;
-                      fallbackStats.stillMissing.push(invoiceNumber);
-                      console.log(`❌ Fallback falhou para NF ${invoiceNumber} - CFOP continua ausente`);
-                    }
-                  } catch (error: any) {
-                    fallbackStats.failures++;
-                    fallbackStats.stillMissing.push(invoiceNumber);
-                    console.error(`❌ Erro no fallback para NF ${invoiceNumber}:`, error.message);
-                  }
-                }
+              // Determinar tipo de faturamento (simplificado)
+              let billingType: 'venda' | 'troca' | 'amostra' = 'venda';
+              const operationDescription = invoice.ide?.xJust || invoice.infAdic?.infCpl || '';
+              if (operationDescription.toLowerCase().includes('troca')) {
+                billingType = 'troca';
+              } else if (operationDescription.toLowerCase().includes('amostra')) {
+                billingType = 'amostra';
               }
-              
-              // Determinar tipo de faturamento baseado no CFOP (usa função especializada)
-              const billingType = this.determineBillingType(cfop);
               
               // Extrair produtos da nota fiscal
               const products = (invoice.det || []).map((item: any) => ({
@@ -3457,11 +3230,12 @@ export class OmieService {
                       console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
                     }
                     
-                    // Verificar se está cancelado via etapa do pedido
+                    // Verificar se está cancelado
                     if (stageData.cancelled) {
                       isCancelled = true;
-                      invoiceStage = 'CANCELADO';
-                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - marcando para exclusão dos cálculos`);
+                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - pulando sincronização`);
+                      skipped++;
+                      continue; // Pular notas canceladas
                     }
                   }
                 } catch (error) {
@@ -3471,9 +3245,9 @@ export class OmieService {
               
               // Verificação adicional: campo de cancelamento direto da NF
               if (invoice.cancelamento?.cCancelado === 'S') {
-                isCancelled = true;
-                invoiceStage = 'CANCELADO';
-                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - marcando para exclusão dos cálculos`);
+                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - pulando sincronização`);
+                skipped++;
+                continue;
               }
               
               const billingData = {
@@ -3481,7 +3255,6 @@ export class OmieService {
                 invoiceNumber,
                 customerFantasyName: customerFantasyName || 'Cliente não identificado',
                 billingType,
-                cfop: cfop || '',
                 totalValue,
                 invoiceDate: invoiceDateObj,
                 sellerId: sellerId || '',
@@ -3497,7 +3270,6 @@ export class OmieService {
                   return this.mapSefazStatus(validStatus); // Fallback para 100 (Autorizado)
                 })(),
                 invoiceStage: invoiceStage || '',
-                isCancelled: isCancelled, // ✅ Passar flag de cancelamento
                 products
               };
               
@@ -3580,15 +3352,6 @@ export class OmieService {
       console.log(`⚠️ Rejeitados: ${skipped}`);
       console.log(`❌ Erros: ${errors.length}`);
       
-      // Log de estatísticas de fallback de CFOP
-      console.log(`\n📋 ESTATÍSTICAS DE FALLBACK DE CFOP:`);
-      console.log(`🔍 Tentativas: ${fallbackStats.attempts}`);
-      console.log(`✅ Sucessos: ${fallbackStats.successes}`);
-      console.log(`❌ Falhas: ${fallbackStats.failures}`);
-      if (fallbackStats.stillMissing.length > 0) {
-        console.log(`⚠️ Notas ainda sem CFOP (${fallbackStats.stillMissing.length}): ${fallbackStats.stillMissing.slice(0, 10).join(', ')}${fallbackStats.stillMissing.length > 10 ? '...' : ''}`);
-      }
-      
       const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
       
       return {
@@ -3598,8 +3361,7 @@ export class OmieService {
         skipped,
         errors,
         isComplete,
-        message: `Sincronização concluída. Total: ${totalProcessed}, Importados: ${imported}, Atualizados: ${updated}, Rejeitados: ${skipped}. ${recordsProcessedThisSync} registros processados nesta execução.`,
-        cfopFallbackStats: fallbackStats
+        message: `Sincronização concluída. Total: ${totalProcessed}, Importados: ${imported}, Atualizados: ${updated}, Rejeitados: ${skipped}. ${recordsProcessedThisSync} registros processados nesta execução.`
       };
       
     } catch (error) {
@@ -4237,7 +3999,6 @@ export async function createOmieOrder(orderData: {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
-    omieCodigoProduto?: string | number;
   }>;
   totalValue: number;
   orderNumber: string;
@@ -4246,30 +4007,20 @@ export async function createOmieOrder(orderData: {
   operationType?: string;
   boletoDays?: number;
 }) {
-  console.log('🔥 [CREATE-OMIE-ORDER] Iniciando criação de pedido no Omie');
-  console.log('📋 [CREATE-OMIE-ORDER] OrderNumber:', orderData.orderNumber);
-  console.log('📋 [CREATE-OMIE-ORDER] Cliente:', orderData.customer.document, '-', orderData.customer.name);
-  console.log('📋 [CREATE-OMIE-ORDER] Produtos:', orderData.products.length);
-  console.log('📋 [CREATE-OMIE-ORDER] Valor Total:', orderData.totalValue);
-  console.log('📋 [CREATE-OMIE-ORDER] Seller ID:', orderData.sellerId);
-  console.log('📋 [CREATE-OMIE-ORDER] Payment Method:', orderData.paymentMethod);
-  
   const omieService = OmieService.createFromEnv();
 
   try {
     // 1. Buscar ou criar cliente no Omie
     let omieCustomerId;
     try {
-      console.log('🔍 [CREATE-OMIE-ORDER] Buscando cliente no Omie:', orderData.customer.document);
       const existingCustomer = await omieService.getClientByCnpjCpf(orderData.customer.document);
       if (existingCustomer) {
         omieCustomerId = existingCustomer.codigo_cliente_omie;
-        console.log('✅ [CREATE-OMIE-ORDER] Cliente encontrado no Omie:', omieCustomerId);
+        console.log('Cliente encontrado no Omie:', omieCustomerId);
       } else {
         throw new Error('Cliente não encontrado');
       }
     } catch (error) {
-      console.log('⚠️ [CREATE-OMIE-ORDER] Cliente não encontrado, será criado novo:', error);
       // Cliente não existe, criar novo
       console.log('Criando novo cliente no Omie...');
       // Criar cliente diretamente via API
@@ -4339,36 +4090,21 @@ export async function createOmieOrder(orderData: {
         origem_pedido: 'CRM-HonestSucos',
         ...(vendorCode && { codigo_vendedor: vendorCode }) // Adicionar vendedor se disponível
       },
-      det: orderData.products.map((product, index) => {
-        // Converter omieCodigoProduto para número se disponível
-        const codigoProduto = product.omieCodigoProduto 
-          ? (typeof product.omieCodigoProduto === 'string' 
-              ? parseInt(product.omieCodigoProduto, 10) 
-              : product.omieCodigoProduto)
-          : undefined;
-        
-        // Log de aviso se produto não tiver código Omie
-        if (!codigoProduto) {
-          console.warn(`⚠️ Produto "${product.description}" não tem código Omie! Pedido pode falhar.`);
+      det: orderData.products.map((product, index) => ({
+        ide: {
+          codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`
+        },
+        produto: {
+          descricao: product.description,
+          quantidade: product.quantity,
+          valor_unitario: product.unitPrice
         }
-        
-        return {
-          ide: {
-            codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`,
-            ...(codigoProduto && { codigo_produto: codigoProduto }) // Incluir codigo_produto se disponível
-          },
-          produto: {
-            descricao: product.description,
-            quantidade: product.quantity,
-            valor_unitario: product.unitPrice
-          }
-        };
-      }),
+      })),
       frete: {
         modalidade: "9" // Sem ocorrência de transporte
       },
       informacoes_adicionais: {
-        codigo_categoria: OMIE_SALES_CATEGORY_CODE, // Categoria fiscal fixa
+        codigo_categoria: "1.01.03", // Categoria fiscal
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
         enviar_email: "N",
@@ -4414,12 +4150,7 @@ export async function createOmieOrder(orderData: {
     };
 
   } catch (error: any) {
-    console.error('❌ [CREATE-OMIE-ORDER] ERRO FATAL ao criar pedido no Omie');
-    console.error('❌ [CREATE-OMIE-ORDER] Error Type:', error.constructor.name);
-    console.error('❌ [CREATE-OMIE-ORDER] Error Message:', error.message);
-    console.error('❌ [CREATE-OMIE-ORDER] Error Stack:', error.stack);
-    console.error('❌ [CREATE-OMIE-ORDER] OrderNumber que falhou:', orderData.orderNumber);
-    console.error('❌ [CREATE-OMIE-ORDER] Cliente que falhou:', orderData.customer.document);
+    console.error('Erro ao criar pedido no Omie:', error);
     throw new Error(`Falha na integração Omie: ${error.message}`);
   }
 }

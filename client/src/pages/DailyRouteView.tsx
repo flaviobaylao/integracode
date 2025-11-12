@@ -22,7 +22,6 @@ import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SalesCardModal from "@/components/SalesCardModal";
-import SaleModal from "@/components/SaleModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 interface DailyRoute {
@@ -81,16 +80,6 @@ export default function DailyRouteView() {
   // Estado para modal de edição do card
   const [editingCard, setEditingCard] = useState<SalesCardWithRelations | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [initialCardValues, setInitialCardValues] = useState<{
-    customerId?: string;
-    sellerId?: string;
-    scheduledDate?: string;
-    scheduledTime?: string;
-  } | null>(null);
-  
-  // Estado para modal de venda (produto selection)
-  const [showSaleModal, setShowSaleModal] = useState(false);
-  const [salesCardForSale, setSalesCardForSale] = useState<any>(null);
   
   // Estado para modal de foto
   const [selectedPhoto, setSelectedPhoto] = useState<{
@@ -415,78 +404,40 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para preparar venda: verifica card existente ou cria novo
+  // Função para abrir modal de edição do card
   const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      // Determinar valores para requisição
+      // Buscar sales_cards da data da rota filtrados por este cliente
       const routeDate = route?.routeDate || selectedDate;
-      const currentTime = format(new Date(), 'HH:mm');
-      const sellerId = selectedSellerId || user?.id || '';
+      const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
       
-      toast({
-        title: "Preparando venda",
-        description: "Verificando card do cliente...",
-      });
-      
-      // Chamar endpoint unificado que SEMPRE cria novo card
-      const response = await apiRequest('POST', `/api/customers/${customerId}/prepare-sale`, {
-        scheduledDate: routeDate,
-        scheduledTime: currentTime,
-        sellerId: sellerId,
-      });
-      
-      if (response.status === 'duplicated') {
-        // Card criado por duplicação - abrir com dados
-        toast({
-          title: "Novo card criado",
-          description: "Card criado com produtos do último pedido! Edite conforme necessário.",
-        });
-        setSelectedCard(response.card);
-        setShowCardModal(true);
-        
-      } else if (response.status === 'create-manual') {
-        // Sem pedido anterior - abrir modal de criação manual
-        toast({
-          title: "Primeiro pedido",
-          description: "Cliente sem pedidos anteriores. Abrindo formulário em branco.",
-        });
-        
-        setInitialCardValues({
-          customerId: response.defaults.customerId,
-          sellerId: response.defaults.sellerId,
-          scheduledDate: response.defaults.scheduledDate,
-          scheduledTime: response.defaults.scheduledTime,
-        });
-        
-        setEditingCard(null);
-        setShowEditModal(true);
+      if (!response || !response.cards) {
+        throw new Error('Nenhum card encontrado para esta data');
       }
       
+      // Filtrar pelo customerId
+      const card = response.cards.find((c: any) => c.customerId === customerId);
+      
+      if (!card) {
+        toast({
+          variant: "destructive",
+          title: "Card não encontrado",
+          description: "Não há card de vendas para este cliente na data selecionada.",
+        });
+        return;
+      }
+      
+      setEditingCard(card);
+      setShowEditModal(true);
     } catch (error: any) {
-      console.error('Erro ao preparar venda:', error);
+      console.error('Erro ao carregar card:', error);
       toast({
         variant: "destructive",
-        title: "Erro ao preparar venda",
-        description: error.message || "Não foi possível preparar o card de vendas.",
+        title: "Erro ao carregar card",
+        description: error.message || "Não foi possível carregar os detalhes do card.",
       });
     }
-  };
-
-  // Handler para iniciar venda (abrir SaleModal)
-  const handleStartSale = (card: SalesCardWithRelations) => {
-    setShowCardModal(false); // Fechar modal de detalhes
-    setSalesCardForSale(card); // Definir card para venda
-    setShowSaleModal(true); // Abrir modal de seleção de produtos
-  };
-
-  // Handler para marcar como "Não Venda"
-  const handleStartNoSale = async (card: SalesCardWithRelations) => {
-    // Implementação será adicionada conforme necessidade
-    toast({
-      title: "Função em desenvolvimento",
-      description: "A funcionalidade 'Não Venda' será implementada em breve.",
-    });
   };
 
   // Função para abrir modal de foto
@@ -930,44 +881,7 @@ export default function DailyRouteView() {
               visits={orderedVisits}
               optimizedOrder={effectiveOptimizedOrder}
               checkpoints={route.checkpoints || []}
-              userRole={user?.role?.toLowerCase()}
               onPhotoClick={(photoData) => setSelectedPhoto(photoData)}
-              onLockCoordinates={async (customerId, latitude, longitude) => {
-                try {
-                  // Validar coordenadas antes de enviar
-                  const lat = parseFloat(latitude);
-                  const lon = parseFloat(longitude);
-                  
-                  if (isNaN(lat) || isNaN(lon)) {
-                    toast({
-                      variant: "destructive",
-                      title: "Coordenadas inválidas",
-                      description: "As coordenadas do checkpoint são inválidas. Não é possível travar.",
-                    });
-                    return;
-                  }
-                  
-                  await apiRequest('PUT', `/api/customers/${customerId}`, {
-                    latitude: lat,
-                    longitude: lon
-                  });
-                  
-                  toast({
-                    title: "Coordenadas travadas com sucesso!",
-                    description: "As coordenadas do cliente foram atualizadas com base no PIN de check-in.",
-                  });
-                  
-                  // Invalidar cache para atualizar dados do cliente e rotas
-                  queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
-                  queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
-                } catch (error: any) {
-                  toast({
-                    variant: "destructive",
-                    title: "Erro ao travar coordenadas",
-                    description: error.message || "Não foi possível atualizar as coordenadas do cliente.",
-                  });
-                }
-              }}
             />
           )}
         </CardContent>
@@ -1005,7 +919,7 @@ export default function DailyRouteView() {
               return (
                 <div 
                   key={visit.id}
-                  onClick={(e) => handleEditCard(visit.customerId, e)}
+                  onClick={() => handleOpenCardDetails(visit.id)}
                   className={`flex items-start p-4 rounded-lg border cursor-pointer transition-all hover:shadow-md ${
                     status === 'completed' 
                       ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-900/30'
@@ -1381,8 +1295,6 @@ export default function DailyRouteView() {
           refetch();
         }}
         card={selectedCard}
-        onStartSale={handleStartSale}
-        onStartNoSale={handleStartNoSale}
       />
 
       {/* Modal de Edição do Card de Vendas */}
@@ -1391,35 +1303,12 @@ export default function DailyRouteView() {
         onClose={() => {
           setShowEditModal(false);
           setEditingCard(null);
-          setInitialCardValues(null); // Limpar valores iniciais
           // Invalidar queries de rotas e cards para recarregar dados atualizados
           queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
           queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
           refetch();
         }}
-        onSuccess={(createdCard) => {
-          // Fechar modal de criação
-          setShowEditModal(false);
-          setEditingCard(null);
-          setInitialCardValues(null);
-          // Abrir modal de detalhes com o card criado
-          setSelectedCard(createdCard);
-          setShowCardModal(true);
-        }}
-        initialValues={initialCardValues || undefined}
         editingCard={editingCard}
-      />
-
-      {/* Modal de Seleção de Produtos (Venda) */}
-      <SaleModal
-        isOpen={showSaleModal}
-        onClose={() => {
-          setShowSaleModal(false);
-          setSalesCardForSale(null);
-          // Recarregar rota após fechar modal
-          refetch();
-        }}
-        salesCard={salesCardForSale}
       />
 
       {/* Modal de Visualização de Foto */}

@@ -25,7 +25,6 @@ interface VisitAgenda {
   isVirtual: boolean;
   visitStatus: string;
   customerName: string;
-  customerFantasyName?: string;
   customerLatitude: string | null;
   customerLongitude: string | null;
   customerAddress: string | null;
@@ -65,7 +64,6 @@ export default function VisitRoutes() {
     endDate: getTodayBrazil(), // Inicializar com data de hoje
     routeDay: 'all',
     visitStatus: 'pending',
-    customerSearch: '',
     page: 1
   });
   
@@ -202,47 +200,34 @@ export default function VisitRoutes() {
   });
 
   // Mapear sales cards para formato compatível com visits
-  const allVisits = salesCardsData?.cards ? salesCardsData.cards.map((card: any) => ({
-    id: card.id,
-    customerId: card.customerId,
-    sellerId: card.sellerId,
-    sellerName: card.seller ? `${card.seller.firstName} ${card.seller.lastName}` : 'N/A',
-    scheduledDate: card.scheduledDate,
-    routeDay: card.routeDay,
-    recurrenceType: card.recurrenceType,
-    isVirtual: card.customer?.virtualService || false,
-    visitStatus: card.status === 'completed' ? 'completed' : card.status === 'pending' ? 'pending' : 'missed',
-    customerName: card.customer?.name || '',
-    customerFantasyName: card.customer?.fantasyName || '',
-    customerLatitude: card.customer?.latitude,
-    customerLongitude: card.customer?.longitude,
-    customerAddress: card.customer?.address,
-    actualCheckIn: card.checkInTime,
-    actualCheckOut: card.checkOutTime,
-    distanceToCustomer: null,
-    salesCardId: card.id,
-    createdAt: card.createdAt
-  })) : [];
-
-  // Aplicar filtro de busca por nome fantasia client-side
-  const filteredVisits = allVisits.filter((visit: VisitAgenda) => {
-    if (!filters.customerSearch) return true;
-    const searchTerm = filters.customerSearch.toLowerCase();
-    return (
-      visit.customerFantasyName?.toLowerCase().includes(searchTerm) ||
-      visit.customerName?.toLowerCase().includes(searchTerm)
-    );
-  });
-
-  const visits = {
-    visits: filteredVisits,
+  const visits = salesCardsData?.cards ? {
+    visits: salesCardsData.cards.map((card: any) => ({
+      id: card.id,
+      customerId: card.customerId,
+      sellerId: card.sellerId,
+      sellerName: card.seller ? `${card.seller.firstName} ${card.seller.lastName}` : 'N/A',
+      scheduledDate: card.scheduledDate,
+      routeDay: card.routeDay,
+      recurrenceType: card.recurrenceType,
+      isVirtual: card.customer?.virtualService || false,
+      visitStatus: card.status === 'completed' ? 'completed' : card.status === 'pending' ? 'pending' : 'missed',
+      customerName: card.customer?.name || '',
+      customerLatitude: card.customer?.latitude,
+      customerLongitude: card.customer?.longitude,
+      customerAddress: card.customer?.address,
+      actualCheckIn: card.checkInTime,
+      actualCheckOut: card.checkOutTime,
+      distanceToCustomer: null,
+      salesCardId: card.id,
+      createdAt: card.createdAt
+    })),
     pagination: {
       page: 1,
       pageSize: 50,
-      total: filteredVisits.length,
+      total: salesCardsData.cards.length,
       totalPages: 1
     }
-  };
+  } : { visits: [], pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 } };
 
   // Função para formatar distâncias: < 1km mostra em metros, >= 1km mostra em km
   const formatDistance = (meters: number) => {
@@ -468,17 +453,6 @@ export default function VisitRoutes() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1 block">Buscar Cliente</label>
-              <Input
-                type="text"
-                placeholder="Nome fantasia do cliente..."
-                value={filters.customerSearch}
-                onChange={(e) => setFilters(prev => ({ ...prev, customerSearch: e.target.value }))}
-                data-testid="input-customer-search"
-              />
-            </div>
-
-            <div>
               <label className="text-sm font-medium mb-1 block">Dia da Semana</label>
               <Select
                 value={filters.routeDay}
@@ -574,7 +548,7 @@ export default function VisitRoutes() {
                         )}
                         <div>
                           <div className="font-medium text-gray-800 dark:text-white flex items-center">
-                            {(location as any).customerFantasyName || location.customerName}
+                            {location.customerName}
                             {location.isVirtual && (
                               <Badge variant="outline" className="ml-2 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600 dark:text-blue-400 text-xs">
                                 Virtual
@@ -652,22 +626,15 @@ export default function VisitRoutes() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visits.visits.map((visit: VisitAgenda) => (
+                  {visits.visits.map((visit) => (
                     <TableRow key={visit.id} data-testid={`visit-row-${visit.id}`}>
                       <TableCell className="font-medium">
                         {formatDate(visit.scheduledDate)}
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col">
-                          <div className="flex items-center font-medium">
-                            <User className="mr-2 h-4 w-4 text-gray-400" />
-                            {visit.customerFantasyName || visit.customerName}
-                          </div>
-                          {visit.customerFantasyName && visit.customerFantasyName !== visit.customerName && (
-                            <div className="text-xs text-gray-500 dark:text-gray-400 ml-6">
-                              {visit.customerName}
-                            </div>
-                          )}
+                        <div className="flex items-center">
+                          <User className="mr-2 h-4 w-4 text-gray-400" />
+                          {visit.customerName}
                         </div>
                       </TableCell>
                       <TableCell>

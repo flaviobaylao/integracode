@@ -6,7 +6,6 @@ import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, 
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, isOmieConfigured } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
-import { applyCustomerRecurrenceChange } from "./customerRecurrenceService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
@@ -20,8 +19,6 @@ import {
   insertSalesGoalSchema,
   insertRouteSchema,
   insertUserSchema,
-  insertLeadSchema,
-  insertDeliveryDriverSchema,
   visitAgenda,
   users,
   salesCards,
@@ -72,16 +69,6 @@ async function saveSyncStatus(
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
-
-  // 🔥🔥🔥 LOGGING GLOBAL AGRESSIVO - TODAS AS REQUISIÇÕES POST
-  app.use((req, res, next) => {
-    if (req.method === 'POST') {
-      console.log(`\n🔥🔥🔥 [GLOBAL-POST-LOGGER] ${req.method} ${req.url}`);
-      console.log(`📋 [GLOBAL-POST-LOGGER] Body:`, JSON.stringify(req.body, null, 2));
-      console.log(`👤 [GLOBAL-POST-LOGGER] Headers:`, JSON.stringify(req.headers, null, 2));
-    }
-    next();
-  });
 
   // Middleware global para impedir cache HTTP em todas as rotas /api/*
   app.use('/api', (req, res, next) => {
@@ -459,12 +446,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Helper function to format user name
-  const formatUserName = (user: any): string => {
-    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
-    return fullName || user.email;
-  };
-
   // User routes
   app.get('/api/users', authenticateUser, async (req: any, res) => {
     try {
@@ -476,13 +457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         users = users.filter(user => user.role === role);
       }
       
-      // Adicionar computed field 'name' para compatibilidade com frontend
-      const usersWithName = users.map(user => ({
-        ...user,
-        name: formatUserName(user)
-      }));
-      
-      res.json(usersWithName);
+      res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
@@ -665,242 +640,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get last order for duplication
-  app.get('/api/customers/:customerId/last-order', authenticateUser, async (req: any, res) => {
-    try {
-      const { customerId } = req.params;
-      const user = req.currentUser;
-      
-      // Get customer to check access
-      const customer = await storage.getCustomer(customerId);
-      if (!customer) {
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      
-      // Check if vendedor can access this customer
-      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      // Get last order
-      const lastOrder = await storage.getLastCustomerOrder(customerId);
-      
-      if (!lastOrder) {
-        return res.json(null); // No previous order
-      }
-      
-      // Sanitize order data for duplication (exclude ID, timestamps, Omie fields, etc)
-      const duplicatedData = {
-        customerId: lastOrder.customerId,
-        sellerId: lastOrder.sellerId,
-        products: lastOrder.products,
-        paymentMethod: lastOrder.paymentMethod,
-        operationType: lastOrder.operationType,
-        notes: lastOrder.notes,
-        freight: lastOrder.freight,
-        discount: lastOrder.discount,
-        saleValue: lastOrder.saleValue,
-        // DO NOT include: id, omieOrderId, completedDate, status, sync fields, delivery fields
-      };
-      
-      res.json(duplicatedData);
-    } catch (error) {
-      console.error("Error fetching last order:", error);
-      res.status(500).json({ message: "Failed to fetch last order" });
-    }
-  });
-
-  // Prepare sale: ALWAYS creates a new card by duplicating last order or returns defaults
-  app.post('/api/customers/:customerId/prepare-sale', authenticateUser, async (req: any, res) => {
-    try {
-      const { customerId } = req.params;
-      const { scheduledDate, scheduledTime, sellerId } = req.body;
-      const user = req.currentUser;
-      
-      console.log(`📋 [PREPARE-SALE] Iniciando para customerId=${customerId}, user=${user.email}, scheduledDate=${scheduledDate}`);
-      
-      // Validate required fields
-      if (!scheduledDate) {
-        console.error(`❌ [PREPARE-SALE] scheduledDate não fornecido`);
-        return res.status(400).json({ message: "scheduledDate is required" });
-      }
-      
-      // Get customer to check access
-      const customer = await storage.getCustomer(customerId);
-      if (!customer) {
-        console.error(`❌ [PREPARE-SALE] Cliente não encontrado: ${customerId}`);
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      
-      console.log(`✅ [PREPARE-SALE] Cliente encontrado: ${customer.fantasyName || customer.name} (${customerId})`);
-      
-      // Check if vendedor can access this customer
-      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
-        console.error(`❌ [PREPARE-SALE] Acesso negado: vendedor ${user.id} tentando acessar cliente de outro vendedor`);
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      // NOVA LÓGICA: SEMPRE criar um novo card, nunca reutilizar cards existentes
-      console.log(`🔄 [PREPARE-SALE] SEMPRE criando novo card (sem verificar cards ativos)`);
-      
-      // Try to duplicate last order
-      const lastOrder = await storage.getLastCustomerOrder(customerId);
-      
-      if (lastOrder) {
-        console.log(`✅ [PREPARE-SALE] Último pedido encontrado para ${customer.fantasyName || customer.name}: ${lastOrder.id || 'ID desconhecido'}`);
-        
-        // Prepare schedule datetime
-        const scheduleDateTime = scheduledTime 
-          ? new Date(`${scheduledDate}T${scheduledTime}:00`)
-          : new Date(scheduledDate);
-        
-        console.log(`📝 [PREPARE-SALE] Criando novo card duplicado com scheduledDate=${scheduleDateTime.toISOString()}`);
-        
-        // Create new sales card with duplicated data
-        const newCard = await storage.createSalesCard({
-          customerId: customerId,
-          sellerId: sellerId || customer.sellerId || user.id,
-          scheduledDate: scheduleDateTime,
-          products: lastOrder.products || [],
-          paymentMethod: lastOrder.paymentMethod || 'a_vista',
-          operationType: lastOrder.operationType || 'venda',
-          notes: lastOrder.notes || '',
-          freight: lastOrder.freight || 0,
-          discount: lastOrder.discount || 0,
-          saleValue: lastOrder.saleValue || 0,
-          isPermanent: false,
-          status: 'pending',
-        });
-        
-        console.log(`✅ [PREPARE-SALE] Card criado: ${newCard.id}`);
-        
-        // Fetch complete card with relations
-        const fullCard = await storage.getSalesCard(newCard.id);
-        
-        if (!fullCard) {
-          console.error(`❌ [PREPARE-SALE] Card criado mas falha ao buscar dados completos: ${newCard.id}`);
-          return res.status(500).json({ message: "Card created but failed to fetch complete data" });
-        }
-        
-        console.log(`✅ [PREPARE-SALE] Card duplicado com sucesso para ${customer.fantasyName || customer.name}: ${newCard.id}`);
-        return res.json({
-          status: 'duplicated',
-          card: fullCard,
-        });
-      }
-      
-      // No previous order - return manual creation signal with defaults
-      console.log(`ℹ️ [PREPARE-SALE] Nenhum pedido anterior encontrado. Retornando defaults para criação manual.`);
-      
-      // Parse scheduledDate corretamente
-      let scheduleDateTime: Date;
-      try {
-        // Se scheduledDate já é uma string ISO completa
-        if (typeof scheduledDate === 'string' && scheduledDate.includes('T')) {
-          scheduleDateTime = new Date(scheduledDate);
-        } else if (scheduledTime) {
-          // Se tem scheduledTime, combinar data + hora
-          scheduleDateTime = new Date(`${scheduledDate}T${scheduledTime}:00`);
-        } else {
-          // Apenas data, sem hora específica
-          scheduleDateTime = new Date(scheduledDate);
-        }
-        
-        // Validar se a data é válida
-        if (isNaN(scheduleDateTime.getTime())) {
-          throw new Error(`Data inválida: ${scheduledDate}`);
-        }
-      } catch (dateError) {
-        console.error(`❌ [PREPARE-SALE] Erro ao processar data: ${scheduledDate}`, dateError);
-        // Fallback para data atual
-        scheduleDateTime = new Date();
-      }
-      
-      console.log(`✅ [PREPARE-SALE] Retornando defaults para ${customer.fantasyName || customer.name}`);
-      return res.json({
-        status: 'create-manual',
-        defaults: {
-          customerId: customerId,
-          sellerId: sellerId || customer.sellerId || user.id,
-          scheduledDate: scheduleDateTime.toISOString().split('T')[0], // Formato yyyy-MM-dd para input type="date"
-          scheduledTime: scheduledTime || '09:00', // Default time if not provided
-        },
-      });
-    } catch (error: any) {
-      console.error("❌ [PREPARE-SALE] Erro inesperado:", error);
-      console.error("❌ [PREPARE-SALE] Stack trace:", error.stack);
-      res.status(500).json({ 
-        message: error.message || "Failed to prepare sale",
-        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      });
-    }
-  });
-
-  app.post('/api/customers/:customerId/duplicate-last-order', authenticateUser, async (req: any, res) => {
-    try {
-      const { customerId } = req.params;
-      const { scheduledDate, scheduledTime, sellerId } = req.body;
-      const user = req.currentUser;
-      
-      // Validate required fields
-      if (!scheduledDate) {
-        return res.status(400).json({ message: "scheduledDate is required" });
-      }
-      
-      // Get customer to check access
-      const customer = await storage.getCustomer(customerId);
-      if (!customer) {
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      
-      // Check if vendedor can access this customer
-      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      // Get last order
-      const lastOrder = await storage.getLastCustomerOrder(customerId);
-      
-      if (!lastOrder) {
-        return res.status(404).json({ message: "No previous order found for this customer" });
-      }
-      
-      // Prepare schedule datetime
-      const scheduleDateTime = scheduledTime 
-        ? new Date(`${scheduledDate}T${scheduledTime}:00`)
-        : new Date(scheduledDate);
-      
-      // Create new sales card with duplicated data
-      const newCard = await storage.createSalesCard({
-        customerId: customerId,
-        sellerId: sellerId || customer.sellerId || user.id,
-        scheduledDate: scheduleDateTime,
-        products: lastOrder.products || [],
-        paymentMethod: lastOrder.paymentMethod || 'a_vista',
-        operationType: lastOrder.operationType || 'venda',
-        notes: lastOrder.notes || '',
-        freight: lastOrder.freight || 0,
-        discount: lastOrder.discount || 0,
-        saleValue: lastOrder.saleValue || 0,
-        isPermanent: false, // Duplicated cards are not permanent
-        status: 'pending',
-      });
-      
-      // Fetch complete card with relations
-      const fullCard = await storage.getSalesCard(newCard.id);
-      
-      if (!fullCard) {
-        return res.status(500).json({ message: "Card created but failed to fetch complete data" });
-      }
-      
-      console.log(`✅ Card duplicado com sucesso para cliente ${customer.fantasyName || customer.name}: ${newCard.id}`);
-      res.json(fullCard);
-    } catch (error: any) {
-      console.error("Error duplicating last order:", error);
-      res.status(500).json({ message: error.message || "Failed to duplicate last order" });
-    }
-  });
-
   app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -911,18 +650,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem editar dados de clientes." });
       }
       
-      // Check if customer exists and capture previous state for recurrence detection
+      // Check if customer exists
       const existingCustomer = await storage.getCustomer(id);
       if (!existingCustomer) {
         return res.status(404).json({ message: "Cliente não encontrado" });
       }
-      
-      // Capture previous state for recurrence comparison
-      const previousState = {
-        sellerId: existingCustomer.sellerId || undefined,
-        weekdays: existingCustomer.weekdays || undefined,
-        visitPeriodicity: existingCustomer.visitPeriodicity || undefined
-      };
       
       // Clean data: transform empty strings to null for numeric fields
       const cleanedData: any = {};
@@ -940,70 +672,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('✅ Cliente atualizado:', {
         id: updatedCustomer.id,
-        name: updatedCustomer.fantasyName || updatedCustomer.name,
         weekdays: updatedCustomer.weekdays,
-        visitPeriodicity: updatedCustomer.visitPeriodicity,
-        sellerId: updatedCustomer.sellerId
+        visitPeriodicity: updatedCustomer.visitPeriodicity
       });
-      
-      // Detect recurrence changes
-      const normalizeWeekdays = (wd: any): string[] => {
-        if (!wd) return [];
-        if (Array.isArray(wd)) return wd;
-        if (typeof wd === 'string') {
-          try {
-            return JSON.parse(wd);
-          } catch {
-            return [];
-          }
-        }
-        return [];
-      };
-      
-      const previousWeekdays = normalizeWeekdays(previousState.weekdays);
-      const newWeekdays = normalizeWeekdays(updatedCustomer.weekdays);
-      const weekdaysChanged = JSON.stringify(previousWeekdays.sort()) !== JSON.stringify(newWeekdays.sort());
-      const periodicityChanged = previousState.visitPeriodicity !== updatedCustomer.visitPeriodicity;
-      const sellerChanged = previousState.sellerId !== updatedCustomer.sellerId;
-      
-      // Apply recurrence changes if any recurrence field changed
-      if (weekdaysChanged || periodicityChanged || sellerChanged) {
-        try {
-          console.log(`🔄 Detectadas mudanças de recorrência para cliente ${updatedCustomer.fantasyName || updatedCustomer.name}...`);
-          const recurrenceResult = await applyCustomerRecurrenceChange(id, {
-            weekdays: newWeekdays.length > 0 ? newWeekdays : undefined,
-            visitPeriodicity: updatedCustomer.visitPeriodicity || undefined,
-            sellerId: updatedCustomer.sellerId || undefined
-          }, {
-            sellerId: previousState.sellerId,
-            weekdays: previousWeekdays.length > 0 ? previousWeekdays : undefined,
-            visitPeriodicity: previousState.visitPeriodicity
-          });
-          
-          if (recurrenceResult.success) {
-            console.log(`✅ Recorrência atualizada: ${recurrenceResult.invalidatedRoutes.length} rotas invalidadas`);
-          } else {
-            console.warn(`⚠️ Falha ao atualizar recorrência: ${recurrenceResult.message}`);
-          }
-        } catch (recurrenceError: any) {
-          console.error('⚠️ Erro ao aplicar mudanças de recorrência:', recurrenceError);
-        }
-      }
       
       // Atualizar automaticamente os salesCards futuros com os novos dados do cliente
       try {
-        console.log(`🔄 Iniciando recalculo de nextVisitDate para cliente ${updatedCustomer.fantasyName || updatedCustomer.name}...`);
         const { updateExistingSalesCardsFromCustomer } = await import('./visitScheduleService');
         const updateResult = await updateExistingSalesCardsFromCustomer(id);
         
         if (updateResult.updated > 0 || updateResult.reallocated > 0) {
-          console.log(`✅ Cards do cliente atualizados: ${updateResult.updated} atualizados, ${updateResult.reallocated} realocados`);
-        } else {
-          console.log(`ℹ️ Nenhum card foi atualizado. Verifique se o cliente tem um permanent card ativo.`);
+          console.log(`🔄 Cards do cliente atualizados: ${updateResult.updated} atualizados, ${updateResult.reallocated} realocados`);
         }
       } catch (updateError: any) {
-        console.error('⚠️ Erro ao atualizar cards do cliente:', updateError);
-        console.error('⚠️ Stack:', updateError.stack);
+        console.error('⚠️ Erro ao atualizar cards do cliente:', updateError.message);
         // Não falhar a atualização do cliente por causa disso
       }
       
@@ -1044,110 +726,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Inactivate customer and delete future cards
       const result = await storage.inactivateCustomer(id, cardId);
       
-      // Build success message and sync with Omie if applicable
+      // Build success message
       let message = "Cliente inativado com sucesso no sistema";
-      let omieInactivationResult = null;
-      
       if (result.customer.omieClientCode) {
-        try {
-          // Extract numeric code from omieClientCode (format: "omie-client-XXXXXX")
-          const numericCode = parseInt(result.customer.omieClientCode.replace('omie-client-', ''));
-          
-          if (!isNaN(numericCode)) {
-            console.log(`🔄 Sincronizando inativação com Omie para cliente ${numericCode}...`);
-            const omieService = getOmieService();
-            const omieResult = await omieService.inactivateClient(numericCode);
-            omieInactivationResult = omieResult;
-            
-            if (omieResult.success) {
-              message += `. Cliente também foi inativado no Omie ERP com sucesso!`;
-            } else {
-              message += `. ATENÇÃO: Erro ao inativar no Omie ERP: ${omieResult.message}. Por favor, inative manualmente no Omie.`;
-            }
-          } else {
-            message += ". ATENÇÃO: Código Omie inválido. Por favor, inative manualmente no Omie ERP.";
-          }
-        } catch (omieError) {
-          console.error('❌ Erro ao sincronizar inativação com Omie:', omieError);
-          message += `. ATENÇÃO: Erro ao comunicar com Omie ERP. Por favor, inative manualmente no Omie.`;
-        }
+        message += ". IMPORTANTE: A inativação no Omie ERP deve ser feita manualmente, pois a API do Omie não permite inativar clientes programaticamente.";
       }
       
       res.json({
         message,
         customer: result.customer,
         deletedCards: result.deletedCards,
-        omieInactivation: omieInactivationResult
+        requiresManualOmieInactivation: !!result.customer.omieClientCode
       });
     } catch (error) {
       console.error("Error inactivating customer:", error);
       res.status(500).json({ message: "Falha ao inativar cliente" });
-    }
-  });
-
-  // Gerenciar TAG "NAO CLIENTE"
-  app.post('/api/customers/:id/tags', authenticateUser, async (req: any, res) => {
-    try {
-      const { id } = req.params;
-      const { tag, action } = req.body; // action: "add" or "remove"
-      const user = req.currentUser;
-      
-      // Only admin, coordinator, and administrative can manage the "NAO CLIENTE" tag
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem gerenciar tags de clientes." });
-      }
-      
-      // Validate tag (currently only "NAO CLIENTE" is supported)
-      if (tag !== 'NAO CLIENTE') {
-        return res.status(400).json({ message: "Tag inválida. Apenas a tag 'NAO CLIENTE' é suportada atualmente." });
-      }
-      
-      // Validate action
-      if (!['add', 'remove'].includes(action)) {
-        return res.status(400).json({ message: "Ação inválida. Use 'add' ou 'remove'." });
-      }
-      
-      // Get customer
-      const customer = await storage.getCustomer(id);
-      if (!customer) {
-        return res.status(404).json({ message: "Cliente não encontrado" });
-      }
-      
-      // Get current tags array (ensure it's always an array)
-      let currentTags: string[] = [];
-      if (customer.tags) {
-        currentTags = Array.isArray(customer.tags) ? customer.tags : [];
-      }
-      
-      // Add or remove tag
-      let newTags: string[];
-      let message: string;
-      
-      if (action === 'add') {
-        if (currentTags.includes(tag)) {
-          return res.status(400).json({ message: `Cliente já possui a tag '${tag}'` });
-        }
-        newTags = [...currentTags, tag];
-        message = `Tag '${tag}' adicionada com sucesso. Este cliente não aparecerá mais nas rotinas de vendas (positivação, rotas, metas).`;
-      } else {
-        if (!currentTags.includes(tag)) {
-          return res.status(400).json({ message: `Cliente não possui a tag '${tag}'` });
-        }
-        newTags = currentTags.filter(t => t !== tag);
-        message = `Tag '${tag}' removida com sucesso. Este cliente voltará a aparecer nas rotinas de vendas.`;
-      }
-      
-      // Update customer with new tags
-      const updatedCustomer = await storage.updateCustomer(id, { tags: newTags });
-      
-      res.json({
-        message,
-        customer: updatedCustomer,
-        tags: newTags
-      });
-    } catch (error) {
-      console.error("Error managing customer tags:", error);
-      res.status(500).json({ message: "Falha ao gerenciar tags do cliente" });
     }
   });
 
@@ -1339,139 +932,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const customer = await storage.updateCustomer(id, data);
-      
-      const hasWeekdaysChanged = data.weekdays && 
-        JSON.stringify([...(Array.isArray(data.weekdays) ? data.weekdays : [data.weekdays])].sort()) !== 
-        JSON.stringify([...(Array.isArray(currentCustomer.weekdays) ? currentCustomer.weekdays : [currentCustomer.weekdays])].sort());
-      
-      const hasPeriodicityChanged = data.visitPeriodicity && data.visitPeriodicity !== currentCustomer.visitPeriodicity;
-      const hasSellerChanged = data.sellerId && data.sellerId !== currentCustomer.sellerId;
-      
-      if (hasWeekdaysChanged || hasPeriodicityChanged || hasSellerChanged) {
-        console.info('[CUSTOMER-UPDATE] Detectadas mudanças de recorrência', {
-          customerId: id,
-          hasWeekdaysChanged,
-          hasPeriodicityChanged,
-          hasSellerChanged
-        });
-        
-        try {
-          const parseWeekdays = (wd: any): string[] | undefined => {
-            if (!wd) return undefined;
-            if (Array.isArray(wd)) return wd;
-            if (typeof wd === 'string') {
-              try {
-                const parsed = JSON.parse(wd);
-                return Array.isArray(parsed) ? parsed : [wd];
-              } catch {
-                return [wd];
-              }
-            }
-            return undefined;
-          };
-
-          const result = await applyCustomerRecurrenceChange(
-            id,
-            {
-              weekdays: parseWeekdays(customer.weekdays),
-              visitPeriodicity: customer.visitPeriodicity || undefined,
-              sellerId: customer.sellerId || undefined
-            },
-            {
-              sellerId: currentCustomer.sellerId || undefined,
-              weekdays: parseWeekdays(currentCustomer.weekdays),
-              visitPeriodicity: currentCustomer.visitPeriodicity || undefined
-            }
-          );
-          
-          if (result.success) {
-            console.info('[CUSTOMER-UPDATE] Recorrência atualizada com sucesso', {
-              customerId: id,
-              previousNextVisitDate: result.previousNextVisitDate,
-              newNextVisitDate: result.newNextVisitDate,
-              invalidatedRoutes: result.invalidatedRoutes
-            });
-          } else {
-            console.warn('[CUSTOMER-UPDATE] Falha ao atualizar recorrência', {
-              customerId: id,
-              message: result.message
-            });
-          }
-        } catch (recurrenceError: any) {
-          console.error('[CUSTOMER-UPDATE] Erro ao atualizar recorrência', {
-            customerId: id,
-            error: recurrenceError.message
-          });
-        }
-      }
-
-      // Sincronizar mudança de vendedor com Omie
-      if (hasSellerChanged && customer.sellerId) {
-        try {
-          // Verificar se é cliente do Omie (id começa com "omie-client-")
-          const isOmieClient = id.startsWith('omie-client-');
-          // Verificar se é vendedor do Omie (sellerId começa com "omie-vendor-")
-          const isOmieVendor = customer.sellerId.startsWith('omie-vendor-');
-          
-          if (isOmieClient && isOmieVendor) {
-            // Extrair códigos numéricos do Omie
-            const omieClientCode = parseInt(id.replace('omie-client-', ''));
-            const omieVendorCode = parseInt(customer.sellerId.replace('omie-vendor-', ''));
-            
-            // Validar códigos numéricos
-            if (isNaN(omieClientCode) || isNaN(omieVendorCode)) {
-              console.error('[OMIE-SYNC] Códigos Omie inválidos', {
-                customerId: id,
-                omieClientCode,
-                omieVendorCode
-              });
-            } else {
-              const omieService = getOmieService(storage);
-              if (!omieService) {
-                console.warn('[OMIE-SYNC] Serviço Omie não está configurado');
-              } else {
-                console.info('[OMIE-SYNC] Sincronizando mudança de vendedor com Omie', {
-                  customerId: id,
-                  omieClientCode,
-                  previousSellerId: currentCustomer.sellerId,
-                  newSellerId: customer.sellerId,
-                  omieVendorCode
-                });
-                
-                const omieResult = await omieService.updateCustomerVendor(omieClientCode, omieVendorCode);
-                
-                if (omieResult.success) {
-                  console.info('[OMIE-SYNC] Vendedor atualizado no Omie com sucesso', {
-                    customerId: id,
-                    omieClientCode,
-                    omieVendorCode,
-                    message: omieResult.message
-                  });
-                } else {
-                  console.warn('[OMIE-SYNC] Falha ao atualizar vendedor no Omie', {
-                    customerId: id,
-                    message: omieResult.message
-                  });
-                }
-              }
-            }
-          } else {
-            if (!isOmieClient) {
-              console.log('[OMIE-SYNC] Cliente não é do Omie, pulando sincronização de vendedor');
-            }
-            if (!isOmieVendor) {
-              console.log('[OMIE-SYNC] Vendedor não é do Omie, pulando sincronização de vendedor');
-            }
-          }
-        } catch (omieError: any) {
-          console.error('[OMIE-SYNC] Erro ao sincronizar vendedor com Omie', {
-            customerId: id,
-            error: omieError.message
-          });
-          // Não bloquear a atualização do cliente em caso de erro no Omie
-        }
-      }
-      
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
@@ -1860,260 +1320,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error removing product image:", error);
       res.status(500).json({ message: "Failed to remove image" });
-    }
-  });
-
-  // ============================================================================
-  // LEADS MANAGEMENT ROUTES
-  // ============================================================================
-  
-  // GET all leads with filters (name, date, seller, status)
-  app.get('/api/leads', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { sellerId, scheduledDate, status } = req.query;
-      
-      // Controle de acesso: vendedores veem apenas seus leads
-      let targetSellerId: string | undefined;
-      if (user.role === 'vendedor') {
-        targetSellerId = user.id; // Vendedor vê apenas seus leads
-      } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        targetSellerId = sellerId; // Admin/coordinator pode filtrar por vendedor
-      } else {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      const filters: any = {};
-      if (targetSellerId) filters.sellerId = targetSellerId;
-      if (scheduledDate) filters.scheduledDate = new Date(scheduledDate as string);
-      if (status) filters.status = status as string;
-      
-      const leads = await storage.getLeads(filters);
-      res.json(leads);
-    } catch (error) {
-      console.error("Error fetching leads:", error);
-      res.status(500).json({ message: "Failed to fetch leads" });
-    }
-  });
-  
-  // GET single lead
-  app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      
-      const lead = await storage.getLead(id);
-      if (!lead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-      
-      // Controle de acesso: vendedores só podem ver seus próprios leads
-      if (user.role === 'vendedor' && lead.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      res.json(lead);
-    } catch (error) {
-      console.error("Error fetching lead:", error);
-      res.status(500).json({ message: "Failed to fetch lead" });
-    }
-  });
-  
-  // CREATE new lead
-  app.post('/api/leads', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      
-      console.log('🆕 [CREATE LEAD] Recebendo requisição...');
-      console.log('   Body recebido:', JSON.stringify(req.body, null, 2));
-      console.log('   Usuário:', user.email, '- Role:', user.role);
-      
-      // Apenas admin, coordinator, administrative e vendedor podem criar leads
-      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      // Processar scheduledDate para timezone Brasil
-      const cleanedData = {
-        ...req.body,
-        latitude: (req.body.latitude === '' || req.body.latitude === undefined) ? null : req.body.latitude,
-        longitude: (req.body.longitude === '' || req.body.longitude === undefined) ? null : req.body.longitude,
-        scheduledDate: (req.body.scheduledDate && req.body.scheduledDate !== '')
-          ? fromZonedTime(`${req.body.scheduledDate}T00:00:00`, 'America/Sao_Paulo')
-          : null,
-      };
-      
-      console.log('   Dados após limpeza:', JSON.stringify(cleanedData, null, 2));
-      console.log('   Validando com insertLeadSchema...');
-      
-      const data = insertLeadSchema.parse(cleanedData);
-      
-      console.log('   ✅ Validação passou! Dados:', JSON.stringify(data, null, 2));
-      
-      // Vendedores só podem criar leads para si mesmos
-      if (user.role === 'vendedor' && data.sellerId !== user.id) {
-        return res.status(403).json({ message: "Vendedores só podem criar leads para si mesmos" });
-      }
-      
-      console.log('   Criando lead no banco...');
-      const lead = await storage.createLead(data);
-      console.log('   ✅✅✅ Lead criado com sucesso! ID:', lead.id);
-      
-      res.status(201).json(lead);
-    } catch (error) {
-      console.error("❌ [CREATE LEAD] Erro ao criar lead:", error);
-      if (error instanceof z.ZodError) {
-        console.error('   Erros de validação Zod:', JSON.stringify(error.errors, null, 2));
-        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
-      }
-      console.error('   Stack trace:', (error as Error).stack);
-      res.status(500).json({ message: "Failed to create lead" });
-    }
-  });
-  
-  // UPDATE lead
-  app.put('/api/leads/:id', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      
-      const existingLead = await storage.getLead(id);
-      if (!existingLead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-      
-      // Controle de acesso: vendedores só podem editar seus próprios leads
-      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      // Processar scheduledDate para timezone Brasil
-      const cleanedData = {
-        ...req.body,
-        latitude: req.body.latitude === '' ? null : req.body.latitude,
-        longitude: req.body.longitude === '' ? null : req.body.longitude,
-        scheduledDate: req.body.scheduledDate 
-          ? fromZonedTime(`${req.body.scheduledDate}T00:00:00`, 'America/Sao_Paulo')
-          : undefined,
-      };
-      
-      const lead = await storage.updateLead(id, cleanedData);
-      res.json(lead);
-    } catch (error) {
-      console.error("Error updating lead:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to update lead" });
-    }
-  });
-  
-  // DELETE lead (soft delete)
-  app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      
-      const existingLead = await storage.getLead(id);
-      if (!existingLead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-      
-      // Apenas admin/coordinator podem deletar leads
-      if (!['admin', 'coordinator'].includes(user.role)) {
-        return res.status(403).json({ message: "Apenas administradores podem deletar leads" });
-      }
-      
-      await storage.deleteLead(id);
-      res.json({ message: "Lead deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting lead:", error);
-      res.status(500).json({ message: "Failed to delete lead" });
-    }
-  });
-  
-  // DISCARD lead with reason
-  app.post('/api/leads/:id/discard', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      const { reason } = req.body;
-      
-      if (!reason) {
-        return res.status(400).json({ message: "Motivo de descarte é obrigatório" });
-      }
-      
-      const existingLead = await storage.getLead(id);
-      if (!existingLead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-      
-      // Controle de acesso: vendedores podem descartar seus próprios leads
-      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      const lead = await storage.discardLead(id, reason);
-      res.json(lead);
-    } catch (error) {
-      console.error("Error discarding lead:", error);
-      res.status(500).json({ message: "Failed to discard lead" });
-    }
-  });
-  
-  // CONVERT lead to customer (transactional)
-  app.post('/api/leads/:id/convert', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      const customerData = req.body;
-      
-      const existingLead = await storage.getLead(id);
-      if (!existingLead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-      
-      // Controle de acesso
-      if (user.role === 'vendedor' && existingLead.sellerId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      if (existingLead.status === 'converted') {
-        return res.status(400).json({ message: "Lead já foi convertido" });
-      }
-      
-      // Pré-processar dados do cliente
-      const cleanedCustomerData = {
-        ...customerData,
-        latitude: existingLead.latitude,
-        longitude: existingLead.longitude,
-        sellerId: existingLead.sellerId,
-        fantasyName: customerData.fantasyName || existingLead.name, // Usar lead.name como fallback
-        phone: customerData.phone || existingLead.phone,
-      };
-      
-      const validatedData = insertCustomerSchema.parse(cleanedCustomerData);
-      
-      // TRANSAÇÃO ATÔMICA: Criar cliente + Atualizar lead + Criar permanent card
-      const customer = await storage.createCustomer(validatedData);
-      
-      // Criar permanent card para o novo cliente
-      await storage.getOrCreatePermanentCard(customer.id, customer.sellerId);
-      
-      // Marcar lead como convertido
-      const updatedLead = await storage.convertLeadToCustomer(id, customer.id);
-      
-      res.status(201).json({
-        message: "Lead convertido com sucesso",
-        customer,
-        lead: updatedLead
-      });
-    } catch (error) {
-      console.error("Error converting lead:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to convert lead" });
     }
   });
 
@@ -2549,8 +1755,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      // Buscar TODOS os pedidos (sem filtro de sellerId)
-      const allCards = await storage.getSalesCards();
+      // Buscar pedidos com source='hotsite' usando o storage
+      const allCards = await storage.getSalesCards({});
       console.log('📊 [HOTSITE-ORDERS] Total de sales_cards:', allCards.length);
       
       // Filtrar apenas pedidos do hotsite
@@ -2573,63 +1779,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Enviar pedido do hotsite para o Omie (Nov 2025)
-  app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      const { id } = req.params;
-      
-      // Apenas admin, coordinator e administrative podem enviar
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      console.log(`📤 [SEND-TO-OMIE] Sending order ${id} to Omie`);
-      
-      // Buscar pedido
-      const order = await storage.getSalesCardById(id);
-      if (!order) {
-        return res.status(404).json({ message: "Pedido não encontrado" });
-      }
-      
-      // Verificar se já foi enviado ou está aguardando
-      if (order.omieSyncStatus === 'enviado_omie') {
-        return res.status(400).json({ message: "Pedido já foi enviado ao Omie" });
-      }
-      if (order.omieSyncStatus === 'aguardando_omie') {
-        return res.status(400).json({ message: "Pedido já está sendo processado" });
-      }
-      
-      // TODO: Implementar integração com Omie (Task 4 pendente)
-      // Por enquanto, retorna resposta mock para testar fluxo
-      console.log(`⚠️ [SEND-TO-OMIE] STUB: Simulando envio bem-sucedido (integração real pendente)`);
-      
-      res.json({ 
-        success: true,
-        omieOrderNumber: `STUB-${Date.now()}`,
-        message: 'DEMO: Pedido marcado para envio (integração com Omie em desenvolvimento)'
-      });
-      
-    } catch (error) {
-      console.error("❌ [SEND-TO-OMIE] Error:", error);
-      res.status(500).json({ message: "Failed to send order to Omie" });
-    }
-  });
-
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
-    console.log('\n🚀🚀🚀 [CREATE-CARD] ROTA CHAMADA!');
-    console.log('📋 [CREATE-CARD] Body recebido:', JSON.stringify(req.body, null, 2));
-    
     try {
       const user = req.currentUser;
-      console.log('👤 [CREATE-CARD] Usuário:', user?.id, '-', user?.role);
-      
       const isAdministrative = ['admin', 'coordinator', 'administrative'].includes(user.role);
-      console.log('🔐 [CREATE-CARD] É administrativo?', isAdministrative);
       
       // Se o usuário não é administrativo e está tentando criar um card para outro vendedor, bloquear
       if (!isAdministrative && req.body.sellerId && req.body.sellerId !== user.id) {
-        console.log('❌ [CREATE-CARD] Bloqueado: tentativa de criar card para outro vendedor');
         return res.status(403).json({ 
           message: "Você não tem permissão para criar cards de vendas para outros vendedores" 
         });
@@ -2637,30 +1793,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Se o usuário não é administrativo, forçar o sellerId para o ID do próprio usuário
       const sellerId = isAdministrative ? req.body.sellerId : user.id;
-      console.log('🎯 [CREATE-CARD] SellerId escolhido:', sellerId);
       
       // Validar que o sellerId existe no banco de dados e é um vendedor
       if (sellerId) {
-        console.log('🔍 [CREATE-CARD] Validando vendedor:', sellerId);
         const seller = await storage.getUserById(sellerId);
         if (!seller) {
-          console.log('❌ [CREATE-CARD] Vendedor não encontrado:', sellerId);
           return res.status(400).json({ 
             message: "Vendedor não encontrado. Por favor, selecione um vendedor válido." 
           });
         }
-        console.log('✅ [CREATE-CARD] Vendedor encontrado:', seller.id, '-', seller.role);
-        
         // Verificar se o usuário selecionado é realmente um vendedor
         if (seller.role !== 'vendedor') {
-          console.log('❌ [CREATE-CARD] Usuário não é vendedor. Role:', seller.role);
           return res.status(400).json({ 
             message: "O usuário selecionado não é um vendedor. Por favor, selecione um vendedor válido." 
           });
         }
       }
-      
-      console.log('📅 [CREATE-CARD] Processando data:', req.body.scheduledDate);
       
       // Processar a data corretamente
       const processedData = {
@@ -2671,34 +1819,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isRecurring: req.body.isRecurring || true,
       };
       
-      console.log('📝 [CREATE-CARD] Dados processados:', JSON.stringify({
-        customerId: processedData.customerId,
-        sellerId: processedData.sellerId,
-        scheduledDate: processedData.scheduledDate,
-        status: processedData.status
-      }, null, 2));
-      
       // Validar apenas os campos obrigatórios
       const requiredFields = ['customerId', 'sellerId', 'scheduledDate'];
       for (const field of requiredFields) {
         if (!processedData[field]) {
-          console.log(`❌ [CREATE-CARD] Campo obrigatório ausente: ${field}`);
           return res.status(400).json({ 
             message: `Campo obrigatório ausente: ${field}` 
           });
         }
       }
       
-      console.log('✅ [CREATE-CARD] Todos os campos obrigatórios presentes');
+      // Verificar se já existe um card ativo para este cliente
+      // Cards ativos são aqueles com status 'pending' ou 'telemarketing'
+      const ACTIVE_STATUSES = ['pending', 'telemarketing'];
+      const existingCards = await storage.getSalesCards(processedData.sellerId);
+      const activeCard = existingCards.find(card => 
+        card.customerId === processedData.customerId && 
+        ACTIVE_STATUSES.includes(card.status)
+      );
       
-      // BLOQUEIO DE DUPLICAÇÃO REMOVIDO:
-      // O sistema agora permite criar múltiplos cards ativos para o mesmo cliente
-      // Cada clique em "efetuar venda" cria um novo card, sem verificar cards existentes
-      console.log(`✅ [CREATE-CARD] Criando novo card para cliente ${processedData.customerId} sem verificar cards ativos`);
+      if (activeCard) {
+        const statusLabel = activeCard.status === 'pending' ? 'pendente' : 'em telemarketing';
+        return res.status(400).json({ 
+          message: `Este cliente já possui um card de vendas ativo (${statusLabel}). Por favor, utilize o card existente antes de criar um novo.` 
+        });
+      }
       
-      console.log('💾 [CREATE-CARD] Chamando storage.createSalesCard...');
       const salesCard = await storage.createSalesCard(processedData);
-      console.log('✅✅✅ [CREATE-CARD] Card criado com sucesso! ID:', salesCard.id);
       
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
@@ -2714,15 +1861,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.json(salesCard);
-    } catch (error: any) {
-      console.error('\n❌❌❌ [CREATE-CARD] ERRO FATAL ao criar sales card!');
-      console.error('❌ [CREATE-CARD] Error Type:', error?.constructor?.name);
-      console.error('❌ [CREATE-CARD] Error Message:', error?.message);
-      console.error('❌ [CREATE-CARD] Error Stack:', error?.stack);
-      console.error('❌ [CREATE-CARD] Full Error:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-      
+    } catch (error) {
+      console.error("Error creating sales card:", error);
       if (error instanceof z.ZodError) {
-        console.log('❌ [CREATE-CARD] Zod validation errors:', error.errors);
+        console.log('Zod validation errors:', error.errors);
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to create sales card" });
@@ -3296,33 +2438,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  console.log('🔥 [STARTUP] Registrando PUT /api/sales-cards/:id com suporte a reset de cards permanentes');
-  
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       
       console.log(`\n🔧 [PUT /api/sales-cards/${id}] Iniciando atualização de card`);
-      console.log(`   📥 req.body completo:`, JSON.stringify(req.body, null, 2));
       console.log(`   📥 req.body.routeDay:`, req.body.routeDay);
-      console.log(`   📥 req.body.status:`, req.body.status);
-      console.log(`   📥 req.body.products:`, req.body.products);
-      console.log(`   📥 req.body Omie campos:`, {
-        omieSyncStatus: req.body.omieSyncStatus,
-        omieOrderId: req.body.omieOrderId,
-        omieOrderNumber: req.body.omieOrderNumber,
-        invoiceNumber: req.body.invoiceNumber
-      });
       
       const data = insertSalesCardSchema.partial().parse(req.body);
       
       console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
-      console.log(`   ✅ Após parse - Omie campos:`, {
-        omieSyncStatus: data.omieSyncStatus,
-        omieOrderId: data.omieOrderId,
-        omieOrderNumber: data.omieOrderNumber,
-        invoiceNumber: data.invoiceNumber
-      });
       
       // Check permissions for reassigning sales cards
       const userId = req.userId;
@@ -3335,29 +2460,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar card ANTES da atualização
       const cardBefore = await storage.getSalesCard(id);
       console.log(`   📋 ANTES - routeDay:`, cardBefore?.routeDay);
-      
-      // 🔒 VALIDAÇÃO: Impedir manipulação de cards já finalizados
-      if (cardBefore && ['completed', 'no_sale', 'failed'].includes(cardBefore.status)) {
-        // Permitir APENAS se for admin tentando corrigir algo específico (ex: atualizar Omie IDs)
-        const isAdminCorrection = user?.role === 'admin' && (
-          data.omieOrderId || 
-          data.omieOrderNumber || 
-          data.omieSyncStatus ||
-          data.invoiceNumber
-        );
-        
-        if (!isAdminCorrection) {
-          console.log(`🔒 [BLOQUEIO] Card ${id} já finalizado (${cardBefore.status}) - impedindo manipulação`);
-          return res.status(403).json({ 
-            message: `Este card já foi finalizado (${cardBefore.status === 'completed' ? 'concluído' : cardBefore.status === 'no_sale' ? 'sem venda' : 'falhou'}) e não pode mais ser editado. Um novo card foi criado automaticamente para a próxima visita.`,
-            blocked: true,
-            reason: 'card_already_finalized',
-            cardStatus: cardBefore.status
-          });
-        } else {
-          console.log(`✅ [ADMIN] Permitindo correção administrativa no card ${id}`);
-        }
-      }
       
       // Se coordenadas GPS foram capturadas, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
@@ -3378,37 +2480,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // NOVA ARQUITETURA: Permanent cards não fecham/criam novos - atualizam order_history
       let salesCard;
-      console.log(`🔍 [DEBUG PUT] Card ${id}: data.status = ${data.status}, checking if final status...`);
-      
       if (data.status && ['completed', 'no_sale', 'failed'].includes(data.status)) {
-        console.log(`🔍 [DEBUG PUT] Status is final (${data.status}), fetching card...`);
-        
         // Buscar card atual para verificar se é permanent
         const currentCard = await storage.getSalesCard(id);
         
         if (!currentCard) {
-          console.log(`❌ [DEBUG PUT] Card ${id} not found!`);
           return res.status(404).json({ message: "Sales card not found" });
         }
         
-        console.log(`🔍 [DEBUG PUT] Card ${id} found, isPermanent = ${currentCard.isPermanent}`);
-        
         if (currentCard.isPermanent) {
-          // PERMANENT CARD: criar order_history e criar novo card
-          console.log(`🆕 [NEW CARD] Starting new card creation flow for permanent card ${id}...`);
+          // PERMANENT CARD: criar order_history e recalcular nextVisitDate
+          console.log(`🔄 Permanent card - Criando order_history e recalculando próxima visita`);
           
+          // 1. Criar registro em order_history
+          const orderData = {
+            salesCardId: id,
+            orderDate: new Date(),
+            products: data.products || currentCard.products || [],
+            totalValue: data.saleValue || currentCard.saleValue || '0',
+            status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
+            notes: data.notes || (data.status === 'no_sale' ? `Sem venda - ${data.noSaleReason || 'não informado'}` : null),
+            checkInTime: data.checkInTime,
+            checkInLatitude: data.checkInLatitude,
+            checkInLongitude: data.checkInLongitude,
+            checkOutTime: data.checkOutTime,
+            checkOutLatitude: data.checkOutLatitude,
+            checkOutLongitude: data.checkOutLongitude,
+            completedAt: data.status === 'completed' ? new Date() : null
+          };
+          
+          await storage.createOrderHistory(orderData);
+          console.log(`✅ Order history criado`);
+          
+          // 2. Atualizar lastVisitDate e recalcular nextVisitDate
+          const { calculateNextVisitDate } = await import('../shared/visitSchedule');
           const customer = await storage.getCustomer(currentCard.customerId);
           
-          console.log(`🔍 [DEBUG] Customer data:`, {
-            exists: !!customer,
-            customerId: currentCard.customerId,
-            weekdays: customer?.weekdays,
-            weekdaysType: typeof customer?.weekdays,
-            periodicity: customer?.visitPeriodicity
-          });
-          
           if (customer && customer.weekdays && customer.visitPeriodicity) {
-            console.log(`✅ [DEBUG] Customer has valid recurrence config, proceeding...`);
             // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
             const lastVisitDate = new Date();
             
@@ -3455,90 +2563,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               referenceDate: new Date()
             });
             
-            // RESETAR permanent card: limpar dados temporários e recalcular datas
-            const { calculatePermanentCardReset } = await import('./permanentCardResetService');
-            
-            // Criar objeto order_history com data atual para passar ao serviço de reset
-            const latestHistoryMock = {
-              salesCardId: id,
-              orderDate: lastVisitDate,
-              products: data.products || currentCard.products || [],
-              totalValue: data.saleValue || currentCard.saleValue || '0',
-              status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
-              notes: data.notes || currentCard.notes || null,
-              checkInTime: currentCard.checkInTime || null,
-              checkInLatitude: currentCard.checkInLatitude || null,
-              checkInLongitude: currentCard.checkInLongitude || null,
-              checkOutTime: currentCard.checkOutTime || null,
-              checkOutLatitude: currentCard.checkOutLatitude || null,
-              checkOutLongitude: currentCard.checkOutLongitude || null,
-              distanceToCustomer: currentCard.distanceToCustomer || null,
-              checkInPhotoUrl: currentCard.checkInPhotoUrl || null,
-              deliveryStatus: currentCard.deliveryStatus || 'pending',
-              deliveryScheduledDate: currentCard.deliveryScheduledDate || null,
-              deliveryCompletedDate: currentCard.deliveryCompletedDate || null,
-              deliveryNotes: currentCard.deliveryNotes || null,
-              trackingCode: currentCard.trackingCode || null,
-              omieOrderId: currentCard.omieOrderId || null,
-              invoiceNumber: currentCard.invoiceNumber || null
-            };
-            
-            // SALVAR no banco de dados para preservar histórico completo
-            console.log(`📝 [HISTORY] Criando order_history para card ${id}...`);
-            const savedHistory = await storage.createOrderHistory(latestHistoryMock);
-            console.log(`✅ [HISTORY] Order history criado: ID ${savedHistory.id}`);
-            
-            // MARCAR CARD ATUAL COMO FINALIZADO (completed/no_sale/failed)
+            // Atualizar permanent card
             salesCard = await storage.updateSalesCard(id, {
-              status: data.status,
-              completedDate: lastVisitDate,
-              ...(data.products && { products: data.products }),
-              ...(data.saleValue && { saleValue: data.saleValue }),
-              ...(data.notes && { notes: data.notes })
+              ...data,
+              lastVisitDate: lastVisitDate,  // Sempre atualiza (qualquer visita)
+              nextVisitDate: scheduleResult.nextDate,
+              status: 'pending' // Permanent card sempre volta para pending
             });
             
-            console.log(`✅ Card ${id} marcado como ${data.status}`);
-            
-            // CRIAR NOVO CARD PERMANENTE PARA PRÓXIMA VISITA
-            console.log(`🆕 [NEW CARD] Preparando dados para novo card...`);
-            console.log(`   - customerId: ${currentCard.customerId}`);
-            console.log(`   - sellerId: ${currentCard.sellerId}`);
-            console.log(`   - nextVisitDate: ${scheduleResult.nextDate.toISOString()}`);
-            console.log(`   - routeDay: ${parsedWeekdays[0]}`);
-            
-            const newCardData: any = {
-              customerId: currentCard.customerId,
-              sellerId: currentCard.sellerId,
-              isPermanent: true,
-              status: 'pending',
-              nextVisitDate: scheduleResult.nextDate,
-              lastVisitDate: lastVisitDate,
-              routeDay: parsedWeekdays[0] || '',
-              products: [],
-              saleValue: '0',
-              notes: null,
-              // Copiar configurações do card anterior
-              deliveryWeekdays: currentCard.deliveryWeekdays,
-              deliveryTimeSlots: currentCard.deliveryTimeSlots,
-              deliverySaturdayTimeSlots: currentCard.deliverySaturdayTimeSlots,
-              boletoDays: currentCard.boletoDays,
-              paymentMethod: currentCard.paymentMethod,
-              operationType: currentCard.operationType,
-              source: 'system'
-            };
-            
-            console.log(`🔥 [NEW CARD] Chamando storage.createSalesCard...`);
-            try {
-              const newCard = await storage.createSalesCard(newCardData);
-              console.log(`✅✅✅ NOVO CARD CRIADO COM SUCESSO!`);
-              console.log(`   - ID: ${newCard.id}`);
-              console.log(`   - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}`);
-              console.log(`   - Próxima visita: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
-            } catch (createError: any) {
-              console.error(`❌ ERRO ao criar novo card:`, createError.message);
-              console.error(`   Stack:`, createError.stack);
-              throw createError;
-            }
+            console.log(`✅ Permanent card atualizado - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);
@@ -3641,7 +2674,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete sales card" });
     }
   });
-
 
   // Delete all sales cards (admin only)
   app.delete('/api/sales-cards', authenticateUser, requireRole(['admin', 'administrative']), async (req: any, res) => {
@@ -7910,105 +6942,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ===== DELIVERY DRIVERS API (COM AUTENTICAÇÃO) =====
+  // ===== DELIVERY DRIVERS APIS =====
   
-  // 1. GET /api/delivery-drivers/stats - Estatísticas
-  app.get("/api/delivery-drivers/stats", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const stats = await storage.getDeliveryDriverStats();
-      res.json(stats);
-    } catch (error: any) {
-      console.error("Error fetching driver stats:", error);
-      res.status(500).json({ message: "Failed to fetch driver stats", error: error.message });
-    }
-  });
-
-  // 2. GET /api/delivery-drivers - Listar todos
-  app.get("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Buscar todos os motoristas
+  app.get("/api/delivery-drivers", async (req, res) => {
     try {
       const drivers = await storage.getDeliveryDrivers();
       res.json(drivers);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching delivery drivers:", error);
-      res.status(500).json({ message: "Failed to fetch delivery drivers", error: error.message });
+      res.status(500).json({ message: "Failed to fetch delivery drivers" });
     }
   });
 
-  // 3. GET /api/delivery-drivers/active - Listar motoristas ativos
-  app.get("/api/delivery-drivers/active", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Buscar motoristas ativos
+  app.get("/api/delivery-drivers/active", async (req, res) => {
     try {
-      const drivers = await storage.getActiveDeliveryDrivers();
-      res.json(drivers);
-    } catch (error: any) {
-      console.error("Error fetching active drivers:", error);
-      res.status(500).json({ message: "Failed to fetch active drivers", error: error.message });
+      const activeDrivers = await storage.getActiveDeliveryDrivers();
+      res.json(activeDrivers);
+    } catch (error) {
+      console.error("Error fetching active delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch active delivery drivers" });
     }
   });
 
-  // 4. GET /api/delivery-drivers/:id - Buscar por ID
-  app.get("/api/delivery-drivers/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Criar motorista
+  app.post("/api/delivery-drivers", async (req, res) => {
     try {
-      const { id } = req.params;
-      const driver = await storage.getDeliveryDriver(id);
-      if (!driver) {
-        return res.status(404).json({ message: "Motorista não encontrado" });
-      }
+      const driverData = req.body;
+      const driver = await storage.createDeliveryDriver(driverData);
       res.json(driver);
-    } catch (error: any) {
-      console.error("Error fetching delivery driver:", error);
-      res.status(500).json({ message: "Failed to fetch delivery driver", error: error.message });
-    }
-  });
-
-  // 5. POST /api/delivery-drivers - Criar motorista
-  app.post("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const validated = insertDeliveryDriverSchema.parse(req.body);
-      const driver = await storage.createDeliveryDriver(validated);
-      res.json(driver);
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
-      }
+    } catch (error) {
       console.error("Error creating delivery driver:", error);
-      res.status(500).json({ message: "Failed to create delivery driver", error: error.message });
+      res.status(500).json({ message: "Failed to create delivery driver" });
     }
   });
 
-  // 6. PUT /api/delivery-drivers/:id - Atualizar motorista
-  app.put("/api/delivery-drivers/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Atualizar motorista
+  app.put("/api/delivery-drivers/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const validated = insertDeliveryDriverSchema.partial().parse(req.body);
-      const driver = await storage.updateDeliveryDriver(id, validated);
+      const driverData = req.body;
+      const driver = await storage.updateDeliveryDriver(id, driverData);
       res.json(driver);
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
-      }
+    } catch (error) {
       console.error("Error updating delivery driver:", error);
-      res.status(500).json({ message: "Failed to update delivery driver", error: error.message });
+      res.status(500).json({ message: "Failed to update delivery driver" });
     }
   });
 
-  // 7. PUT /api/delivery-drivers/:id/toggle-status - Alternar status
-  app.put("/api/delivery-drivers/:id/toggle-status", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Alternar status do motorista
+  app.put("/api/delivery-drivers/:id/toggle-status", async (req, res) => {
     try {
       const { id } = req.params;
-      const toggleSchema = insertDeliveryDriverSchema.pick({ isActive: true });
-      const { isActive } = toggleSchema.parse(req.body);
+      const { isActive } = req.body;
       const driver = await storage.updateDeliveryDriver(id, { isActive });
       res.json(driver);
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validação falhou", errors: error.flatten() });
-      }
+    } catch (error) {
       console.error("Error toggling driver status:", error);
-      res.status(500).json({ message: "Failed to toggle driver status", error: error.message });
+      res.status(500).json({ message: "Failed to toggle driver status" });
     }
   });
 
-  // ===== DELIVERY STATUS API =====
+  // Estatísticas de motoristas
+  app.get("/api/delivery-drivers/stats", async (req, res) => {
+    try {
+      const stats = await storage.getDeliveryDriverStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching driver stats:", error);
+      res.status(500).json({ message: "Failed to fetch driver stats" });
+    }
+  });
 
   // Atualizar status de entrega
   app.put("/api/deliveries/:salesCardId/status", async (req, res) => {
@@ -8045,6 +7050,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating delivery status:", error);
       res.status(500).json({ message: "Failed to update delivery status" });
+    }
+  });
+
+  // Buscar motoristas ativos
+  app.get("/api/delivery-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const drivers = await storage.getActiveDeliveryDrivers();
+      res.json(drivers);
+    } catch (error: any) {
+      console.error("Error fetching delivery drivers:", error);
+      res.status(500).json({ message: "Failed to fetch delivery drivers", error: error.message });
     }
   });
 
@@ -8317,25 +7333,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!card) {
         return res.status(404).json({ message: 'Card não encontrado' });
-      }
-      
-      // 🔒 VALIDAÇÃO: Permitir envio APENAS para cards com status 'completed'
-      if (card.status !== 'completed') {
-        console.log(`🔒 [BLOQUEIO] Card ${cardId} tem status ${card.status} - somente cards 'completed' podem ser enviados ao Omie`);
-        const statusMessages: Record<string, string> = {
-          'pending': 'pendente de execução',
-          'in_progress': 'em andamento',
-          'no_sale': 'sem venda',
-          'failed': 'falhou'
-        };
-        const statusLabel = statusMessages[card.status] || card.status;
-        
-        return res.status(403).json({ 
-          message: `Este card não pode ser enviado ao Omie porque está "${statusLabel}". Apenas vendas finalizadas e concluídas podem ser enviadas ao faturamento.`,
-          blocked: true,
-          reason: 'invalid_status_for_billing',
-          cardStatus: card.status
-        });
       }
       
       if (!card.saleValue || parseFloat(card.saleValue) === 0) {
@@ -9305,13 +8302,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Route to finalize sale with Omie integration
   app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
-    console.log('\n\n🔥🔥🔥 [FINALIZE] ROTA CHAMADA! ID:', req.params.id, '\n\n');
     try {
       const { id } = req.params;
       const { 
         items, 
         totalValue, 
-        orderNumber: providedOrderNumber, 
+        orderNumber, 
         paymentMethod, 
         operationType, 
         shouldBlock,
@@ -9326,17 +8322,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Use items as products for backward compatibility
       const products = items || req.body.products;
 
-      // Gerar orderNumber se não fornecido pelo frontend
-      const orderNumber = providedOrderNumber || `ORD-${Date.now()}-${id}`;
-
-      console.log('🔥 [FINALIZE] Iniciando finalização de venda');
-      console.log('📋 [FINALIZE] Card ID:', id);
-      console.log('📋 [FINALIZE] providedOrderNumber:', providedOrderNumber);
-      console.log('📋 [FINALIZE] generated orderNumber:', orderNumber);
-      console.log('📋 [FINALIZE] Products:', products?.length || 0, 'items');
-      console.log('📋 [FINALIZE] Total Value:', totalValue);
-      console.log('📋 [FINALIZE] Payment Method:', paymentMethod);
-      console.log('📋 [FINALIZE] Operation Type:', operationType);
+      console.log('Finalizing sale for card:', id);
+      console.log('Sale data:', { products, totalValue, orderNumber, operationType });
 
       // Check if order should be blocked
       let shouldBlockOrder = shouldBlock || false; // Use from frontend
@@ -9495,28 +8482,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const { createOmieOrder } = await import('./omieIntegration');
           
           try {
-            // Buscar dados completos dos produtos do banco para incluir código Omie
-            const allProducts = await storage.getProducts();
-            const productsWithOmieCode = products.map((p: any) => {
-              // Buscar produto no banco pelo ID ou nome
-              const dbProduct = allProducts.find(
-                (dbP) => dbP.id === p.id || dbP.name === p.name
-              );
-              
-              // Log de aviso se produto não tiver código Omie
-              if (!dbProduct?.omieCodigoProduto) {
-                console.warn(`⚠️ Produto "${p.name}" (ID: ${p.id}) não tem código Omie! Pedido pode falhar.`);
-              }
-              
-              return {
-                description: p.name,
-                quantity: p.quantity,
-                unitPrice: p.unitPrice,
-                totalPrice: p.totalPrice,
-                omieCodigoProduto: dbProduct?.omieCodigoProduto || undefined
-              };
-            });
-            
             const omieResult = await createOmieOrder({
               customer: {
                 document: fullCard.customer.cnpj || fullCard.customer.cpf || '',
@@ -9525,7 +8490,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 phone: fullCard.customer.phone || '',
                 address: fullCard.customer.address || ''
               },
-              products: productsWithOmieCode,
+              products: products.map((p: any) => ({
+                description: p.name,
+                quantity: p.quantity,
+                unitPrice: p.unitPrice,
+                totalPrice: p.totalPrice
+              })),
               totalValue,
               orderNumber,
               sellerId: fullCard.sellerId,
@@ -9551,14 +8521,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
 
           } catch (omieApiError: any) {
-            console.error('❌ [OMIE-SEND] Erro ao enviar pedido para Omie:', {
-              error: omieApiError,
-              message: omieApiError.message,
-              stack: omieApiError.stack,
-              orderNumber,
-              cardId: id,
-              customerId: fullCard.customer.id
-            });
+            console.error('Omie API Error:', omieApiError);
             
             // Marcar como completed mesmo com erro no Omie
             const fallbackOrderId = `FALLBACK-${orderNumber}`;
@@ -9566,8 +8529,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               omieOrderId: fallbackOrderId,
               status: 'completed'
             });
-
-            console.log(`⚠️ [OMIE-SEND] Card ${id} marcado como completed com fallback ID: ${fallbackOrderId}`);
 
             res.json({
               success: true,
@@ -10090,7 +9051,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Otimizar APENAS as visitas realmente pendentes (não processadas)
         const { optimizeRoute } = await import('./routeOptimizationService');
         const routePoints = validVisits.map(v => ({
-          id: v.customerId, // CORRIGIDO: Usar customerId ao invés de card.id
+          id: v.id,
           latitude: parseFloat(v.customerLatitude as any),
           longitude: parseFloat(v.customerLongitude as any),
           customerName: v.customerName,
@@ -10103,95 +9064,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           routePoints
         );
 
-        // CORRIGIDO: Buscar customerIds dos cards completados e em andamento
-        // E VALIDAR se ainda deveriam estar na rota (baseado em nextVisitDate)
-        const completedCustomerIds: string[] = [];
-        for (const cp of completedCheckpoints) {
-          const card = await storage.getSalesCard(cp.salesCardId);
-          if (card?.customerId) {
-            // Verificar se o cliente ainda deveria estar na rota deste dia
-            const customer = await storage.getCustomer(card.customerId);
-            if (customer && customer.isActive) {
-              // Buscar permanent card do cliente
-              const permanentCard = await db.select()
-                .from(salesCards)
-                .where(and(
-                  eq(salesCards.customerId, customer.id),
-                  eq(salesCards.isPermanent, true)
-                ))
-                .limit(1);
-              
-              if (permanentCard.length > 0) {
-                const nextVisitDate = permanentCard[0].nextVisitDate;
-                if (nextVisitDate) {
-                  // Comparar datas (ignora hora)
-                  const visitDateStr = new Date(nextVisitDate).toISOString().split('T')[0];
-                  const routeDateStr = routeDate.toISOString().split('T')[0];
-                  
-                  if (visitDateStr === routeDateStr) {
-                    // Cliente ainda deveria estar nesta rota
-                    completedCustomerIds.push(card.customerId);
-                  } else {
-                    console.log(`⚠️ Cliente ${customer.fantasyName || customer.name} completado mas nextVisitDate mudou: ${visitDateStr} ≠ ${routeDateStr}`);
-                  }
-                } else {
-                  // Se não tem nextVisitDate, manter para não perder dados
-                  completedCustomerIds.push(card.customerId);
-                }
-              } else {
-                // Se não tem permanent card, manter
-                completedCustomerIds.push(card.customerId);
-              }
-            }
-          }
-        }
-        
-        const inProgressCustomerIds: string[] = [];
-        for (const cp of inProgressCheckpoints) {
-          const card = await storage.getSalesCard(cp.salesCardId);
-          if (card?.customerId) {
-            // Verificar se o cliente ainda deveria estar na rota deste dia
-            const customer = await storage.getCustomer(card.customerId);
-            if (customer && customer.isActive) {
-              // Buscar permanent card do cliente
-              const permanentCard = await db.select()
-                .from(salesCards)
-                .where(and(
-                  eq(salesCards.customerId, customer.id),
-                  eq(salesCards.isPermanent, true)
-                ))
-                .limit(1);
-              
-              if (permanentCard.length > 0) {
-                const nextVisitDate = permanentCard[0].nextVisitDate;
-                if (nextVisitDate) {
-                  // Comparar datas (ignora hora)
-                  const visitDateStr = new Date(nextVisitDate).toISOString().split('T')[0];
-                  const routeDateStr = routeDate.toISOString().split('T')[0];
-                  
-                  if (visitDateStr === routeDateStr) {
-                    // Cliente ainda deveria estar nesta rota
-                    inProgressCustomerIds.push(card.customerId);
-                  } else {
-                    console.log(`⚠️ Cliente ${customer.fantasyName || customer.name} em andamento mas nextVisitDate mudou: ${visitDateStr} ≠ ${routeDateStr}`);
-                  }
-                } else {
-                  // Se não tem nextVisitDate, manter para não perder dados
-                  inProgressCustomerIds.push(card.customerId);
-                }
-              } else {
-                // Se não tem permanent card, manter
-                inProgressCustomerIds.push(card.customerId);
-              }
-            }
-          }
-        }
-
-        // Construir ordem final preservando APENAS visitas que ainda deveriam estar neste dia
+        // Construir ordem final preservando TODAS as visitas já iniciadas
         const finalOrder = [
-          ...completedCustomerIds,        // 1. Visitas completadas E que ainda deveriam estar aqui
-          ...inProgressCustomerIds,       // 2. Visitas em andamento E que ainda deveriam estar aqui
-          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes
+          ...completedCardIds,        // 1. Visitas completadas (mantém ordem original)
+          ...inProgressCardIds,       // 2. Visitas em andamento (mantém ordem original)
+          ...optimizedRoute.orderedPoints.map(p => p.id) // 3. Novas pendentes (otimizadas)
         ];
 
         const totalVisits = finalOrder.length;
@@ -10608,25 +9485,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      // Buscar detalhes das visitas (DIRETO de customers - fonte única)
+      // Buscar detalhes das visitas
       const visits = await Promise.all(
-        (route.optimizedOrder || []).map(async (customerId: string) => {
-          // optimizedOrder agora contém IDs de clientes, não de sales_cards
-          const [customer] = await db.select({
-            id: customers.id,
-            customerId: customers.id,
-            customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
-            customerLatitude: customers.latitude,
-            customerLongitude: customers.longitude,
-            customerAddress: customers.address,
-            scheduledDate: sql<Date>`${route.routeDate}::timestamp`,
-            isVirtual: customers.virtualService
-          })
-            .from(customers)
-            .where(eq(customers.id, customerId))
+        (route.optimizedOrder || []).map(async (visitId: string) => {
+          const [visit] = await db.select()
+            .from(visitAgenda)
+            .where(eq(visitAgenda.id, visitId))
             .limit(1);
-          
-          return customer;
+          return visit;
         })
       );
 
@@ -12761,7 +11627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           unitPrice: z.number().min(0)
         })).min(1, 'Adicione pelo menos um produto'),
         totalAmount: z.number().min(0),
-        paymentMethod: z.enum(['pix', 'boleto']).default('pix'),
+        paymentMethod: z.enum(['pix', 'card', 'boleto']).default('pix'),
         source: z.enum(['hotsite', 'website']).default('hotsite'),
         // Tabela de preço selecionada pelo cliente no hotsite
         priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional()
@@ -12779,6 +11645,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, {
         message: 'CPF é obrigatório para consumidores (pessoa física) e deve ter 11 dígitos',
         path: ['customer', 'cpfCnpj']
+      }).refine((data) => {
+        // ✅ Boleto não permitido para pessoa física (consumidores)
+        if (data.customer.customerType === 'pessoa_fisica' && data.paymentMethod === 'boleto') {
+          return false;
+        }
+        return true;
+      }, {
+        message: 'Boleto bancário não está disponível para consumidores. Utilize Pix ou Cartão.',
+        path: ['paymentMethod']
       });
       
       const validatedData = orderSchema.parse(req.body);
@@ -13682,236 +12557,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("❌ Error fixing card sellers:", error);
       res.status(500).json({ message: "Failed to fix card sellers", error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  // Limpeza de cards poluídos (com produtos/valores mas status ativo)
-  app.post('/api/admin/cleanup-polluted-cards', authenticateUser, requireRole(['admin']), async (req: any, res) => {
-    try {
-      const { 
-        dryRun = true, 
-        limit = 1000, 
-        skipRecentMinutes = 10,
-        cardIds = null 
-      } = req.body;
-
-      console.log('🧹 Iniciando limpeza de cards poluídos...');
-      console.log(`   - Modo: ${dryRun ? 'DRY-RUN (apenas diagnóstico)' : 'EXECUÇÃO REAL'}`);
-      console.log(`   - Limite: ${limit} cards`);
-      console.log(`   - Pular cards editados nos últimos ${skipRecentMinutes} minutos`);
-
-      const FINAL_STATUSES = ['completed', 'no_sale', 'failed', 'cancelled'];
-      const skipTimestamp = new Date(Date.now() - skipRecentMinutes * 60 * 1000);
-
-      // Construir query para detectar cards poluídos
-      let query = db
-        .select()
-        .from(salesCards)
-        .where(
-          and(
-            not(inArray(salesCards.status, FINAL_STATUSES)),
-            or(
-              // Cards com produtos
-              sql`jsonb_array_length(${salesCards.products}) > 0`,
-              // Cards com valor de venda
-              sql`${salesCards.saleValue} > 0`,
-              // Cards com invoice number
-              isNotNull(salesCards.invoiceNumber),
-              // Cards com Omie IDs
-              isNotNull(salesCards.omieOrderId),
-              // Cards com check-in (foram visitados)
-              isNotNull(salesCards.checkInTime)
-            )
-          )
-        );
-
-      // Filtrar cards específicos se fornecidos
-      if (cardIds && Array.isArray(cardIds) && cardIds.length > 0) {
-        query = query.where(inArray(salesCards.id, cardIds));
-      }
-
-      // Aplicar limite
-      query = query.limit(limit);
-
-      const pollutedCards = await query;
-
-      // Filtrar cards editados recentemente
-      const cardsToProcess = pollutedCards.filter(card => {
-        const updatedAt = card.updatedAt || card.createdAt;
-        return new Date(updatedAt) < skipTimestamp;
-      });
-
-      const skippedRecent = pollutedCards.length - cardsToProcess.length;
-
-      console.log(`📊 Análise:`);
-      console.log(`   - Cards poluídos encontrados: ${pollutedCards.length}`);
-      console.log(`   - Cards pulados (editados recentemente): ${skippedRecent}`);
-      console.log(`   - Cards a processar: ${cardsToProcess.length}`);
-
-      // Se dry-run, apenas reportar
-      if (dryRun) {
-        const summary = cardsToProcess.map(c => ({
-          id: c.id,
-          customerId: c.customerId,
-          sellerId: c.sellerId,
-          status: c.status,
-          saleValue: c.saleValue || 0,
-          productCount: (c.products as any[])?.length || 0,
-          isPermanent: c.isPermanent || false,
-          hasInvoice: !!c.invoiceNumber,
-          hasOmieId: !!c.omieOrderId,
-          hasCheckIn: !!c.checkInTime,
-          updatedAt: c.updatedAt,
-          proposedStatus: (c.saleValue || 0) > 0 ? 'completed' : 'no_sale',
-        }));
-
-        return res.json({
-          dryRun: true,
-          totalFound: pollutedCards.length,
-          skippedRecent,
-          toProcess: cardsToProcess.length,
-          cards: summary,
-          byStatus: {
-            completed: summary.filter(c => c.proposedStatus === 'completed').length,
-            no_sale: summary.filter(c => c.proposedStatus === 'no_sale').length,
-          },
-          byType: {
-            permanent: summary.filter(c => c.isPermanent).length,
-            regular: summary.filter(c => !c.isPermanent).length,
-          },
-        });
-      }
-
-      // EXECUÇÃO REAL
-      const results = {
-        processed: 0,
-        completed: 0,
-        no_sale: 0,
-        resetted: 0,
-        errors: [] as any[],
-      };
-
-      // Processar em batches de 100 com transação
-      const batchSize = 100;
-      for (let i = 0; i < cardsToProcess.length; i += batchSize) {
-        const batch = cardsToProcess.slice(i, i + batchSize);
-        
-        console.log(`   → Processando batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(cardsToProcess.length / batchSize)}...`);
-
-        for (const card of batch) {
-          try {
-            // Determinar novo status
-            const newStatus = (card.saleValue || 0) > 0 ? 'completed' : 'no_sale';
-            
-            // Atualizar status e completedDate
-            await db
-              .update(salesCards)
-              .set({
-                status: newStatus,
-                completedDate: new Date(),
-              })
-              .where(eq(salesCards.id, card.id));
-
-            results.processed++;
-            if (newStatus === 'completed') results.completed++;
-            else results.no_sale++;
-
-            // Se for permanent card, verificar order_history e resetar
-            if (card.isPermanent) {
-              // Verificar se já existe order_history
-              const existingHistory = await db
-                .select()
-                .from(orderHistory)
-                .where(eq(orderHistory.salesCardId, card.id))
-                .limit(1);
-
-              // Se não existe, criar um entry mínimo
-              if (existingHistory.length === 0 && card.saleValue && (card.saleValue > 0)) {
-                await db.insert(orderHistory).values({
-                  id: `order-${card.id}-cleanup`,
-                  salesCardId: card.id,
-                  customerId: card.customerId,
-                  sellerId: card.sellerId,
-                  orderDate: card.completedDate || new Date(),
-                  products: card.products || [],
-                  saleValue: card.saleValue,
-                  paymentMethod: card.paymentMethod || 'a_vista',
-                  operationType: card.operationType || 'venda',
-                  notes: `Histórico criado automaticamente pelo script de limpeza`,
-                });
-              }
-
-              // Disparar reset service
-              await resetPermanentCard(card.id);
-              results.resetted++;
-            }
-
-          } catch (error: any) {
-            console.error(`   ❌ Erro ao processar card ${card.id}:`, error.message);
-            results.errors.push({
-              cardId: card.id,
-              error: error.message,
-            });
-          }
-        }
-      }
-
-      console.log(`✅ Limpeza concluída:`);
-      console.log(`   - Cards processados: ${results.processed}`);
-      console.log(`   - Marcados como 'completed': ${results.completed}`);
-      console.log(`   - Marcados como 'no_sale': ${results.no_sale}`);
-      console.log(`   - Permanent cards resetados: ${results.resetted}`);
-      console.log(`   - Erros: ${results.errors.length}`);
-
-      res.json({
-        success: true,
-        dryRun: false,
-        totalFound: pollutedCards.length,
-        skippedRecent,
-        ...results,
-      });
-
-    } catch (error: any) {
-      console.error("❌ Erro na limpeza de cards:", error);
-      res.status(500).json({ 
-        message: "Falha na limpeza de cards",
-        error: error.message 
-      });
-    }
-  });
-
-  // Rota de limpeza manual de sales cards antigos (ADMIN ONLY)
-  app.post('/api/admin/cleanup-old-cards', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      
-      // Apenas admin pode executar
-      if (user.role !== 'admin') {
-        return res.status(403).json({ message: 'Acesso negado' });
-      }
-
-      console.log('🧹 [MANUAL-CLEANUP] Iniciando limpeza manual de sales cards antigos...');
-      
-      const { manualCleanup } = await import('./salesCardCleanupService');
-      const result = await manualCleanup(storage);
-      
-      console.log(`✅ [MANUAL-CLEANUP] Limpeza concluída: ${result.removed} removidos, ${result.kept} mantidos`);
-      
-      res.json({
-        success: true,
-        message: 'Limpeza concluída com sucesso',
-        removed: result.removed,
-        kept: result.kept,
-        skippedInvalidDate: result.skippedInvalidDate,
-        total: result.total
-      });
-
-    } catch (error: any) {
-      console.error('❌ [MANUAL-CLEANUP] Erro na limpeza manual:', error);
-      res.status(500).json({ 
-        message: 'Erro ao executar limpeza',
-        error: error.message 
-      });
     }
   });
 

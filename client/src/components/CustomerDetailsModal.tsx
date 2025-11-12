@@ -46,38 +46,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     enabled: !!customer?.id,
   });
 
-  // TEMPORARY: Usar fetch() puro para contornar problema de cache do React Query
-  // TODO: Reverter para useMutation após implementar fix de service worker/cache
-  const [isCreatingCard, setIsCreatingCard] = useState(false);
-
-  const handleCreateSalesCard = async () => {
-    if (!customer?.id || isCreatingCard) return;
-    
-    // Verificar se já existe um card pendente para este cliente
-    const hasPendingCard = salesHistory?.some((card: any) => 
-      card.status === 'pending'
-    );
-    
-    if (hasPendingCard) {
-      toast({
-        title: "Card já existe",
-        description: "Este cliente já possui um card de vendas pendente. Por favor, utilize o card existente.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    setIsCreatingCard(true);
-    
-    try {
-      // Buscar usuário atual
-      const currentUserRes = await fetch('/api/auth/user', { credentials: 'include' });
-      if (!currentUserRes.ok) throw new Error('Não autenticado');
-      const currentUser = await currentUserRes.json();
+  const createSalesCardMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      const currentUser = await fetch('/api/auth/user').then(res => res.json());
       
       // Buscar dados do cliente para calcular próxima data correta
-      const customerResponse = await fetch(`/api/customers/${customer.id}`, { credentials: 'include' });
-      if (!customerResponse.ok) throw new Error('Erro ao buscar dados do cliente');
+      const customerResponse = await fetch(`/api/customers/${customerId}`);
       const customerData = await customerResponse.json();
       
       let scheduledDate = new Date();
@@ -122,43 +96,49 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
         }
       }
       
-      // Criar sales card
-      const createRes = await fetch('/api/sales-cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          customerId: customer.id,
-          sellerId: currentUser.id,
-          status: 'pending',
-          scheduledDate: scheduledDate.toISOString(),
-          notes: 'Card criado a partir da gestão de clientes'
-        })
+      return apiRequest('POST', '/api/sales-cards', {
+        customerId: customerId,
+        sellerId: currentUser.id,
+        status: 'pending',
+        scheduledDate: scheduledDate.toISOString(),
+        notes: 'Card criado a partir da gestão de clientes'
       });
-      
-      if (!createRes.ok) {
-        const errorData = await createRes.json();
-        throw new Error(errorData.message || 'Erro ao criar card');
-      }
-      
-      // Invalidar cache manualmente
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      
       toast({
         title: "Sucesso",
         description: "Card de venda criado com sucesso!",
       });
       onClose();
-    } catch (error: any) {
-      console.error('Erro ao criar sales card:', error);
+    },
+    onError: (error) => {
       toast({
         title: "Erro",
         description: error.message || "Não foi possível criar o card de venda",
         variant: "destructive",
       });
-    } finally {
-      setIsCreatingCard(false);
+    },
+  });
+
+  const handleCreateSalesCard = () => {
+    if (!customer?.id) return;
+    
+    // Verificar se já existe um card pendente para este cliente
+    const hasPendingCard = salesHistory?.some((card: any) => 
+      card.status === 'pending'
+    );
+    
+    if (hasPendingCard) {
+      toast({
+        title: "Card já existe",
+        description: "Este cliente já possui um card de vendas pendente. Por favor, utilize o card existente.",
+        variant: "destructive",
+      });
+      return;
     }
+    
+    createSalesCardMutation.mutate(customer.id);
   };
 
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
@@ -262,12 +242,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
             </DialogTitle>
             <Button
               onClick={handleCreateSalesCard}
-              disabled={isCreatingCard}
+              disabled={createSalesCardMutation.isPending}
               className="bg-green-600 hover:bg-green-700 text-white"
               data-testid="button-create-sales-card"
             >
               <Plus className="h-4 w-4 mr-2" />
-              {isCreatingCard ? 'Criando...' : 'Criar Card de Venda'}
+              {createSalesCardMutation.isPending ? 'Criando...' : 'Criar Card de Venda'}
             </Button>
           </div>
         </DialogHeader>

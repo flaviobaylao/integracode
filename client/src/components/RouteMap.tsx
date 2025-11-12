@@ -20,14 +20,11 @@ interface RouteMapProps {
   optimizedOrder: string[];
   checkpoints?: Array<{
     visitId: string;
-    customerId?: string;
-    customerName?: string;
     checkpointLatitude: string;
     checkpointLongitude: string;
     checkpointTime: string;
     checkpointType: string;
   }>;
-  userRole?: string;
   onPhotoClick?: (photoData: {
     url: string;
     customerName: string;
@@ -35,10 +32,9 @@ interface RouteMapProps {
     latitude: string;
     longitude: string;
   }) => void;
-  onLockCoordinates?: (customerId: string, latitude: string, longitude: string) => void;
 }
 
-export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], userRole, onPhotoClick, onLockCoordinates }: RouteMapProps) {
+export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
@@ -184,41 +180,6 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
     }
 
-    // ============================================================
-    // SISTEMA DE CORES DE PIN BASEADO NA DISTÂNCIA
-    // ============================================================
-    // Verde: check-in e check-out no mesmo lugar (<=100m)
-    // Roxo: check-in (quando >100m do check-out)
-    // Vermelho: check-out (quando >100m do check-in)
-    // ============================================================
-    
-    // Função para calcular distância entre dois pontos (Haversine em metros)
-    const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-      const R = 6371000; // Raio da Terra em metros
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = 
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
-    // Agrupar checkpoints por visitId para comparar check-in e check-out
-    const checkpointsByVisit = new Map<string, { checkIn?: typeof checkpoints[0], checkOut?: typeof checkpoints[0] }>();
-    checkpoints.forEach((checkpoint) => {
-      if (!checkpointsByVisit.has(checkpoint.visitId)) {
-        checkpointsByVisit.set(checkpoint.visitId, {});
-      }
-      const visitCheckpoints = checkpointsByVisit.get(checkpoint.visitId)!;
-      if (checkpoint.checkpointType === 'check_in') {
-        visitCheckpoints.checkIn = checkpoint;
-      } else {
-        visitCheckpoints.checkOut = checkpoint;
-      }
-    });
-
     // Adicionar marcadores de checkpoints reais (se houver)
     const checkInCoordinates: [number, number][] = [];
     
@@ -238,43 +199,9 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       const correspondingVisit = visits.find(v => v.id === checkpoint.visitId);
       const hasPhoto = correspondingVisit?.checkInPhotoUrl && checkpoint.checkpointType === 'check_in';
 
-      // Determinar cor do PIN baseado na distância entre check-in e check-out
-      let pinColor = 'bg-purple-600'; // Padrão: roxo para check-in
-      let pinHoverColor = 'hover:bg-purple-700';
-      
-      const visitCheckpoints = checkpointsByVisit.get(checkpoint.visitId);
-      if (visitCheckpoints?.checkIn && visitCheckpoints?.checkOut) {
-        const checkInLat = parseFloat(visitCheckpoints.checkIn.checkpointLatitude);
-        const checkInLon = parseFloat(visitCheckpoints.checkIn.checkpointLongitude);
-        const checkOutLat = parseFloat(visitCheckpoints.checkOut.checkpointLatitude);
-        const checkOutLon = parseFloat(visitCheckpoints.checkOut.checkpointLongitude);
-        
-        if (!isNaN(checkInLat) && !isNaN(checkInLon) && !isNaN(checkOutLat) && !isNaN(checkOutLon)) {
-          const distance = calculateDistance(checkInLat, checkInLon, checkOutLat, checkOutLon);
-          
-          if (distance <= 100) {
-            // Check-in e check-out no mesmo lugar (<=100m) → VERDE
-            pinColor = 'bg-green-600';
-            pinHoverColor = 'hover:bg-green-700';
-          } else if (checkpoint.checkpointType === 'check_in') {
-            // Check-in diferente do check-out (>100m) → ROXO
-            pinColor = 'bg-purple-600';
-            pinHoverColor = 'hover:bg-purple-700';
-          } else {
-            // Check-out diferente do check-in (>100m) → VERMELHO
-            pinColor = 'bg-red-600';
-            pinHoverColor = 'hover:bg-red-700';
-          }
-        }
-      } else if (checkpoint.checkpointType === 'check_out') {
-        // Se só tem check-out sem check-in → VERMELHO
-        pinColor = 'bg-red-600';
-        pinHoverColor = 'hover:bg-red-700';
-      }
-
       // Ícone diferente se tiver foto (camera icon)
       const checkpointIconHtml = hasPhoto ? renderToStaticMarkup(
-        <div className={`${pinColor} rounded-full shadow-lg flex items-center justify-center cursor-pointer ${pinHoverColor}`}
+        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center cursor-pointer hover:bg-purple-700"
              style={{ width: '20px', height: '20px' }}
              title="Clique para ver a foto">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -283,7 +210,7 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
           </svg>
         </div>
       ) : renderToStaticMarkup(
-        <div className={`${pinColor} rounded-full shadow-lg flex items-center justify-center`}
+        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center"
              style={{ width: '12px', height: '12px' }}>
         </div>
       );
@@ -310,63 +237,15 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
         });
       }
 
-      // Popup com informações (incluindo nome fantasia e botão de lock para admins)
-      const customerDisplayName = checkpoint.customerName || correspondingVisit?.customerName || 'Cliente';
-      const isAdminUser = userRole && ['admin', 'coordinator', 'administrative'].includes(userRole);
-      const lockButtonId = `lock-coords-${checkpoint.visitId}-${checkpoint.checkpointType}`;
-      
-      let popupContent = `<div style="min-width: 200px;">
-        <strong>${customerDisplayName}</strong><br>
-        <em>${checkpoint.checkpointType === 'check_in' ? '📍 Check-in' : '🔴 Check-out'}</em><br>
-        ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
-      
-      if (hasPhoto) {
-        popupContent += `<br><em style="color: #9333ea;">Clique no ícone para ver a foto</em>`;
-      }
-      
-      if (isAdminUser && checkpoint.customerId && onLockCoordinates) {
-        popupContent += `<br><br>
-          <button 
-            id="${lockButtonId}"
-            style="
-              background: #10b981; 
-              color: white; 
-              border: none; 
-              padding: 6px 12px; 
-              border-radius: 4px; 
-              cursor: pointer;
-              font-size: 12px;
-              width: 100%;
-              margin-top: 4px;
-            "
-            onmouseover="this.style.background='#059669'"
-            onmouseout="this.style.background='#10b981'"
-          >
-            🔒 Travar Coordenadas
-          </button>`;
-      }
-      
-      popupContent += `</div>`;
+      // Popup com informações
+      const popupContent = hasPhoto 
+        ? `<strong>📸 ${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}<br>
+           <em style="color: #9333ea;">Clique no ícone para ver a foto</em>`
+        : `<strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
 
-      const popup = L.popup().setContent(popupContent);
-      marker.bindPopup(popup);
-      
-      // Adicionar listener para o botão de lock após o popup abrir
-      if (isAdminUser && checkpoint.customerId && onLockCoordinates) {
-        marker.on('popupopen', () => {
-          const lockButton = document.getElementById(lockButtonId);
-          if (lockButton) {
-            lockButton.addEventListener('click', () => {
-              onLockCoordinates(
-                checkpoint.customerId!,
-                checkpoint.checkpointLatitude,
-                checkpoint.checkpointLongitude
-              );
-              marker.closePopup();
-            });
-          }
-        });
-      }
+      marker.bindPopup(popupContent);
     });
 
     // Desenhar rota executada em vermelho (baseado em check-ins)
