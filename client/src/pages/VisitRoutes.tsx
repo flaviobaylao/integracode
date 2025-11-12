@@ -211,7 +211,7 @@ export default function VisitRoutes() {
       recurrenceType: card.recurrenceType,
       isVirtual: card.customer?.virtualService || false,
       visitStatus: card.status === 'completed' ? 'completed' : card.status === 'pending' ? 'pending' : 'missed',
-      customerName: card.customer?.name || '',
+      customerName: card.customer?.fantasyName || card.customer?.name || '',
       customerLatitude: card.customer?.latitude,
       customerLongitude: card.customer?.longitude,
       customerAddress: card.customer?.address,
