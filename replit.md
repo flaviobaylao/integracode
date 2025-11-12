@@ -26,6 +26,8 @@
 - **Rota do Dia (Nov 12, 2025)**: New simplified daily route visualization page accessible via `/rota-do-dia`. Features include:
   - Clean, user-friendly interface for viewing daily routes
   - Date and seller selection filters (admin/coordinator access)
+  - **Auto-refresh**: Page automatically updates every 30 seconds to show latest check-ins/check-outs
+  - **Manual refresh button**: Click to immediately update route data with loading indicator
   - **Route Metrics Dashboard**: Displays total visits, completed, pending, average visit time, plus planned distance and executed distance calculations
     - **Average Visit Time**: Calculated from check-in to check-out timestamps; visits with only check-in (no check-out) are counted as 30 minutes
   - **Interactive Map**: Leaflet-based route visualization showing:

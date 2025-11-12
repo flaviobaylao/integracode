@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -13,9 +13,11 @@ import type { DailyRouteResponse } from "@shared/schema";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
+import { useToast } from "@/hooks/use-toast";
 
 export default function RotaDoDia() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator';
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
@@ -30,10 +32,19 @@ export default function RotaDoDia() {
     enabled: isAdmin && !!user,
   });
 
-  const { data: response, isLoading } = useQuery<DailyRouteResponse>({
+  const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
     queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate],
     enabled: !!selectedSellerId && !!selectedDate,
+    refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
   });
+
+  const handleManualRefresh = async () => {
+    await refetch();
+    toast({
+      title: "Rota atualizada",
+      description: "Os dados foram atualizados com sucesso",
+    });
+  };
 
   const route = response?.route;
 
@@ -146,14 +157,29 @@ export default function RotaDoDia() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-          <Route className="h-8 w-8 text-green-600" />
-          Rota do Dia
-        </h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-2">
-          Visualize e gerencie suas visitas programadas
-        </p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+            <Route className="h-8 w-8 text-green-600" />
+            Rota do Dia
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-2">
+            Visualize e gerencie suas visitas programadas
+          </p>
+        </div>
+        {selectedSellerId && (
+          <Button
+            onClick={handleManualRefresh}
+            disabled={isFetching}
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-2"
+            data-testid="button-refresh-route"
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'Atualizando...' : 'Atualizar'}
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
