@@ -310,20 +310,27 @@ export async function optimizeRoute(
 }
 
 /**
- * Gera a rota diária para um vendedor consultando direto na tabela customers
- * FONTE ÚNICA DE VERDADE: customers
+ * HELPER: Planeja a rota diária SEM salvar no banco
+ * Retorna apenas os dados otimizados para serem salvos/atualizados depois
  * 
- * PERIODICIDADE: Agora usa a lógica correta baseada em SEMANAS (não dias)
- * - Semanal: toda semana nos dias configurados
- * - Quinzenal: semana SIM, semana NÃO (alternado desde serviceStartDate)
- * - Mensal: 1 semana SIM, 3 semanas NÃO (desde serviceStartDate)
- * - Bimestral: a cada 8 semanas (desde serviceStartDate)
+ * Usado por:
+ * - generateDailyRoute() para criar nova rota
+ * - Endpoint de regeneração para atualizar rota existente
  */
-export async function generateDailyRoute(
+export async function planDailyRoute(
   storage: DatabaseStorage,
   sellerId: string,
   routeDate: Date
-): Promise<any> {
+): Promise<{
+  sellerData: any;
+  optimizedOrder: string[];
+  totalDistance: number;
+  totalVisits: number;
+  routePoints: any[];
+  customersWithoutCoords: any[];
+  customersWithSuspiciousCoords: any[];
+  warnings: string[];
+}> {
   // Buscar informações do vendedor
   const seller = await storage.getUserById(sellerId);
   
@@ -344,10 +351,9 @@ export async function generateDailyRoute(
   const daysOfWeekFull = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
   const targetWeekdayFull = daysOfWeekFull[routeDate.getDay()];
   
-  console.log(`📅 Gerando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
+  console.log(`📅 Planejando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
   // NOVA ARQUITETURA: Buscar PERMANENT CARDS cuja nextVisitDate é HOJE ou está ATRASADA
-  // Permanent cards = 1 card por cliente com isPermanent=true, nextVisitDate calculado dinamicamente
   const { db } = await import('./db');
   const { salesCards, customers } = await import('../shared/schema');
   const { eq, and, lte } = await import('drizzle-orm');
@@ -371,8 +377,8 @@ export async function generateDailyRoute(
     .where(
       and(
         eq(salesCards.sellerId, sellerId),
-        eq(salesCards.isPermanent, true),  // Apenas permanent cards
-        lte(salesCards.nextVisitDate, endOfDay)  // nextVisitDate <= hoje (inclui atrasados)
+        eq(salesCards.isPermanent, true),
+        lte(salesCards.nextVisitDate, endOfDay)
       )
     );
 
@@ -380,16 +386,12 @@ export async function generateDailyRoute(
   
   // Filtrar apenas visitas presenciais com status válido
   const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {
-    // Apenas cards pending ou open
     if (!['pending', 'open'].includes(sc.cardStatus)) return false;
-    
-    // Não incluir clientes com atendimento virtual
     if (sc.customerVirtualService) return false;
-    
     return true;
   });
 
-  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas (${salesCardsWithCustomers.length - customersToVisit.length} virtuais ou outros status)`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas`);
 
   // Filtrar apenas clientes com coordenadas válidas
   const validCustomers = customersToVisit.filter((c: any) => 
@@ -406,11 +408,10 @@ export async function generateDailyRoute(
   );
 
   if (customersWithoutCoords.length > 0) {
-    console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas:`);
-    customersWithoutCoords.forEach((c: any) => console.log(`      - ${c.customerFantasyName || c.customerName} (${c.customerId})`));
+    console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas`);
   }
 
-  // 🔍 VALIDAÇÃO DE DISTÂNCIAS ANÔMALAS
+  // Validação de distâncias anômalas
   const sellerLat = parseFloat(seller.homeLatitude as any);
   const sellerLon = parseFloat(seller.homeLongitude as any);
   const customersWithSuspiciousCoords: any[] = [];
@@ -418,45 +419,41 @@ export async function generateDailyRoute(
   validCustomers.forEach((c: any) => {
     const customerLat = parseFloat(c.customerLatitude as any);
     const customerLon = parseFloat(c.customerLongitude as any);
-    
-    // Calcular distância em linha reta (Haversine)
     const distance = calculateHaversineDistance(sellerLat, sellerLon, customerLat, customerLon);
     
-    // Alertar se distância > 100km (suspeito para rota diária)
     if (distance > 100) {
       customersWithSuspiciousCoords.push({
         id: c.customerId,
         name: c.customerFantasyName || c.customerName,
         distance: Math.round(distance),
         latitude: c.customerLatitude,
-        longitude: c.customerLongitude,
-        city: c.customerAddress
+        longitude: c.customerLongitude
       });
     }
   });
 
   if (customersWithSuspiciousCoords.length > 0) {
-    console.log(`   🚨 ALERTA: ${customersWithSuspiciousCoords.length} clientes com coordenadas SUSPEITAS (>100km da casa do vendedor):`);
-    customersWithSuspiciousCoords.forEach((c: any) => 
-      console.log(`      - ${c.name}: ${c.distance}km de distância (lat: ${c.latitude}, lon: ${c.longitude})`)
-    );
+    console.log(`   🚨 ALERTA: ${customersWithSuspiciousCoords.length} clientes com coordenadas SUSPEITAS (>100km)`);
   }
 
   if (validCustomers.length === 0) {
     return {
-      routeId: null,
-      message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
+      sellerData: seller,
+      optimizedOrder: [],
+      totalDistance: 0,
       totalVisits: 0,
-      visitsWithoutCoordinates: customersWithoutCoords.length,
+      routePoints: [],
+      customersWithoutCoords,
+      customersWithSuspiciousCoords,
       warnings: customersWithoutCoords.length > 0 
-        ? [`${customersWithoutCoords.length} clientes sem coordenadas configuradas`]
+        ? [`${customersWithoutCoords.length} clientes sem coordenadas`]
         : []
     };
   }
 
   // Converter clientes para pontos de rota
-  const routePoints: RoutePoint[] = validCustomers.map((c: any) => ({
-    id: c.customerId, // Usar ID do cliente como identificador da visita
+  const routePoints = validCustomers.map((c: any) => ({
+    id: c.customerId,
     latitude: parseFloat(c.customerLatitude as any),
     longitude: parseFloat(c.customerLongitude as any),
     customerName: c.customerFantasyName || c.customerName,
@@ -465,7 +462,7 @@ export async function generateDailyRoute(
 
   console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);
 
-  // Otimizar a rota (usando distâncias reais de moto)
+  // Otimizar a rota
   const optimizedRoute = await optimizeRoute(
     parseFloat(seller.homeLatitude as any),
     parseFloat(seller.homeLongitude as any),
@@ -474,32 +471,76 @@ export async function generateDailyRoute(
 
   console.log(`   ✅ Rota otimizada: ${optimizedRoute.totalDistance.toFixed(2)}km estimados`);
 
-  // 🔍 VALIDAÇÃO DE DISTÂNCIA TOTAL
+  // Validação de distância total
   const warnings: string[] = [];
   
   if (customersWithSuspiciousCoords.length > 0) {
-    warnings.push(`${customersWithSuspiciousCoords.length} clientes com coordenadas suspeitas (>100km). Verifique: ${customersWithSuspiciousCoords.map(c => c.name).join(', ')}`);
+    warnings.push(`${customersWithSuspiciousCoords.length} clientes com coordenadas suspeitas (>100km)`);
   }
   
   if (optimizedRoute.totalDistance > 500) {
-    console.log(`   🚨 CRÍTICO: Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km)! Verifique coordenadas incorretas.`);
-    warnings.push(`Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km). Provavelmente há coordenadas erradas.`);
+    console.log(`   🚨 CRÍTICO: Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km)!`);
+    warnings.push(`Rota muito longa (${optimizedRoute.totalDistance.toFixed(2)}km)`);
   } else if (optimizedRoute.totalDistance > 300) {
-    console.log(`   ⚠️  AVISO: Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km). Revise se há coordenadas incorretas.`);
-    warnings.push(`Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km). Revise coordenadas.`);
+    console.log(`   ⚠️  AVISO: Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km)`);
+    warnings.push(`Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km)`);
   }
 
-  // Salvar rota no banco de dados
+  return {
+    sellerData: seller,
+    optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
+    totalDistance: optimizedRoute.totalDistance,
+    totalVisits: optimizedRoute.orderedPoints.length,
+    routePoints: optimizedRoute.orderedPoints,
+    customersWithoutCoords,
+    customersWithSuspiciousCoords,
+    warnings
+  };
+}
+
+/**
+ * Gera a rota diária para um vendedor consultando direto na tabela customers
+ * FONTE ÚNICA DE VERDADE: customers
+ * 
+ * PERIODICIDADE: Agora usa a lógica correta baseada em SEMANAS (não dias)
+ * - Semanal: toda semana nos dias configurados
+ * - Quinzenal: semana SIM, semana NÃO (alternado desde serviceStartDate)
+ * - Mensal: 1 semana SIM, 3 semanas NÃO (desde serviceStartDate)
+ * - Bimestral: a cada 8 semanas (desde serviceStartDate)
+ */
+export async function generateDailyRoute(
+  storage: DatabaseStorage,
+  sellerId: string,
+  routeDate: Date
+): Promise<any> {
+  // Usar helper para planejar rota
+  const plan = await planDailyRoute(storage, sellerId, routeDate);
+  
+  const startOfDay = new Date(routeDate);
+  startOfDay.setHours(0, 0, 0, 0);
+  
+  // Se não houver visitas válidas, retornar erro
+  if (plan.totalVisits === 0) {
+    return {
+      routeId: null,
+      message: 'Nenhuma visita presencial com coordenadas válidas encontrada para esta data',
+      totalVisits: 0,
+      visitsWithoutCoordinates: plan.customersWithoutCoords.length,
+      warnings: plan.warnings
+    };
+  }
+
+  // Salvar rota no banco de dados usando dados do plan
   const routeData = {
     sellerId,
     routeDate: startOfDay,
-    startLatitude: seller.homeLatitude.toString(),
-    startLongitude: seller.homeLongitude.toString(),
-    startAddress: `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`,
-    optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id), // IDs dos clientes
-    totalEstimatedDistance: optimizedRoute.totalDistance.toString(),
+    startLatitude: plan.sellerData.homeLatitude.toString(),
+    startLongitude: plan.sellerData.homeLongitude.toString(),
+    startAddress: `Casa do vendedor ${plan.sellerData.firstName} ${plan.sellerData.lastName || ''}`,
+    optimizedOrder: plan.optimizedOrder, // IDs dos clientes
+    totalEstimatedDistance: plan.totalDistance.toString(),
     totalActualDistance: '0',
-    totalVisits: optimizedRoute.orderedPoints.length,
+    totalVisits: plan.totalVisits,
     completedVisits: 0,
     routeStatus: 'pending'
   };
@@ -509,22 +550,22 @@ export async function generateDailyRoute(
   return {
     routeId: route.id,
     sellerId,
-    sellerName: `${seller.firstName} ${seller.lastName || ''}`,
+    sellerName: `${plan.sellerData.firstName} ${plan.sellerData.lastName || ''}`,
     routeDate: startOfDay,
     startLocation: {
-      latitude: parseFloat(seller.homeLatitude as any),
-      longitude: parseFloat(seller.homeLongitude as any),
+      latitude: parseFloat(plan.sellerData.homeLatitude as any),
+      longitude: parseFloat(plan.sellerData.homeLongitude as any),
       address: routeData.startAddress
     },
     optimizedRoute: {
-      points: optimizedRoute.orderedPoints,
-      totalDistance: optimizedRoute.totalDistance,
-      segments: optimizedRoute.segments,
-      totalVisits: optimizedRoute.orderedPoints.length
+      points: plan.routePoints,
+      totalDistance: plan.totalDistance,
+      segments: [],
+      totalVisits: plan.totalVisits
     },
-    visitsWithoutCoordinates: customersWithoutCoords,
-    warnings,
-    suspiciousCoordinates: customersWithSuspiciousCoords
+    visitsWithoutCoordinates: plan.customersWithoutCoords,
+    warnings: plan.warnings,
+    suspiciousCoordinates: plan.customersWithSuspiciousCoords
   };
 }
 
