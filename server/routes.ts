@@ -9641,6 +9641,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Aplicar otimização à rota (salvar no banco)
+  app.post('/api/daily-routes/:routeId/optimize', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      
+      // Apenas administradores podem otimizar rotas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem otimizar rotas.' });
+      }
+      
+      // Buscar rota
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+
+      // Buscar dados do vendedor (coordenadas de casa)
+      const seller = await storage.getUser(route.sellerId);
+      
+      if (!seller?.homeLatitude || !seller?.homeLongitude) {
+        return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
+      }
+
+      // Buscar visitas da rota com coordenadas
+      const visitsData = await Promise.all(
+        (route.optimizedOrder || []).map(async (customerId: string) => {
+          const [customer] = await db
+            .select({
+              id: customers.id,
+              customerId: customers.id,
+              customerName: customers.fantasyName,
+              customerAddress: customers.address,
+              latitude: customers.latitude,
+              longitude: customers.longitude
+            })
+            .from(customers)
+            .where(eq(customers.id, customerId))
+            .limit(1);
+
+          return customer;
+        })
+      );
+
+      // Filtrar apenas visitas com coordenadas válidas
+      const validVisits = visitsData
+        .filter((v): v is NonNullable<typeof v> => {
+          if (!v || v === null || v === undefined) return false;
+          if (v.latitude === null || v.longitude === null) return false;
+          
+          const lat = typeof v.latitude === 'string' ? parseFloat(v.latitude) : v.latitude;
+          const lon = typeof v.longitude === 'string' ? parseFloat(v.longitude) : v.longitude;
+          
+          return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
+        });
+
+      if (validVisits.length === 0) {
+        return res.status(400).json({ message: 'Nenhuma visita com coordenadas válidas encontrada' });
+      }
+
+      // Preparar pontos para otimização
+      const points = validVisits.map(visit => ({
+        id: visit.id,
+        latitude: typeof visit.latitude === 'string' ? parseFloat(visit.latitude) : visit.latitude,
+        longitude: typeof visit.longitude === 'string' ? parseFloat(visit.longitude) : visit.longitude,
+        customerName: visit.customerName || 'Cliente',
+        customerAddress: visit.customerAddress || ''
+      }));
+
+      // Executar otimização
+      const { optimizeRoute } = await import('./routeOptimizationService');
+      const optimizedResult = await optimizeRoute(
+        seller.homeLatitude,
+        seller.homeLongitude,
+        points
+      );
+
+      // Ordem otimizada
+      const optimizedOrder = optimizedResult.orderedPoints.map(p => p.id);
+      
+      // Salvar no banco de dados
+      await storage.updateDailyRoute(routeId, {
+        optimizedOrder,
+        totalEstimatedDistance: optimizedResult.totalDistance.toString(),
+        totalVisits: optimizedOrder.length
+      });
+      
+      console.log(`✅ Rota ${routeId} otimizada e salva: ${validVisits.length} visitas, distância: ${optimizedResult.totalDistance}km`);
+
+      res.json({
+        success: true,
+        optimizedOrder,
+        totalDistance: optimizedResult.totalDistance,
+        totalVisits: optimizedOrder.length,
+        message: `Rota otimizada com sucesso! ${optimizedOrder.length} visitas, distância: ${optimizedResult.totalDistance}km`
+      });
+    } catch (error: any) {
+      console.error('Erro ao otimizar rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao otimizar rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Validar visita fora da rota (admin apenas)
   app.post('/api/daily-routes/checkpoints/:checkpointId/validate', authenticateUser, async (req: any, res) => {
     try {
