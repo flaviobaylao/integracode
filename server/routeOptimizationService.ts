@@ -384,6 +384,17 @@ export async function planDailyRoute(
 
   console.log(`   📋 ${salesCardsWithCustomers.length} clientes com visita agendada/atrasada encontrados`);
   
+  // DEBUG: Log detalhado dos status dos cards
+  const statusBreakdown: Record<string, number> = {};
+  const virtualServiceCount = salesCardsWithCustomers.filter((sc: any) => sc.customerVirtualService).length;
+  
+  salesCardsWithCustomers.forEach((sc: any) => {
+    statusBreakdown[sc.cardStatus] = (statusBreakdown[sc.cardStatus] || 0) + 1;
+  });
+  
+  console.log(`   🔍 DEBUG - Breakdown de status:`, statusBreakdown);
+  console.log(`   🔍 DEBUG - Virtual service: ${virtualServiceCount} cards`);
+  
   // Filtrar apenas visitas presenciais com status válido
   const customersToVisit = salesCardsWithCustomers.filter((sc: any) => {
     if (!['pending', 'open'].includes(sc.cardStatus)) return false;
@@ -391,7 +402,7 @@ export async function planDailyRoute(
     return true;
   });
 
-  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais agendadas (após filtro de status + virtual)`);
 
   // Filtrar apenas clientes com coordenadas válidas
   const validCustomers = customersToVisit.filter((c: any) => 
@@ -407,8 +418,14 @@ export async function planDailyRoute(
     isNaN(parseFloat(c.customerLongitude as any))
   );
 
+  console.log(`   🔍 DEBUG - Clientes com coordenadas válidas: ${validCustomers.length}/${customersToVisit.length}`);
+  
   if (customersWithoutCoords.length > 0) {
-    console.log(`   ⚠️  ${customersWithoutCoords.length} clientes sem coordenadas válidas`);
+    console.log(`   ⚠️  ${customersWithoutCoords.length} clientes SEM coordenadas válidas`);
+    // Log dos primeiros 5 clientes sem coordenadas para debug
+    customersWithoutCoords.slice(0, 5).forEach((c: any) => {
+      console.log(`      - ${c.customerFantasyName || c.customerName} (ID: ${c.customerId}): lat=${c.customerLatitude}, lon=${c.customerLongitude}`);
+    });
   }
 
   // Validação de distâncias anômalas
@@ -486,7 +503,7 @@ export async function planDailyRoute(
     warnings.push(`Rota longa (${optimizedRoute.totalDistance.toFixed(2)}km)`);
   }
 
-  return {
+  const result = {
     sellerData: seller,
     optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
     totalDistance: optimizedRoute.totalDistance,
@@ -496,6 +513,10 @@ export async function planDailyRoute(
     customersWithSuspiciousCoords,
     warnings
   };
+
+  console.log(`   🔍 DEBUG - Resultado final: ${result.totalVisits} visitas, ${result.optimizedOrder.length} IDs em optimizedOrder`);
+  
+  return result;
 }
 
 /**
