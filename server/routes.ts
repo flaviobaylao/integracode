@@ -9196,6 +9196,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
+      console.log(`🔍 [DEBUG] Buscando ${route.optimizedOrder?.length || 0} visitas do optimizedOrder`);
+      console.log(`🔍 [DEBUG] Primeiros 3 customer IDs: ${(route.optimizedOrder || []).slice(0, 3).join(', ')}`);
+      
       const visits = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
           // optimizedOrder agora contém IDs de clientes, não de sales_cards
@@ -9216,6 +9219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return customer;
         })
       );
+      
+      console.log(`✅ [DEBUG] ${visits.filter(v => v).length} visitas encontradas, ${visits.filter(v => !v).length} não encontradas`);
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
