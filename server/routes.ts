@@ -9168,6 +9168,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ENDPOINT DE TESTE
+  app.get('/api/test-route-endpoint', async (req: any, res) => {
+    console.log('🚨🚨🚨 TESTE ENDPOINT CHAMADO!!! 🚨🚨🚨');
+    return res.json({ test: 'SUCCESS', timestamp: new Date().toISOString() });
+  });
+
   // Buscar rota de uma data específica para um vendedor
   app.get('/api/daily-routes/:sellerId/date/:date', authenticateUser, async (req: any, res) => {
     try {
