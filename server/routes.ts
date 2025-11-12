@@ -2606,12 +2606,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post('/api/sales-cards', authenticateUser, async (req: any, res) => {
+    console.log('\n🚀🚀🚀 [CREATE-CARD] ROTA CHAMADA!');
+    console.log('📋 [CREATE-CARD] Body recebido:', JSON.stringify(req.body, null, 2));
+    
     try {
       const user = req.currentUser;
+      console.log('👤 [CREATE-CARD] Usuário:', user?.id, '-', user?.role);
+      
       const isAdministrative = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      console.log('🔐 [CREATE-CARD] É administrativo?', isAdministrative);
       
       // Se o usuário não é administrativo e está tentando criar um card para outro vendedor, bloquear
       if (!isAdministrative && req.body.sellerId && req.body.sellerId !== user.id) {
+        console.log('❌ [CREATE-CARD] Bloqueado: tentativa de criar card para outro vendedor');
         return res.status(403).json({ 
           message: "Você não tem permissão para criar cards de vendas para outros vendedores" 
         });
@@ -2619,22 +2626,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Se o usuário não é administrativo, forçar o sellerId para o ID do próprio usuário
       const sellerId = isAdministrative ? req.body.sellerId : user.id;
+      console.log('🎯 [CREATE-CARD] SellerId escolhido:', sellerId);
       
       // Validar que o sellerId existe no banco de dados e é um vendedor
       if (sellerId) {
+        console.log('🔍 [CREATE-CARD] Validando vendedor:', sellerId);
         const seller = await storage.getUserById(sellerId);
         if (!seller) {
+          console.log('❌ [CREATE-CARD] Vendedor não encontrado:', sellerId);
           return res.status(400).json({ 
             message: "Vendedor não encontrado. Por favor, selecione um vendedor válido." 
           });
         }
+        console.log('✅ [CREATE-CARD] Vendedor encontrado:', seller.id, '-', seller.role);
+        
         // Verificar se o usuário selecionado é realmente um vendedor
         if (seller.role !== 'vendedor') {
+          console.log('❌ [CREATE-CARD] Usuário não é vendedor. Role:', seller.role);
           return res.status(400).json({ 
             message: "O usuário selecionado não é um vendedor. Por favor, selecione um vendedor válido." 
           });
         }
       }
+      
+      console.log('📅 [CREATE-CARD] Processando data:', req.body.scheduledDate);
       
       // Processar a data corretamente
       const processedData = {
@@ -2645,22 +2660,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isRecurring: req.body.isRecurring || true,
       };
       
+      console.log('📝 [CREATE-CARD] Dados processados:', JSON.stringify({
+        customerId: processedData.customerId,
+        sellerId: processedData.sellerId,
+        scheduledDate: processedData.scheduledDate,
+        status: processedData.status
+      }, null, 2));
+      
       // Validar apenas os campos obrigatórios
       const requiredFields = ['customerId', 'sellerId', 'scheduledDate'];
       for (const field of requiredFields) {
         if (!processedData[field]) {
+          console.log(`❌ [CREATE-CARD] Campo obrigatório ausente: ${field}`);
           return res.status(400).json({ 
             message: `Campo obrigatório ausente: ${field}` 
           });
         }
       }
       
+      console.log('✅ [CREATE-CARD] Todos os campos obrigatórios presentes');
+      
       // BLOQUEIO DE DUPLICAÇÃO REMOVIDO:
       // O sistema agora permite criar múltiplos cards ativos para o mesmo cliente
       // Cada clique em "efetuar venda" cria um novo card, sem verificar cards existentes
       console.log(`✅ [CREATE-CARD] Criando novo card para cliente ${processedData.customerId} sem verificar cards ativos`);
       
+      console.log('💾 [CREATE-CARD] Chamando storage.createSalesCard...');
       const salesCard = await storage.createSalesCard(processedData);
+      console.log('✅✅✅ [CREATE-CARD] Card criado com sucesso! ID:', salesCard.id);
       
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
@@ -2676,10 +2703,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.json(salesCard);
-    } catch (error) {
-      console.error("Error creating sales card:", error);
+    } catch (error: any) {
+      console.error('\n❌❌❌ [CREATE-CARD] ERRO FATAL ao criar sales card!');
+      console.error('❌ [CREATE-CARD] Error Type:', error?.constructor?.name);
+      console.error('❌ [CREATE-CARD] Error Message:', error?.message);
+      console.error('❌ [CREATE-CARD] Error Stack:', error?.stack);
+      console.error('❌ [CREATE-CARD] Full Error:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
       if (error instanceof z.ZodError) {
-        console.log('Zod validation errors:', error.errors);
+        console.log('❌ [CREATE-CARD] Zod validation errors:', error.errors);
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to create sales card" });
