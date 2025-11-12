@@ -73,6 +73,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // 🔥🔥🔥 LOGGING GLOBAL AGRESSIVO - TODAS AS REQUISIÇÕES POST
+  app.use((req, res, next) => {
+    if (req.method === 'POST') {
+      console.log(`\n🔥🔥🔥 [GLOBAL-POST-LOGGER] ${req.method} ${req.url}`);
+      console.log(`📋 [GLOBAL-POST-LOGGER] Body:`, JSON.stringify(req.body, null, 2));
+      console.log(`👤 [GLOBAL-POST-LOGGER] Headers:`, JSON.stringify(req.headers, null, 2));
+    }
+    next();
+  });
+
   // Middleware global para impedir cache HTTP em todas as rotas /api/*
   app.use('/api', (req, res, next) => {
     res.set({
