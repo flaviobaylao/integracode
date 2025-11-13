@@ -27,6 +27,8 @@
     - Supports multi-vehicle planning, check-in/check-out, and checkpoint distance tracking.
     - Automatic coordinate validation with warnings.
     - Admin diagnostic tools.
+    - **Unified Customer + Lead Optimization**: Route optimization algorithm (`resolveRouteStops()` helper) supports both customers and leads simultaneously. Uses `visitStops` metadata with stopId format "customer:{id}" or "lead:{id}". Legacy support detects prefixes for backward compatibility with routes created before metadata system.
+    - **3-Layer Deduplication**: Protects against duplicate route entries at GET (display), POST input (processing), and POST output (reconstruction) levels to ensure data integrity.
     - **Route Allocation Logic**: `serviceStartDate` is contract start, not last visit. Routes filter customers where `routeDate >= serviceStartDate`. Single validation source via `calculateNextVisitDate()`.
     - **Executed Route Distance**: Calculates actual traveled distance based on chronological check-ins from seller's home to all visited locations and back home, using OSRM API. Recalculation occurs automatically after every checkpoint registration.
     - **"Rota do Dia" Page**: Auto-refreshing daily route visualization with metrics (total visits, completed, pending, average visit time, planned/executed distance, worked hours). Interactive map shows seller's home, customer visits, optimized route, actual executed route, and photo markers.
