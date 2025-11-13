@@ -765,28 +765,30 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
-        // FALLBACK para serviceStartDate: usar createdAt ou data atual se não tiver
-        // Isso garante que clientes sem data inicial ainda sejam incluídos nas rotas
-        let effectiveStartDate: Date | undefined = lastCompletedDate;
-        
-        if (!effectiveStartDate) {
-          // Sem última visita - usar serviceStartDate se disponível
-          if (customer.serviceStartDate) {
-            effectiveStartDate = customer.serviceStartDate;
-          } else {
-            // Log para identificar clientes sem serviceStartDate
-            clientsWithoutServiceStartDate++;
-            
-            // Fallback: usar createdAt ou data atual
-            effectiveStartDate = customer.createdAt || new Date();
+        // ✅ CORREÇÃO (Nov 13, 2025): NÃO usar serviceStartDate como lastCompletedDate
+        // serviceStartDate é data de início do contrato, NÃO última visita
+        // Filtrar apenas clientes cuja data de início já passou
+        if (customer.serviceStartDate) {
+          const serviceStart = new Date(customer.serviceStartDate);
+          serviceStart.setHours(0, 0, 0, 0);
+          const targetNormalized = new Date(targetDateBRT);
+          targetNormalized.setHours(0, 0, 0, 0);
+          
+          // Se a rota é ANTES do início do serviço, pular cliente
+          if (targetNormalized < serviceStart) {
+            continue; // Contrato ainda não iniciou
           }
+        } else {
+          // Log clientes sem serviceStartDate
+          clientsWithoutServiceStartDate++;
         }
         
-        // Calcular próxima visita usando effectiveStartDate como base
+        // Calcular próxima visita - lastCompletedDate APENAS de visitas reais
+        // Se não há visitas anteriores, calculateNextVisitDate retorna o primeiro dia válido
         const scheduleResult = calculateNextVisitDate({
           weekdays: weekdaysArray,
           periodicity: customer.visitPeriodicity || 'semanal',
-          lastCompletedDate: effectiveStartDate,
+          lastCompletedDate: lastCompletedDate, // undefined se não há visitas
           referenceDate: targetDateBRT
         });
         
