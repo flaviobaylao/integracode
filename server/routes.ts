@@ -7498,10 +7498,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // VERIFICAR BLOQUEIO POR DÉBITO VENCIDO
       try {
         const clientDocument = card.customer.cnpj || card.customer.cpf || '';
+        console.log(`🔍 [DEBT-CHECK] Verificando débitos para documento: ${clientDocument}`);
+        console.log(`🔍 [DEBT-CHECK] Cliente: ${card.customer.fantasyName || card.customer.name}`);
+        
         const clienteComDebito = await storage.getOverdueDebtByDocument(clientDocument);
-
+        console.log(`🔍 [DEBT-CHECK] Resultado da consulta:`, clienteComDebito ? 'DÉBITO ENCONTRADO' : 'SEM DÉBITO');
+        
         if (clienteComDebito) {
-          console.log(`⚠️ BLOQUEANDO PEDIDO: Cliente ${clienteComDebito.clientName} com débito vencido`);
+          console.log(`⚠️ BLOQUEANDO PEDIDO: Cliente ${clienteComDebito.clientName} com débito vencido de R$ ${parseFloat(clienteComDebito.totalAmount).toFixed(2)} - ${clienteComDebito.maxDaysOverdue} dias de atraso`);
           
           // Criar registro de pedido bloqueado
           const blockedOrderData = {
@@ -7518,6 +7522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
           
           await db.insert(blockedOrders).values(blockedOrderData);
+          console.log(`✅ [DEBT-CHECK] Pedido bloqueado registrado no banco de dados`);
           
           return res.status(403).json({ 
             blocked: true,
@@ -7526,9 +7531,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             debtAmount: parseFloat(clienteComDebito.totalAmount),
             daysOverdue: clienteComDebito.maxDaysOverdue
           });
+        } else {
+          console.log(`✅ [DEBT-CHECK] Cliente liberado - sem débitos vencidos`);
         }
       } catch (error) {
-        console.error('Erro ao verificar débitos vencidos:', error);
+        console.error('❌ [DEBT-CHECK] Erro ao verificar débitos vencidos:', error);
         // Continua o fluxo mesmo se houver erro na consulta de débitos
       }
       
