@@ -354,74 +354,57 @@ export async function planDailyRoute(
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
+  // DEBUG: Procurar Emporio Rocha
+  const hasEmporioRocha = customersScheduled.find(c => c.id === 'omie-client-4254744082');
+  if (hasEmporioRocha) {
+    console.log(`   🔍 DEBUG: Emporio Rocha ENCONTRADO em customersScheduled (virtual: ${hasEmporioRocha.virtualService})`);
+  }
+  
   // Filtrar apenas visitas presenciais (não virtuais)
   const customersToVisit = customersScheduled.filter(c => !c.virtualService);
 
   console.log(`   ✅ ${customersToVisit.length} visitas presenciais (após filtro de virtual)`);
-
-  // CORREÇÃO DO BUG: Filtrar clientes que REALMENTE devem ser visitados na data da rota
-  // baseado em weekdays e visitPeriodicity
-  const customersValidForDate = customersToVisit.filter(c => {
-    try {
-      // Normalizar weekdays (pode vir como string JSON ou array do Drizzle)
-      let weekdays: string[];
-      if (typeof c.weekdays === 'string') {
-        weekdays = JSON.parse(c.weekdays || '[]');
-      } else if (Array.isArray(c.weekdays)) {
-        weekdays = c.weekdays;
-      } else {
-        weekdays = [];
-      }
-      
-      // Se não tem dias configurados, incluir (edge case)
-      if (!weekdays || weekdays.length === 0) {
-        console.log(`   ⚠️  Cliente ${c.fantasyName || c.name} sem weekdays configurado - INCLUINDO por segurança`);
-        return true;
-      }
-      
-      // ServiceStartDate já vem como Date | null do Drizzle timestamp
-      // Se não houver, a função shouldVisitOnDateByPeriodicity usa data padrão (2025-01-02)
-      const serviceStartDate = c.serviceStartDate || null;
-      
-      // Validar se cliente deve ser visitado nesta data
-      const shouldVisit = shouldVisitOnDateByPeriodicity(
-        c.visitPeriodicity,
-        routeDate,
-        weekdays,
-        serviceStartDate
-      );
-      
-      if (!shouldVisit) {
-        console.log(`   ❌ REJEITADO: ${c.fantasyName || c.name} - weekdays: ${weekdays.join(', ')} - periodicity: ${c.visitPeriodicity} - data rota: ${targetWeekdayFull}`);
-      }
-      
-      return shouldVisit;
-    } catch (error) {
-      console.error(`   ⚠️  Erro ao validar cliente ${c.id}:`, error);
-      return false; // Em caso de erro, rejeitar cliente
-    }
-  });
-
-  console.log(`   ✅ ${customersValidForDate.length} clientes válidos para ${targetWeekdayFull} (após validação de weekdays + periodicity)`);
-  if (customersToVisit.length !== customersValidForDate.length) {
-    console.log(`   🔍 FILTRADOS: ${customersToVisit.length - customersValidForDate.length} clientes não correspondem ao dia ${targetWeekdayFull}`);
+  
+  // DEBUG: Verificar se Emporio Rocha passou
+  const hasEmporioRocha2 = customersToVisit.find(c => c.id === 'omie-client-4254744082');
+  if (hasEmporioRocha2) {
+    console.log(`   🔍 DEBUG: Emporio Rocha PASSOU filtro de virtual`);
+  } else if (hasEmporioRocha) {
+    console.log(`   ❌ DEBUG: Emporio Rocha REJEITADO por filtro de virtual!`);
   }
 
+  // ✅ CORREÇÃO (Nov 13, 2025): REMOVIDA validação duplicada!
+  // getCustomersForDate() já faz a filtragem correta usando calculateNextVisitDate()
+  // A revalidação com shouldVisitOnDateByPeriodicity() criava divergência e rejeitava clientes válidos
+  
   // Filtrar apenas clientes com coordenadas válidas
-  const validCustomers = customersValidForDate.filter(c => 
+  const validCustomers = customersToVisit.filter(c => 
     c.latitude && 
     c.longitude &&
     !isNaN(parseFloat(c.latitude as any)) &&
     !isNaN(parseFloat(c.longitude as any))
   );
+  
+  // DEBUG: Verificar se Emporio Rocha passou
+  const hasEmporioRocha3 = validCustomers.find(c => c.id === 'omie-client-4254744082');
+  if (hasEmporioRocha3) {
+    console.log(`   🔍 DEBUG: Emporio Rocha PASSOU filtro de coordenadas`);
+  } else if (hasEmporioRocha2) {
+    const er = hasEmporioRocha2;
+    console.log(`   ❌ DEBUG: Emporio Rocha REJEITADO por coordenadas!`);
+    console.log(`      - latitude: ${er.latitude} (tipo: ${typeof er.latitude})`);
+    console.log(`      - longitude: ${er.longitude} (tipo: ${typeof er.longitude})`);
+    console.log(`      - parseFloat(lat): ${parseFloat(er.latitude as any)} (isNaN: ${isNaN(parseFloat(er.latitude as any))})`);
+    console.log(`      - parseFloat(lon): ${parseFloat(er.longitude as any)} (isNaN: ${isNaN(parseFloat(er.longitude as any))})`);
+  }
 
-  const customersWithoutCoords = customersValidForDate.filter(c => 
+  const customersWithoutCoords = customersToVisit.filter(c => 
     !c.latitude || !c.longitude ||
     isNaN(parseFloat(c.latitude as any)) ||
     isNaN(parseFloat(c.longitude as any))
   );
 
-  console.log(`   🔍 DEBUG - Clientes com coordenadas válidas: ${validCustomers.length}/${customersValidForDate.length}`);
+  console.log(`   🔍 DEBUG - Clientes com coordenadas válidas: ${validCustomers.length}/${customersToVisit.length}`);
   
   if (customersWithoutCoords.length > 0) {
     console.log(`   ⚠️  ${customersWithoutCoords.length} clientes SEM coordenadas válidas`);

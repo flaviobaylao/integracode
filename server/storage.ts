@@ -792,14 +792,13 @@ export class DatabaseStorage implements IStorage {
           referenceDate: targetDateBRT
         });
         
-        // Normalizar nextDate para início do dia BRT para comparação justa
-        // scheduleResult.nextDate pode estar em horário arbitrário (ex: 08:00 UTC)
-        // Precisamos comparar datas no mesmo formato (início do dia BRT)
+        // Normalizar ambas as datas para comparação simples (YYYY-MM-DD)
+        // Ignora timezone completamente, compara apenas a data calendário
         const nextDateStr = scheduleResult.nextDate.toISOString().split('T')[0];
-        const nextDateBRT = fromZonedTime(new Date(`${nextDateStr}T00:00:00`), BRAZIL_TZ);
+        const targetDateStr = targetDateBRT.toISOString().split('T')[0];
         
         // Incluir visitas atrasadas e da data alvo (nextVisitDate <= targetDate)
-        if (nextDateBRT.getTime() <= targetDateBRT.getTime()) {
+        if (nextDateStr <= targetDateStr) {
           customersToVisit.push(customer);
         }
       } catch (error: any) {
