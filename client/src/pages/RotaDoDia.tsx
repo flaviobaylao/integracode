@@ -879,10 +879,18 @@ export default function RotaDoDia() {
                               <div>
                                 <span className="text-gray-500">Check-out: </span>
                                 {checkOutCheckpoint ? (
-                                  <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
-                                    {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
-                                    {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
-                                  </span>
+                                  <div className="inline-flex items-center gap-2">
+                                    <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
+                                      {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                      {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
+                                    </span>
+                                    {visit.isAutoCheckout && (
+                                      <Badge variant="secondary" className="text-xs" data-testid={`badge-auto-checkout-${visit.customerId}`}>
+                                        <Clock className="h-3 w-3 mr-1" />
+                                        Check-out automático
+                                      </Badge>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className="text-gray-400">—</span>
                                 )}

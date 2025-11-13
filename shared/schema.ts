@@ -676,6 +676,8 @@ export const dailyRouteVisitSchema = z.object({
   customerAddress: z.string().nullable(),
   scheduledDate: z.string(),
   isVirtual: z.boolean().nullable(),
+  visitDuration: z.number().nullable().optional(), // Duração em minutos
+  isAutoCheckout: z.boolean().optional(), // Check-out automático (30min)
 });
 
 export const routeSegmentSchema = z.object({
