@@ -898,8 +898,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             <div className="flex flex-wrap justify-center gap-3">
               <Button
                 onClick={() => {
-                  console.log('Finalizar Venda clicked, calling onStartSale with card:', card.id);
-                  onStartSale?.(card);
+                  console.log('Finalizar Venda clicked, calling onStartSale with card:', displayCard?.id);
+                  if (onStartSale && displayCard) {
+                    onStartSale(displayCard);
+                  }
                 }}
                 className="bg-green-600 hover:bg-green-700 text-white"
                 data-testid="button-start-sale"
@@ -908,7 +910,11 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 EFETUAR VENDA
               </Button>
               <Button
-                onClick={() => onStartNoSale?.(card)}
+                onClick={() => {
+                  if (onStartNoSale && displayCard) {
+                    onStartNoSale(displayCard);
+                  }
+                }}
                 variant="outline"
                 className="border-red-600 text-red-600 hover:bg-red-50"
                 data-testid="button-start-no-sale"
