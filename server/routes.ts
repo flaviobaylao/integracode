@@ -9195,7 +9195,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerLongitude: customers.longitude,
             customerAddress: customers.address,
             scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
-            isVirtual: customers.virtualService
+            isVirtual: customers.virtualService,
+            weekdays: customers.weekdays, // Dias da semana de cadastro do cliente
+            visitPeriodicity: customers.visitPeriodicity // Periodicidade (semanal, quinzenal, mensal)
           })
             .from(customers)
             .where(eq(customers.id, customerId))
