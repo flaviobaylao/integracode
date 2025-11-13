@@ -199,7 +199,7 @@ function HotsiteContent() {
             <p className="text-sm text-gray-700">
               <strong>Próximos passos:</strong><br/>
               • Você receberá a confirmação no WhatsApp<br/>
-              • Entraremos em contato para confirmar o pagamento<br/>
+              • Nossa equipe entrará em contato para agendar sua entrega<br/>
               • Entregaremos seus sucos fresquinhos! 🍓
             </p>
           </div>
