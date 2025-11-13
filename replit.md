@@ -48,6 +48,7 @@
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system based on operation type, overdue debt, and payment terms.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA accessible at `/shop`. Features customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration (new customers to Omie), **5-tier dynamic pricing system**, server-side security, automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Supports Pix, Credit/Debit Card, and Boleto. Includes product gallery, customer reviews, stock management, order management page, and **technical product details**. Order confirmation displays message: "Nossa equipe entrará em contato para agendar sua entrega".
+    - **Minimum Order & Shipping**: Free shipping on all orders. Minimum order values: Consumidor Varejo (R$ 70), Consumidor Atacado (R$ 200), CNPJ Goiânia (R$ 150), CNPJ Interior (R$ 350). Cart displays minimum order warnings and disables checkout if minimum not met.
     - **Premium Landing Page Design**: Redesigned Nov 2025 inspired by Solti.com with:
         - **Hero Section**: Fullscreen background with product line image, bold messaging "100% Fruta. Zero Mentira." emphasizing purity (no sugar, no preservatives).
         - **Badges Section**: Three prominent badges (100% FRUTA, ZERO AÇÚCAR, ZERO CONSERVANTES) with icons and hover effects.

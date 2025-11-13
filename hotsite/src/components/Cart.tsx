@@ -1,4 +1,5 @@
 import { CartItem } from '../types';
+import { useCustomerType } from '../contexts/CustomerTypeContext';
 
 interface CartProps {
   items: CartItem[];
@@ -9,11 +10,30 @@ interface CartProps {
 }
 
 export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout, onClose }: CartProps) {
+  const { category, consumerTier, resellerLocation } = useCustomerType();
+  
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const hasDiscount = subtotal >= 200;
   const discountPercent = hasDiscount ? 10 : 0;
   const discount = (subtotal * discountPercent) / 100;
   const total = subtotal - discount;
+
+  // Calcular pedido mínimo baseado no tipo de cliente
+  const getMinimumOrder = (): number => {
+    if (category === 'consumer') {
+      return consumerTier === 'retail' ? 70 : 200;
+    }
+    if (category === 'reseller') {
+      if (resellerLocation === 'goiania') return 150;
+      if (resellerLocation === 'interior') return 350;
+      if (resellerLocation === 'brasilia') return 150;
+    }
+    return 70; // Fallback
+  };
+
+  const minimumOrder = getMinimumOrder();
+  const meetsMinimum = total >= minimumOrder;
+  const missingAmount = minimumOrder - total;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end md:items-center md:justify-center" data-testid="cart-modal">
@@ -91,6 +111,28 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
         {/* Footer */}
         {items.length > 0 && (
           <div className="border-t p-4 bg-gray-50">
+            {/* Frete Grátis */}
+            <div className="mb-3 p-3 bg-green-50 border-2 border-green-400 rounded-lg">
+              <p className="text-sm font-bold text-green-700 flex items-center gap-2">
+                <span>🚚</span>
+                Frete Grátis em todos os pedidos!
+              </p>
+            </div>
+
+            {/* Aviso de Pedido Mínimo */}
+            {!meetsMinimum && (
+              <div className="mb-3 p-3 bg-amber-50 border-2 border-amber-400 rounded-lg">
+                <p className="text-sm font-bold text-amber-700 flex items-center gap-2">
+                  <span>⚠️</span>
+                  Pedido mínimo: R$ {minimumOrder.toFixed(2)}
+                </p>
+                <p className="text-xs text-amber-600 mt-1">
+                  Adicione mais R$ {missingAmount.toFixed(2)} para finalizar seu pedido
+                </p>
+              </div>
+            )}
+
+            {/* Desconto Atacado */}
             {hasDiscount && (
               <div className="mb-3 p-3 bg-honest-orange bg-opacity-10 border-2 border-honest-orange rounded-lg">
                 <p className="text-sm font-bold text-honest-orange flex items-center gap-2">
@@ -111,6 +153,10 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                   <span>- R$ {discount.toFixed(2)}</span>
                 </div>
               )}
+              <div className="flex justify-between text-sm text-green-700">
+                <span>Frete:</span>
+                <span className="font-semibold">GRÁTIS</span>
+              </div>
               <div className="flex justify-between text-lg font-bold border-t pt-2">
                 <span>Total:</span>
                 <span className="text-honest-green" data-testid="cart-total">R$ {total.toFixed(2)}</span>
@@ -119,10 +165,15 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
             <button
               onClick={onCheckout}
-              className="btn-primary w-full"
+              disabled={!meetsMinimum}
+              className={`w-full py-3 rounded-xl font-bold transition-all ${
+                meetsMinimum
+                  ? 'btn-primary'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
               data-testid="btn-checkout"
             >
-              Finalizar Pedido
+              {meetsMinimum ? 'Finalizar Pedido' : `Pedido Mínimo: R$ ${minimumOrder.toFixed(2)}`}
             </button>
           </div>
         )}
