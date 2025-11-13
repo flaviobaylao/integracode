@@ -265,20 +265,42 @@ export default function RotaDoDia() {
   };
 
   const filteredCustomers = useMemo(() => {
-    if (!customers || !customerSearchQuery) return customers || [];
-    const query = customerSearchQuery.toLowerCase();
-    return customers.filter((customer: any) => {
+    console.log('🔍 DEBUG filteredCustomers:', { 
+      hasCustomers: !!customers, 
+      customersCount: customers?.length,
+      searchQuery: customerSearchQuery,
+      searchQueryLength: customerSearchQuery?.length 
+    });
+    
+    if (!customers || !customerSearchQuery) {
+      console.log('⚠️ DEBUG: Retornando todos os clientes (sem filtro)');
+      return customers || [];
+    }
+    
+    const query = customerSearchQuery.toLowerCase().trim();
+    console.log('🔎 DEBUG: Query processada:', query);
+    
+    const filtered = customers.filter((customer: any) => {
       const fantasyName = customer.fantasyName?.toLowerCase() || '';
       const name = customer.name?.toLowerCase() || '';
       const cnpj = customer.cnpj?.replace(/\D/g, '') || '';
       const cpf = customer.cpf?.replace(/\D/g, '') || '';
       const queryClean = query.replace(/\D/g, '');
       
-      return fantasyName.includes(query) ||
+      const matches = fantasyName.includes(query) ||
              name.includes(query) ||
              cnpj.includes(queryClean) ||
              cpf.includes(queryClean);
+             
+      return matches;
     });
+    
+    console.log(`✅ DEBUG: ${filtered.length} clientes filtrados de ${customers.length}`);
+    if (filtered.length > 0) {
+      console.log('DEBUG: Primeiros 3 clientes:', filtered.slice(0, 3).map(c => c.fantasyName || c.name));
+    }
+    
+    return filtered;
   }, [customers, customerSearchQuery]);
 
   const route = response?.route;
