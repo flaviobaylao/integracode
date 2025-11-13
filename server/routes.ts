@@ -2591,7 +2591,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       checkOutLatitude: checkOutLat,
                       checkOutLongitude: checkOutLon,
                       visitStatus: visitStatus,
-                      visitDuration: visitDuration
+                      visitDuration: visitDuration,
+                      isAutoCheckout: false // Check-out por ação do vendedor (venda/não-venda)
                     })
                     .where(eq(visitAgenda.id, visit.id));
                   
@@ -4698,7 +4699,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           actualCheckOut: checkOutTime,
           checkOutLatitude: latitude.toString(),
           checkOutLongitude: longitude.toString(),
-          visitStatus: 'completed'
+          visitStatus: 'completed',
+          visitDuration: visitDuration,
+          isAutoCheckout: false // Check-out manual pelo vendedor
         })
         .where(eq(visitAgenda.id, id));
 

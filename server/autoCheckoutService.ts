@@ -47,12 +47,16 @@ export async function processAutoCheckouts(storage: DatabaseStorage): Promise<{
           continue;
         }
 
+        const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
+        
         await db.update(visitAgenda)
           .set({
             actualCheckOut: checkOutTime,
             checkOutLatitude: checkOutLat.toString(),
             checkOutLongitude: checkOutLon.toString(),
-            visitStatus: 'completed'
+            visitStatus: 'completed',
+            visitDuration: visitDuration,
+            isAutoCheckout: true // Marcar como check-out automático (30min)
           })
           .where(eq(visitAgenda.id, visit.id));
 

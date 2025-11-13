@@ -599,6 +599,8 @@ export const visitAgenda = pgTable("visit_agenda", {
   checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }),
   checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }),
   distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }),
+  visitDuration: integer("visit_duration"), // Duração em minutos
+  isAutoCheckout: boolean("is_auto_checkout").default(false), // Indica se check-out foi automático (30min sem ação)
   
   // Dados do cliente na data da visita (cache para performance)
   customerName: varchar("customer_name").notNull(),
