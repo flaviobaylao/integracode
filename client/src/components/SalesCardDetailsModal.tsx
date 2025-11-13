@@ -364,7 +364,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto z-[9999]">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-3">
             <StatusIcon className={`h-6 w-6 ${statusInfo.iconColor}`} />

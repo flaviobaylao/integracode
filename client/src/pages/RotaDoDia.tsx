@@ -16,9 +16,12 @@ import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import SaleEditModal from "@/components/SaleEditModal";
+import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { SalesCardWithRelations } from "@shared/schema";
 
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdays(weekdaysJson: string | null | undefined): string {
@@ -64,6 +67,8 @@ export default function RotaDoDia() {
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
   const [selectedCard, setSelectedCard] = useState<any>(null);
   const [showCardModal, setShowCardModal] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
   const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -402,6 +407,25 @@ export default function RotaDoDia() {
     e.stopPropagation();
     setSelectedPhoto(photoUrl);
     setShowPhotoModal(true);
+  };
+
+  const handleEditSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setIsEditModalOpen(true);
+  };
+
+  const handleNoSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setIsNoSaleModalOpen(true);
+  };
+
+  const closeModals = () => {
+    setShowCardModal(false);
+    setIsEditModalOpen(false);
+    setIsNoSaleModalOpen(false);
+    setSelectedCard(null);
   };
 
   return (
@@ -978,10 +1002,25 @@ export default function RotaDoDia() {
       {showCardModal && selectedCard && (
         <SalesCardDetailsModal
           isOpen={showCardModal}
-          onClose={() => {
-            setShowCardModal(false);
-            setSelectedCard(null);
-          }}
+          onClose={closeModals}
+          card={selectedCard}
+          onStartSale={handleEditSale}
+          onStartNoSale={handleNoSale}
+        />
+      )}
+
+      {isEditModalOpen && selectedCard && (
+        <SaleEditModal
+          isOpen={isEditModalOpen}
+          onClose={closeModals}
+          card={selectedCard}
+        />
+      )}
+
+      {isNoSaleModalOpen && selectedCard && (
+        <NoSaleModal
+          isOpen={isNoSaleModalOpen}
+          onClose={closeModals}
           card={selectedCard}
         />
       )}
