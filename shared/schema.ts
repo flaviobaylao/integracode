@@ -134,6 +134,7 @@ export const products = pgTable("products", {
   omieCodigoProduto: varchar("omie_codigo_produto"), // ID numérico do produto no Omie como string (ex: "2425693571")
   name: varchar("name").notNull(),
   description: text("description"),
+  details: text("details"), // Ficha técnica detalhada do produto (exibida no hotsite)
   price: decimal("price", { precision: 10, scale: 2 }).notNull(), // Mantido para compatibilidade (equivalente ao retail_price)
   
   // Tabelas de preço para diferentes tipos de cliente
