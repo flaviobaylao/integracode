@@ -9552,7 +9552,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerLongitude: customer.longitude,
               customerAddress: customer.address,
               scheduledDate: route.routeDate,
-              isVirtual: customer.virtualService
+              isVirtual: customer.virtualService,
+              weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
+              visitPeriodicity: customer.visitPeriodicity // Periodicidade (semanal, quinzenal, mensal)
             };
           } else {
             // Lead

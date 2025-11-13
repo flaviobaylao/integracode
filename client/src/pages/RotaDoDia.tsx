@@ -766,9 +766,9 @@ export default function RotaDoDia() {
 
                   return (
                     <div
-                      key={visit.customerId}
+                      key={visit.id || visit.customerId || index}
                       className={`p-3 border rounded-lg hover:shadow-md transition-all ${borderColor}`}
-                      data-testid={`visit-${visit.customerId}`}
+                      data-testid={`visit-${visit.customerId || visit.id}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div 
