@@ -10438,10 +10438,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedTo: route.sellerId
       });
       
-      console.log(`➕ Lead ${lead.fantasyName} adicionado à rota ${routeId} (${currentOrder.length} → ${newOrder.length} visitas)`);
+      // Criar sales_card para o lead (necessário para check-in/check-out)
+      const salesCard = await storage.createSalesCard({
+        customerId: leadId, // Lead ID vai para customerId
+        sellerId: route.sellerId,
+        scheduledDate: route.date,
+        source: 'manual_route_addition' as any,
+        recurrence: 'ondemand' as any,
+        weekdays: null as any,
+      });
+      
+      console.log(`➕ Lead ${lead.fantasyName} adicionado à rota ${routeId} com sales_card ${salesCard.id} (${currentOrder.length} → ${newOrder.length} visitas)`);
       
       res.json({
         success: true,
+        salesCard,
         message: 'Lead adicionado à rota com sucesso',
         newTotalVisits: newOrder.length,
         lead: {

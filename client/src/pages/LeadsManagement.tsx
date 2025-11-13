@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -24,14 +25,22 @@ import { type Lead, type InsertLead, insertLeadSchema } from "@shared/schema";
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    fantasyName: string;
+    latitude: string;
+    longitude: string;
+    contact: string;
+    phone: string;
+    observation: string;
+    status: "pending" | "contacted" | "converted" | "cancelled";
+  }>({
     fantasyName: "",
     latitude: "",
     longitude: "",
     contact: "",
     phone: "",
     observation: "",
-    status: "pending" as const
+    status: "pending"
   });
   const { toast } = useToast();
   const queryClient = useQueryClient();

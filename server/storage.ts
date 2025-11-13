@@ -4750,14 +4750,25 @@ export class DatabaseStorage implements IStorage {
   }
   
   async createLead(leadData: InsertLead): Promise<Lead> {
-    const [lead] = await db.insert(leads).values(leadData).returning();
+    const values = {
+      ...leadData,
+      latitude: leadData.latitude.toString(),
+      longitude: leadData.longitude.toString(),
+    };
+    const [lead] = await db.insert(leads).values(values).returning();
     return lead;
   }
   
   async updateLead(id: string, leadData: Partial<InsertLead>): Promise<Lead> {
+    const values = {
+      ...leadData,
+      ...(leadData.latitude && { latitude: leadData.latitude.toString() }),
+      ...(leadData.longitude && { longitude: leadData.longitude.toString() }),
+      updatedAt: new Date(),
+    };
     const [lead] = await db
       .update(leads)
-      .set({ ...leadData, updatedAt: new Date() })
+      .set(values)
       .where(eq(leads.id, id))
       .returning();
     return lead;
