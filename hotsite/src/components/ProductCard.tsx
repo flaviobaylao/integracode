@@ -33,8 +33,8 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-honest-green to-honest-orange">
-            <span className="text-white text-6xl">🍊</span>
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-rose-400 to-pink-500">
+            <span className="text-white text-6xl">🍓</span>
           </div>
         )}
       </div>

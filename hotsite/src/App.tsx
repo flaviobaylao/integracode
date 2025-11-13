@@ -181,7 +181,7 @@ function HotsiteContent() {
   // View: Sucesso
   if (view === 'success') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-honest-green to-honest-orange flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="flex justify-center mb-6">
             <HonestLogo size="xl" className="text-honest-green" />
@@ -196,7 +196,7 @@ function HotsiteContent() {
               <strong>Próximos passos:</strong><br/>
               • Você receberá a confirmação no WhatsApp<br/>
               • Entraremos em contato para confirmar o pagamento<br/>
-              • Entregaremos seus sucos fresquinhos! 🍊
+              • Entregaremos seus sucos fresquinhos! 🍓
             </p>
           </div>
 
@@ -241,7 +241,7 @@ function HotsiteContent() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-gradient-to-r from-honest-green to-green-600 text-white sticky top-0 z-40 shadow-lg">
+      <header className="bg-gradient-to-r from-red-500 to-rose-600 text-white sticky top-0 z-40 shadow-lg">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex-1">
@@ -275,8 +275,8 @@ function HotsiteContent() {
       </header>
 
       {/* Banner */}
-      <div className="bg-gradient-to-r from-honest-orange to-yellow-500 text-white text-center py-6 px-4">
-        <h2 className="text-xl font-bold mb-1">🍊 Sucos 100% Naturais!</h2>
+      <div className="bg-gradient-to-r from-rose-400 to-pink-500 text-white text-center py-6 px-4">
+        <h2 className="text-xl font-bold mb-1">🍓 Sucos 100% Naturais!</h2>
         <p className="text-sm">Entregamos em Goiânia e região metropolitana</p>
       </div>
 

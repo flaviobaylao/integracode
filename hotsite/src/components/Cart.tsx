@@ -47,8 +47,8 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                     {item.imageUrl ? (
                       <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover rounded-lg" />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-honest-green to-honest-orange rounded-lg">
-                        <span className="text-white text-3xl">🍊</span>
+                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-rose-400 to-pink-500 rounded-lg">
+                        <span className="text-white text-3xl">🍓</span>
                       </div>
                     )}
                   </div>
