@@ -781,6 +781,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
+      // 🔍 LOG 1: Payload recebido do frontend
+      console.log('📝 [CREATE CUSTOMER] Payload recebido:', {
+        weekdays: req.body.weekdays,
+        weekdaysType: typeof req.body.weekdays,
+        visitPeriodicity: req.body.visitPeriodicity,
+        name: req.body.name,
+        sellerId: req.body.sellerId,
+      });
+      
       // Transformar strings vazias em null para campos numéricos
       const cleanedData = {
         ...req.body,
@@ -793,7 +802,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : undefined,
       };
       
+      // 🔍 LOG 2: Dados após limpeza
+      console.log('🧹 [CREATE CUSTOMER] Após limpeza:', {
+        weekdays: cleanedData.weekdays,
+        weekdaysType: typeof cleanedData.weekdays,
+      });
+      
       const data = insertCustomerSchema.parse(cleanedData);
+      
+      // 🔍 LOG 3: Dados após validação zod
+      console.log('✅ [CREATE CUSTOMER] Após validação zod:', {
+        weekdays: data.weekdays,
+        weekdaysType: typeof data.weekdays,
+      });
       
       // Verificar duplicidade de CPF
       if (data.cpf) {
@@ -830,13 +851,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Criar cliente no Integra
       const customer = await storage.createCustomer(data);
       
-      // Tentar cadastrar automaticamente no Omie (se tiver CPF/CNPJ)
+      // 🔍 LOG 4: Cliente criado no banco
+      console.log('💾 [CREATE CUSTOMER] Cliente salvo no banco:', {
+        id: customer.id,
+        name: customer.name,
+        weekdays: customer.weekdays,
+        weekdaysType: typeof customer.weekdays,
+      });
+      
+      // 🎯 CRIAR SALES CARD PERMANENTE automaticamente
+      let salesCardMessage = '';
+      try {
+        console.log(`🎯 [CREATE CUSTOMER] Criando sales_card permanente para cliente ${customer.name}...`);
+        const permanentCard = await storage.getOrCreatePermanentCard(customer.id, customer.sellerId);
+        salesCardMessage = ` ✅ Card de atendimento criado (ID: ${permanentCard.id})`;
+        console.log(`✅ [CREATE CUSTOMER] Sales card criado com sucesso: ${permanentCard.id}`);
+      } catch (cardError: any) {
+        console.error('❌ [CREATE CUSTOMER] Erro ao criar sales card:', cardError);
+        salesCardMessage = ` ⚠️ Cliente criado, mas houve erro ao criar card de atendimento: ${cardError.message}`;
+      }
+      
+      // 📤 CADASTRAR NO OMIE automaticamente (se tiver CPF/CNPJ)
       let omieMessage = '';
       if (customer.cpf || customer.cnpj) {
         try {
           const omieService = getOmieService(storage);
           if (omieService) {
-            console.log(`📤 Tentando cadastrar cliente no Omie: ${customer.name}...`);
+            console.log(`📤 [CREATE CUSTOMER] Tentando cadastrar cliente no Omie: ${customer.name}...`);
             const omieResult = await omieService.createClient({
               cnpj: customer.cnpj,
               cpf: customer.cpf,
@@ -856,21 +897,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 omieClientCode: omieResult.omieClientCode.toString()
               });
               omieMessage = ` ✅ Cliente cadastrado no Omie (código: ${omieResult.omieClientCode})`;
-              console.log(`✅ Cliente ${customer.name} cadastrado no Omie com sucesso`);
+              console.log(`✅ [CREATE CUSTOMER] Cliente ${customer.name} cadastrado no Omie com sucesso (código: ${omieResult.omieClientCode})`);
             } else {
-              omieMessage = ` ⚠️ Cliente criado no Integra, mas não foi possível cadastrar no Omie: ${omieResult.message}`;
-              console.warn(`⚠️ Não foi possível cadastrar no Omie: ${omieResult.message}`);
+              omieMessage = ` ⚠️ Cliente criado no Integra, mas não foi possível cadastrar no Omie: ${omieResult.message || 'Erro desconhecido'}`;
+              console.warn(`⚠️ [CREATE CUSTOMER] Falha ao cadastrar no Omie:`, omieResult);
             }
+          } else {
+            omieMessage = ` ⚠️ Serviço Omie não disponível`;
+            console.warn(`⚠️ [CREATE CUSTOMER] Omie service não está disponível`);
           }
         } catch (omieError: any) {
-          console.error('Erro ao cadastrar cliente no Omie:', omieError);
-          omieMessage = ` ⚠️ Cliente criado no Integra, mas houve erro ao cadastrar no Omie`;
+          console.error('❌ [CREATE CUSTOMER] Erro ao cadastrar cliente no Omie:', omieError);
+          omieMessage = ` ⚠️ Cliente criado no Integra, mas houve erro ao cadastrar no Omie: ${omieError.message || 'Erro desconhecido'}`;
         }
       }
       
       res.json({
         ...customer,
-        _omieMessage: omieMessage // Mensagem informativa sobre o cadastro no Omie
+        _omieMessage: omieMessage, // Mensagem informativa sobre o cadastro no Omie
+        _salesCardMessage: salesCardMessage // Mensagem informativa sobre o sales card
       });
     } catch (error) {
       console.error("Error creating customer:", error);
