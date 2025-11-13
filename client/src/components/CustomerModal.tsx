@@ -333,11 +333,28 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       const url = customer ? `/api/customers/${customer.id}` : '/api/customers';
       return await apiRequest(method, url, data);
     },
-    onSuccess: () => {
+    onSuccess: (response: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      
+      // Mensagem principal de sucesso
+      let description = customer ? "Cliente atualizado com sucesso!" : "Cliente criado com sucesso!";
+      
+      // Adicionar informações sobre Omie e Sales Card (se disponíveis)
+      const messages: string[] = [];
+      if (response._omieMessage) {
+        messages.push(response._omieMessage);
+      }
+      if (response._salesCardMessage) {
+        messages.push(response._salesCardMessage);
+      }
+      
+      if (messages.length > 0) {
+        description += "\n\n" + messages.join("\n");
+      }
+      
       toast({
         title: "Sucesso",
-        description: customer ? "Cliente atualizado com sucesso!" : "Cliente criado com sucesso!",
+        description,
       });
       onClose();
     },
