@@ -94,8 +94,8 @@ export function CustomerTypeProvider({ children }: { children: ReactNode }) {
   };
 
   const isSelectionComplete = 
-    (category === 'consumer' && consumerTier !== null && consumerData !== null) ||
-    (category === 'reseller' && resellerLocation !== null && companyData !== null);
+    (category === 'consumer' && consumerTier !== null) ||
+    (category === 'reseller' && resellerLocation !== null);
 
   return (
     <CustomerTypeContext.Provider
