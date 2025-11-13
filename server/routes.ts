@@ -634,7 +634,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Customer routes
   app.get('/api/customers', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      const user = req.currentUser;
+      let sellerId = req.sellerId; // Set by checkSellerAccess middleware for vendedor
+      
+      // Admin/Coordinator/Administrative pode especificar sellerId via query param
+      // para visualizar clientes de outro vendedor (ex: ao adicionar visitas na rota)
+      if ((user.role === 'admin' || user.role === 'coordinator' || user.role === 'administrative') 
+          && req.query.sellerId) {
+        sellerId = req.query.sellerId as string;
+      }
       
       const customers = await storage.getCustomers(sellerId);
       res.json(customers);

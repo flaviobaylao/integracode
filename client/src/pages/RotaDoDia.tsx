@@ -78,8 +78,19 @@ export default function RotaDoDia() {
   });
 
   const { data: customers } = useQuery<any[]>({
-    queryKey: ['/api/customers'],
-    enabled: isAdmin && showAddVisitModal && addVisitTab === 'customer',
+    queryKey: ['/api/customers', { sellerId: selectedSellerId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedSellerId) {
+        params.append('sellerId', selectedSellerId);
+      }
+      const res = await fetch(`/api/customers?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch customers');
+      return res.json();
+    },
+    enabled: isAdmin && showAddVisitModal && addVisitTab === 'customer' && !!selectedSellerId,
   });
 
   const { data: leads } = useQuery<any[]>({
@@ -966,7 +977,7 @@ export default function RotaDoDia() {
           setAddVisitTab('customer');
         }
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl z-[9999]">
           <DialogHeader>
             <DialogTitle>Adicionar à Rota</DialogTitle>
           </DialogHeader>
