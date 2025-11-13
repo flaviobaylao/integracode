@@ -699,7 +699,7 @@ export default function RotaDoDia() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Rota Executada</p>
-                    <p className="text-xl font-bold">{formatDistance(routeMetrics.executedDistance)}</p>
+                    <p className="text-xl font-bold">{formatDistance(routeMetrics.executedDistance * 1000)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
