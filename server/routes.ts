@@ -9487,23 +9487,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Calcular carga horária trabalhada (primeiro check-in até último check-out OU momento atual)
       if (checkIns.length > 0) {
-        // Ordenar por tempo para garantir primeiro e último
+        // Ordenar por tempo
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
         const lastCheckIn = new Date(checkIns[checkIns.length - 1].checkpointTime);
         
-        // Determinar se a rota está finalizada ou em andamento
+        // Determinar horário de término:
+        // - Se houver check-out E ele for mais recente que o último check-in: usar check-out (rota finalizada)
+        // - Senão: usar momento atual (rota em andamento - vendedor voltou do almoço, por exemplo)
         let endTime: Date;
         if (checkOuts.length > 0) {
-          checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
           const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
           
-          // Se o último check-in é mais recente que o último check-out, rota está em andamento
-          if (lastCheckIn.getTime() > lastCheckOut.getTime()) {
-            endTime = new Date(); // Usar momento atual
+          // Se check-out é mais recente que check-in: rota finalizada
+          if (lastCheckOut.getTime() >= lastCheckIn.getTime()) {
+            endTime = lastCheckOut;
           } else {
-            endTime = lastCheckOut; // Usar último check-out (rota finalizada)
+            // Check-in mais recente: vendedor voltou, rota em andamento
+            endTime = new Date();
           }
         } else {
           // Sem check-outs: rota em andamento
@@ -9919,23 +9922,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Calcular carga horária trabalhada (primeiro check-in até último check-out OU momento atual)
       if (checkIns.length > 0) {
-        // Ordenar por tempo para garantir primeiro e último
+        // Ordenar por tempo
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
         const lastCheckIn = new Date(checkIns[checkIns.length - 1].checkpointTime);
         
-        // Determinar se a rota está finalizada ou em andamento
+        // Determinar horário de término:
+        // - Se houver check-out E ele for mais recente que o último check-in: usar check-out (rota finalizada)
+        // - Senão: usar momento atual (rota em andamento - vendedor voltou do almoço, por exemplo)
         let endTime: Date;
         if (checkOuts.length > 0) {
-          checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
           const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
           
-          // Se o último check-in é mais recente que o último check-out, rota está em andamento
-          if (lastCheckIn.getTime() > lastCheckOut.getTime()) {
-            endTime = new Date(); // Usar momento atual
+          // Se check-out é mais recente que check-in: rota finalizada
+          if (lastCheckOut.getTime() >= lastCheckIn.getTime()) {
+            endTime = lastCheckOut;
           } else {
-            endTime = lastCheckOut; // Usar último check-out (rota finalizada)
+            // Check-in mais recente: vendedor voltou, rota em andamento
+            endTime = new Date();
           }
         } else {
           // Sem check-outs: rota em andamento
