@@ -12,6 +12,22 @@ async function throwIfResNotOk(res: Response) {
     if (res.status === 401) {
       throw new UnauthorizedError();
     }
+    
+    // Tentar parsear como JSON primeiro (para erros estruturados do backend)
+    const contentType = res.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      try {
+        const errorData = await res.json();
+        console.log('🔴 API Error Response:', errorData);
+        throw new Error(errorData.message || JSON.stringify(errorData));
+      } catch (jsonError) {
+        // Se falhar ao parsear JSON, lançar erro genérico
+        console.log('⚠️ Failed to parse error JSON:', jsonError);
+        throw new Error(`${res.status}: Error parsing response`);
+      }
+    }
+    
+    // Fallback para text se não for JSON
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
@@ -29,6 +45,7 @@ export async function apiRequest(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
   try {
+    console.log('🌐 API Request:', method, url, data ? 'with data' : 'no data');
     const res = await fetch(url, {
       method,
       headers: data ? { "Content-Type": "application/json" } : {},
@@ -37,6 +54,7 @@ export async function apiRequest(
       signal: controller.signal,
     });
 
+    console.log('📡 API Response:', res.status, res.statusText);
     await throwIfResNotOk(res);
     return await res.json();
   } finally {
