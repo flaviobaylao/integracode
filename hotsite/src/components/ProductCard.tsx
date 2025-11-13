@@ -115,7 +115,7 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
               </div>
 
               <button
-                onClick={() => { onAddToCart(product); setShowDetails(false); }}
+                onClick={() => onAddToCart(product)}
                 className="w-full btn-primary py-3 text-lg"
                 data-testid={`btn-add-cart-modal-${product.id}`}
               >
