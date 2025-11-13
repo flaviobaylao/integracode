@@ -12387,6 +12387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: product.id,
         name: product.name,
         description: product.description,
+        details: product.details ?? null, // Ficha técnica detalhada
         price: parseFloat(product.price), // Preço base (compatibilidade)
         retailPrice: product.retailPrice ? parseFloat(product.retailPrice) : null,
         wholesalePrice: product.wholesalePrice ? parseFloat(product.wholesalePrice) : null,
@@ -12428,6 +12429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: product.id,
         name: product.name,
         description: product.description,
+        details: product.details ?? null, // Ficha técnica detalhada
         price: parseFloat(product.price),
         imageUrl: product.imageUrl || '/placeholder-product.jpg',
         images: product.images || (product.imageUrl ? [product.imageUrl] : []), // Retornar array de imagens
