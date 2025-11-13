@@ -170,7 +170,7 @@ export function CustomerTypeSelector() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setResellerLocation('goiania')}
               className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
@@ -203,24 +203,6 @@ export function CustomerTypeSelector() {
                 </h2>
                 <p className="text-sm text-gray-600">
                   Cidades do interior de Goiás
-                </p>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setResellerLocation('brasilia')}
-              className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
-              data-testid="button-select-brasilia"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-cyan-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <MapPin className="w-10 h-10 text-blue-600" />
-                </div>
-                <h2 className="text-xl font-bold text-gray-800 mb-2">
-                  Brasília/DF
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Distrito Federal
                 </p>
               </div>
             </button>
