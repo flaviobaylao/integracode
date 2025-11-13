@@ -1282,10 +1282,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     value={paymentMethod} 
                     onValueChange={setPaymentMethod}
                   >
-                    <SelectTrigger 
-                      data-testid="select-payment-method"
-                      disabled={operationType === 'troca' || operationType === 'amostra'}
-                    >
+                    <SelectTrigger data-testid="select-payment-method">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
