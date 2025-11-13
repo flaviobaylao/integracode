@@ -4,6 +4,11 @@ import Cart from './components/Cart';
 import CheckoutForm from './components/CheckoutForm';
 import { CustomerTypeSelector } from './components/CustomerTypeSelector';
 import { HonestLogo } from './components/HonestLogo';
+import HeroSection from './components/HeroSection';
+import BadgesSection from './components/BadgesSection';
+import IngredientsSection from './components/IngredientsSection';
+import ProductShowcase from './components/ProductShowcase';
+import BenefitsSection from './components/BenefitsSection';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
 import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
@@ -239,18 +244,18 @@ function HotsiteContent() {
 
   // View: Catálogo (Principal)
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-red-500 to-rose-600 text-white sticky top-0 z-40 shadow-lg">
-        <div className="container mx-auto px-4 py-4">
+    <div className="min-h-screen bg-white">
+      {/* Header fixo */}
+      <header className="bg-white/95 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+        <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex-1">
-              <HonestLogo size="xl" className="text-white" />
+              <HonestLogo size="lg" className="text-honest-green" />
             </div>
             
             <button
               onClick={reset}
-              className="text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-2 rounded-lg mr-3 transition-all"
+              className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg mr-3 transition-all"
               data-testid="btn-change-customer-type"
             >
               Alterar Tipo
@@ -258,10 +263,10 @@ function HotsiteContent() {
             
             <button
               onClick={() => setIsCartOpen(true)}
-              className="relative bg-white bg-opacity-20 hover:bg-opacity-30 rounded-full p-3 transition-all active:scale-95"
+              className="relative bg-honest-green hover:bg-green-700 text-white rounded-full p-3 transition-all active:scale-95"
               data-testid="btn-open-cart"
             >
-              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               {cartItemsCount > 0 && (
@@ -274,14 +279,27 @@ function HotsiteContent() {
         </div>
       </header>
 
-      {/* Banner */}
-      <div className="bg-gradient-to-r from-rose-400 to-pink-500 text-white text-center py-6 px-4">
-        <h2 className="text-xl font-bold mb-1">🍓 Sucos 100% Naturais!</h2>
-        <p className="text-sm">Entregamos em Goiânia e região metropolitana</p>
-      </div>
+      {/* Landing Page Sections */}
+      <HeroSection />
+      <BadgesSection />
+      <IngredientsSection />
+      <ProductShowcase />
+      <BenefitsSection />
+
+      {/* Catálogo de Produtos */}
+      <section id="products" className="py-20 bg-gray-50">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+              Nossos Sucos
+            </h2>
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+              Escolha seus sabores favoritos e receba em casa
+            </p>
+          </div>
 
       {/* Conteúdo Principal */}
-      <main className="container mx-auto px-4 py-6 max-w-7xl">
+      <main className="max-w-7xl mx-auto px-4">
         {error && (
           <div className="bg-red-100 border-2 border-red-500 text-red-700 px-4 py-3 rounded-lg mb-4 flex items-center justify-between">
             <span>{error}</span>
@@ -315,15 +333,35 @@ function HotsiteContent() {
           </div>
         )}
       </main>
+        </div>
+      </section>
 
       {/* Footer */}
-      <footer className="bg-honest-green text-white py-6 mt-12">
-        <div className="container mx-auto px-4 text-center">
-          <p className="font-semibold mb-2">📍 Bela Vista de Goiás, GO</p>
-          <p className="text-sm opacity-90">Entregamos em Goiânia e região metropolitana</p>
-          <p className="text-sm opacity-90 mt-4">
-            📞 WhatsApp: <a href="https://wa.me/5562999999999" className="underline">(62) 99999-9999</a>
-          </p>
+      <footer className="bg-honest-green text-white py-12">
+        <div className="container mx-auto px-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+            <div>
+              <HonestLogo size="xl" className="text-white mb-4" />
+              <p className="text-sm opacity-90">
+                Sucos 100% naturais direto da fazenda para você.
+                Sem açúcar, sem conservantes, sem enrolação.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-bold text-lg mb-4">Contato</h3>
+              <p className="text-sm opacity-90 mb-2">📍 Bela Vista de Goiás, GO</p>
+              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/5562999999999" className="underline">(62) 99999-9999</a></p>
+              <p className="text-sm opacity-90">Entregamos em Goiânia e região</p>
+            </div>
+            <div>
+              <h3 className="font-bold text-lg mb-4">Horário de Atendimento</h3>
+              <p className="text-sm opacity-90">Segunda a Sexta: 8h às 18h</p>
+              <p className="text-sm opacity-90">Sábado: 8h às 12h</p>
+            </div>
+          </div>
+          <div className="border-t border-white/20 pt-6 text-center text-sm opacity-75">
+            <p>&copy; {new Date().getFullYear()} Honest Sucos. Todos os direitos reservados.</p>
+          </div>
         </div>
       </footer>
 
