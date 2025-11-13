@@ -963,41 +963,137 @@ export default function RotaDoDia() {
                         </h3>
                       </div>
 
-                      {offsiteCheckIns.map((checkpoint, index) => (
-                        <div
-                          key={checkpoint.id}
-                          className="p-3 border border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950 rounded-lg"
-                          data-testid={`offsite-visit-${checkpoint.id}`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 w-7 h-7 rounded-full bg-orange-600 text-white flex items-center justify-center text-sm font-semibold">
-                              !
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="font-semibold text-orange-600 dark:text-orange-400">
-                                  {checkpoint.customerName || 'Cliente não identificado'}
-                                </p>
-                                {checkpoint.photoUrl && (
-                                  <Camera 
-                                    className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
-                                    onClick={(e) => handlePhotoClick(checkpoint.photoUrl!, e)}
-                                  />
-                                )}
+                      {offsiteCheckIns.map((checkpoint, index) => {
+                        const validationStatus = checkpoint.validationStatus || 'pending';
+                        const isValidated = validationStatus === 'validated';
+                        const isCancelled = validationStatus === 'cancelled';
+                        const isPending = validationStatus === 'pending';
+                        
+                        return (
+                          <div
+                            key={checkpoint.id}
+                            className={`p-3 border rounded-lg ${
+                              isValidated 
+                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950' 
+                                : isCancelled
+                                ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950'
+                                : 'border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950'
+                            }`}
+                            data-testid={`offsite-visit-${checkpoint.id}`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
+                                isValidated 
+                                  ? 'bg-green-600' 
+                                  : isCancelled
+                                  ? 'bg-red-600'
+                                  : 'bg-orange-600'
+                              }`}>
+                                {isValidated ? '✓' : isCancelled ? '✗' : '!'}
                               </div>
-                              <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
-                                Check-in realizado fora da rota programada
-                              </p>
-                              <div className="text-xs">
-                                <span className="text-gray-500">Horário: </span>
-                                <span className="font-medium text-orange-600 dark:text-orange-400">
-                                  {formatInTimeZone(checkpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
-                                </span>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className={`font-semibold ${
+                                    isValidated 
+                                      ? 'text-green-600 dark:text-green-400' 
+                                      : isCancelled
+                                      ? 'text-red-600 dark:text-red-400'
+                                      : 'text-orange-600 dark:text-orange-400'
+                                  }`}>
+                                    {checkpoint.customerName || 'Cliente não identificado'}
+                                  </p>
+                                  {checkpoint.photoUrl && (
+                                    <Camera 
+                                      className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
+                                      onClick={(e) => handlePhotoClick(checkpoint.photoUrl!, e)}
+                                    />
+                                  )}
+                                  {isValidated && (
+                                    <Badge variant="default" className="bg-green-600 text-white">
+                                      Validada
+                                    </Badge>
+                                  )}
+                                  {isCancelled && (
+                                    <Badge variant="destructive">
+                                      Rejeitada
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                                  Check-in realizado fora da rota programada
+                                </p>
+                                <div className="text-xs mb-2">
+                                  <span className="text-gray-500">Horário: </span>
+                                  <span className={`font-medium ${
+                                    isValidated 
+                                      ? 'text-green-600 dark:text-green-400' 
+                                      : isCancelled
+                                      ? 'text-red-600 dark:text-red-400'
+                                      : 'text-orange-600 dark:text-orange-400'
+                                  }`}>
+                                    {formatInTimeZone(checkpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                  </span>
+                                </div>
+                                
+                                {/* Botões de validação (apenas admin e status pending) */}
+                                {isAdmin && isPending && (
+                                  <div className="flex gap-2 mt-2">
+                                    <Button
+                                      size="sm"
+                                      variant="default"
+                                      className="bg-green-600 hover:bg-green-700 text-white"
+                                      onClick={async () => {
+                                        try {
+                                          await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpoint.id}/validate`, {});
+                                          toast({
+                                            title: "Visita validada!",
+                                            description: "A distância desta visita foi incluída na rota executada.",
+                                          });
+                                          refetch();
+                                        } catch (error: any) {
+                                          toast({
+                                            title: "Erro ao validar",
+                                            description: error.message,
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      data-testid={`button-validate-${checkpoint.id}`}
+                                    >
+                                      <CheckCircle className="h-4 w-4 mr-1" />
+                                      Validar
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={async () => {
+                                        try {
+                                          await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpoint.id}/cancel`, {});
+                                          toast({
+                                            title: "Visita rejeitada",
+                                            description: "Esta visita não será contabilizada na rota executada.",
+                                          });
+                                          refetch();
+                                        } catch (error: any) {
+                                          toast({
+                                            title: "Erro ao rejeitar",
+                                            description: error.message,
+                                            variant: "destructive",
+                                          });
+                                        }
+                                      }}
+                                      data-testid={`button-reject-${checkpoint.id}`}
+                                    >
+                                      <X className="h-4 w-4 mr-1" />
+                                      Rejeitar
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </>
                   );
                 })()}
