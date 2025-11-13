@@ -354,24 +354,10 @@ export async function planDailyRoute(
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
-  // DEBUG: Procurar Emporio Rocha
-  const hasEmporioRocha = customersScheduled.find(c => c.id === 'omie-client-4254744082');
-  if (hasEmporioRocha) {
-    console.log(`   🔍 DEBUG: Emporio Rocha ENCONTRADO em customersScheduled (virtual: ${hasEmporioRocha.virtualService})`);
-  }
-  
   // Filtrar apenas visitas presenciais (não virtuais)
   const customersToVisit = customersScheduled.filter(c => !c.virtualService);
 
   console.log(`   ✅ ${customersToVisit.length} visitas presenciais (após filtro de virtual)`);
-  
-  // DEBUG: Verificar se Emporio Rocha passou
-  const hasEmporioRocha2 = customersToVisit.find(c => c.id === 'omie-client-4254744082');
-  if (hasEmporioRocha2) {
-    console.log(`   🔍 DEBUG: Emporio Rocha PASSOU filtro de virtual`);
-  } else if (hasEmporioRocha) {
-    console.log(`   ❌ DEBUG: Emporio Rocha REJEITADO por filtro de virtual!`);
-  }
 
   // ✅ CORREÇÃO (Nov 13, 2025): REMOVIDA validação duplicada!
   // getCustomersForDate() já faz a filtragem correta usando calculateNextVisitDate()
@@ -384,19 +370,6 @@ export async function planDailyRoute(
     !isNaN(parseFloat(c.latitude as any)) &&
     !isNaN(parseFloat(c.longitude as any))
   );
-  
-  // DEBUG: Verificar se Emporio Rocha passou
-  const hasEmporioRocha3 = validCustomers.find(c => c.id === 'omie-client-4254744082');
-  if (hasEmporioRocha3) {
-    console.log(`   🔍 DEBUG: Emporio Rocha PASSOU filtro de coordenadas`);
-  } else if (hasEmporioRocha2) {
-    const er = hasEmporioRocha2;
-    console.log(`   ❌ DEBUG: Emporio Rocha REJEITADO por coordenadas!`);
-    console.log(`      - latitude: ${er.latitude} (tipo: ${typeof er.latitude})`);
-    console.log(`      - longitude: ${er.longitude} (tipo: ${typeof er.longitude})`);
-    console.log(`      - parseFloat(lat): ${parseFloat(er.latitude as any)} (isNaN: ${isNaN(parseFloat(er.latitude as any))})`);
-    console.log(`      - parseFloat(lon): ${parseFloat(er.longitude as any)} (isNaN: ${isNaN(parseFloat(er.longitude as any))})`);
-  }
 
   const customersWithoutCoords = customersToVisit.filter(c => 
     !c.latitude || !c.longitude ||

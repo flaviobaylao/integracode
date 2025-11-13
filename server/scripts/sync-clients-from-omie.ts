@@ -60,7 +60,8 @@ async function syncClientsFromOmie() {
             const systemClient = {
               ...converted,
               sellerId: finalSellerId,
-              weekdays: "segunda,terça,quarta,quinta,sexta"
+              weekdays: "segunda,terça,quarta,quinta,sexta",
+              virtualService: false // IMPORTANTE: Clientes sincronizados são presenciais por padrão
             };
 
             if (existingCustomer) {
@@ -81,7 +82,8 @@ async function syncClientsFromOmie() {
                 sellerId: converted.sellerId || existingCustomer.sellerId, // NUNCA sobrescrever com default
                 isActive: systemClient.isActive,
                 omieStatus: systemClient.omieStatus,
-                situacao: systemClient.situacao
+                situacao: systemClient.situacao,
+                virtualService: false // IMPORTANTE: Garantir que não seja marcado como virtual
               });
               
               // Log quando atualizar vendedor
