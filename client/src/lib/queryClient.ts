@@ -9,7 +9,7 @@ export class UnauthorizedError extends Error {
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       throw new UnauthorizedError();
     }
     const text = (await res.text()) || res.statusText;
