@@ -70,11 +70,10 @@ async function saveSyncStatus(
 async function isLeadVisit(customerId: string, dailyRoute: any): Promise<boolean> {
   try {
     // First check visitStops for "lead:{id}" format
-    if (dailyRoute?.visitStops?.stopIds) {
-      const leadStop = dailyRoute.visitStops.stopIds.find((stopId: string) => 
-        stopId.startsWith('lead:') && stopId === `lead:${customerId}`
-      );
-      if (leadStop) {
+    // visitStops is stored as { [stopId]: { entityType, entityId } }
+    if (dailyRoute?.visitStops) {
+      const stopId = `lead:${customerId}`;
+      if (dailyRoute.visitStops[stopId]) {
         console.log(`🎯 Visit ${customerId} identified as LEAD via visitStops`);
         return true;
       }

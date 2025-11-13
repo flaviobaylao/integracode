@@ -47,7 +47,18 @@ export default function RotaDoDia() {
   });
 
   const { data: leads } = useQuery<any[]>({
-    queryKey: ['/api/leads', 'available', selectedSellerId],
+    queryKey: ['/api/leads', { sellerId: selectedSellerId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedSellerId) {
+        params.append('sellerId', selectedSellerId);
+      }
+      const res = await fetch(`/api/leads?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch leads');
+      return res.json();
+    },
     enabled: isAdmin && showAddVisitModal && addVisitTab === 'lead' && !!selectedSellerId,
   });
 
