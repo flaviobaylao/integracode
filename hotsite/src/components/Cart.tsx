@@ -21,19 +21,24 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
   // Calcular pedido mínimo baseado no tipo de cliente
   const getMinimumOrder = (): number => {
     if (category === 'consumer') {
-      return consumerTier === 'retail' ? 70 : 200;
+      if (consumerTier === 'retail') return 70;
+      if (consumerTier === 'wholesale') return 200;
+      return 70; // Fallback para consumidor sem tier
     }
     if (category === 'reseller') {
       if (resellerLocation === 'goiania') return 150;
       if (resellerLocation === 'interior') return 350;
       if (resellerLocation === 'brasilia') return 150;
+      return 150; // Fallback para revendedor sem localização
     }
-    return 70; // Fallback
+    return 70; // Fallback geral
   };
 
   const minimumOrder = getMinimumOrder();
-  const meetsMinimum = total >= minimumOrder;
-  const missingAmount = minimumOrder - total;
+  // ✅ CORREÇÃO: Usar subtotal ao invés de total para validar pedido mínimo
+  // Isso evita que o desconto de 10% bloqueie clientes que atingem o mínimo
+  const meetsMinimum = subtotal >= minimumOrder;
+  const missingAmount = minimumOrder - subtotal;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end md:items-center md:justify-center" data-testid="cart-modal">
