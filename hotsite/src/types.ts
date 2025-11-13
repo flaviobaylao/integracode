@@ -2,6 +2,7 @@ export interface Product {
   id: string;
   name: string;
   description: string | null;
+  details: string | null; // Ficha técnica detalhada do produto
   price: number; // Mantido para compatibilidade
   retailPrice: number | null;
   wholesalePrice: number | null;

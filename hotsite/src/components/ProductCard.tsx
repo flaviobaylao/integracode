@@ -123,6 +123,19 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
               </button>
             </div>
 
+            {/* Detalhes Técnicos */}
+            {product.details && (
+              <div className="bg-white rounded-xl p-6 shadow-sm">
+                <h4 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="text-honest-orange">📋</span>
+                  Detalhes Técnicos
+                </h4>
+                <div className="text-gray-700 whitespace-pre-wrap text-sm leading-relaxed" data-testid={`product-details-${product.id}`}>
+                  {product.details}
+                </div>
+              </div>
+            )}
+
             {/* Reviews */}
             <ProductReviews productId={product.id} productName={product.name} />
           </div>
