@@ -271,11 +271,13 @@ export default function RotaDoDia() {
     const queryClean = query.replace(/\D/g, '');
     
     return customers.filter((customer: any) => {
+      // Busca em todos os campos de nome
       const fantasyName = customer.fantasyName?.toLowerCase() || '';
       const name = customer.name?.toLowerCase() || '';
+      const companyName = customer.companyName?.toLowerCase() || '';
       
-      // Pesquisa por nome
-      if (fantasyName.includes(query) || name.includes(query)) {
+      // Pesquisa por nome fantasia, razão social ou nome da empresa
+      if (fantasyName.includes(query) || name.includes(query) || companyName.includes(query)) {
         return true;
       }
       
