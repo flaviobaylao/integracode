@@ -283,27 +283,31 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   const handleFinalizeSale = async () => {
     if (products.length === 0) {
+      const error = new Error("Adicione pelo menos um produto para finalizar a venda.");
       toast({
         title: "Erro",
-        description: "Adicione pelo menos um produto para finalizar a venda.",
+        description: error.message,
         variant: "destructive",
       });
-      return;
+      throw error;
     }
 
     const totalValue = calculateTotal();
     const minValue = operationType === 'venda' ? 10 : 0;
     
     if (totalValue < minValue) {
+      const error = new Error(`Valor mínimo para venda é R$ ${minValue.toFixed(2)}`);
       toast({
         title: "Erro",
-        description: `Valor mínimo para venda é R$ ${minValue.toFixed(2)}`,
+        description: error.message,
         variant: "destructive",
       });
-      return;
+      throw error;
     }
 
-    if (!card) return;
+    if (!card) {
+      throw new Error("Card não encontrado");
+    }
 
     setIsSubmitting(true);
     try {
@@ -330,6 +334,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           scheduledDate: nextScheduledDate || undefined
         }
       });
+    } catch (error) {
+      setIsSubmitting(false);
+      throw error; // Propagar erro para handleSendToFaturamento
     } finally {
       setIsSubmitting(false);
     }
@@ -338,13 +345,23 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const handleSendToFaturamento = async () => {
     if (!card?.id) return;
     
-    // Primeiro finalizar a venda, depois enviar para faturamento
-    await handleFinalizeSale();
-    
-    // Esperar um pouco para garantir que a venda foi finalizada
-    setTimeout(() => {
+    try {
+      // Primeiro finalizar a venda
+      await handleFinalizeSale();
+      
+      // Aguardar um pouco para garantir que a venda foi salva
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Depois enviar para faturamento
       sendToOmieMutation.mutate(card.id);
-    }, 1000);
+    } catch (error: any) {
+      console.error('Erro ao finalizar venda antes de enviar para Omie:', error);
+      toast({
+        title: "Erro ao Finalizar",
+        description: error.message || "Não foi possível finalizar a venda antes de enviar para o Omie.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleNoSale = () => {
