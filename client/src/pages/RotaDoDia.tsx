@@ -20,6 +20,42 @@ import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+// Funções auxiliares para formatar dados de agendamento
+function formatWeekdays(weekdaysJson: string | null | undefined): string {
+  if (!weekdaysJson) return '';
+  
+  try {
+    const days = JSON.parse(weekdaysJson);
+    if (!Array.isArray(days) || days.length === 0) return '';
+    
+    const dayMap: Record<string, string> = {
+      'segunda': 'Seg',
+      'terca': 'Ter',
+      'quarta': 'Qua',
+      'quinta': 'Qui',
+      'sexta': 'Sex',
+      'sabado': 'Sáb',
+      'domingo': 'Dom'
+    };
+    
+    return days.map(d => dayMap[d] || d).join(', ');
+  } catch (e) {
+    return '';
+  }
+}
+
+function formatPeriodicity(periodicity: string | null | undefined): string {
+  if (!periodicity) return '';
+  
+  const periodicityMap: Record<string, string> = {
+    'semanal': 'Semanal',
+    'quinzenal': 'Quinzenal',
+    'mensal': 'Mensal'
+  };
+  
+  return periodicityMap[periodicity] || periodicity;
+}
+
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -765,10 +801,19 @@ export default function RotaDoDia() {
                               )}
                             </div>
                             
-                            <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-2">
+                            <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                               <MapPin className="h-3 w-3" />
                               {visit.customerAddress || 'Endereço não informado'}
                             </p>
+
+                            {!isLead && (visit.weekdays || visit.visitPeriodicity) && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-2 font-medium">
+                                <Calendar className="h-3 w-3" />
+                                {formatWeekdays(visit.weekdays)}
+                                {visit.weekdays && visit.visitPeriodicity && ' • '}
+                                {formatPeriodicity(visit.visitPeriodicity)}
+                              </p>
+                            )}
 
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div>
