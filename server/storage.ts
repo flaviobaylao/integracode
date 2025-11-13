@@ -4180,11 +4180,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOverdueDebtByDocument(document: string): Promise<any | undefined> {
-    const [debt] = await db
-      .select()
-      .from(overdueDebts)
-      .where(eq(overdueDebts.clientDocument, document))
-      .limit(1);
+    // Normalizar documento de busca: remover pontos, barras, traços
+    const normalizedSearchDocument = document.replace(/[.\-\/]/g, '');
+    console.log(`🔍 [STORAGE] Buscando débito para documento normalizado: ${normalizedSearchDocument}`);
+    
+    // Buscar débitos onde o documento (sem formatação) corresponda
+    const allDebts = await db.select().from(overdueDebts);
+    const debt = allDebts.find(d => {
+      const normalizedDbDocument = d.clientDocument.replace(/[.\-\/]/g, '');
+      return normalizedDbDocument === normalizedSearchDocument;
+    });
+    
+    if (debt) {
+      console.log(`✅ [STORAGE] Débito encontrado: ${debt.clientName} - R$ ${debt.totalAmount}`);
+    } else {
+      console.log(`ℹ️ [STORAGE] Nenhum débito encontrado para: ${normalizedSearchDocument}`);
+    }
+    
     return debt;
   }
 

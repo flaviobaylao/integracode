@@ -7498,10 +7498,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // VERIFICAR BLOQUEIO POR DÉBITO VENCIDO
       try {
         const clientDocument = card.customer.cnpj || card.customer.cpf || '';
-        console.log(`🔍 [DEBT-CHECK] Verificando débitos para documento: ${clientDocument}`);
+        // Normalizar documento: remover pontos, barras, traços para comparação
+        const normalizedDocument = clientDocument.replace(/[.\-\/]/g, '');
+        console.log(`🔍 [DEBT-CHECK] Verificando débitos para documento: ${clientDocument} (normalizado: ${normalizedDocument})`);
         console.log(`🔍 [DEBT-CHECK] Cliente: ${card.customer.fantasyName || card.customer.name}`);
         
-        const clienteComDebito = await storage.getOverdueDebtByDocument(clientDocument);
+        const clienteComDebito = await storage.getOverdueDebtByDocument(normalizedDocument);
         console.log(`🔍 [DEBT-CHECK] Resultado da consulta:`, clienteComDebito ? 'DÉBITO ENCONTRADO' : 'SEM DÉBITO');
         
         if (clienteComDebito) {
