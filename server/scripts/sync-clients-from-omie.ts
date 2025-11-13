@@ -57,44 +57,47 @@ async function syncClientsFromOmie() {
             // Prioridade de vendedor: Omie > Existente > Default (NUNCA sobrescrever vendedor existente com default)
             const finalSellerId = converted.sellerId || existingCustomer?.sellerId || defaultSellerId || '';
             
-            const systemClient = {
-              ...converted,
-              sellerId: finalSellerId,
-              weekdays: "segunda,terça,quarta,quinta,sexta",
-              virtualService: false // IMPORTANTE: Clientes sincronizados são presenciais por padrão
-            };
-
             if (existingCustomer) {
-              // Atualizar cliente existente
+              // Atualizar cliente existente - NÃO sobrescrever weekdays/visitPeriodicity
               await storage.updateCustomer(existingCustomer.id, {
-                name: systemClient.name,
-                customerType: systemClient.customerType,
-                cpf: systemClient.cpf,
-                cnpj: systemClient.cnpj,
-                companyName: systemClient.companyName,
-                fantasyName: systemClient.fantasyName,
-                phone: systemClient.phone,
-                email: systemClient.email,
-                address: systemClient.address,
-                city: systemClient.city,
-                state: systemClient.state,
-                zipCode: systemClient.zipCode,
+                name: converted.name,
+                customerType: converted.customerType,
+                cpf: converted.cpf,
+                cnpj: converted.cnpj,
+                companyName: converted.companyName,
+                fantasyName: converted.fantasyName,
+                phone: converted.phone,
+                email: converted.email,
+                address: converted.address,
+                city: converted.city,
+                state: converted.state,
+                zipCode: converted.zipCode,
                 sellerId: converted.sellerId || existingCustomer.sellerId, // NUNCA sobrescrever com default
-                isActive: systemClient.isActive,
-                omieStatus: systemClient.omieStatus,
-                situacao: systemClient.situacao,
+                isActive: converted.isActive,
+                omieStatus: converted.omieStatus,
+                situacao: converted.situacao,
                 virtualService: false // IMPORTANTE: Garantir que não seja marcado como virtual
+                // NÃO incluir weekdays/visitPeriodicity na atualização para preservar dados existentes
               });
               
               // Log quando atualizar vendedor
-              if (systemClient.sellerId && systemClient.sellerId !== existingCustomer.sellerId) {
-                console.log(`✅ Cliente ${systemClient.name}: vendedor atualizado para ${systemClient.sellerId}`);
+              if (converted.sellerId && converted.sellerId !== existingCustomer.sellerId) {
+                console.log(`✅ Cliente ${converted.name}: vendedor atualizado para ${converted.sellerId}`);
               }
               
               result.updated++;
             } else {
-              // Criar novo cliente
-              await storage.createCustomer(systemClient);
+              // Criar novo cliente - usar padrões seguros para weekdays/visitPeriodicity
+              // Omie não fornece dados de agendamento, então usamos padrões do sistema
+              const newClient = {
+                ...converted,
+                sellerId: finalSellerId,
+                weekdays: JSON.stringify(["Dom"]), // Padrão: visitar aos domingos
+                visitPeriodicity: 'semanal' as const, // Padrão: visita semanal
+                virtualService: false // IMPORTANTE: Clientes sincronizados são presenciais por padrão
+              };
+              
+              await storage.createCustomer(newClient);
               result.imported++;
             }
 
