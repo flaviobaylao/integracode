@@ -98,10 +98,8 @@ function HotsiteContent() {
   };
 
   const calculateTotal = () => {
-    const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const hasDiscount = subtotal >= 200;
-    const discount = hasDiscount ? (subtotal * 0.1) : 0;
-    return subtotal - discount;
+    // Sem desconto - preços já são diferenciados por tabela
+    return cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   };
 
   const handleCheckout = async (customer: Customer, paymentMethod: 'pix' | 'card' | 'boleto') => {

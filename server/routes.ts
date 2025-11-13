@@ -12813,10 +12813,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         serverSubtotal += correctPrice * item.quantity;
       }
       
-      // Aplicar desconto de 10% se subtotal >= R$ 200
-      const hasDiscount = serverSubtotal >= 200;
-      const discount = hasDiscount ? serverSubtotal * 0.1 : 0;
-      const serverTotal = serverSubtotal - discount;
+      // ✅ Sem desconto - preços já são diferenciados por tabela
+      const serverTotal = serverSubtotal;
       
       // Validar se o total enviado está correto (margem de 1 centavo para arredondamento)
       const totalDifference = Math.abs(serverTotal - validatedData.totalAmount);

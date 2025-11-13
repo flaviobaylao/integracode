@@ -13,10 +13,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
   const { category, consumerTier, resellerLocation } = useCustomerType();
   
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const hasDiscount = subtotal >= 200;
-  const discountPercent = hasDiscount ? 10 : 0;
-  const discount = (subtotal * discountPercent) / 100;
-  const total = subtotal - discount;
+  const total = subtotal; // Sem desconto - preços já são diferenciados por tabela
 
   // Calcular pedido mínimo baseado no tipo de cliente
   const getMinimumOrder = (): number => {
@@ -136,28 +133,12 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                 </p>
               </div>
             )}
-
-            {/* Desconto Atacado */}
-            {hasDiscount && (
-              <div className="mb-3 p-3 bg-honest-orange bg-opacity-10 border-2 border-honest-orange rounded-lg">
-                <p className="text-sm font-bold text-honest-orange flex items-center gap-2">
-                  <span>🎉</span>
-                  Parabéns! Você ganhou {discountPercent}% de desconto (preço atacado)
-                </p>
-              </div>
-            )}
             
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
                 <span>R$ {subtotal.toFixed(2)}</span>
               </div>
-              {hasDiscount && (
-                <div className="flex justify-between text-sm text-honest-orange">
-                  <span>Desconto ({discountPercent}%):</span>
-                  <span>- R$ {discount.toFixed(2)}</span>
-                </div>
-              )}
               <div className="flex justify-between text-sm text-green-700">
                 <span>Frete:</span>
                 <span className="font-semibold">GRÁTIS</span>
