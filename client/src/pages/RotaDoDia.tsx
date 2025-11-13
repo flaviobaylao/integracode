@@ -265,42 +265,32 @@ export default function RotaDoDia() {
   };
 
   const filteredCustomers = useMemo(() => {
-    console.log('🔍 DEBUG filteredCustomers:', { 
-      hasCustomers: !!customers, 
-      customersCount: customers?.length,
-      searchQuery: customerSearchQuery,
-      searchQueryLength: customerSearchQuery?.length 
-    });
-    
-    if (!customers || !customerSearchQuery) {
-      console.log('⚠️ DEBUG: Retornando todos os clientes (sem filtro)');
-      return customers || [];
-    }
+    if (!customers || !customerSearchQuery) return customers || [];
     
     const query = customerSearchQuery.toLowerCase().trim();
-    console.log('🔎 DEBUG: Query processada:', query);
+    const queryClean = query.replace(/\D/g, '');
     
-    const filtered = customers.filter((customer: any) => {
+    return customers.filter((customer: any) => {
       const fantasyName = customer.fantasyName?.toLowerCase() || '';
       const name = customer.name?.toLowerCase() || '';
-      const cnpj = customer.cnpj?.replace(/\D/g, '') || '';
-      const cpf = customer.cpf?.replace(/\D/g, '') || '';
-      const queryClean = query.replace(/\D/g, '');
       
-      const matches = fantasyName.includes(query) ||
-             name.includes(query) ||
-             cnpj.includes(queryClean) ||
-             cpf.includes(queryClean);
-             
-      return matches;
+      // Pesquisa por nome
+      if (fantasyName.includes(query) || name.includes(query)) {
+        return true;
+      }
+      
+      // Pesquisa por CNPJ/CPF apenas se a query contém números
+      if (queryClean.length > 0) {
+        const cnpj = customer.cnpj?.replace(/\D/g, '') || '';
+        const cpf = customer.cpf?.replace(/\D/g, '') || '';
+        
+        if (cnpj.includes(queryClean) || cpf.includes(queryClean)) {
+          return true;
+        }
+      }
+      
+      return false;
     });
-    
-    console.log(`✅ DEBUG: ${filtered.length} clientes filtrados de ${customers.length}`);
-    if (filtered.length > 0) {
-      console.log('DEBUG: Primeiros 3 clientes:', filtered.slice(0, 3).map(c => c.fantasyName || c.name));
-    }
-    
-    return filtered;
   }, [customers, customerSearchQuery]);
 
   const route = response?.route;
