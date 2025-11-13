@@ -48,6 +48,14 @@
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system based on operation type, overdue debt, and payment terms.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA accessible at `/shop`. Features customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration (new customers to Omie), **5-tier dynamic pricing system**, server-side security, automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Supports Pix, Credit/Debit Card, and Boleto. Includes product gallery, customer reviews, stock management, order management page, and **technical product details**.
+    - **Premium Landing Page Design**: Redesigned Nov 2025 inspired by Solti.com with:
+        - **Hero Section**: Fullscreen background with product line image, bold messaging "100% Fruta. Zero Mentira." emphasizing purity (no sugar, no preservatives).
+        - **Badges Section**: Three prominent badges (100% FRUTA, ZERO AÇÚCAR, ZERO CONSERVANTES) with icons and hover effects.
+        - **Ingredients Showcase**: Grid displaying 8 key fruits (Acerola, Maracujá, Framboesa, Limão, Mirtilo, Morango, Maçã, Pera) with emoji icons and photos.
+        - **Product Showcase**: Lifestyle photography section (3 images) showing product usage in real contexts.
+        - **Benefits Section**: Green gradient section highlighting brand values (Saúde de Verdade, Energia Natural, Sabor Autêntico, Qualidade Garantida).
+        - **Enhanced Footer**: 3-column layout with company info, contact details, and business hours.
+        - **Visual Theme**: Strawberry/pink color palette, premium spacing, clean typography, generous white space inspired by premium beverage brands.
     - **5-Tier Pricing System**: Each product has separate prices for different customer segments:
         - **Consumidor Varejo** (retailPrice): For consumer purchases < R$200
         - **Consumidor Atacado** (wholesalePrice): For consumer purchases >= R$200
@@ -58,6 +66,7 @@
     - **Admin Management**: Admins configure all 5 price tiers via "Tabela de Preços do Hotsite" page. Products automatically populated with calculated prices: 0% (retail), -10% (wholesale), -15% (Goiânia), -20% (Interior), -25% (Brasília) from base price. Manual adjustment recommended for business-specific margins.
     - **Technical Details**: Products include optional technical details/specifications managed by admins. Details field (10,000 char max) preserves line breaks and displays conditionally in product modal. Editable via "Tabela de Preços do Hotsite" page.
     - **Hotsite Deployment**: Hotsite is a standalone SPA that must be rebuilt after source changes: `cd hotsite && npm run build && cp -r dist/* ../server/public-hotsite/`. Public API endpoints (`/api/public/products`) provide all product data including pricing and details.
+    - **Assets Management**: Product and lifestyle photos stored in `hotsite/public/images/` and served via `/shop/images/` path.
 - **Leads Management**: Lead tracking system with full route integration.
     - **Access Control**: Administrative users create/delete leads; all view; sellers update assigned leads.
     - **Lead Fields**: `fantasyName`, `latitude/longitude`, `contact`, `phone`, `photo`, `observation`, `status`.
