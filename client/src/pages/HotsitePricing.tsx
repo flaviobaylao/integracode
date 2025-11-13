@@ -4,8 +4,9 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Save, ShoppingBag, DollarSign, Package, MapPin } from "lucide-react";
+import { Loader2, Save, ShoppingBag, DollarSign, Package, MapPin, FileText } from "lucide-react";
 import type { Product } from "@shared/schema";
 
 export default function HotsitePricing() {
@@ -44,6 +45,16 @@ export default function HotsitePricing() {
       [productId]: {
         ...(prev[productId] || {}),
         [field]: numValue,
+      },
+    }));
+  };
+
+  const handleTextChange = (productId: string, field: keyof Product, value: string) => {
+    setEditedProducts(prev => ({
+      ...prev,
+      [productId]: {
+        ...(prev[productId] || {}),
+        [field]: value.trim() === '' ? null : value,
       },
     }));
   };
@@ -125,6 +136,7 @@ export default function HotsitePricing() {
           const displayGoiania = currentEdits.resaleGoianiaPrice !== undefined ? (currentEdits.resaleGoianiaPrice as number | null) : product.resaleGoianiaPrice;
           const displayInterior = currentEdits.resaleInteriorPrice !== undefined ? (currentEdits.resaleInteriorPrice as number | null) : product.resaleInteriorPrice;
           const displayBrasilia = currentEdits.resaleBrasiliaPrice !== undefined ? (currentEdits.resaleBrasiliaPrice as number | null) : product.resaleBrasiliaPrice;
+          const displayDetails = currentEdits.details !== undefined ? (currentEdits.details as string | null) : product.details;
 
           return (
             <Card key={product.id} className="hover:shadow-md transition-shadow">
@@ -254,6 +266,28 @@ export default function HotsitePricing() {
                       className="text-right"
                     />
                     <p className="text-xs text-gray-500">Revenda</p>
+                  </div>
+                </div>
+
+                {/* Detalhes Técnicos */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-honest-orange" />
+                      Detalhes Técnicos / Ficha Técnica
+                      <span className="text-xs text-gray-500 font-normal">(Exibido no hotsite)</span>
+                    </label>
+                    <Textarea
+                      placeholder="Digite os detalhes técnicos do produto, informações nutricionais, ingredientes, modo de uso, etc..."
+                      value={displayDetails || ''}
+                      onChange={(e) => handleTextChange(product.id, 'details', e.target.value)}
+                      data-testid={`textarea-details-${product.id}`}
+                      className="min-h-[120px] resize-y"
+                      maxLength={10000}
+                    />
+                    <p className="text-xs text-gray-500 text-right">
+                      {(displayDetails || '').length} / 10.000 caracteres
+                    </p>
                   </div>
                 </div>
               </CardContent>
