@@ -417,7 +417,7 @@ export default function RotaDoDia() {
 
     return {
       plannedDistance: calculateRouteDistance(plannedCoords),
-      executedDistance: calculateRouteDistance(executedCoords),
+      executedDistance: Number(route.totalActualDistance ?? 0),
       averageVisitTime
     };
   }, [route]);

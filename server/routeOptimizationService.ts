@@ -638,8 +638,12 @@ export async function registerCheckpoint(
     sequenceNumber
   });
 
+  console.log(`✅ Checkpoint ${checkpointType} salvo para visita ${visitId}`);
+
   // Recalcular distância total da rota usando apenas checkpoints validados
+  // IMPORTANTE: Fazer isso DEPOIS de salvar o checkpoint para que ele seja incluído na recalculação
   if (route) {
+    console.log(`🔄 Recalculando distância total da rota ${dailyRouteId}...`);
     const { recalculateRouteDistance } = await import('./actualRouteService');
     await recalculateRouteDistance(dailyRouteId, storage);
     
@@ -647,6 +651,8 @@ export async function registerCheckpoint(
     const updatedRoute = await storage.getDailyRoute(dailyRouteId);
     const totalDistance = parseFloat(updatedRoute?.totalActualDistance || '0');
     const completedVisits = updatedRoute?.completedVisits || 0;
+
+    console.log(`✅ Rota recalculada: ${totalDistance}km, ${completedVisits} visitas concluídas`);
 
     return {
       distanceFromPrevious: Math.round(distanceFromPrevious * 100) / 100,
