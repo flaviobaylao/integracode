@@ -638,24 +638,19 @@ export async function registerCheckpoint(
     sequenceNumber
   });
 
-  // Atualizar distância total percorrida na rota
+  // Recalcular distância total da rota usando apenas checkpoints validados
   if (route) {
-    const currentTotal = parseFloat(route.totalActualDistance || '0');
-    const newTotal = currentTotal + distanceFromPrevious;
+    const { recalculateRouteDistance } = await import('./actualRouteService');
+    await recalculateRouteDistance(dailyRouteId, storage);
     
-    // Contar visitas completadas (check-outs)
-    const completedCount = checkpoints.filter(cp => cp.checkpointType === 'check_out').length;
-    const completedVisits = checkpointType === 'check_out' ? completedCount + 1 : completedCount;
-    
-    await storage.updateDailyRoute(dailyRouteId, {
-      totalActualDistance: newTotal.toString(),
-      completedVisits,
-      routeStatus: checkpointType === 'check_in' && completedVisits === 0 ? 'in_progress' : route.routeStatus
-    });
+    // Buscar rota atualizada
+    const updatedRoute = await storage.getDailyRoute(dailyRouteId);
+    const totalDistance = parseFloat(updatedRoute?.totalActualDistance || '0');
+    const completedVisits = updatedRoute?.completedVisits || 0;
 
     return {
       distanceFromPrevious: Math.round(distanceFromPrevious * 100) / 100,
-      totalDistanceSoFar: Math.round(newTotal * 100) / 100,
+      totalDistanceSoFar: Math.round(totalDistance * 100) / 100,
       completedVisits,
       isOffRoute
     };

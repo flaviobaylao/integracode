@@ -166,7 +166,7 @@ export async function validateOffRouteVisit(
   });
 
   // Recalcular distância total da rota
-  await recalculateRouteDistance(storage, checkpoint.dailyRouteId);
+  await recalculateRouteDistance(checkpoint.dailyRouteId, storage);
 }
 
 /**
@@ -194,15 +194,15 @@ export async function cancelOffRouteVisit(
   });
 
   // Recalcular distância total da rota
-  await recalculateRouteDistance(storage, checkpoint.dailyRouteId);
+  await recalculateRouteDistance(checkpoint.dailyRouteId, storage);
 }
 
 /**
  * Recalcula a distância total da rota baseado nos checkpoints validados
  */
-async function recalculateRouteDistance(
-  storage: DatabaseStorage,
-  dailyRouteId: string
+export async function recalculateRouteDistance(
+  dailyRouteId: string,
+  storage: DatabaseStorage
 ): Promise<void> {
   const result = await calculateActualRouteDistance(storage, dailyRouteId);
   
