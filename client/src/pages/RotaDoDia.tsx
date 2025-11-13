@@ -410,19 +410,15 @@ export default function RotaDoDia() {
   };
 
   const handleEditSale = (card: SalesCardWithRelations) => {
-    console.log('🎯 handleEditSale chamado com card:', card.id);
     setSelectedCard(card);
     setShowCardModal(false);
     setIsEditModalOpen(true);
-    console.log('✅ Estados atualizados - showCardModal: false, isEditModalOpen: true');
   };
 
   const handleNoSale = (card: SalesCardWithRelations) => {
-    console.log('🎯 handleNoSale chamado com card:', card.id);
     setSelectedCard(card);
     setShowCardModal(false);
     setIsNoSaleModalOpen(true);
-    console.log('✅ Estados atualizados - showCardModal: false, isNoSaleModalOpen: true');
   };
 
   const closeModals = () => {

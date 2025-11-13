@@ -956,8 +956,11 @@ export class DatabaseStorage implements IStorage {
     }
     
     // VALIDAÇÃO CRÍTICA 2: Verificar se o dia agendado está alinhado com os weekdays do cliente
-    // EXCEÇÃO: Pular validação para adições manuais à rota (source: 'manual_route_addition')
-    const skipWeekdayValidation = processedSalesCard.source === 'manual_route_addition';
+    // EXCEÇÃO: Pular validação para:
+    //  - 'manual_route_addition': adições manuais à rota
+    //  - 'rota_do_dia': visualização de cards na rota do dia (cliente já foi alocado)
+    const skipWeekdayValidation = processedSalesCard.source === 'manual_route_addition' || 
+                                  processedSalesCard.source === 'rota_do_dia';
     
     if (processedSalesCard.customerId && processedSalesCard.scheduledDate && !skipWeekdayValidation) {
       const customer = await this.getCustomer(processedSalesCard.customerId);

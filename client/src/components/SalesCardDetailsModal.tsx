@@ -897,40 +897,21 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             {/* Botões de Venda */}
             <div className="flex flex-wrap justify-center gap-3">
               <Button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  
-                  alert('Botão clicado! onStartSale: ' + (!!onStartSale) + ', displayCard: ' + (!!displayCard));
-                  console.log('🔵 Botão EFETUAR VENDA clicado!');
-                  console.log('🔵 onStartSale existe?', !!onStartSale);
-                  console.log('🔵 displayCard existe?', !!displayCard);
-                  console.log('🔵 displayCard.id:', displayCard?.id);
-                  
+                onClick={() => {
                   if (onStartSale && displayCard) {
-                    console.log('✅ Chamando onStartSale...');
                     onStartSale(displayCard);
-                  } else {
-                    console.error('❌ onStartSale ou displayCard não disponível');
-                    console.error('❌ onStartSale:', onStartSale);
-                    console.error('❌ displayCard:', displayCard);
                   }
                 }}
                 className="bg-green-600 hover:bg-green-700 text-white"
                 data-testid="button-start-sale"
-                type="button"
               >
                 <CircleDollarSign className="h-4 w-4 mr-2" />
-                TESTE CLIQUE AQUI
+                EFETUAR VENDA
               </Button>
               <Button
                 onClick={() => {
-                  console.log('🔵 Botão NÃO VENDA clicado!');
                   if (onStartNoSale && displayCard) {
-                    console.log('✅ Chamando onStartNoSale...');
                     onStartNoSale(displayCard);
-                  } else {
-                    console.error('❌ onStartNoSale ou displayCard não disponível');
                   }
                 }}
                 variant="outline"

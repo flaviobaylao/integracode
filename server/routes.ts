@@ -2814,6 +2814,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Criar novo sales card com campos obrigatórios
+      // NOTA: source='rota_do_dia' permite criar card mesmo fora dos weekdays configurados
+      // (cliente pode ter sido adicionado manualmente à rota)
       const newCard = await storage.createSalesCard({
         customerId,
         sellerId,
