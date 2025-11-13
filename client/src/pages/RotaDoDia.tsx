@@ -383,37 +383,8 @@ export default function RotaDoDia() {
       });
     }
 
-    // Calcular tempo médio de visita
-    let totalVisitTime = 0;
-    let visitCount = 0;
-
-    route.visits?.forEach(visit => {
-      const checkIn = route.checkpoints?.find(
-        cp => cp.visitId === visit.id && cp.checkpointType === 'check_in'
-      );
-      const checkOut = route.checkpoints?.find(
-        cp => cp.visitId === visit.id && cp.checkpointType === 'check_out'
-      );
-
-      if (checkIn) {
-        let visitTimeMinutes = 0;
-        
-        if (checkOut) {
-          // Visita completa: calcular diferença real
-          const checkInTime = new Date(checkIn.checkpointTime).getTime();
-          const checkOutTime = new Date(checkOut.checkpointTime).getTime();
-          visitTimeMinutes = (checkOutTime - checkInTime) / (1000 * 60); // converter para minutos
-        } else {
-          // Apenas check-in: considerar 30 minutos
-          visitTimeMinutes = 30;
-        }
-
-        totalVisitTime += visitTimeMinutes;
-        visitCount++;
-      }
-    });
-
-    const averageVisitTime = visitCount > 0 ? Math.round(totalVisitTime / visitCount) : 0;
+    // Usar tempo médio calculado pelo backend (apenas visitas completas com check-in E check-out)
+    const averageVisitTime = route.progress?.averageVisitTime ?? 0;
 
     return {
       plannedDistance: calculateRouteDistance(plannedCoords),

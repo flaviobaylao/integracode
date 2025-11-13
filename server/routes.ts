@@ -9542,6 +9542,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }
 
+      // Calcular tempo médio de visitas (média de tempo entre check-in e check-out)
+      let averageVisitTime = 0;
+      
+      // Agrupar checkpoints por visitId (com fallback para customerId se visitId ausente)
+      // e ordenar por timestamp para parear corretamente
+      const visitGroups = new Map<string, { checkIns: Date[], checkOuts: Date[] }>();
+      
+      // Agrupar check-ins
+      checkIns.forEach(cp => {
+        const key = cp.visitId || cp.customerId; // Fallback para customerId se visitId ausente
+        if (!key) return;
+        
+        if (!visitGroups.has(key)) {
+          visitGroups.set(key, { checkIns: [], checkOuts: [] });
+        }
+        visitGroups.get(key)!.checkIns.push(new Date(cp.checkpointTime));
+      });
+      
+      // Agrupar check-outs
+      checkOuts.forEach(cp => {
+        const key = cp.visitId || cp.customerId; // Fallback para customerId se visitId ausente
+        if (!key) return;
+        
+        if (!visitGroups.has(key)) {
+          visitGroups.set(key, { checkIns: [], checkOuts: [] });
+        }
+        visitGroups.get(key)!.checkOuts.push(new Date(cp.checkpointTime));
+      });
+      
+      // Para cada visita, parear TODOS os check-ins com check-outs válidos
+      const visitDurations: number[] = [];
+      visitGroups.forEach((group) => {
+        if (group.checkIns.length > 0 && group.checkOuts.length > 0) {
+          // Ordenar por timestamp
+          group.checkIns.sort((a, b) => a.getTime() - b.getTime());
+          group.checkOuts.sort((a, b) => a.getTime() - b.getTime());
+          
+          // Iterar por todos os check-ins e parear com próximo check-out válido
+          const usedCheckOuts = new Set<number>();
+          
+          for (const checkInTime of group.checkIns) {
+            // Encontrar o próximo check-out que:
+            // 1. Ocorre DEPOIS deste check-in
+            // 2. Ainda não foi usado
+            let matchedIndex = -1;
+            
+            for (let i = 0; i < group.checkOuts.length; i++) {
+              if (!usedCheckOuts.has(i)) {
+                const checkOutTime = group.checkOuts[i];
+                const durationMs = checkOutTime.getTime() - checkInTime.getTime();
+                const durationMinutes = Math.floor(durationMs / (1000 * 60));
+                
+                // Se encontrou um check-out válido (positivo e < 8 horas)
+                if (durationMinutes > 0 && durationMinutes < 480) {
+                  visitDurations.push(durationMinutes);
+                  usedCheckOuts.add(i);
+                  matchedIndex = i;
+                  break; // Próximo check-in
+                }
+              }
+            }
+          }
+        }
+      });
+      
+      // Calcular média de todas as visitas completadas
+      if (visitDurations.length > 0) {
+        const totalDuration = visitDurations.reduce((acc, duration) => acc + duration, 0);
+        averageVisitTime = Math.round(totalDuration / visitDurations.length);
+      }
+
       // Headers para evitar cache e garantir dados atualizados
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.setHeader('Pragma', 'no-cache');
@@ -9564,6 +9635,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalEstimatedDistance: Math.round(parseFloat(route.totalEstimatedDistance || '0') * 1000),
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete,
+            averageVisitTime,
             workedHours,
             lunchBreak
           }
