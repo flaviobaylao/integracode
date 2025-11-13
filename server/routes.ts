@@ -9491,14 +9491,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
+        const lastCheckIn = new Date(checkIns[checkIns.length - 1].checkpointTime);
         
-        // Se há check-outs, usar o último. Senão, usar o momento atual (rota em andamento)
+        // Determinar se a rota está finalizada ou em andamento
         let endTime: Date;
         if (checkOuts.length > 0) {
           checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
-          endTime = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+          const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+          
+          // Se o último check-in é mais recente que o último check-out, rota está em andamento
+          if (lastCheckIn.getTime() > lastCheckOut.getTime()) {
+            endTime = new Date(); // Usar momento atual
+          } else {
+            endTime = lastCheckOut; // Usar último check-out (rota finalizada)
+          }
         } else {
-          // Rota em andamento: calcular até agora
+          // Sem check-outs: rota em andamento
           endTime = new Date();
         }
         
@@ -9915,14 +9923,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
+        const lastCheckIn = new Date(checkIns[checkIns.length - 1].checkpointTime);
         
-        // Se há check-outs, usar o último. Senão, usar o momento atual (rota em andamento)
+        // Determinar se a rota está finalizada ou em andamento
         let endTime: Date;
         if (checkOuts.length > 0) {
           checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
-          endTime = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+          const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+          
+          // Se o último check-in é mais recente que o último check-out, rota está em andamento
+          if (lastCheckIn.getTime() > lastCheckOut.getTime()) {
+            endTime = new Date(); // Usar momento atual
+          } else {
+            endTime = lastCheckOut; // Usar último check-out (rota finalizada)
+          }
         } else {
-          // Rota em andamento: calcular até agora
+          // Sem check-outs: rota em andamento
           endTime = new Date();
         }
         
