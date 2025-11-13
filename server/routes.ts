@@ -1298,11 +1298,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
+      console.log(`📝 [PUT /api/products/${id}] Payload recebido:`, JSON.stringify(req.body, null, 2));
+      
       const data = insertProductSchema.partial().parse(req.body);
+      console.log(`✅ [PUT /api/products/${id}] Dados após validação Zod:`, JSON.stringify(data, null, 2));
+      
       const product = await storage.updateProduct(id, data);
+      console.log(`💾 [PUT /api/products/${id}] Produto salvo:`, JSON.stringify(product, null, 2));
+      
       res.json(product);
     } catch (error) {
-      console.error("Error updating product:", error);
+      console.error(`❌ [PUT /api/products/${id}] Error updating product:`, error);
       res.status(500).json({ message: "Failed to update product" });
     }
   });

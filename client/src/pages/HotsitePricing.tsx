@@ -58,7 +58,7 @@ export default function HotsitePricing() {
     });
   };
 
-  const formatPrice = (value: number | null | undefined): string => {
+  const formatPrice = (value: number | string | null | undefined): string => {
     if (value === null || value === undefined) return '';
     return value.toString();
   };
