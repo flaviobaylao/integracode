@@ -2541,6 +2541,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Sales card not found" });
         }
         
+        // ✅ CHECK-OUT AUTOMÁTICO: Se registrou pedido ou "não venda", fazer check-out automaticamente
+        // APENAS se o status está MUDANDO para completed ou no_sale (não executar em updates irrelevantes)
+        const isStatusChanging = currentCard.status !== data.status;
+        const shouldAutoCheckout = isStatusChanging && ['completed', 'no_sale'].includes(data.status);
+        
+        if (shouldAutoCheckout) {
+          try {
+            console.log(`🔄 [AUTO-CHECKOUT] Status mudando para "${data.status}" - verificando visita relacionada ao card ${id}...`);
+            
+            // Buscar visita relacionada a este sales card (mais recente da data de hoje)
+            const today = new Date().toISOString().split('T')[0];
+            const relatedVisits = await db.select()
+              .from(visitAgenda)
+              .where(and(
+                eq(visitAgenda.salesCardId, id),
+                eq(visitAgenda.visitDate, sql`DATE(${today})`)
+              ))
+              .orderBy(desc(visitAgenda.createdAt))
+              .limit(1);
+            
+            if (relatedVisits.length > 0) {
+              const visit = relatedVisits[0];
+              console.log(`📋 [AUTO-CHECKOUT] Visita encontrada: ${visit.id}, status: ${visit.visitStatus}`);
+              
+              // Verificar se tem check-in mas não tem check-out
+              if (visit.actualCheckIn && !visit.actualCheckOut) {
+                // Validar se coordenadas do check-in existem
+                if (!visit.checkInLatitude || !visit.checkInLongitude) {
+                  console.log(`⚠️ [AUTO-CHECKOUT] Coordenadas do check-in ausentes - pulando check-out automático`);
+                } else {
+                  console.log(`✅ [AUTO-CHECKOUT] Visita tem check-in sem check-out - executando check-out automático...`);
+                  
+                  const checkOutTime = new Date();
+                  const checkInTime = new Date(visit.actualCheckIn);
+                  const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
+                  
+                  // Usar as mesmas coordenadas do check-in para o check-out
+                  const checkOutLat = visit.checkInLatitude;
+                  const checkOutLon = visit.checkInLongitude;
+                  
+                  // Definir visitStatus baseado no status do sales card
+                  const visitStatus = data.status === 'completed' ? 'completed' : 'no_sale';
+                  
+                  // Atualizar visita com dados de check-out
+                  await db.update(visitAgenda)
+                    .set({
+                      actualCheckOut: checkOutTime,
+                      checkOutLatitude: checkOutLat,
+                      checkOutLongitude: checkOutLon,
+                      visitStatus: visitStatus,
+                      visitDuration: visitDuration
+                    })
+                    .where(eq(visitAgenda.id, visit.id));
+                  
+                  console.log(`✅ [AUTO-CHECKOUT] Check-out automático realizado em ${checkOutTime.toLocaleTimeString('pt-BR')} com status "${visitStatus}"`);
+                  console.log(`⏱️ [AUTO-CHECKOUT] Duração da visita: ${visitDuration} minutos`);
+                  
+                  // Registrar checkpoint de check-out na rota diária
+                  const dailyRoute = await db.select()
+                    .from(dailyRoutes)
+                    .where(and(
+                      eq(dailyRoutes.sellerId, visit.sellerId),
+                      eq(dailyRoutes.routeDate, today)
+                    ))
+                    .limit(1);
+                  
+                  if (dailyRoute.length > 0) {
+                    console.log(`📍 [AUTO-CHECKOUT] Registrando checkpoint de check-out na rota ${dailyRoute[0].id}...`);
+                    
+                    await db.insert(routeCheckpoints).values({
+                      dailyRouteId: dailyRoute[0].id,
+                      visitId: visit.id,
+                      checkpointType: 'check_out',
+                      latitude: checkOutLat,
+                      longitude: checkOutLon,
+                      timestamp: checkOutTime
+                    });
+                    
+                    console.log(`✅ [AUTO-CHECKOUT] Checkpoint de check-out registrado com sucesso`);
+                  }
+                }
+              } else if (!visit.actualCheckIn) {
+                console.log(`ℹ️ [AUTO-CHECKOUT] Visita não possui check-in - pulando check-out automático`);
+              } else if (visit.actualCheckOut) {
+                console.log(`ℹ️ [AUTO-CHECKOUT] Visita já possui check-out - pulando`);
+              }
+            } else {
+              console.log(`ℹ️ [AUTO-CHECKOUT] Nenhuma visita relacionada encontrada para o card ${id} na data de hoje`);
+            }
+          } catch (autoCheckoutError) {
+            console.error('❌ [AUTO-CHECKOUT] Erro ao fazer check-out automático:', autoCheckoutError);
+            // Não bloquear o fluxo principal se o check-out automático falhar
+          }
+        }
+        
         if (currentCard.isPermanent) {
           // PERMANENT CARD: criar order_history e recalcular nextVisitDate
           console.log(`🔄 Permanent card - Criando order_history e recalculando próxima visita`);
