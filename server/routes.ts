@@ -9656,6 +9656,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         leadsByLeadId.set(lead.id, lead);
       });
       
+      // Buscar dados de visit_agenda para obter isAutoCheckout e visitDuration
+      // Incluindo tanto customerIds quanto leadIds
+      const { visitAgenda } = await import('../shared/schema');
+      const { or } = await import('drizzle-orm');
+      
+      let visitAgendaData: any[] = [];
+      if (customerIds.length > 0 || leadIds.length > 0) {
+        const conditions = [];
+        if (customerIds.length > 0) {
+          conditions.push(inArray(visitAgenda.customerId, customerIds));
+        }
+        // Note: visit_agenda não tem leadId direto, mas pode ter sido criado por sales_card
+        // com customerId como o entityId do lead, então buscamos por ambos
+        
+        visitAgendaData = await db
+          .select({
+            customerId: visitAgenda.customerId,
+            isAutoCheckout: visitAgenda.isAutoCheckout,
+            visitDuration: visitAgenda.visitDuration
+          })
+          .from(visitAgenda)
+          .where(and(
+            eq(visitAgenda.sellerId, sellerId),
+            eq(sql`DATE(${visitAgenda.scheduledDate})`, date),
+            conditions.length > 0 ? or(...conditions) : sql`1=1`
+          ));
+      }
+      
+      const visitAgendaByEntityId = new Map<string, any>();
+      visitAgendaData.forEach(va => {
+        visitAgendaByEntityId.set(va.customerId, va);
+      });
+      
       // Montar visitas na ordem do optimizedOrder com suporte a customers e leads
       const visits = (route.optimizedOrder || [])
         .map((stopId: string) => {
@@ -9676,6 +9709,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const customer = customersByCustomerId.get(entityId);
             if (!customer) return null;
             
+            // Buscar dados de visitAgenda para isAutoCheckout e visitDuration
+            const visitAgendaInfo = visitAgendaByEntityId.get(customer.id);
+            
             return {
               id: stopId, // Usar stopId como visit ID
               visitType: 'customer' as const,
@@ -9688,12 +9724,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
               scheduledDate: route.routeDate,
               isVirtual: customer.virtualService,
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
-              visitPeriodicity: customer.visitPeriodicity // Periodicidade (semanal, quinzenal, mensal)
+              visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
+              isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
+              visitDuration: visitAgendaInfo?.visitDuration ?? null
             };
           } else {
             // Lead
             const lead = leadsByLeadId.get(entityId);
             if (!lead) return null;
+            
+            // Buscar dados de visitAgenda para leads também
+            // (visit_agenda usa customerId para armazenar o entityId do lead)
+            const visitAgendaInfo = visitAgendaByEntityId.get(lead.id);
             
             return {
               id: stopId, // Usar stopId como visit ID
@@ -9705,7 +9747,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerLongitude: lead.longitude,
               customerAddress: null, // Leads não têm endereço completo
               scheduledDate: route.routeDate,
-              isVirtual: false
+              isVirtual: false,
+              isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
+              visitDuration: visitAgendaInfo?.visitDuration ?? null
             };
           }
         })
