@@ -24,6 +24,11 @@ export interface Customer {
   address: string;
   cpfCnpj?: string | null;
   customerType: 'pessoa_fisica' | 'pessoa_juridica';
+  deliveryLocation?: {
+    latitude: number;
+    longitude: number;
+    capturedAt: Date;
+  } | null;
 }
 
 export interface Order {
@@ -38,4 +43,9 @@ export interface Order {
   paymentMethod: 'pix' | 'card' | 'boleto';
   source: 'hotsite' | 'website';
   priceTable?: 'retail' | 'wholesale' | 'goiania' | 'interior' | 'brasilia';
+  deliveryLocation?: {
+    latitude: number;
+    longitude: number;
+    capturedAt: Date;
+  } | null;
 }

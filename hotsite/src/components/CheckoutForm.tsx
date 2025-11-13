@@ -25,6 +25,11 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Estados para captura de localização GPS
+  const [deliveryLocation, setDeliveryLocation] = useState<{ latitude: number; longitude: number; capturedAt: Date } | null>(null);
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   // Preencher dados do contexto quando disponível
   useEffect(() => {
@@ -81,6 +86,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     
     console.log('🟢 Form submitted');
     console.log('🟢 Form data:', formData);
+    console.log('🟢 Delivery location:', deliveryLocation);
     console.log('🟢 Payment method:', paymentMethod);
     
     const isValid = validate();
@@ -88,7 +94,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     
     if (isValid) {
       console.log('🟢 Calling onSubmit...');
-      onSubmit(formData, paymentMethod);
+      // Incluir coordenadas de entrega (opcional) no customer
+      const customerWithLocation = {
+        ...formData,
+        deliveryLocation: deliveryLocation || null
+      };
+      onSubmit(customerWithLocation, paymentMethod);
     } else {
       console.log('❌ Validation failed, errors:', errors);
     }
@@ -105,6 +116,55 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   const formatCPF = (value: string) => {
     const numbers = value.replace(/\D/g, '');
     return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+  };
+
+  // Capturar localização GPS do dispositivo
+  const handleCaptureLocation = () => {
+    setLocationError(null);
+    
+    if (!navigator.geolocation) {
+      setLocationError('Seu navegador não suporta geolocalização');
+      return;
+    }
+
+    setIsCapturingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          capturedAt: new Date()
+        };
+        setDeliveryLocation(location);
+        setIsCapturingLocation(false);
+        console.log('📍 Localização capturada:', location);
+      },
+      (error) => {
+        setIsCapturingLocation(false);
+        let errorMessage = 'Erro ao capturar localização';
+        
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Permissão negada. Habilite a localização no seu navegador.';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Localização indisponível no momento.';
+            break;
+          case error.TIMEOUT:
+            errorMessage = 'Tempo esgotado ao tentar capturar localização.';
+            break;
+        }
+        
+        setLocationError(errorMessage);
+        console.error('Erro ao capturar localização:', error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
   };
 
   // ✅ Forçar mudança de pagamento se pessoa_fisica tentar usar boleto
@@ -219,6 +279,88 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <p className="text-xs text-green-600 mt-1">✓ Validado anteriormente</p>
               </div>
             </div>
+          </div>
+
+          {/* Localização de Entrega (Opcional) */}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <h2 className="font-bold text-lg mb-4">📍 Localização de Entrega (Opcional)</h2>
+            
+            {/* Aviso destacado */}
+            <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 mb-4">
+              <div className="flex gap-3">
+                <span className="text-2xl">⚠️</span>
+                <div className="flex-1">
+                  <h3 className="font-bold text-yellow-900 mb-1">Atenção Importante!</h3>
+                  <p className="text-sm text-yellow-800">
+                    Capture a localização <strong>APENAS se você estiver no local de entrega</strong> no momento. 
+                    Isso nos ajuda a confirmar o endereço correto para a entrega dos produtos.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {!deliveryLocation ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={handleCaptureLocation}
+                  disabled={isCapturingLocation}
+                  className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  data-testid="button-capture-location"
+                >
+                  {isCapturingLocation ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Capturando localização...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      Capturar Localização de Entrega
+                    </>
+                  )}
+                </button>
+                
+                {locationError && (
+                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
+                    <p className="text-sm text-red-800">❌ {locationError}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 mb-3">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">✅</span>
+                    <div className="flex-1">
+                      <h3 className="font-bold text-green-900 mb-2">Localização Capturada!</h3>
+                      <div className="text-sm text-green-800 space-y-1">
+                        <p><strong>Latitude:</strong> {deliveryLocation.latitude.toFixed(6)}</p>
+                        <p><strong>Longitude:</strong> {deliveryLocation.longitude.toFixed(6)}</p>
+                        <p className="text-xs text-green-700 mt-2">
+                          Capturado em: {deliveryLocation.capturedAt.toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => setDeliveryLocation(null)}
+                  className="w-full bg-gray-200 text-gray-800 py-2 rounded-xl font-medium hover:bg-gray-300 transition-colors"
+                  data-testid="button-clear-location"
+                >
+                  Capturar Novamente
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Forma de Pagamento */}

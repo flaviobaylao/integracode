@@ -704,7 +704,7 @@ export function CustomerTypeSelector() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setResellerLocation('goiania')}
               className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 border-2 border-transparent hover:border-green-500"
@@ -741,7 +741,8 @@ export function CustomerTypeSelector() {
               </div>
             </button>
 
-            <button
+            {/* TEMPORARIAMENTE REMOVIDO - Brasília e Entorno */}
+            {/* <button
               onClick={() => setResellerLocation('brasilia')}
               className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all transform hover:scale-105 border-2 border-transparent hover:border-green-500"
               data-testid="button-select-brasilia"
@@ -757,7 +758,7 @@ export function CustomerTypeSelector() {
                   DF e entorno de Goiás
                 </p>
               </div>
-            </button>
+            </button> */}
           </div>
         </div>
       </div>

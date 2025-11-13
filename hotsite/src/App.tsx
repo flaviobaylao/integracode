@@ -146,6 +146,7 @@ function HotsiteContent() {
         paymentMethod,
         source: 'hotsite' as const,
         priceTable: convertPriceTable(priceTable), // ✅ Adicionar tabela de preço
+        deliveryLocation: customer.deliveryLocation || null, // ✅ Adicionar coordenadas GPS (opcional)
       };
 
       console.log('🔵 Order objeto criado:', order);
