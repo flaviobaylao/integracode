@@ -9485,17 +9485,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
-      if (checkIns.length > 0 && checkOuts.length > 0) {
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out OU momento atual)
+      if (checkIns.length > 0) {
         // Ordenar por tempo para garantir primeiro e último
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
-        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
-        const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        
+        // Se há check-outs, usar o último. Senão, usar o momento atual (rota em andamento)
+        let endTime: Date;
+        if (checkOuts.length > 0) {
+          checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+          endTime = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        } else {
+          // Rota em andamento: calcular até agora
+          endTime = new Date();
+        }
         
         // Calcular diferença em milissegundos e converter para minutos
-        const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
+        const diffMs = endTime.getTime() - firstCheckIn.getTime();
         const totalMinutes = Math.floor(diffMs / (1000 * 60));
         
         // Descontar almoço APENAS se foi ativado
@@ -9901,17 +9909,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Calcular carga horária trabalhada (primeiro check-in até último check-out)
-      if (checkIns.length > 0 && checkOuts.length > 0) {
+      // Calcular carga horária trabalhada (primeiro check-in até último check-out OU momento atual)
+      if (checkIns.length > 0) {
         // Ordenar por tempo para garantir primeiro e último
         checkIns.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
-        checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
         const firstCheckIn = new Date(checkIns[0].checkpointTime);
-        const lastCheckOut = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        
+        // Se há check-outs, usar o último. Senão, usar o momento atual (rota em andamento)
+        let endTime: Date;
+        if (checkOuts.length > 0) {
+          checkOuts.sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+          endTime = new Date(checkOuts[checkOuts.length - 1].checkpointTime);
+        } else {
+          // Rota em andamento: calcular até agora
+          endTime = new Date();
+        }
         
         // Calcular diferença em milissegundos e converter para minutos
-        const diffMs = lastCheckOut.getTime() - firstCheckIn.getTime();
+        const diffMs = endTime.getTime() - firstCheckIn.getTime();
         const totalMinutes = Math.floor(diffMs / (1000 * 60));
         
         // Descontar almoço APENAS se foi ativado
