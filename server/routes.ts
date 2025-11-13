@@ -28,6 +28,7 @@ import {
   syncStates,
   dailyRoutes,
   routeCheckpoints,
+  leads,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -91,6 +92,126 @@ async function isLeadVisit(customerId: string, dailyRoute: any): Promise<boolean
     console.error(`❌ Error checking if visit ${customerId} is LEAD:`, error);
     return false; // Fail-safe: treat as customer if check fails
   }
+}
+
+// Helper function to resolve route stops (customers + leads) with coordinates
+interface ResolvedStop {
+  stopId: string;
+  entityType: 'customer' | 'lead';
+  entityId: string;
+  name: string;
+  address?: string;
+  latitude: number;
+  longitude: number;
+}
+
+async function resolveRouteStops(
+  optimizedOrder: string[],
+  visitStops: { [stopId: string]: { entityType: 'customer' | 'lead'; entityId: string } }
+): Promise<ResolvedStop[]> {
+  const resolvedStops: ResolvedStop[] = [];
+
+  for (const stopId of optimizedOrder) {
+    try {
+      // Get metadata from visitStops
+      const stopMeta = visitStops[stopId];
+      
+      // Determine entityType and entityId with proper legacy support
+      let entityType: 'customer' | 'lead' = 'customer';
+      let entityId: string = stopId;
+      
+      if (stopMeta) {
+        // Has metadata, use it
+        entityType = stopMeta.entityType;
+        entityId = stopMeta.entityId;
+      } else if (stopId.includes(':')) {
+        // No metadata but has prefix, extract it (legacy support)
+        const [prefix, id] = stopId.split(':', 2);
+        if (prefix === 'lead' && id) {
+          entityType = 'lead';
+          entityId = id;
+        } else if (prefix === 'customer' && id) {
+          entityType = 'customer';
+          entityId = id;
+        }
+        // If prefix is unrecognized, fall through to customer default
+      }
+      // Else: no metadata, no prefix → assume customer (backward compatibility)
+
+      if (entityType === 'customer') {
+        // Fetch customer data
+        const [customer] = await db
+          .select({
+            id: customers.id,
+            fantasyName: customers.fantasyName,
+            address: customers.address,
+            latitude: customers.latitude,
+            longitude: customers.longitude
+          })
+          .from(customers)
+          .where(eq(customers.id, entityId))
+          .limit(1);
+
+        if (customer && customer.latitude && customer.longitude) {
+          const lat = typeof customer.latitude === 'string' ? parseFloat(customer.latitude) : customer.latitude;
+          const lon = typeof customer.longitude === 'string' ? parseFloat(customer.longitude) : customer.longitude;
+
+          if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+            resolvedStops.push({
+              stopId,
+              entityType: 'customer',
+              entityId: customer.id,
+              name: customer.fantasyName || 'Cliente',
+              address: customer.address || '',
+              latitude: lat,
+              longitude: lon
+            });
+          } else {
+            console.warn(`⚠️  Customer ${entityId} has invalid coordinates, skipping`);
+          }
+        } else {
+          console.warn(`⚠️  Customer ${entityId} not found or missing coordinates, skipping`);
+        }
+      } else if (entityType === 'lead') {
+        // Fetch lead data
+        const [lead] = await db
+          .select({
+            id: leads.id,
+            fantasyName: leads.fantasyName,
+            latitude: leads.latitude,
+            longitude: leads.longitude
+          })
+          .from(leads)
+          .where(eq(leads.id, entityId))
+          .limit(1);
+
+        if (lead && lead.latitude && lead.longitude) {
+          const lat = typeof lead.latitude === 'string' ? parseFloat(lead.latitude) : lead.latitude;
+          const lon = typeof lead.longitude === 'string' ? parseFloat(lead.longitude) : lead.longitude;
+
+          if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+            resolvedStops.push({
+              stopId,
+              entityType: 'lead',
+              entityId: lead.id,
+              name: lead.fantasyName,
+              address: '',
+              latitude: lat,
+              longitude: lon
+            });
+          } else {
+            console.warn(`⚠️  Lead ${entityId} has invalid coordinates, skipping`);
+          }
+        } else {
+          console.warn(`⚠️  Lead ${entityId} not found or missing coordinates, skipping`);
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error resolving stop ${stopId}:`, error);
+    }
+  }
+
+  return resolvedStops;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -9739,8 +9860,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // NOVA ARQUITETURA COM VISITSTOPS: Resolver stops (customers + leads)
       console.log(`🔍 [DEBUG] Resolvendo stops (customers + leads) para ${date}`);
       
-      const optimizedOrder = route.optimizedOrder || [];
+      // Deduplic ar optimizedOrder (proteção contra dados históricos com duplicatas)
+      const optimizedOrder = Array.from(new Set(route.optimizedOrder || []));
       const visitStops = (route.visitStops as any) || {};
+      
+      if (optimizedOrder.length !== (route.optimizedOrder || []).length) {
+        console.warn(`⚠️  Detectadas ${(route.optimizedOrder || []).length - optimizedOrder.length} duplicatas no optimizedOrder, removendo para exibição`);
+      }
       
       // Separar customerIds e leadIds
       const customerIds: string[] = [];
@@ -10276,55 +10402,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
       }
 
-      // Buscar visitas da rota com coordenadas (DIRETO de customers - fonte única)
-      const visitsData = await Promise.all(
-        (route.optimizedOrder || []).map(async (customerId: string) => {
-          // optimizedOrder agora contém IDs de clientes, não de sales_cards
-          const [customer] = await db
-            .select({
-              id: customers.id,
-              customerId: customers.id,
-              customerName: customers.fantasyName,
-              customerAddress: customers.address,
-              latitude: customers.latitude,
-              longitude: customers.longitude
-            })
-            .from(customers)
-            .where(eq(customers.id, customerId))
-            .limit(1);
+      // Resolver stops (customers + leads) usando helper
+      const visitStops = (route.visitStops as any) || {};
+      const resolvedStops = await resolveRouteStops(route.optimizedOrder || [], visitStops);
 
-          return customer;
-        })
-      );
-
-      // Filtrar apenas visitas com coordenadas válidas (aceitar string ou number)
-      const validVisits = visitsData
-        .filter((v): v is NonNullable<typeof v> => {
-          if (!v || v === null || v === undefined) return false;
-          if (v.latitude === null || v.longitude === null) return false;
-          
-          // Converter para número se for string
-          const lat = typeof v.latitude === 'string' ? parseFloat(v.latitude) : v.latitude;
-          const lon = typeof v.longitude === 'string' ? parseFloat(v.longitude) : v.longitude;
-          
-          // Validar se são números válidos
-          return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
-        });
-
-      console.log(`📊 Debug re-otimização - Total visitas na rota: ${route.optimizedOrder?.length || 0}, Visitas encontradas: ${visitsData.filter(v => v).length}, Válidas: ${validVisits.length}`);
-
-      if (validVisits.length === 0) {
-        console.error(`❌ Nenhuma visita válida encontrada para rota ${routeId}. Visitas: ${JSON.stringify(visitsData.map(v => v ? { id: v.id, lat: v.latitude, lon: v.longitude } : null))}`);
+      if (resolvedStops.length === 0) {
         return res.status(400).json({ message: 'Nenhuma visita com coordenadas válidas encontrada' });
       }
 
-      // Preparar pontos para otimização (converter coordenadas para número)
-      const points = validVisits.map(visit => ({
-        id: visit.id,
-        latitude: typeof visit.latitude === 'string' ? parseFloat(visit.latitude) : visit.latitude,
-        longitude: typeof visit.longitude === 'string' ? parseFloat(visit.longitude) : visit.longitude,
-        customerName: visit.customerName || 'Cliente',
-        customerAddress: visit.customerAddress || ''
+      console.log(`🔄 Preview otimização rota ${routeId}: ${resolvedStops.length} stops (${resolvedStops.filter(s => s.entityType === 'customer').length} clientes + ${resolvedStops.filter(s => s.entityType === 'lead').length} leads)`);
+
+      // Preparar pontos para otimização
+      const points = resolvedStops.map(stop => ({
+        id: stop.entityId,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        customerName: stop.name,
+        customerAddress: stop.address || ''
       }));
 
       // Executar otimização
@@ -10381,49 +10475,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
       }
 
-      // Buscar visitas da rota com coordenadas
-      const visitsData = await Promise.all(
-        (route.optimizedOrder || []).map(async (customerId: string) => {
-          const [customer] = await db
-            .select({
-              id: customers.id,
-              customerId: customers.id,
-              customerName: customers.fantasyName,
-              customerAddress: customers.address,
-              latitude: customers.latitude,
-              longitude: customers.longitude
-            })
-            .from(customers)
-            .where(eq(customers.id, customerId))
-            .limit(1);
+      // Resolver stops (customers + leads) usando helper
+      // Deduplic ar optimizedOrder antes de processar (previne duplicatas)
+      const visitStops = (route.visitStops as any) || {};
+      const uniqueOptimizedOrder = Array.from(new Set(route.optimizedOrder || []));
+      
+      if (uniqueOptimizedOrder.length !== (route.optimizedOrder || []).length) {
+        console.warn(`⚠️  Detectadas ${(route.optimizedOrder || []).length - uniqueOptimizedOrder.length} entradas duplicadas em optimizedOrder, removendo antes de otimizar`);
+      }
+      
+      const resolvedStops = await resolveRouteStops(uniqueOptimizedOrder, visitStops);
 
-          return customer;
-        })
-      );
-
-      // Filtrar apenas visitas com coordenadas válidas
-      const validVisits = visitsData
-        .filter((v): v is NonNullable<typeof v> => {
-          if (!v || v === null || v === undefined) return false;
-          if (v.latitude === null || v.longitude === null) return false;
-          
-          const lat = typeof v.latitude === 'string' ? parseFloat(v.latitude) : v.latitude;
-          const lon = typeof v.longitude === 'string' ? parseFloat(v.longitude) : v.longitude;
-          
-          return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
-        });
-
-      if (validVisits.length === 0) {
+      if (resolvedStops.length === 0) {
         return res.status(400).json({ message: 'Nenhuma visita com coordenadas válidas encontrada' });
       }
 
+      console.log(`🔄 Otimizando rota ${routeId}: ${resolvedStops.length} stops (${resolvedStops.filter(s => s.entityType === 'customer').length} clientes + ${resolvedStops.filter(s => s.entityType === 'lead').length} leads)`);
+
       // Preparar pontos para otimização
-      const points = validVisits.map(visit => ({
-        id: visit.id,
-        latitude: typeof visit.latitude === 'string' ? parseFloat(visit.latitude) : visit.latitude,
-        longitude: typeof visit.longitude === 'string' ? parseFloat(visit.longitude) : visit.longitude,
-        customerName: visit.customerName || 'Cliente',
-        customerAddress: visit.customerAddress || ''
+      const points = resolvedStops.map(stop => ({
+        id: stop.entityId,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        customerName: stop.name,
+        customerAddress: stop.address || ''
       }));
 
       // Executar otimização
@@ -10434,24 +10509,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         points
       );
 
-      // Ordem otimizada
-      const optimizedOrder = optimizedResult.orderedPoints.map(p => p.id);
+      // Reconstruir optimizedOrder e visitStops com a nova ordem
+      // Criar mapa de entityId -> stop original para lookup rápido
+      const stopMap = new Map<string, ResolvedStop>();
+      resolvedStops.forEach(stop => {
+        stopMap.set(stop.entityId, stop);
+      });
+
+      // Criar nova ordem com stopIds corretos e novo visitStops
+      const newOptimizedOrder: string[] = [];
+      const newVisitStops: { [stopId: string]: { entityType: 'customer' | 'lead'; entityId: string } } = {};
+      const seenStopIds = new Set<string>(); // Para evitar duplicatas
+
+      optimizedResult.orderedPoints.forEach(point => {
+        const stop = stopMap.get(point.id);
+        if (stop) {
+          // Criar stopId com formato correto: "customer:{id}" ou "lead:{id}"
+          const stopId = `${stop.entityType}:${stop.entityId}`;
+          
+          // Adicionar apenas se ainda não foi visto (deduplicação)
+          if (!seenStopIds.has(stopId)) {
+            seenStopIds.add(stopId);
+            newOptimizedOrder.push(stopId);
+            newVisitStops[stopId] = {
+              entityType: stop.entityType,
+              entityId: stop.entityId
+            };
+          } else {
+            console.warn(`⚠️  Duplicata detectada e removida: ${stopId}`);
+          }
+        }
+      });
       
       // Salvar no banco de dados
       await storage.updateDailyRoute(routeId, {
-        optimizedOrder,
+        optimizedOrder: newOptimizedOrder,
+        visitStops: newVisitStops,
         totalEstimatedDistance: optimizedResult.totalDistance.toString(),
-        totalVisits: optimizedOrder.length
+        totalVisits: newOptimizedOrder.length
       });
       
-      console.log(`✅ Rota ${routeId} otimizada e salva: ${validVisits.length} visitas, distância: ${optimizedResult.totalDistance}km`);
+      console.log(`✅ Rota ${routeId} otimizada e salva: ${resolvedStops.length} visitas (${resolvedStops.filter(s => s.entityType === 'customer').length} clientes + ${resolvedStops.filter(s => s.entityType === 'lead').length} leads), distância: ${optimizedResult.totalDistance}km`);
 
       res.json({
         success: true,
-        optimizedOrder,
+        optimizedOrder: newOptimizedOrder,
         totalDistance: optimizedResult.totalDistance,
-        totalVisits: optimizedOrder.length,
-        message: `Rota otimizada com sucesso! ${optimizedOrder.length} visitas, distância: ${optimizedResult.totalDistance}km`
+        totalVisits: newOptimizedOrder.length,
+        message: `Rota otimizada com sucesso! ${newOptimizedOrder.length} visitas, distância: ${optimizedResult.totalDistance}km`
       });
     } catch (error: any) {
       console.error('Erro ao otimizar rota:', error);
