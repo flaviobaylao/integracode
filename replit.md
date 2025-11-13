@@ -45,7 +45,15 @@
 - **Data Validation & Integrity**: 3-layer protection for sales card scheduling, automated seller validation, and admin tools.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system based on operation type, overdue debt, and payment terms.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
-- **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA. Features customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration (new customers to Omie), dynamic pricing, server-side security, automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Supports Pix, Credit/Debit Card, and Boleto. Includes product gallery, customer reviews, stock management, and order management page.
+- **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA accessible at `/shop`. Features customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration (new customers to Omie), **5-tier dynamic pricing system**, server-side security, automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Supports Pix, Credit/Debit Card, and Boleto. Includes product gallery, customer reviews, stock management, and order management page.
+    - **5-Tier Pricing System**: Each product has separate prices for different customer segments:
+        - **Consumidor Varejo** (retailPrice): For consumer purchases < R$200
+        - **Consumidor Atacado** (wholesalePrice): For consumer purchases >= R$200
+        - **Revenda Goiânia** (resaleGoianiaPrice): Resellers in Goiânia capital
+        - **Revenda Interior** (resaleInteriorPrice): Resellers in Goiás interior
+        - **Revenda Brasília/DF** (resaleBrasiliaPrice): Resellers in Brasília/DF area
+    - **Pricing Logic**: Located in `hotsite/src/utils/pricing.ts`, uses `getProductPrice()` function to select appropriate price based on customer type and location. Falls back to base `price` if specific tier is NULL.
+    - **Admin Management**: Admins configure all 5 price tiers via "Tabela de Preços do Hotsite" page. Products automatically populated with calculated prices: 0% (retail), -10% (wholesale), -15% (Goiânia), -20% (Interior), -25% (Brasília) from base price. Manual adjustment recommended for business-specific margins.
 - **Leads Management**: Lead tracking system with full route integration.
     - **Access Control**: Administrative users create/delete leads; all view; sellers update assigned leads.
     - **Lead Fields**: `fantasyName`, `latitude/longitude`, `contact`, `phone`, `photo`, `observation`, `status`.
