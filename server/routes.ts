@@ -877,6 +877,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
+      // DEBUG: Log do payload recebido
+      console.log('📍 PUT /api/customers/:id - Payload recebido:', {
+        id,
+        latitude: req.body.latitude,
+        latitudeType: typeof req.body.latitude,
+        longitude: req.body.longitude,
+        longitudeType: typeof req.body.longitude,
+        weekdays: req.body.weekdays,
+        visitPeriodicity: req.body.visitPeriodicity,
+        serviceStartDate: req.body.serviceStartDate,
+      });
+      
       // Transformar strings vazias em null para campos numéricos
       const data = {
         ...req.body,
@@ -887,6 +899,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
           : undefined,
       };
+      
+      console.log('📍 PUT /api/customers/:id - Data após transformação:', {
+        latitude: data.latitude,
+        longitude: data.longitude,
+      });
       
       // Get current customer and user info
       const currentCustomerResult = await storage.getCustomer(id);
