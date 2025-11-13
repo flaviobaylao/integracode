@@ -5,19 +5,19 @@ export default function BadgesSection() {
     {
       icon: Leaf,
       title: '100% FRUTA',
-      description: 'Sem polpa reconstituída',
+      description: 'Feito com frutas naturais',
       color: 'text-green-600'
     },
     {
       icon: Droplet,
-      title: 'ZERO AÇÚCAR',
+      title: 'SEM AÇÚCAR ADICIONADO',
       description: 'Adoçado naturalmente',
       color: 'text-blue-600'
     },
     {
       icon: Shield,
-      title: 'ZERO CONSERVANTES',
-      description: 'Sem química artificial',
+      title: 'SEM ADIÇÃO DE CONSERVANTES',
+      description: 'Puro e natural',
       color: 'text-rose-600'
     }
   ];
@@ -51,7 +51,7 @@ export default function BadgesSection() {
               Direto da Fazenda para Você
             </p>
             <p className="text-lg text-gray-700 leading-relaxed">
-              Cada garrafa leva apenas <strong>frutas frescas</strong> selecionadas.
+              Cada garrafa leva <strong>frutas frescas</strong> selecionadas.
               Nada mais, nada menos. É como espremer as frutas na hora,
               mas com a praticidade de ter sempre à mão.
             </p>

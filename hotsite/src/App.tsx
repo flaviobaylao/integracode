@@ -6,7 +6,6 @@ import { CustomerTypeSelector } from './components/CustomerTypeSelector';
 import { HonestLogo } from './components/HonestLogo';
 import HeroSection from './components/HeroSection';
 import BadgesSection from './components/BadgesSection';
-import IngredientsSection from './components/IngredientsSection';
 import ProductShowcase from './components/ProductShowcase';
 import BenefitsSection from './components/BenefitsSection';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
@@ -217,7 +216,7 @@ function HotsiteContent() {
           </button>
 
           <a
-            href={`https://wa.me/5562999999999?text=Olá! Meu pedido é ${orderNumber}`}
+            href={`https://wa.me/556299578281?text=Olá! Meu pedido é ${orderNumber}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn-secondary w-full mt-3 inline-block"
@@ -282,7 +281,6 @@ function HotsiteContent() {
       {/* Landing Page Sections */}
       <HeroSection />
       <BadgesSection />
-      <IngredientsSection />
       <ProductShowcase />
       <BenefitsSection />
 
@@ -350,7 +348,7 @@ function HotsiteContent() {
             <div>
               <h3 className="font-bold text-lg mb-4">Contato</h3>
               <p className="text-sm opacity-90 mb-2">📍 Bela Vista de Goiás, GO</p>
-              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/5562999999999" className="underline">(62) 99999-9999</a></p>
+              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/556299578281" className="underline">(62) 99578-2812</a></p>
               <p className="text-sm opacity-90">Entregamos em Goiânia e região</p>
             </div>
             <div>
