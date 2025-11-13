@@ -798,7 +798,7 @@ export default function RotaDoDia() {
                       <div className="flex items-start justify-between gap-3">
                         <div 
                           className="flex items-start gap-3 flex-1 cursor-pointer"
-                          onClick={() => handleVisitClick(visit.customerId)}
+                          onClick={() => handleVisitClick(visit.customerId || visit.entityId)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
@@ -831,12 +831,12 @@ export default function RotaDoDia() {
                               {visit.customerAddress || 'Endereço não informado'}
                             </p>
 
-                            {!isLead && (visit.weekdays || visit.visitPeriodicity) && (
+                            {!isLead && ((visit as any).weekdays || (visit as any).visitPeriodicity) && (
                               <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-2 font-medium">
                                 <Calendar className="h-3 w-3" />
-                                {formatWeekdays(visit.weekdays)}
-                                {visit.weekdays && visit.visitPeriodicity && ' • '}
-                                {formatPeriodicity(visit.visitPeriodicity)}
+                                {formatWeekdays((visit as any).weekdays)}
+                                {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
+                                {formatPeriodicity((visit as any).visitPeriodicity)}
                               </p>
                             )}
 
@@ -872,23 +872,44 @@ export default function RotaDoDia() {
                             )}
                           </div>
                         </div>
-                        {isAdmin && route.id && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm(`Deseja realmente remover ${visit.customerName} desta rota?`)) {
-                                deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId });
-                              }
-                            }}
-                            disabled={deleteVisitMutation.isPending}
-                            data-testid={`button-delete-visit-${visit.customerId}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+                        
+                        <div className="flex items-center gap-1">
+                          {/* Botão Waze */}
+                          {visit.customerLatitude && visit.customerLongitude && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(`https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`, '_blank');
+                              }}
+                              data-testid={`button-waze-${visit.customerId}`}
+                              title="Abrir no Waze"
+                            >
+                              <Navigation className="h-4 w-4" />
+                            </Button>
+                          )}
+                          
+                          {/* Botão Deletar (apenas admin) */}
+                          {isAdmin && route.id && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`Deseja realmente remover ${visit.customerName} desta rota?`)) {
+                                  deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId || visit.entityId });
+                                }
+                              }}
+                              disabled={deleteVisitMutation.isPending}
+                              data-testid={`button-delete-visit-${visit.customerId}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
