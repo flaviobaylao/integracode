@@ -261,6 +261,46 @@ export default function RotaDoDia() {
     },
   });
 
+  const validateVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/validate`, {});
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita validada!",
+        description: "A distância desta visita foi incluída na rota executada.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao validar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/cancel`, {});
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita rejeitada",
+        description: "Esta visita não será contabilizada na rota executada.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao rejeitar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleManualRefresh = async () => {
     await refetch();
     toast({
@@ -1042,50 +1082,30 @@ export default function RotaDoDia() {
                                       size="sm"
                                       variant="default"
                                       className="bg-green-600 hover:bg-green-700 text-white"
-                                      onClick={async () => {
-                                        try {
-                                          await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpoint.id}/validate`, {});
-                                          toast({
-                                            title: "Visita validada!",
-                                            description: "A distância desta visita foi incluída na rota executada.",
-                                          });
-                                          refetch();
-                                        } catch (error: any) {
-                                          toast({
-                                            title: "Erro ao validar",
-                                            description: error.message,
-                                            variant: "destructive",
-                                          });
-                                        }
-                                      }}
+                                      onClick={() => validateVisitMutation.mutate(checkpoint.id)}
+                                      disabled={validateVisitMutation.isPending || rejectVisitMutation.isPending}
                                       data-testid={`button-validate-${checkpoint.id}`}
                                     >
-                                      <CheckCircle className="h-4 w-4 mr-1" />
-                                      Validar
+                                      {validateVisitMutation.isPending ? (
+                                        <Clock className="h-4 w-4 mr-1 animate-spin" />
+                                      ) : (
+                                        <CheckCircle className="h-4 w-4 mr-1" />
+                                      )}
+                                      {validateVisitMutation.isPending ? 'Validando...' : 'Validar'}
                                     </Button>
                                     <Button
                                       size="sm"
                                       variant="destructive"
-                                      onClick={async () => {
-                                        try {
-                                          await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpoint.id}/cancel`, {});
-                                          toast({
-                                            title: "Visita rejeitada",
-                                            description: "Esta visita não será contabilizada na rota executada.",
-                                          });
-                                          refetch();
-                                        } catch (error: any) {
-                                          toast({
-                                            title: "Erro ao rejeitar",
-                                            description: error.message,
-                                            variant: "destructive",
-                                          });
-                                        }
-                                      }}
+                                      onClick={() => rejectVisitMutation.mutate(checkpoint.id)}
+                                      disabled={validateVisitMutation.isPending || rejectVisitMutation.isPending}
                                       data-testid={`button-reject-${checkpoint.id}`}
                                     >
-                                      <X className="h-4 w-4 mr-1" />
-                                      Rejeitar
+                                      {rejectVisitMutation.isPending ? (
+                                        <Clock className="h-4 w-4 mr-1 animate-spin" />
+                                      ) : (
+                                        <X className="h-4 w-4 mr-1" />
+                                      )}
+                                      {rejectVisitMutation.isPending ? 'Rejeitando...' : 'Rejeitar'}
                                     </Button>
                                   </div>
                                 )}
