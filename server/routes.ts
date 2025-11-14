@@ -2099,8 +2099,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Pedido sem produtos" });
       }
       
+      // ✅ VALIDAR CAMPOS OBRIGATÓRIOS ANTES DE ENVIAR PARA OMIE
+      if (!order.paymentMethod) {
+        return res.status(400).json({ 
+          message: "Pedido sem método de pagamento. Não é possível enviar para Omie." 
+        });
+      }
+      
+      if (!order.operationType) {
+        return res.status(400).json({ 
+          message: "Pedido sem tipo de operação. Não é possível enviar para Omie." 
+        });
+      }
+      
+      // ✅ Validar saleValue com verificação robusta contra strings mal formatadas
+      const totalValue = Number(String(order.saleValue).trim());
+      if (!Number.isFinite(totalValue) || totalValue <= 0) {
+        return res.status(400).json({ 
+          message: `Pedido com valor total inválido: "${order.saleValue}". Não é possível enviar para Omie.` 
+        });
+      }
+      
+      // ✅ Validar e formatar produtos em uma única etapa, armazenando valores validados
+      const validatedProducts = [];
+      for (let i = 0; i < products.length; i++) {
+        const p = products[i];
+        
+        if (!p.name && !p.productName) {
+          return res.status(400).json({ 
+            message: `Produto ${i + 1} sem nome/descrição. Verifique a estrutura do pedido.` 
+          });
+        }
+        
+        const quantity = Number(p.quantity);
+        const unitPrice = Number(p.unitPrice);
+        
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          return res.status(400).json({ 
+            message: `Produto ${i + 1} (${p.name || p.productName}) com quantidade inválida: "${p.quantity}"` 
+          });
+        }
+        
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+          return res.status(400).json({ 
+            message: `Produto ${i + 1} (${p.name || p.productName}) com preço unitário inválido: "${p.unitPrice}"` 
+          });
+        }
+        
+        // ✅ Calcular/validar totalPrice
+        let totalPrice: number;
+        if (p.totalPrice !== undefined && p.totalPrice !== null) {
+          totalPrice = Number(p.totalPrice);
+          if (!Number.isFinite(totalPrice) || totalPrice < 0) {
+            return res.status(400).json({ 
+              message: `Produto ${i + 1} (${p.name || p.productName}) com totalPrice inválido: "${p.totalPrice}"` 
+            });
+          }
+        } else {
+          totalPrice = quantity * unitPrice;
+          // ✅ Verificar overflow/Infinity
+          if (!Number.isFinite(totalPrice)) {
+            return res.status(400).json({ 
+              message: `Produto ${i + 1} (${p.name || p.productName}): total calculado resultou em valor inválido` 
+            });
+          }
+        }
+        
+        // ✅ Armazenar produto validado
+        validatedProducts.push({
+          description: p.name || p.productName,
+          quantity,
+          unitPrice,
+          totalPrice
+        });
+      }
+      
+      // ✅ Validar boletoDays se for pagamento via boleto (SEM defaults silenciosos)
+      let boletoDays: number | undefined = undefined;
+      if (order.paymentMethod === 'boleto') {
+        const days = Number(order.boletoDays);
+        if (!Number.isFinite(days) || days <= 0) {
+          return res.status(400).json({ 
+            message: "Pedido com pagamento via boleto deve ter prazo de dias válido (boletoDays). Não é possível enviar para Omie." 
+          });
+        }
+        boletoDays = days;
+      }
+      
       // Criar pedido no Omie (com cadastro automático do cliente se necessário)
-      console.log('📤 [SEND-TO-OMIE] Enviando para Omie...');
+      console.log('📤 [SEND-TO-OMIE] Enviando para Omie...', {
+        paymentMethod: order.paymentMethod,
+        operationType: order.operationType,
+        saleValue: order.saleValue,
+        boletoDays
+      });
+      
       const omieResult = await createOmieOrder({
         customer: {
           document: document.replace(/\D/g, ''), // Apenas números
@@ -2109,18 +2202,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phone: customer.phone || '',
           address: customer.address || ''
         },
-        products: products.map((p: any) => ({
-          description: p.productName || p.name,
-          quantity: p.quantity,
-          unitPrice: p.unitPrice,
-          totalPrice: p.quantity * p.unitPrice
-        })),
-        totalValue: parseFloat(order.saleValue || '0'),
+        products: validatedProducts, // ✅ Usar produtos já validados (sem reconversão)
+        totalValue: totalValue, // ✅ Usar valor já validado como numérico
         orderNumber: `WEB-${order.id.substring(0, 8)}`,
         sellerId: order.sellerId,
-        paymentMethod: order.paymentMethod || 'pix',
-        operationType: order.operationType || 'venda',
-        boletoDays: order.boletoDays || 7
+        paymentMethod: order.paymentMethod, // ✅ Usar valor exato armazenado (já validado acima)
+        operationType: order.operationType, // ✅ Usar valor exato armazenado (já validado acima)
+        boletoDays: boletoDays // ✅ Usar apenas para boleto
       });
       
       // Atualizar o pedido com informações do Omie
@@ -13141,6 +13229,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const scheduledDate = getNextDayOfWeek(routeDay);
       
+      // ✅ ESTRUTURAR PRODUTOS NO FORMATO COMPATÍVEL COM OMIE
+      // Transformar items do hotsite para o formato esperado pelo sistema e Omie
+      const formattedProducts = validatedData.items.map(item => ({
+        productId: item.productId,
+        name: item.productName, // ✅ Campo 'name' é usado ao enviar para Omie
+        productName: item.productName, // Manter compatibilidade com código existente
+        quantity: Number(item.quantity), // ✅ Garantir tipo numérico
+        unitPrice: Number(item.unitPrice), // ✅ Garantir tipo numérico
+        totalPrice: Number(item.quantity) * Number(item.unitPrice) // ✅ Campo obrigatório para Omie (numérico)
+      }));
+      
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
@@ -13153,7 +13252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: 'pending',
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
-        products: validatedData.items,
+        products: formattedProducts, // ✅ Usar produtos formatados com todos os campos necessários
         saleValue: serverTotal.toString(), // ✅ Valor total validado pelo servidor
         notes: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
         deliveryWeekdays: [],
