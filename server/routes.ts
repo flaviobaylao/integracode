@@ -7723,11 +7723,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Apenas notas com dados de invoice
           sql`${billingsTable.invoiceNumber} IS NOT NULL`,
           sql`${billingsTable.invoiceDate} IS NOT NULL`,
-          // Notas que ainda não têm rota de entrega (usando invoice_number para buscar)
+          // Notas que ainda não têm rota de entrega
+          // Corrigido: delivery_route_stops.sales_card_id referencia sales_cards.id, não billings.id
           sql`NOT EXISTS (
             SELECT 1 FROM delivery_route_stops drs
-            JOIN billings b ON b.id = drs.sales_card_id
-            WHERE b.invoice_number = ${billingsTable.invoiceNumber}
+            JOIN sales_cards sc ON sc.id = drs.sales_card_id
+            WHERE (
+              (sc.invoice_number IS NOT NULL AND sc.invoice_number = ${billingsTable.invoiceNumber})
+              OR (sc.omie_order_id IS NOT NULL AND ${billingsTable.omieOrderId} IS NOT NULL 
+                  AND sc.omie_order_id = ${billingsTable.omieOrderId}::text)
+            )
           )`
         )
       )

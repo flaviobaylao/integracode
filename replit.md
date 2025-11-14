@@ -4,6 +4,18 @@
 
 # Recent Changes (Nov 14, 2025)
 
+## Delivery Management Count Fix
+- **Issue**: Delivery management showed 73 clients while invoicing list showed 72 "aguardando rota" (should match)
+- **Root Cause**: `/api/deliveries` endpoint had incorrect NOT EXISTS subquery (lines 7727-7731). It tried to JOIN `billings.id` with `delivery_route_stops.sales_card_id`, but `sales_card_id` references `sales_cards` table, not `billings`. The subquery never found matches, so already-routed billings weren't filtered out.
+- **Fix**: Corrected NOT EXISTS to properly traverse `delivery_route_stops` → `sales_cards` → `billings` using shared business keys (`invoice_number` or `omie_order_id`)
+- **Impact**: Now correctly excludes billings that already have assigned delivery routes, ensuring delivery management count matches invoicing "aguardando rota" count
+
+## CPF/CNPJ Display in Hotsite Orders
+- **Feature**: Added CPF/CNPJ column to hotsite orders table and details modal
+- **Formatting**: CPF displayed as xxx.xxx.xxx-xx, CNPJ as xx.xxx.xxx/xxxx-xx
+- **Location**: Column appears after "Cliente" column in table; shown in customer information section of details modal
+- **Impact**: Improved order tracking by displaying customer tax document directly in order list
+
 ## Hotsite Orders Display Bug Fix
 - **Issue**: `/api/hotsite-orders` endpoint returned empty array despite hotsite orders existing in database
 - **Root Cause**: Called `getSalesCards({})` which passed empty object as `sellerId` parameter, causing SQL to filter by `seller_id = '[object Object]'`
