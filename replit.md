@@ -129,3 +129,23 @@
   7. Imported `deliveryDrivers` table from schema into storage layer
 - **Testing**: All CRUD operations tested and working
 - **Impact**: Complete driver CRUD functionality now works reliably
+
+## Default Vehicle Configuration - Honest Goiânia (COMPLETE)
+- **Feature**: Configured default starting address for delivery vehicles
+- **Implementation**:
+  - **Default Address**: HONEST GOIANIA
+  - **Coordinates**: 
+    - Latitude: -16.719458733340122
+    - Longitude: -49.29937095026935
+  - **Code Location**: `client/src/pages/DeliveryManagement.tsx` - `addVehicle()` function
+  - **Functional setState**: Uses `setVehicles(prev => [...prev, {...}])` to prevent race conditions
+- **Behavior**:
+  - When users click "Adicionar Veículo", fields auto-populate with Honest Goiânia coordinates
+  - All fields (address, latitude, longitude) remain **fully editable** by users
+  - Default vehicle type: Moto
+  - Default time window: 08:00 - 18:00
+- **Impact**:
+  - ✅ Streamlined vehicle configuration for Goiânia operations
+  - ✅ Users can still customize address/coordinates for any vehicle
+  - ✅ Prevents stale state issues with functional setState
+  - ✅ Reduces manual data entry for most common scenario

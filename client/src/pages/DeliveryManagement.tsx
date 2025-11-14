@@ -280,12 +280,11 @@ export default function DeliveryManagement() {
           onClick={() => setShowVehicleConfig(true)}
           data-testid="button-configure-routes"
           size="lg"
-          disabled={selectedOrders.size === 0}
         >
           <Settings className="h-4 w-4 mr-2" />
           {selectedOrders.size > 0 
             ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
-            : 'Configurar e Planejar Rotas'}
+            : 'Configurar Veículos'}
         </Button>
       </div>
 
@@ -476,6 +475,14 @@ export default function DeliveryManagement() {
               Configure os veículos disponíveis para as entregas
             </DialogDescription>
           </DialogHeader>
+          
+          {selectedOrders.size === 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800" data-testid="alert-no-orders">
+              <p className="font-medium">ℹ️ Nenhum pedido selecionado</p>
+              <p className="text-xs mt-1">Você pode pré-configurar os veículos agora, mas precisará selecionar pedidos antes de gerar as rotas.</p>
+            </div>
+          )}
+          
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <Button onClick={addVehicle} size="sm" data-testid="button-add-vehicle">
