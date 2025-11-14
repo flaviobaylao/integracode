@@ -7676,58 +7676,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { status = 'aguardando-rota' } = req.query;
       
       // Buscar notas fiscais (billings) com etapa "Aguardando Rota"
-      const deliveries = await db.select({
-        id: billingsTable.id,
-        invoiceNumber: billingsTable.invoiceNumber,
-        omieOrderId: billingsTable.omieOrderId,
-        orderNumber: billingsTable.orderNumber,
-        // Customer data with fallback to billing data
-        customerId: sql<string>`COALESCE(${customers.id}, 'billing-' || ${billingsTable.id})`,
-        customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name}, ${billingsTable.customerFantasyName})`,
-        customerAddress: sql<string>`COALESCE(${customers.address}, '')`,
-        customerLatitude: sql<number>`COALESCE(${customers.latitude}, 0)`,
-        customerLongitude: sql<number>`COALESCE(${customers.longitude}, 0)`,
-        averageDeliveryTime: sql<number>`COALESCE(${customers.averageDeliveryTime}, 30)`,
-        exclusiveVehicle: sql<boolean>`false`,
-        vehicleTypes: sql<string[]>`ARRAY[]::text[]`,
-        isUrgent: sql<boolean>`false`,
-        saleValue: billingsTable.totalValue,
-        products: billingsTable.products,
-        scheduledDate: billingsTable.invoiceDate,
-        completedDate: billingsTable.invoiceDate,
-        paymentMethod: billingsTable.paymentMethod,
-        operationType: billingsTable.billingType,
-      })
-      .from(billingsTable)
-      .leftJoin(customers, 
-        sql`(
-          ${customers.id} = CONCAT('omie-client-', ${billingsTable.omieCustomerCode})
-          OR REGEXP_REPLACE(${customers.cpf}, '[^0-9]', '', 'g') = REGEXP_REPLACE(${billingsTable.customerDocument}, '[^0-9]', '', 'g')
-          OR REGEXP_REPLACE(${customers.cnpj}, '[^0-9]', '', 'g') = REGEXP_REPLACE(${billingsTable.customerDocument}, '[^0-9]', '', 'g')
-        )`
-      )
-      .where(
-        and(
-          eq(billingsTable.invoiceStage, 'Aguardando Rota'),
-          // Apenas notas com dados de invoice
-          sql`${billingsTable.invoiceNumber} IS NOT NULL`,
-          sql`${billingsTable.invoiceDate} IS NOT NULL`,
-          // Notas que ainda não têm rota de entrega
-          // Corrigido: delivery_route_stops.sales_card_id referencia sales_cards.id, não billings.id
-          sql`NOT EXISTS (
+      // Usa DISTINCT ON para garantir que cada billing apareça apenas uma vez,
+      // mesmo se houver múltiplos customers fazendo match no LEFT JOIN
+      // Prioriza match exato por omie_customer_code, depois por CNPJ/CPF
+      const deliveries = await db.execute(sql`
+        SELECT DISTINCT ON (b.id)
+          b.id,
+          b.invoice_number as "invoiceNumber",
+          b.omie_order_id as "omieOrderId",
+          b.order_number as "orderNumber",
+          COALESCE(c.id, 'billing-' || b.id) as "customerId",
+          COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+          COALESCE(c.address, '') as "customerAddress",
+          COALESCE(c.latitude, 0) as "customerLatitude",
+          COALESCE(c.longitude, 0) as "customerLongitude",
+          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
+          false as "exclusiveVehicle",
+          ARRAY[]::text[] as "vehicleTypes",
+          false as "isUrgent",
+          b.total_value as "saleValue",
+          b.products,
+          b.invoice_date as "scheduledDate",
+          b.invoice_date as "completedDate",
+          b.payment_method as "paymentMethod",
+          b.billing_type as "operationType"
+        FROM billings b
+        LEFT JOIN customers c ON (
+          c.id = CONCAT('omie-client-', b.omie_customer_code)
+          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        )
+        WHERE b.invoice_stage = 'Aguardando Rota'
+          AND b.invoice_number IS NOT NULL
+          AND b.invoice_date IS NOT NULL
+          AND NOT EXISTS (
             SELECT 1 FROM delivery_route_stops drs
             JOIN sales_cards sc ON sc.id = drs.sales_card_id
             WHERE (
-              (sc.invoice_number IS NOT NULL AND sc.invoice_number = ${billingsTable.invoiceNumber})
-              OR (sc.omie_order_id IS NOT NULL AND ${billingsTable.omieOrderId} IS NOT NULL 
-                  AND sc.omie_order_id = ${billingsTable.omieOrderId}::text)
+              (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
+              OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
+                  AND sc.omie_order_id = b.omie_order_id::text)
             )
-          )`
-        )
-      )
-      .orderBy(billingsTable.invoiceDate);
+          )
+        ORDER BY 
+          b.id, 
+          CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END,
+          c.id NULLS LAST,
+          b.invoice_date
+      `);
       
-      res.json(deliveries);
+      res.json(deliveries.rows);
     } catch (error: any) {
       console.error("Error fetching deliveries:", error);
       res.status(500).json({ message: "Failed to fetch deliveries", error: error.message });

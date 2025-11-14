@@ -2,89 +2,6 @@
 
 "Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos. Its primary purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system aims to enhance business efficiency, improve customer service, expand market reach, and increase sales. Key capabilities include robust sales tracking, reporting, route optimization, fine-grained access control, an e-commerce platform ("Hotsite Instagram"), and real-time billing data integration from Omie ERP for customer "positivation" status.
 
-# Recent Changes (Nov 14, 2025)
-
-## Driver Management Fix (COMPLETE)
-- **Issue**: Driver creation and deletion weren't working (reported by user)
-- **Root Causes**: 
-  1. Duplicate GET "/api/delivery-drivers" endpoint (lines 7568 and 7674 in routes.ts)
-  2. Read operations queried `users` table (role='motorista') while write operations targeted `delivery_drivers` table
-  3. Missing `isActive` field in createDeliveryDriver INSERT statement
-  4. SQL syntax error in updateDeliveryDriver using COALESCE with undefined values
-  5. Inconsistent response formats (snake_case vs camelCase)
-  6. Missing authentication on driver management endpoints
-- **Fix**: 
-  1. Removed duplicate endpoint definition
-  2. Updated all storage methods to consistently use `delivery_drivers` table (not users)
-  3. Added `isActive` field to CREATE (defaults to true)
-  4. Rewrote `updateDeliveryDriver` using proper Drizzle ORM `.update().set().where().returning()`
-  5. All CRUD methods now return consistent camelCase fields: `getDeliveryDrivers`, `getActiveDeliveryDrivers`, `createDeliveryDriver`, `updateDeliveryDriver`, `updateDriverLocation`
-  6. Added proper authentication with role-based access control:
-     - GET endpoints: admin, coordinator, administrative, vendedor (can view)
-     - POST/PUT endpoints: admin, coordinator, administrative only (can modify)
-  7. Imported `deliveryDrivers` table from schema into storage layer
-- **Testing**: 
-  - ✅ Driver creation test passed
-  - ✅ Driver update test passed
-  - ✅ Toggle status test passed
-  - ✅ All responses return proper camelCase matching frontend expectations
-- **Impact**: Complete driver CRUD functionality now works reliably. Drivers can be created, updated, status-toggled through the UI. Vendor users can view drivers for route assignment but cannot modify them. All data consistency issues resolved.
-
-## Delivery Management Count Fix
-- **Issue**: Delivery management showed 73 clients while invoicing list showed 72 "aguardando rota" (should match)
-- **Root Cause**: `/api/deliveries` endpoint had incorrect NOT EXISTS subquery (lines 7727-7731). It tried to JOIN `billings.id` with `delivery_route_stops.sales_card_id`, but `sales_card_id` references `sales_cards` table, not `billings`. The subquery never found matches, so already-routed billings weren't filtered out.
-- **Fix**: Corrected NOT EXISTS to properly traverse `delivery_route_stops` → `sales_cards` → `billings` using shared business keys (`invoice_number` or `omie_order_id`)
-- **Impact**: Now correctly excludes billings that already have assigned delivery routes, ensuring delivery management count matches invoicing "aguardando rota" count
-
-## CPF/CNPJ Display in Hotsite Orders
-- **Feature**: Added CPF/CNPJ column to hotsite orders table and details modal
-- **Formatting**: CPF displayed as xxx.xxx.xxx-xx, CNPJ as xx.xxx.xxx/xxxx-xx
-- **Location**: Column appears after "Cliente" column in table; shown in customer information section of details modal
-- **Impact**: Improved order tracking by displaying customer tax document directly in order list
-
-## Hotsite Orders Display Bug Fix
-- **Issue**: `/api/hotsite-orders` endpoint returned empty array despite hotsite orders existing in database
-- **Root Cause**: Called `getSalesCards({})` which passed empty object as `sellerId` parameter, causing SQL to filter by `seller_id = '[object Object]'`
-- **Fix**: Changed to `getSalesCards(undefined)` to fetch all sales_cards without seller filter
-- **Impact**: Hotsite orders now display correctly in "Pedidos do Site" admin page
-
-## Hotsite Order Value (saleValue) Bug Fix
-- **Issue**: Order totals displayed as R$ 0.00 in "Pedidos do Site" page despite orders having correct values in notes
-- **Root Cause**: POST `/api/public/orders` endpoint created sales_cards without populating `saleValue` field, storing total only as text in `notes`
-- **Fix**: Added `saleValue: serverTotal.toString()` to orderData (line 13160 in server/routes.ts)
-- **Data Backfill**: Executed SQL UPDATE to extract totals from notes and populate sale_value for existing hotsite orders using regex pattern
-- **Validation**: End-to-end test confirmed new orders now save with correct saleValue (verified order created with sale_value = 75.00)
-- **Impact**: All hotsite orders (new and existing) now display correct monetary values in admin interface
-
-## Hotsite Orders Management Features
-- **Interactive Order Details Modal**: Clicking on order row or eye icon opens modal with complete order information including products, customer details, and payment method
-- **Delete Order Functionality**: Admin/coordinator/administrative users can delete hotsite orders via DELETE `/api/hotsite-orders/:id` endpoint. Validates user permissions and confirms order source is 'hotsite' before deletion
-- **Send to Omie Integration**: Admin users can send hotsite orders to Omie ERP via POST `/api/hotsite-orders/:id/send-to-omie` endpoint
-  - Automatically creates customer in Omie if customer doesn't exist (using `createOmieOrder` function)
-  - Validates order hasn't been sent previously to prevent duplicates
-  - Handles both array and string formats for order products field
-  - Updates sales_card with Omie order ID and sync status after successful send
-  - Returns both `numero_pedido` and `omieOrderNumber` for frontend compatibility
-
-## Hotsite Product Structure & Omie Validation
-- **Product Data Structure**: Hotsite orders now store complete product information for Omie compatibility
-  - Products formatted with `name`, `productName`, `quantity`, `unitPrice`, and `totalPrice` fields at order creation time
-  - All numeric fields (`quantity`, `unitPrice`, `totalPrice`) stored as actual numbers (not strings)
-  - Structure created at order time (lines 13234-13241 in server/routes.ts)
-  
-- **Robust Omie Send Validation**: Endpoint POST `/api/hotsite-orders/:id/send-to-omie` implements strict validation before sending to Omie
-  - **Mandatory Fields**: Rejects orders missing `paymentMethod` or `operationType` (no silent defaults)
-  - **Numeric Validation**: Uses `Number()` with `Number.isFinite()` checks to reject malformed values
-    - Validates `saleValue` against strings like '123abc' or 'R$ 100,50' (line 2119)
-    - Validates each product's `quantity` and `unitPrice` (lines 2137-2149)
-    - Validates `totalPrice` when present or calculates from validated values (lines 2152-2169)
-    - Detects overflow/Infinity scenarios
-  - **Boleto Payment**: When `paymentMethod = 'boleto'`, requires valid numeric `boletoDays` (no default to 7)
-  - **Validated Products**: Stores validated products in `validatedProducts` array and reuses for Omie payload (line 2208) to prevent NaN propagation
-  - **Error Messages**: Returns detailed error messages indicating which field/product failed validation
-  
-- **End-to-End Validation**: Test confirmed orders created via `/api/public/orders` have correct structure and display properly in admin interface with non-zero sale values
-
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
@@ -103,13 +20,13 @@
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing).
-- **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo for visit schedule calculations. CPF/CNPJ validation. Bulk data imports. Customer displays prioritize `fantasy_name`. Normalization of weekday formats.
-- **Sales & Financial Management**: Sales card tracking with source, conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and sales goals dashboard.
+- **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), normalization of weekday formats.
+- **Sales & Financial Management**: Sales card tracking with source and conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and sales goals dashboard.
 - **Delivery & Route Optimization**:
     - Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API.
     - Visual mapping, checkpoint registration, performance dashboards.
-    - Supports multi-vehicle planning, check-in/check-out, and checkpoint distance tracking.
-    - Unified Customer + Lead Optimization: Route optimization algorithm supports both customers and leads simultaneously using `visitStops` metadata.
+    - Multi-vehicle planning, check-in/check-out, and checkpoint distance tracking.
+    - Unified Customer + Lead Optimization: Route optimization algorithm supports both customers and leads simultaneously.
     - 3-Layer Deduplication: Protects against duplicate route entries.
     - Route Allocation Logic: Filters customers where `routeDate >= serviceStartDate`.
     - Executed Route Distance: Calculates actual traveled distance based on chronological check-ins using OSRM API.
@@ -127,9 +44,8 @@
     - **Payment Methods**: Differentiated by customer type (Pix, Credit/Debit Card, Boleto).
     - **Shopping Cart UX**: Cart modal opens on product add and remains open, with multiple closing methods.
     - **Minimum Order & Shipping**: Free shipping on all orders with minimum order values enforced per customer type. No additional discounts.
-    - **5-Tier Pricing System**: Products have separate prices for Consumidor Varejo, Consumidor Atacado, Revenda Goiânia, Revenda Interior, and Revenda Brasília/DF. Pricing logic is in `hotsite/src/utils/pricing.ts`. Admins configure prices.
-    - **Technical Details**: Optional technical details (10,000 char max) for products, managed by admins.
-    - **Hotsite Deployment**: Requires rebuild after source changes: `cd hotsite && npm run build && cp -r dist/* ../server/public-hotsite/`.
+    - **5-Tier Pricing System**: Products have separate prices for Consumidor Varejo, Consumidor Atacado, Revenda Goiânia, Revenda Interior, and Revenda Brasília/DF.
+    - **Technical Details**: Optional technical details (10,000 char max) for products.
 - **Leads Management**: Lead tracking system with full route integration.
     - **Access Control**: Administrative users create/delete leads; all view; sellers update assigned leads.
     - **Route Integration**: Unified `visitStops` field allows mixing customers and leads on daily routes.
@@ -149,3 +65,44 @@
 - **Receita Federal API**
 - **Omie ERP**
 - **OSRM API**
+# Recent Changes (Nov 14, 2025)
+
+## Delivery Management Duplicate Orders Fix (COMPLETE)
+- **Issue**: Delivery management page showed duplicate entries for the same client (e.g., CONVENIENCIA VIA 153 appeared twice with different addresses)
+- **Root Causes**:
+  1. **Original count mismatch**: `/api/deliveries` endpoint had incorrect NOT EXISTS subquery. It tried to JOIN `billings.id` with `delivery_route_stops.sales_card_id`, but `sales_card_id` references `sales_cards` table, not `billings`. The subquery never found matches, so already-routed billings weren't filtered out.
+  2. **Duplicate rows**: LEFT JOIN with `customers` table used 3 OR conditions (omie_customer_code, CPF, CNPJ) without deduplication. When multiple customers matched the same billing (e.g., 2 stores with same CNPJ but different addresses), the JOIN returned multiple rows for the same billing.
+- **Fix**: 
+  1. Corrected NOT EXISTS to properly traverse `delivery_route_stops` → `sales_cards` → `billings` using shared business keys (`invoice_number` or `omie_order_id`)
+  2. Added `DISTINCT ON (b.id)` to the SELECT query to guarantee each billing appears only once, even when multiple customers match
+  3. Implemented intelligent customer prioritization using CASE WHEN in ORDER BY:
+     - **Priority 1**: Customer with exact match by `omie_customer_code` (canonical Omie customer)
+     - **Priority 2**: Customers with non-null IDs
+     - **Priority 3**: Ordering by invoice date
+  4. Query: `ORDER BY b.id, CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END, c.id NULLS LAST, b.invoice_date`
+- **Impact**: 
+  - ✅ Eliminates duplicates definitively - each billing appears exactly once
+  - ✅ Always selects the correct customer (from Omie) even when multiple stores share the same CNPJ
+  - ✅ Correctly excludes billings that already have assigned delivery routes
+  - ✅ Count now matches perfectly between delivery management and invoicing "aguardando rota"
+  - ✅ Deterministic behavior - same customer selected every time for a given billing
+
+## Driver Management Fix (COMPLETE)
+- **Issue**: Driver creation and update weren't working (reported by user)
+- **Root Causes**: 
+  1. Duplicate GET "/api/delivery-drivers" endpoint
+  2. Read operations queried `users` table (role='motorista') while write operations targeted `delivery_drivers` table
+  3. Missing `isActive` field in createDeliveryDriver INSERT statement
+  4. SQL syntax error in updateDeliveryDriver using COALESCE with undefined values
+  5. Inconsistent response formats (snake_case vs camelCase)
+  6. Missing authentication on driver management endpoints
+- **Fix**: 
+  1. Removed duplicate endpoint definition
+  2. Updated all storage methods to consistently use `delivery_drivers` table (not users)
+  3. Added `isActive` field to CREATE (defaults to true)
+  4. Rewrote `updateDeliveryDriver` using proper Drizzle ORM `.update().set().where().returning()`
+  5. All CRUD methods now return consistent camelCase fields
+  6. Added proper authentication with role-based access control
+  7. Imported `deliveryDrivers` table from schema into storage layer
+- **Testing**: All CRUD operations tested and working
+- **Impact**: Complete driver CRUD functionality now works reliably
