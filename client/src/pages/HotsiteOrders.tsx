@@ -5,7 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail } from 'lucide-react';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -43,6 +44,7 @@ interface Customer {
 export default function HotsiteOrders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedOrder, setSelectedOrder] = useState<HotsiteOrder | null>(null);
 
   // Buscar pedidos do hotsite
   const { data: hotsiteData, isLoading: isLoadingOrders } = useQuery<{
@@ -298,6 +300,7 @@ export default function HotsiteOrders() {
                       <TableHead>Pagamento</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="text-center">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -306,7 +309,12 @@ export default function HotsiteOrders() {
                       const customerName = customer?.fantasy_name || customer?.name || 'Cliente não encontrado';
                       
                       return (
-                        <TableRow key={order.id} data-testid={`row-order-${order.id}`}>
+                        <TableRow 
+                          key={order.id} 
+                          data-testid={`row-order-${order.id}`}
+                          className="cursor-pointer hover:bg-gray-50"
+                          onClick={() => setSelectedOrder(order)}
+                        >
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4 text-gray-400" />
@@ -347,6 +355,19 @@ export default function HotsiteOrders() {
                           <TableCell>{getPaymentMethodLabel(order.paymentMethod)}</TableCell>
                           <TableCell>{getOperationTypeLabel(order.operationType)}</TableCell>
                           <TableCell>{getStatusBadge(order.status)}</TableCell>
+                          <TableCell className="text-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedOrder(order);
+                              }}
+                              data-testid={`button-view-details-${order.id}`}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -356,6 +377,193 @@ export default function HotsiteOrders() {
             )}
           </CardContent>
         </Card>
+
+        {/* Order Details Dialog */}
+        <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            {selectedOrder && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <ShoppingCart className="h-5 w-5" />
+                    Detalhes do Pedido
+                  </DialogTitle>
+                  <DialogDescription>
+                    Pedido realizado em {format(new Date(selectedOrder.scheduledDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-6">
+                  {/* Status e Informações Gerais */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium text-gray-600">Status</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {getStatusBadge(selectedOrder.status)}
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium text-gray-600">Valor Total</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-green-700">
+                          R$ {parseFloat(selectedOrder.saleValue || '0').toFixed(2)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Cliente */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <User className="h-5 w-5" />
+                        Informações do Cliente
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(() => {
+                        const customer = customersMap[selectedOrder.customerId];
+                        const customerName = customer?.fantasy_name || customer?.name || 'Cliente não encontrado';
+                        
+                        return (
+                          <>
+                            <div>
+                              <div className="text-sm font-medium text-gray-600">Nome</div>
+                              <div className="text-lg font-semibold">{customerName}</div>
+                            </div>
+                            {customer?.phone && (
+                              <div className="flex items-center gap-2 text-gray-700">
+                                <Phone className="h-4 w-4" />
+                                {customer.phone}
+                              </div>
+                            )}
+                            {customer?.email && (
+                              <div className="flex items-center gap-2 text-gray-700">
+                                <Mail className="h-4 w-4" />
+                                {customer.email}
+                              </div>
+                            )}
+                            {customer?.address && (
+                              <div className="flex items-center gap-2 text-gray-700">
+                                <MapPin className="h-4 w-4" />
+                                {customer.address}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </CardContent>
+                  </Card>
+
+                  {/* Produtos */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Package className="h-5 w-5" />
+                        Produtos
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {selectedOrder.products && selectedOrder.products.length > 0 ? (
+                        <div className="space-y-3">
+                          {selectedOrder.products.map((product, idx) => (
+                            <div 
+                              key={idx} 
+                              className="flex justify-between items-start p-3 bg-gray-50 rounded-lg"
+                            >
+                              <div className="flex-1">
+                                <div className="font-medium">{product.name}</div>
+                                <div className="text-sm text-gray-600">
+                                  Quantidade: {product.quantity}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm text-gray-600">
+                                  R$ {product.unitPrice.toFixed(2)} cada
+                                </div>
+                                <div className="font-semibold text-green-700">
+                                  R$ {(product.quantity * product.unitPrice).toFixed(2)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="pt-3 border-t flex justify-between items-center">
+                            <div className="font-semibold">Total</div>
+                            <div className="text-xl font-bold text-green-700">
+                              R$ {parseFloat(selectedOrder.saleValue || '0').toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-gray-500">
+                          Nenhum produto encontrado
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Pagamento e Tipo */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium text-gray-600">
+                          Método de Pagamento
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="h-4 w-4 text-gray-400" />
+                          <span className="font-medium">
+                            {getPaymentMethodLabel(selectedOrder.paymentMethod)}
+                          </span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium text-gray-600">
+                          Tipo de Operação
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <span className="font-medium">
+                          {getOperationTypeLabel(selectedOrder.operationType)}
+                        </span>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Observações */}
+                  {selectedOrder.notes && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Observações</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-gray-700 whitespace-pre-wrap">{selectedOrder.notes}</p>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Ações */}
+                  <div className="flex justify-end gap-2 pt-4 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={() => setSelectedOrder(null)}
+                      data-testid="button-close-details"
+                    >
+                      Fechar
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
