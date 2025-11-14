@@ -10,6 +10,14 @@
 - **Fix**: Changed to `getSalesCards(undefined)` to fetch all sales_cards without seller filter
 - **Impact**: Hotsite orders now display correctly in "Pedidos do Site" admin page
 
+## Hotsite Order Value (saleValue) Bug Fix
+- **Issue**: Order totals displayed as R$ 0.00 in "Pedidos do Site" page despite orders having correct values in notes
+- **Root Cause**: POST `/api/public/orders` endpoint created sales_cards without populating `saleValue` field, storing total only as text in `notes`
+- **Fix**: Added `saleValue: serverTotal.toString()` to orderData (line 13160 in server/routes.ts)
+- **Data Backfill**: Executed SQL UPDATE to extract totals from notes and populate sale_value for existing hotsite orders using regex pattern
+- **Validation**: End-to-end test confirmed new orders now save with correct saleValue (verified order created with sale_value = 75.00)
+- **Impact**: All hotsite orders (new and existing) now display correct monetary values in admin interface
+
 ## Hotsite Orders Management Features
 - **Interactive Order Details Modal**: Clicking on order row or eye icon opens modal with complete order information including products, customer details, and payment method
 - **Delete Order Functionality**: Admin/coordinator/administrative users can delete hotsite orders via DELETE `/api/hotsite-orders/:id` endpoint. Validates user permissions and confirms order source is 'hotsite' before deletion
