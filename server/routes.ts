@@ -13154,6 +13154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
         products: validatedData.items,
+        saleValue: serverTotal.toString(), // ✅ Valor total validado pelo servidor
         notes: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
         deliveryWeekdays: [],
         deliveryTimeSlots: [],
