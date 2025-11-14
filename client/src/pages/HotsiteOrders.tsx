@@ -42,6 +42,8 @@ interface Customer {
   phone?: string;
   email?: string;
   address?: string;
+  cpf?: string;
+  cnpj?: string;
 }
 
 export default function HotsiteOrders() {
@@ -197,6 +199,26 @@ export default function HotsiteOrders() {
       amostra: 'Amostra',
     };
     return typeMap[type || ''] || type || 'Venda';
+  };
+
+  const formatDocument = (cpf?: string, cnpj?: string) => {
+    if (cnpj) {
+      // Format CNPJ: 00.000.000/0000-00
+      const cleaned = cnpj.replace(/\D/g, '');
+      if (cleaned.length === 14) {
+        return cleaned.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+      }
+      return cnpj;
+    }
+    if (cpf) {
+      // Format CPF: 000.000.000-00
+      const cleaned = cpf.replace(/\D/g, '');
+      if (cleaned.length === 11) {
+        return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      }
+      return cpf;
+    }
+    return '-';
   };
 
   return (
@@ -370,6 +392,7 @@ export default function HotsiteOrders() {
                     <TableRow>
                       <TableHead>Data</TableHead>
                       <TableHead>Cliente</TableHead>
+                      <TableHead>CPF/CNPJ</TableHead>
                       <TableHead>Produtos</TableHead>
                       <TableHead>Valor</TableHead>
                       <TableHead>Pagamento</TableHead>
@@ -405,6 +428,11 @@ export default function HotsiteOrders() {
                                   <div className="text-xs text-gray-500">{customer.phone}</div>
                                 )}
                               </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm font-mono">
+                              {formatDocument(customer?.cpf, customer?.cnpj)}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -510,6 +538,16 @@ export default function HotsiteOrders() {
                               <div className="text-sm font-medium text-gray-600">Nome</div>
                               <div className="text-lg font-semibold">{customerName}</div>
                             </div>
+                            {(customer?.cpf || customer?.cnpj) && (
+                              <div>
+                                <div className="text-sm font-medium text-gray-600">
+                                  {customer?.cnpj ? 'CNPJ' : 'CPF'}
+                                </div>
+                                <div className="text-lg font-mono font-semibold">
+                                  {formatDocument(customer?.cpf, customer?.cnpj)}
+                                </div>
+                              </div>
+                            )}
                             {customer?.phone && (
                               <div className="flex items-center gap-2 text-gray-700">
                                 <Phone className="h-4 w-4" />
