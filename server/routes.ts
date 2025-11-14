@@ -7828,78 +7828,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Vehicle configurations are required" });
       }
 
-      // Buscar pedidos completos com informação de urgência dos billings
-      // Usa LEFT JOIN LATERAL para prevenir colisões entre clientes
-      const ordersResult = await db.execute<{
+      // Buscar billings selecionados para roteirização
+      // Como /api/deliveries retorna billing.id (não sales_card.id), 
+      // precisamos buscar os billings e criar sales_cards temporários
+      const billingsResult = await db.execute<{
         id: string;
+        invoiceNumber: string;
+        omieOrderId: string;
+        orderNumber: string;
         customerId: string;
         customerName: string;
         customerAddress: string;
         customerLatitude: string;
         customerLongitude: string;
         averageDeliveryTime: number;
-        exclusiveVehicle: boolean;
-        vehicleTypes: string[];
         isUrgent: boolean;
         saleValue: number;
         products: any;
         scheduledDate: Date;
-        completedDate: Date;
         paymentMethod: string;
         operationType: string;
       }>(sql`
-        SELECT 
-          sc.id,
-          sc.customer_id as "customerId",
-          COALESCE(c.fantasy_name, c.name) as "customerName",
-          c.address as "customerAddress",
-          c.latitude as "customerLatitude",
-          c.longitude as "customerLongitude",
-          COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
-          COALESCE(sc.exclusive_vehicle, false) as "exclusiveVehicle",
-          COALESCE(sc.vehicle_types, '[]'::jsonb) as "vehicleTypes",
-          COALESCE(billing_match.is_urgent, false) as "isUrgent",
-          sc.sale_value as "saleValue",
-          sc.products,
-          sc.scheduled_date as "scheduledDate",
-          sc.completed_date as "completedDate",
-          sc.payment_method as "paymentMethod",
-          sc.operation_type as "operationType"
-        FROM sales_cards sc
-        INNER JOIN customers c ON sc.customer_id = c.id
-        LEFT JOIN LATERAL (
-          SELECT b.is_urgent
-          FROM billings b
-          WHERE (
-              (sc.invoice_number IS NOT NULL AND b.invoice_number = sc.invoice_number)
-           OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id = sc.omie_order_id::varchar)
-          )
-            AND (
-              b.omie_customer_code IS NULL
-              OR c.omie_client_code IS NULL
-              OR b.omie_customer_code = c.omie_client_code
-            )
-          ORDER BY
-            CASE WHEN b.invoice_number = sc.invoice_number THEN 0 ELSE 1 END,
-            b.invoice_date DESC NULLS LAST,
-            b.updated_at DESC NULLS LAST
-          LIMIT 1
-        ) billing_match ON TRUE
-        WHERE sc.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
+        SELECT DISTINCT ON (b.id)
+          b.id,
+          b.invoice_number as "invoiceNumber",
+          b.omie_order_id as "omieOrderId",
+          b.order_number as "orderNumber",
+          COALESCE(c.id, 'billing-' || b.id) as "customerId",
+          COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+          COALESCE(c.address, '') as "customerAddress",
+          COALESCE(c.latitude, 0) as "customerLatitude",
+          COALESCE(c.longitude, 0) as "customerLongitude",
+          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
+          COALESCE(b.is_urgent, false) as "isUrgent",
+          b.total_value as "saleValue",
+          b.products,
+          b.invoice_date as "scheduledDate",
+          b.payment_method as "paymentMethod",
+          b.billing_type as "operationType"
+        FROM billings b
+        LEFT JOIN customers c ON (
+          c.id = CONCAT('omie-client-', b.omie_customer_code)
+          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        )
+        WHERE b.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
+        ORDER BY 
+          b.id, 
+          CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END,
+          c.id NULLS LAST,
+          b.invoice_date
       `);
       
-      const orders = ordersResult.rows;
+      const orders = billingsResult.rows;
+      
+      console.log(`📦 [ROUTE-PLANNING] Recebidos ${orderIds.length} billing IDs, encontrados ${orders.length} billings válidos`);
 
-      // Validar que todos os pedidos têm coordenadas
-      const invalidOrders = orders.filter(o => !o.customerLatitude || !o.customerLongitude);
-      if (invalidOrders.length > 0) {
+      if (orders.length === 0) {
         return res.status(400).json({ 
-          message: "Some orders don't have customer coordinates",
-          invalidOrders: invalidOrders.map(o => ({ id: o.id, name: o.customerName }))
+          message: "Nenhum pedido válido encontrado para os IDs fornecidos",
+          requestedIds: orderIds,
+          foundCount: 0
         });
       }
 
-      // Converter para formato do serviço
+      // Validar que todos os pedidos têm coordenadas válidas
+      console.log(`🔍 [ROUTE-PLANNING] Validando coordenadas de ${orders.length} pedidos...`);
+      const invalidOrders = orders.filter(o => {
+        const lat = o.customerLatitude;
+        const lng = o.customerLongitude;
+        
+        console.log(`  → ${o.customerName}: lat=${lat} (type: ${typeof lat}), lng=${lng} (type: ${typeof lng})`);
+        
+        // Verificar se é null, undefined, string vazia, ou "0"
+        if (!lat || !lng || lat === '' || lng === '' || lat === '0' || lng === '0') {
+          console.log(`    ❌ Falhou no primeiro check (null/empty/'0')`);
+          return true;
+        }
+        
+        // Verificar se converte para número válido diferente de zero
+        const latNum = parseFloat(lat as string);
+        const lngNum = parseFloat(lng as string);
+        
+        const isInvalid = isNaN(latNum) || isNaN(lngNum) || latNum === 0 || lngNum === 0;
+        if (isInvalid) {
+          console.log(`    ❌ Falhou no segundo check: latNum=${latNum}, lngNum=${lngNum}`);
+        } else {
+          console.log(`    ✅ Coordenadas válidas`);
+        }
+        
+        return isInvalid;
+      });
+      
+      if (invalidOrders.length > 0) {
+        console.warn(`⚠️ [ROUTE-PLANNING] ${invalidOrders.length} pedidos sem coordenadas válidas:`, 
+                     invalidOrders.map(o => ({ id: o.id, name: o.customerName, lat: o.customerLatitude, lng: o.customerLongitude })));
+        return res.status(400).json({ 
+          message: `${invalidOrders.length} ${invalidOrders.length === 1 ? 'pedido não possui' : 'pedidos não possuem'} coordenadas de cliente cadastradas. Por favor, cadastre as coordenadas dos clientes antes de roteirizar.`,
+          invalidOrders: invalidOrders.map(o => ({ 
+            id: o.id, 
+            customerName: o.customerName, 
+            address: o.customerAddress,
+            latitude: o.customerLatitude || 'não cadastrado',
+            longitude: o.customerLongitude || 'não cadastrado'
+          }))
+        });
+      }
+
+      // Converter billings para formato do serviço de roteirização
       const deliveryOrders = orders.map(o => ({
         id: o.id,
         customerId: o.customerId,
@@ -7907,17 +7943,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerAddress: o.customerAddress,
         customerLatitude: parseFloat(o.customerLatitude as string),
         customerLongitude: parseFloat(o.customerLongitude as string),
-        averageDeliveryTime: o.averageDeliveryTime || 10,
-        exclusiveVehicle: o.exclusiveVehicle || false,
-        vehicleTypes: o.vehicleTypes || [],
+        averageDeliveryTime: o.averageDeliveryTime || 30,
+        exclusiveVehicle: false,
+        vehicleTypes: [],
         isUrgent: o.isUrgent || false,
-        saleValue: o.saleValue || 0,
+        saleValue: parseFloat(o.saleValue as any) || 0,
         products: o.products,
         scheduledDate: o.scheduledDate,
-        completedDate: o.completedDate,
+        completedDate: o.scheduledDate,
         paymentMethod: o.paymentMethod,
         operationType: o.operationType,
       }));
+      
+      console.log(`✅ [ROUTE-PLANNING] ${deliveryOrders.length} pedidos prontos para roteirização`);
 
       // Planejar rotas
       const { planDeliveryRoutes } = await import('./deliveryRouteService');
