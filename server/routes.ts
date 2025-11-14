@@ -1979,19 +1979,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      // Buscar pedidos com source='hotsite' usando o storage
-      const allCards = await storage.getSalesCards({});
+      // ✅ CORREÇÃO: Passar undefined ao invés de {} para buscar todos os cards
+      const allCards = await storage.getSalesCards(undefined);
       console.log('📊 [HOTSITE-ORDERS] Total de sales_cards:', allCards.length);
       
       // Filtrar apenas pedidos do hotsite
       const hotsiteOrders = allCards.filter(card => card.source === 'hotsite');
       console.log('📊 [HOTSITE-ORDERS] Sales_cards com source="hotsite":', hotsiteOrders.length);
       
-      // Ordenar por data
+      // Ordenar por data de criação (mais recentes primeiro)
       hotsiteOrders.sort((a, b) => {
-        const dateA = new Date(a.scheduledDate).getTime();
-        const dateB = new Date(b.scheduledDate).getTime();
-        return dateB - dateA; // Mais recentes primeiro
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
       });
       
       console.log('✅ [HOTSITE-ORDERS] Retornando', hotsiteOrders.length, 'pedidos');
