@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
-import { getOmieService, isOmieConfigured } from "./omieIntegration";
+import { getOmieService, isOmieConfigured, createOmieOrder } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -2000,6 +2000,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("❌ [HOTSITE-ORDERS] Error fetching hotsite orders:", error);
       res.status(500).json({ message: "Failed to fetch hotsite orders" });
+    }
+  });
+
+  // Excluir pedido do hotsite
+  app.delete('/api/hotsite-orders/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const orderId = req.params.id;
+      
+      console.log('🗑️ [DELETE-HOTSITE-ORDER] User:', user.email, 'deleting order:', orderId);
+      
+      // Apenas admin, coordinator e administrative podem excluir pedidos do hotsite
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        console.log('⛔ [DELETE-HOTSITE-ORDER] Access denied for role:', user.role);
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Verificar se o pedido existe e é do hotsite
+      const order = await storage.getSalesCard(orderId);
+      if (!order) {
+        return res.status(404).json({ message: "Pedido não encontrado" });
+      }
+      
+      if (order.source !== 'hotsite') {
+        return res.status(400).json({ message: "Este pedido não é do hotsite" });
+      }
+      
+      // Excluir o pedido
+      await storage.deleteSalesCard(orderId);
+      
+      console.log('✅ [DELETE-HOTSITE-ORDER] Pedido excluído:', orderId);
+      
+      res.json({ success: true, message: "Pedido excluído com sucesso" });
+    } catch (error) {
+      console.error("❌ [DELETE-HOTSITE-ORDER] Error:", error);
+      res.status(500).json({ message: "Erro ao excluir pedido" });
+    }
+  });
+
+  // Enviar pedido do hotsite para Omie
+  app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const orderId = req.params.id;
+      
+      console.log('📤 [SEND-TO-OMIE] User:', user.email, 'sending order:', orderId);
+      
+      // Apenas admin, coordinator e administrative podem enviar para Omie
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        console.log('⛔ [SEND-TO-OMIE] Access denied for role:', user.role);
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Buscar o pedido completo
+      const order = await storage.getSalesCard(orderId);
+      if (!order) {
+        return res.status(404).json({ message: "Pedido não encontrado" });
+      }
+      
+      if (order.source !== 'hotsite') {
+        return res.status(400).json({ message: "Este pedido não é do hotsite" });
+      }
+      
+      // Verificar se já foi enviado para Omie
+      if (order.omieOrderId) {
+        return res.status(400).json({ 
+          message: "Este pedido já foi enviado para o Omie",
+          omieOrderNumber: order.omieOrderNumber 
+        });
+      }
+      
+      // Buscar dados do cliente
+      const customer = await storage.getCustomer(order.customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      
+      // Preparar dados para envio ao Omie
+      const document = customer.cnpj || customer.cpf;
+      if (!document) {
+        return res.status(400).json({ 
+          message: "Cliente não possui CPF/CNPJ cadastrado" 
+        });
+      }
+      
+      // Parsear produtos do pedido (pode vir como string ou array)
+      let products;
+      if (Array.isArray(order.products)) {
+        products = order.products;
+      } else if (typeof order.products === 'string') {
+        products = JSON.parse(order.products || '[]');
+      } else {
+        products = [];
+      }
+      
+      if (!products || products.length === 0) {
+        return res.status(400).json({ message: "Pedido sem produtos" });
+      }
+      
+      // Criar pedido no Omie (com cadastro automático do cliente se necessário)
+      console.log('📤 [SEND-TO-OMIE] Enviando para Omie...');
+      const omieResult = await createOmieOrder({
+        customer: {
+          document: document.replace(/\D/g, ''), // Apenas números
+          name: customer.fantasyName || customer.name,
+          email: customer.email || '',
+          phone: customer.phone || '',
+          address: customer.address || ''
+        },
+        products: products.map((p: any) => ({
+          description: p.productName || p.name,
+          quantity: p.quantity,
+          unitPrice: p.unitPrice,
+          totalPrice: p.quantity * p.unitPrice
+        })),
+        totalValue: parseFloat(order.saleValue || '0'),
+        orderNumber: `WEB-${order.id.substring(0, 8)}`,
+        sellerId: order.sellerId,
+        paymentMethod: order.paymentMethod || 'pix',
+        operationType: order.operationType || 'venda',
+        boletoDays: order.boletoDays || 7
+      });
+      
+      // Atualizar o pedido com informações do Omie
+      await storage.updateSalesCard(orderId, {
+        omieOrderId: omieResult.codigo_pedido?.toString(),
+        omieSyncStatus: 'synced',
+        omieSentAt: new Date()
+      });
+      
+      console.log('✅ [SEND-TO-OMIE] Pedido enviado:', omieResult.numero_pedido);
+      
+      res.json({ 
+        success: true, 
+        message: "Pedido enviado para Omie com sucesso",
+        numero_pedido: omieResult.numero_pedido, // Para compatibilidade com toast do frontend
+        codigo_pedido: omieResult.codigo_pedido,
+        omieOrderNumber: omieResult.numero_pedido
+      });
+    } catch (error: any) {
+      console.error("❌ [SEND-TO-OMIE] Error:", error);
+      res.status(500).json({ 
+        message: error.message || "Erro ao enviar pedido para Omie" 
+      });
     }
   });
 

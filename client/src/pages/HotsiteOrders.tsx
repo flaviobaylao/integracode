@@ -6,10 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail } from 'lucide-react';
+import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail, Trash2, Send } from 'lucide-react';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useMutation } from '@tanstack/react-query';
+import { apiRequest, queryClient } from '@/lib/queryClient';
+import { useToast } from '@/hooks/use-toast';
 
 interface HotsiteOrder {
   id: string;
@@ -45,6 +48,7 @@ export default function HotsiteOrders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedOrder, setSelectedOrder] = useState<HotsiteOrder | null>(null);
+  const { toast } = useToast();
 
   // Buscar pedidos do hotsite
   const { data: hotsiteData, isLoading: isLoadingOrders } = useQuery<{
@@ -73,6 +77,77 @@ export default function HotsiteOrders() {
     map[customer.id] = customer;
     return map;
   }, {} as Record<string, Customer>) || {};
+
+  // Mutation para excluir pedido
+  const deleteMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await fetch(`/api/hotsite-orders/${orderId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao excluir pedido');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
+      setSelectedOrder(null);
+      toast({
+        title: 'Pedido excluído',
+        description: 'O pedido foi excluído com sucesso.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao excluir',
+        description: error.message || 'Não foi possível excluir o pedido.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Mutation para enviar pedido para Omie
+  const sendToOmieMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await fetch(`/api/hotsite-orders/${orderId}/send-to-omie`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao enviar para Omie');
+      }
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
+      toast({
+        title: 'Pedido enviado para Omie',
+        description: `Pedido criado no Omie: ${data.numero_pedido || 'N/A'}`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao enviar para Omie',
+        description: error.message || 'Não foi possível enviar o pedido para o Omie.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleDeleteOrder = (orderId: string) => {
+    if (confirm('Tem certeza que deseja excluir este pedido?')) {
+      deleteMutation.mutate(orderId);
+    }
+  };
+
+  const handleSendToOmie = (orderId: string) => {
+    if (confirm('Deseja enviar este pedido para faturamento no Omie? Se o cliente não estiver cadastrado, será criado automaticamente.')) {
+      sendToOmieMutation.mutate(orderId);
+    }
+  };
 
   // Filtrar pedidos
   const filteredOrders = orders?.filter(order => {
@@ -550,7 +625,28 @@ export default function HotsiteOrders() {
                   )}
 
                   {/* Ações */}
-                  <div className="flex justify-end gap-2 pt-4 border-t">
+                  <div className="flex justify-between gap-2 pt-4 border-t">
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        onClick={() => handleDeleteOrder(selectedOrder.id)}
+                        disabled={deleteMutation.isPending}
+                        data-testid="button-delete-order"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        {deleteMutation.isPending ? 'Excluindo...' : 'Excluir Pedido'}
+                      </Button>
+                      <Button
+                        variant="default"
+                        onClick={() => handleSendToOmie(selectedOrder.id)}
+                        disabled={sendToOmieMutation.isPending}
+                        data-testid="button-send-to-omie"
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        {sendToOmieMutation.isPending ? 'Enviando...' : 'Enviar para Omie'}
+                      </Button>
+                    </div>
                     <Button
                       variant="outline"
                       onClick={() => setSelectedOrder(null)}
