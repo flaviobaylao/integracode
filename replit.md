@@ -2,6 +2,14 @@
 
 "Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos. Its primary purpose is to streamline operations by integrating customer relationship management, product catalog administration, sales card tracking, and WhatsApp communication. The system aims to enhance business efficiency, improve customer service, expand market reach, and increase sales. Key capabilities include robust sales tracking, reporting, route optimization, fine-grained access control, an e-commerce platform ("Hotsite Instagram"), and real-time billing data integration from Omie ERP for customer "positivation" status.
 
+# Recent Changes (Nov 14, 2025)
+
+## Hotsite Orders Display Bug Fix
+- **Issue**: `/api/hotsite-orders` endpoint returned empty array despite hotsite orders existing in database
+- **Root Cause**: Called `getSalesCards({})` which passed empty object as `sellerId` parameter, causing SQL to filter by `seller_id = '[object Object]'`
+- **Fix**: Changed to `getSalesCards(undefined)` to fetch all sales_cards without seller filter
+- **Impact**: Hotsite orders now display correctly in "Pedidos do Site" admin page
+
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
