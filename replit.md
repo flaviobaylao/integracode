@@ -10,6 +10,16 @@
 - **Fix**: Changed to `getSalesCards(undefined)` to fetch all sales_cards without seller filter
 - **Impact**: Hotsite orders now display correctly in "Pedidos do Site" admin page
 
+## Hotsite Orders Management Features
+- **Interactive Order Details Modal**: Clicking on order row or eye icon opens modal with complete order information including products, customer details, and payment method
+- **Delete Order Functionality**: Admin/coordinator/administrative users can delete hotsite orders via DELETE `/api/hotsite-orders/:id` endpoint. Validates user permissions and confirms order source is 'hotsite' before deletion
+- **Send to Omie Integration**: Admin users can send hotsite orders to Omie ERP via POST `/api/hotsite-orders/:id/send-to-omie` endpoint
+  - Automatically creates customer in Omie if customer doesn't exist (using `createOmieOrder` function)
+  - Validates order hasn't been sent previously to prevent duplicates
+  - Handles both array and string formats for order products field
+  - Updates sales_card with Omie order ID and sync status after successful send
+  - Returns both `numero_pedido` and `omieOrderNumber` for frontend compatibility
+
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
