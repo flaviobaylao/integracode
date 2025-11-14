@@ -512,6 +512,17 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               <div className="bg-white rounded-xl p-4 shadow-sm">
                 <h2 className="font-bold text-lg mb-4">3. Localização de Entrega (Opcional)</h2>
                 
+                {/* Aviso Importante */}
+                <div className="mb-4 p-3 bg-amber-50 border-2 border-amber-400 rounded-lg">
+                  <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                    <span className="text-lg">⚠️</span>
+                    Importante: Capture a localização somente se você estiver no local da entrega!
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Isso ajuda nossa equipe a encontrar seu endereço com mais facilidade.
+                  </p>
+                </div>
+                
                 {!deliveryLocation ? (
                   <div>
                     <button
