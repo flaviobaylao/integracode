@@ -127,14 +127,16 @@ export default function DeliveryManagement() {
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
 
   // Query para buscar pedidos aguardando rota
-  const { data: orders, isLoading: isLoadingOrders } = useQuery<DeliveryOrder[]>({
+  const { data: orders, isLoading: isLoadingOrders, error: ordersError } = useQuery<DeliveryOrder[]>({
     queryKey: ['/api/deliveries'],
+    queryFn: () => apiRequest('GET', '/api/deliveries'),
     refetchInterval: 30000,
   });
 
   // Query para buscar motoristas ativos
-  const { data: drivers = [], isLoading: isLoadingDrivers } = useQuery<DeliveryDriver[]>({
+  const { data: drivers = [], isLoading: isLoadingDrivers, error: driversError } = useQuery<DeliveryDriver[]>({
     queryKey: ['/api/delivery-drivers'],
+    queryFn: () => apiRequest('GET', '/api/delivery-drivers'),
   });
 
   // Mutation para planejar rotas
@@ -288,6 +290,47 @@ export default function DeliveryManagement() {
             : 'Configurar Veículos'}
         </Button>
       </div>
+
+      {/* Error Alert - Renderização inline para permitir recuperação */}
+      {(ordersError || driversError) && (
+        <Card className="border-red-200 bg-red-50">
+          <CardHeader>
+            <CardTitle className="text-red-600">Erro ao Carregar Dados</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p className="text-muted-foreground">
+                Ocorreu um erro ao carregar alguns dados. Você pode tentar novamente.
+              </p>
+              {ordersError && (
+                <div className="p-3 bg-white border border-red-200 rounded">
+                  <p className="text-sm text-red-800">
+                    <strong>Erro ao carregar pedidos:</strong> {(ordersError as any)?.message || 'Erro desconhecido'}
+                  </p>
+                </div>
+              )}
+              {driversError && (
+                <div className="p-3 bg-white border border-red-200 rounded">
+                  <p className="text-sm text-red-800">
+                    <strong>Erro ao carregar motoristas:</strong> {(driversError as any)?.message || 'Erro desconhecido'}
+                  </p>
+                </div>
+              )}
+              <Button 
+                onClick={() => {
+                  queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                  queryClient.invalidateQueries({ queryKey: ['/api/delivery-drivers'] });
+                }}
+                className="mt-2"
+                disabled={isLoadingOrders || isLoadingDrivers}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${(isLoadingOrders || isLoadingDrivers) ? 'animate-spin' : ''}`} />
+                {(isLoadingOrders || isLoadingDrivers) ? 'Tentando...' : 'Tentar Novamente'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters */}
       <Card data-testid="filters-card">
