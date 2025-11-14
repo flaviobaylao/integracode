@@ -159,16 +159,16 @@ export default function DeliveryManagement() {
     },
   });
 
-  // Mutation para marcar como urgente
+  // Mutation para marcar como urgente (billings)
   const toggleUrgentMutation = useMutation({
     mutationFn: async (data: { id: string; isUrgent: boolean }) => {
-      return await apiRequest('PUT', `/api/sales-cards/${data.id}`, { isUrgent: data.isUrgent });
+      return await apiRequest('PATCH', `/api/billings/${data.id}/urgent`, { isUrgent: data.isUrgent });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       toast({
         title: "Urgência atualizada",
-        description: "A marcação de urgência foi atualizada.",
+        description: "A marcação de urgência foi atualizada com sucesso.",
       });
     },
   });

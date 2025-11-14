@@ -3260,6 +3260,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Toggle urgent delivery status for billings (before roteirização)
+  app.patch('/api/billings/:id/urgent', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { isUrgent } = req.body;
+      
+      if (typeof isUrgent !== 'boolean') {
+        return res.status(400).json({ message: "isUrgent must be a boolean value" });
+      }
+      
+      const billing = await storage.updateBillingUrgency(id, isUrgent);
+      res.json(billing);
+    } catch (error: any) {
+      console.error("Error updating billing urgent status:", error);
+      if (error.message && error.message.includes('not found')) {
+        return res.status(404).json({ message: "Billing not found" });
+      }
+      res.status(500).json({ message: "Failed to update billing urgent status" });
+    }
+  });
+
   // ==================== ORDER HISTORY ROUTES ====================
   
   // Get permanent card for a customer (or create if doesn't exist)
@@ -7693,7 +7714,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           false as "exclusiveVehicle",
           ARRAY[]::text[] as "vehicleTypes",
-          false as "isUrgent",
+          COALESCE(b.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
           b.products,
           b.invoice_date as "scheduledDate",

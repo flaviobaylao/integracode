@@ -67,6 +67,29 @@
 - **OSRM API**
 # Recent Changes (Nov 14, 2025)
 
+## Urgent Delivery Prioritization (COMPLETE)
+- **Feature**: Sistema de priorização de entregas urgentes para roteirização
+- **Implementation**:
+  1. **Schema**: Campo `isUrgent` adicionado à tabela `billings`
+  2. **Algorithm**: Urgent-first grouping com 3 buckets (urgent, highPriority, normal)
+  3. **Priority Factors**: 0.1 para urgent, 0.7 para highPriority, 1.0 para normal
+  4. **2-opt Guard**: Proteção que impede entregas urgentes serem movidas para depois de não-urgentes
+  5. **Endpoint**: PATCH `/api/billings/:id/urgent` para atualizar status de urgência
+  6. **Storage**: Método `updateBillingUrgency` para atualização otimizada
+  7. **Interface**: Checkbox em Gestão de Entregas para marcar billings como urgentes
+- **Flow**:
+  1. Usuário marca billing como urgente antes da roteirização
+  2. Sistema aplica urgent-first grouping no algoritmo de otimização
+  3. Entregas urgentes aparecem sempre no início das rotas
+  4. 2-opt respeita ordem de urgência durante refinamento
+- **Impact**:
+  - ✅ Entregas urgentes sempre priorizadas
+  - ✅ Considera particularidades de localização, veículo e horário
+  - ✅ Mantém eficiência do algoritmo de otimização
+  - ✅ Compatível com rotas de vendedores existentes
+
+# Recent Changes (Nov 14, 2025)
+
 ## Delivery Management Duplicate Orders Fix (COMPLETE)
 - **Issue**: Delivery management page showed duplicate entries for the same client (e.g., CONVENIENCIA VIA 153 appeared twice with different addresses)
 - **Root Causes**:

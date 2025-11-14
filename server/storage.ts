@@ -3509,6 +3509,20 @@ export class DatabaseStorage implements IStorage {
     return updatedBilling;
   }
 
+  async updateBillingUrgency(id: string, isUrgent: boolean): Promise<Billing> {
+    const [updatedBilling] = await db
+      .update(billings)
+      .set({ isUrgent, updatedAt: new Date() })
+      .where(eq(billings.id, id))
+      .returning();
+    
+    if (!updatedBilling) {
+      throw new Error(`Billing with id ${id} not found`);
+    }
+    
+    return updatedBilling;
+  }
+
   async deleteBilling(id: string): Promise<void> {
     await db
       .delete(billings)

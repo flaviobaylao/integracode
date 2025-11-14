@@ -11,6 +11,7 @@ export interface RouteLocation {
   priority?: number; // 1-5, onde 5 é prioridade alta
   estimatedDuration?: number; // tempo estimado de visita em minutos
   isVirtual?: boolean; // indica se é atendimento virtual
+  isUrgent?: boolean; // entrega urgente (prioridade máxima na roteirização)
 }
 
 export interface OptimizedRoute {
@@ -48,6 +49,7 @@ export function calculateTravelTime(distanceMeters: number): number {
 /**
  * Algoritmo Nearest Neighbor para otimização de rota
  * Sempre começa da localização inicial (home base do vendedor)
+ * Implementa urgent-first grouping: entregas urgentes sempre primeiro
  */
 export function optimizeRoute(
   startLocation: { latitude: number; longitude: number },
@@ -62,11 +64,15 @@ export function optimizeRoute(
     };
   }
 
-  // Separar por prioridade - clientes com prioridade alta primeiro
-  const highPriority = destinations.filter(d => (d.priority || 3) >= 4);
-  const normalPriority = destinations.filter(d => (d.priority || 3) < 4);
+  // Separar por urgência E prioridade - 3 grupos:
+  // 1. Entregas urgentes (isUrgent=true) - SEMPRE PRIMEIRO
+  // 2. Clientes com alta prioridade (priority >= 4)
+  // 3. Clientes com prioridade normal (priority < 4)
+  const urgentDeliveries = destinations.filter(d => d.isUrgent === true);
+  const highPriority = destinations.filter(d => d.isUrgent !== true && (d.priority || 3) >= 4);
+  const normalPriority = destinations.filter(d => d.isUrgent !== true && (d.priority || 3) < 4);
 
-  const unvisited = [...highPriority, ...normalPriority];
+  const unvisited = [...urgentDeliveries, ...highPriority, ...normalPriority];
   const route: RouteLocation[] = [];
   const routeOrder: string[] = [];
   let totalDistance = 0;
@@ -93,8 +99,17 @@ export function optimizeRoute(
         unvisited[i].longitude
       );
 
-      // Aplicar fator de prioridade - clientes de alta prioridade têm "distância" reduzida
-      const priorityFactor = (unvisited[i].priority || 3) >= 4 ? 0.7 : 1.0;
+      // Aplicar fator de prioridade:
+      // - Entregas urgentes: fator 0.1 (prioridade MÁXIMA)
+      // - Alta prioridade: fator 0.7
+      // - Prioridade normal: fator 1.0
+      let priorityFactor = 1.0;
+      if (unvisited[i].isUrgent === true) {
+        priorityFactor = 0.1; // Entregas urgentes sempre primeiro
+      } else if ((unvisited[i].priority || 3) >= 4) {
+        priorityFactor = 0.7; // Alta prioridade
+      }
+      
       const adjustedDistance = distance * priorityFactor;
 
       if (adjustedDistance < nearestDistance) {
@@ -172,6 +187,24 @@ export function optimizeRouteAdvanced(
         const segment = newRoute.slice(i, j + 1);
         segment.reverse();
         newRoute.splice(i, j - i + 1, ...segment);
+        
+        // GUARDAR 2-OPT: Verificar se a troca viola a regra de urgência
+        // Não permitir que entregas urgentes sejam movidas para depois de não-urgentes
+        let violatesUrgencyRule = false;
+        for (let k = 0; k < newRoute.length - 1; k++) {
+          const current = newRoute[k];
+          const next = newRoute[k + 1];
+          // Se próxima é urgente mas atual não é, viola a regra
+          if (next.isUrgent === true && current.isUrgent !== true) {
+            violatesUrgencyRule = true;
+            break;
+          }
+        }
+        
+        // Se viola a regra de urgência, pular esta troca
+        if (violatesUrgencyRule) {
+          continue;
+        }
         
         // Calcular nova distância
         let newDistance = 0;

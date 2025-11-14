@@ -510,6 +510,7 @@ export const billings = pgTable("billings", {
   invoiceStage: varchar("invoice_stage"), // Etapa do pedido/nota fiscal (cEtapa do Omie)
   stageName: varchar("stage_name"), // Nome da etapa (etapa_descricao)
   isCancelled: boolean("is_cancelled").notNull().default(false), // Se a nota foi cancelada
+  isUrgent: boolean("is_urgent").notNull().default(false), // Entrega urgente (priorizada na roteirização)
   
   // Produtos da nota fiscal
   products: jsonb("products").$type<Array<{
