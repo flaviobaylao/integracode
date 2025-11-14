@@ -207,10 +207,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               <Menu className="h-6 w-6" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-72 p-0 overflow-y-auto">
-            <div className="p-4">
-              {/* User Info */}
-              <div className="flex items-center space-x-3 pb-4 border-b border-gray-200">
+          <SheetContent side="left" className="w-72 p-0">
+            <div className="h-full flex flex-col">
+              <div className="p-4 flex-1 overflow-y-auto">
+                {/* User Info */}
+                <div className="flex items-center space-x-3 pb-4 border-b border-gray-200">
                 <Avatar>
                   <AvatarImage src={user?.profileImageUrl || ''} />
                   <AvatarFallback>
@@ -328,12 +329,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   </li>
                 )}
               </ul>
+              </div>
               
               {/* Versão do Sistema - Rodapé do Menu Mobile */}
-              <div className="mt-6 pt-4 border-t border-gray-200">
-                <div className="px-2">
-                  <VersionDisplay />
-                </div>
+              <div className="p-4 border-t border-gray-200 flex-shrink-0">
+                <VersionDisplay />
               </div>
             </div>
           </SheetContent>
@@ -393,7 +393,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       <div className="flex">
         {/* Sidebar Navigation - Hidden on mobile */}
         <nav className="hidden md:block w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200 flex flex-col">
-          <div className="p-4 flex-1 overflow-y-auto">
+          <div className="p-4 flex-1 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
             <ul className="space-y-2">
               {menuItems
                 .filter(item => item.available)
