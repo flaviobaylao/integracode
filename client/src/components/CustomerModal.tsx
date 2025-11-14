@@ -78,20 +78,27 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
     try {
       weekdaysArray = JSON.parse(weekdays);
     } catch {
-      // Se não for JSON válido, tratar como array único
-      weekdaysArray = [weekdays];
+      // ✅ FIX: Se não for JSON válido, split por vírgula/ponto-e-vírgula (dados legados)
+      // Exemplo: "segunda,terca,quarta,quinta,sexta, Qua" → ["segunda","terca","quarta","quinta","sexta","Qua"]
+      weekdaysArray = weekdays
+        .split(/[,;\/]/)      // Split por vírgula, ponto-e-vírgula ou barra
+        .map(d => d.trim())    // Remove espaços
+        .filter(d => d);       // Remove strings vazias
     }
   } else {
     weekdaysArray = weekdays || [];
   }
 
-  // Normalizar cada dia
-  return weekdaysArray
+  // Normalizar cada dia e remover duplicatas
+  const normalized = weekdaysArray
     .map(day => {
       const normalized = weekdayMap[day.toLowerCase().trim()];
       return normalized || day; // Se não encontrar no mapa, retorna original
     })
     .filter(day => day); // Remove valores vazios
+  
+  // Remove duplicatas preservando ordem (usando Array.from para compatibilidade TS)
+  return Array.from(new Set(normalized));
 }
 
 export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
