@@ -213,7 +213,7 @@ function HotsiteContent() {
           </button>
 
           <a
-            href={`https://wa.me/556299578281?text=Olá! Meu pedido é ${orderNumber}`}
+            href={`https://wa.me/5562995782812?text=Olá! Meu pedido é ${orderNumber}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn-secondary w-full mt-3 inline-block"
@@ -345,7 +345,7 @@ function HotsiteContent() {
             <div>
               <h3 className="font-bold text-lg mb-4">Contato</h3>
               <p className="text-sm opacity-90 mb-2">📍 Bela Vista de Goiás, GO</p>
-              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/556299578281" className="underline">(62) 99578-2812</a></p>
+              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/5562995782812" className="underline">(62) 99578-2812</a></p>
               <p className="text-sm opacity-90">Entregamos em Goiânia e região</p>
             </div>
             <div>
