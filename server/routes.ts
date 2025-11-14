@@ -7898,7 +7898,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.invoice_date
       `);
       
-      res.json(deliveries.rows);
+      // Processar os dados para garantir que customerWeekdays seja um array
+      const processedDeliveries = deliveries.rows.map((delivery: any) => ({
+        ...delivery,
+        customerWeekdays: delivery.customerWeekdays 
+          ? (typeof delivery.customerWeekdays === 'string' 
+              ? JSON.parse(delivery.customerWeekdays) 
+              : delivery.customerWeekdays)
+          : []
+      }));
+      
+      res.json(processedDeliveries);
     } catch (error: any) {
       console.error("Error fetching deliveries:", error);
       res.status(500).json({ message: "Failed to fetch deliveries", error: error.message });
