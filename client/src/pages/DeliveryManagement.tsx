@@ -475,7 +475,7 @@ export default function DeliveryManagement() {
                               📍 Lat: {Number(order.customerLatitude).toFixed(6)}, Lng: {Number(order.customerLongitude).toFixed(6)}
                             </span>
                           )}
-                          {order.customerWeekdays && order.customerWeekdays.length > 0 && (
+                          {order.customerWeekdays && Array.isArray(order.customerWeekdays) && order.customerWeekdays.length > 0 && (
                             <span className="flex items-center">
                               <Calendar className="h-3 w-3 mr-1" />
                               Dias: {order.customerWeekdays.join(', ')}
