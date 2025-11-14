@@ -956,7 +956,7 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
-    // VALIDAÇÃO CRÍTICA 2: Verificar se o dia agendado está alinhado com os weekdays do cliente
+    // VALIDAÇÃO CRÍTICA 2: Log de informação sobre weekdays (validação movida para o handler)
     // EXCEÇÃO: Pular validação para:
     //  - 'manual_route_addition': adições manuais à rota
     //  - 'rota_do_dia': visualização de cards na rota do dia (cliente já foi alocado)
@@ -983,13 +983,8 @@ export class DatabaseStorage implements IStorage {
           const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
           const scheduledDayName = weekdayNames[scheduledDayOfWeek];
           
-          // Verificar se o dia agendado está na lista de weekdays do cliente
-          if (!customerWeekdays.includes(scheduledDayName)) {
-            console.error(`❌ ERRO DE VALIDAÇÃO: Tentativa de criar card para ${customer.fantasyName || customer.name} em ${scheduledDayName} (${processedSalesCard.scheduledDate}), mas cliente só atende em: ${customerWeekdays.join(', ')}`);
-            throw new Error(`Data agendada (${scheduledDayName}) não está nos dias de atendimento do cliente (${customerWeekdays.join(', ')})`);
-          }
-          
-          console.log(`✅ Validação OK: Card para ${customer.fantasyName || customer.name} agendado para ${scheduledDayName} está alinhado com weekdays [${customerWeekdays.join(', ')}]`);
+          // Log de informação (validação feita no handler)
+          console.log(`ℹ️ Card agendado para ${scheduledDayName}, cliente atende em: ${customerWeekdays.join(', ')}`);
         }
       }
     } else if (skipWeekdayValidation) {

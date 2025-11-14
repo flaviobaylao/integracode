@@ -2286,6 +2286,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Buscar o cliente para derivar campos obrigatórios
+      const customer = await storage.getCustomer(processedData.customerId);
+      if (!customer) {
+        return res.status(400).json({ 
+          message: "Cliente não encontrado" 
+        });
+      }
+      
+      // Derivar routeDay do scheduledDate se não fornecido
+      if (!processedData.routeDay && processedData.scheduledDate) {
+        const scheduledDate = new Date(processedData.scheduledDate);
+        const dayOfWeek = scheduledDate.getDay();
+        const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+        processedData.routeDay = weekdayNames[dayOfWeek];
+      }
+      
+      // Derivar recurrenceType de customer.visitPeriodicity com fallback para 'semanal'
+      if (!processedData.recurrenceType) {
+        processedData.recurrenceType = customer.visitPeriodicity || 'semanal';
+      }
+      
+      // Validar que a data agendada está alinhada com os dias de atendimento do cliente
+      // Pular validação para fontes especiais (manual_route_addition, rota_do_dia)
+      const skipWeekdayValidation = processedData.source === 'manual_route_addition' || 
+                                    processedData.source === 'rota_do_dia';
+      
+      if (customer.weekdays && processedData.scheduledDate && !skipWeekdayValidation) {
+        let customerWeekdays: string[] = [];
+        try {
+          customerWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays || [];
+        } catch (e) {
+          console.warn(`⚠️ Cliente ${customer.id} tem weekdays inválido, pulando validação`);
+        }
+        
+        if (customerWeekdays.length > 0) {
+          const scheduledDate = new Date(processedData.scheduledDate);
+          const scheduledDayOfWeek = scheduledDate.getDay();
+          const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+          const scheduledDayName = weekdayNames[scheduledDayOfWeek];
+          
+          if (!customerWeekdays.includes(scheduledDayName)) {
+            return res.status(400).json({ 
+              message: `A data agendada (${scheduledDayName}) não está nos dias de atendimento do cliente. Este cliente atende em: ${customerWeekdays.join(', ')}` 
+            });
+          }
+        }
+      }
+      
+      // Validar que campos obrigatórios do schema estão presentes
+      if (!processedData.routeDay) {
+        return res.status(400).json({ 
+          message: "Campo obrigatório ausente: routeDay" 
+        });
+      }
+      if (!processedData.recurrenceType) {
+        return res.status(400).json({ 
+          message: "Campo obrigatório ausente: recurrenceType" 
+        });
+      }
+      
       // Verificar se já existe um card ativo para este cliente
       // Cards ativos são aqueles com status 'pending' ou 'telemarketing'
       const ACTIVE_STATUSES = ['pending', 'telemarketing'];
