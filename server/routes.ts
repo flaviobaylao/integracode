@@ -900,6 +900,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🎯 FUNÇÃO AUXILIAR: Normalizar weekdays para formato abreviado padrão
+  // Retorna: string[] normalizado OU throws Error se inválido
+  // ✅ Function declaration (hoisted) em vez de arrow function para evitar TDZ
+  function normalizeWeekdays(weekdays: any): string[] | undefined {
+    if (!weekdays) return undefined;
+    
+    // Mapa completo: todos os formatos possíveis → formato canônico
+    const weekdayMap: Record<string, string> = {
+      // Segunda-feira
+      'segunda': 'Seg', 'segunda-feira': 'Seg', 'seg': 'Seg',
+      // Terça-feira
+      'terça': 'Ter', 'terca': 'Ter', 'terça-feira': 'Ter', 'terca-feira': 'Ter', 'ter': 'Ter',
+      // Quarta-feira
+      'quarta': 'Qua', 'quarta-feira': 'Qua', 'qua': 'Qua',
+      // Quinta-feira
+      'quinta': 'Qui', 'quinta-feira': 'Qui', 'qui': 'Qui',
+      // Sexta-feira
+      'sexta': 'Sex', 'sexta-feira': 'Sex', 'sex': 'Sex',
+      // Sábado
+      'sábado': 'Sab', 'sabado': 'Sab', 'sáb': 'Sab', 'sab': 'Sab',
+      // Domingo
+      'domingo': 'Dom', 'dom': 'Dom'
+    };
+    
+    try {
+      let weekdaysArray: any[];
+      
+      // Caso 1: Já é array
+      if (Array.isArray(weekdays)) {
+        weekdaysArray = weekdays;
+      }
+      // Caso 2: String JSON (ex: '["Seg","Qui"]')
+      else if (typeof weekdays === 'string') {
+        // Tentar parsear como JSON primeiro
+        try {
+          weekdaysArray = JSON.parse(weekdays);
+          if (!Array.isArray(weekdaysArray)) {
+            // Se JSON parse retornou algo que não é array, tratar como string separada por vírgulas
+            weekdaysArray = weekdays.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+          }
+        } catch {
+          // Não é JSON válido, tratar como string separada por vírgulas/ponto-e-vírgula
+          weekdaysArray = weekdays.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+        }
+      } else {
+        throw new Error(`Formato inválido de weekdays: esperado array ou string, recebido ${typeof weekdays}`);
+      }
+      
+      // Normalizar cada dia e validar
+      const normalized: string[] = [];
+      const unmapped: string[] = [];
+      
+      for (const day of weekdaysArray) {
+        const dayLower = day.toString().toLowerCase().trim();
+        const canonical = weekdayMap[dayLower];
+        
+        if (canonical) {
+          normalized.push(canonical);
+        } else {
+          // Token desconhecido - não aceitar
+          unmapped.push(day);
+        }
+      }
+      
+      // Se houver tokens inválidos, rejeitar
+      if (unmapped.length > 0) {
+        throw new Error(`Dias da semana inválidos: ${unmapped.join(', ')}. Valores aceitos: Dom, Seg, Ter, Qua, Qui, Sex, Sab`);
+      }
+      
+      // Remover duplicatas preservando ordem
+      const unique = [...new Set(normalized)];
+      
+      return unique.length > 0 ? unique : undefined;
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Erro desconhecido';
+      throw new Error(`Erro ao normalizar weekdays: ${errorMessage}`);
+    }
+  }
+
   app.post('/api/customers', authenticateUser, async (req: any, res) => {
     try {
       // 🔍 LOG 1: Payload recebido do frontend
@@ -911,9 +990,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId: req.body.sellerId,
       });
       
+      // Normalizar weekdays para formato abreviado padrão
+      let normalizedWeekdays: string[] | undefined = undefined;
+      try {
+        normalizedWeekdays = normalizeWeekdays(req.body.weekdays);
+      } catch (error: any) {
+        return res.status(400).json({ 
+          message: "Dias da semana inválidos",
+          error: error.message 
+        });
+      }
+      
       // Transformar strings vazias em null para campos numéricos
       const cleanedData = {
         ...req.body,
+        weekdays: normalizedWeekdays, // ✅ Usar weekdays normalizado
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
@@ -1063,9 +1154,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         serviceStartDate: req.body.serviceStartDate,
       });
       
+      // Normalizar weekdays para formato abreviado padrão (se fornecido)
+      let normalizedWeekdays: string[] | undefined = undefined;
+      if (req.body.weekdays !== undefined) {
+        try {
+          normalizedWeekdays = normalizeWeekdays(req.body.weekdays);
+        } catch (error: any) {
+          return res.status(400).json({ 
+            message: "Dias da semana inválidos",
+            error: error.message 
+          });
+        }
+      }
+      
       // Transformar strings vazias em null para campos numéricos
       const data = {
         ...req.body,
+        // Se normalizedWeekdays foi definido, usar; senão, não incluir no update (manter valor existente)
+        ...(normalizedWeekdays !== undefined && { weekdays: normalizedWeekdays }),
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
@@ -1256,46 +1362,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           
           if (weekdaysRaw) {
-            // Normalizar e validar dias da semana
-            const weekdayMap: Record<string, string> = {
-              'segunda': 'segunda',
-              'segunda-feira': 'segunda',
-              'seg': 'segunda',
-              'terça': 'terca',
-              'terca': 'terca',
-              'terça-feira': 'terca',
-              'terca-feira': 'terca',
-              'ter': 'terca',
-              'quarta': 'quarta',
-              'quarta-feira': 'quarta',
-              'qua': 'quarta',
-              'quinta': 'quinta',
-              'quinta-feira': 'quinta',
-              'qui': 'quinta',
-              'sexta': 'sexta',
-              'sexta-feira': 'sexta',
-              'sex': 'sexta',
-              'sábado': 'sabado',
-              'sabado': 'sabado',
-              'sáb': 'sabado',
-              'sab': 'sabado',
-              'domingo': 'domingo',
-              'dom': 'domingo'
-            };
-            
-            const inputDays = weekdaysRaw.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
-            const normalizedDays = inputDays
-              .map(day => weekdayMap[day])
-              .filter(day => day !== undefined);
-            
-            if (normalizedDays.length === 0 && inputDays.length > 0) {
-              results.errors.push(`Linha ${i + 2}: Nenhum dia da semana válido encontrado em '${weekdaysRaw}'`);
-            } else if (normalizedDays.length > 2) {
-              results.errors.push(`Linha ${i + 2}: Máximo de 2 dias da semana permitido. Encontrados ${normalizedDays.length} dias.`);
-            } else if (normalizedDays.length > 0) {
-              // Remover duplicatas e salvar como JSON array
-              const uniqueDays = Array.from(new Set(normalizedDays));
-              updateData.weekdays = JSON.stringify(uniqueDays);
+            // ✅ Usar função centralizada de normalização
+            try {
+              const normalizedDays = normalizeWeekdays(weekdaysRaw);
+              
+              if (!normalizedDays || normalizedDays.length === 0) {
+                results.errors.push(`Linha ${i + 2}: Nenhum dia da semana válido encontrado em '${weekdaysRaw}'`);
+              } else if (normalizedDays.length > 2) {
+                results.errors.push(`Linha ${i + 2}: Máximo de 2 dias da semana permitido. Encontrados ${normalizedDays.length} dias.`);
+              } else {
+                updateData.weekdays = JSON.stringify(normalizedDays);
+              }
+            } catch (error: any) {
+              results.errors.push(`Linha ${i + 2}: Erro ao processar dias da semana: ${error.message}`);
             }
           }
           
@@ -2315,9 +2394,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (customer.weekdays && processedData.scheduledDate && !skipWeekdayValidation) {
         let customerWeekdays: string[] = [];
         try {
-          customerWeekdays = typeof customer.weekdays === 'string' 
+          // ✅ Normalização defensiva: garantir formato canônico antes de validar
+          const rawWeekdays = typeof customer.weekdays === 'string' 
             ? JSON.parse(customer.weekdays) 
             : customer.weekdays || [];
+          
+          // Normalizar para formato abreviado padrão
+          const normalized = normalizeWeekdays(rawWeekdays);
+          customerWeekdays = normalized || [];
+          
+          console.log(`🔍 [WEEKDAY VALIDATION] Cliente ${customer.id}:`, {
+            raw: rawWeekdays,
+            normalized: customerWeekdays
+          });
         } catch (e) {
           console.warn(`⚠️ Cliente ${customer.id} tem weekdays inválido, pulando validação`);
         }
@@ -14046,6 +14135,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("❌ Error fixing card sellers:", error);
       res.status(500).json({ message: "Failed to fix card sellers", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // ========================================
+  // NORMALIZE WEEKDAYS MIGRATION
+  // ========================================
+  
+  app.post('/api/admin/normalize-weekdays', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar migrações de dados
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Acesso negado. Apenas admin." });
+      }
+
+      const { dryRun = true } = req.body;
+
+      console.log(`🔄 Iniciando normalização de weekdays (dryRun: ${dryRun})...`);
+
+      // Buscar todos os clientes com weekdays não-null
+      const allCustomers = await db
+        .select()
+        .from(customers)
+        .where(isNotNull(customers.weekdays));
+
+      console.log(`📊 Encontrados ${allCustomers.length} clientes com weekdays definidos`);
+
+      const changes: any[] = [];
+      const errors: any[] = [];
+      let updated = 0;
+      let skipped = 0;
+
+      for (const customer of allCustomers) {
+        try {
+          // Tentar normalizar os weekdays atuais
+          const currentWeekdays = customer.weekdays;
+          
+          if (!currentWeekdays) {
+            skipped++;
+            continue;
+          }
+
+          // Normalizar
+          const normalized = normalizeWeekdays(currentWeekdays);
+          
+          // Comparar se mudou
+          const currentAsString = JSON.stringify(currentWeekdays);
+          const normalizedAsString = JSON.stringify(normalized);
+          
+          if (currentAsString !== normalizedAsString) {
+            const change = {
+              customerId: customer.id,
+              customerName: customer.fantasyName || customer.name,
+              before: currentWeekdays,
+              after: normalized,
+              beforeString: currentAsString,
+              afterString: normalizedAsString
+            };
+            
+            changes.push(change);
+
+            // Se não for dry-run, atualizar
+            if (!dryRun) {
+              await db
+                .update(customers)
+                .set({ weekdays: normalized })
+                .where(eq(customers.id, customer.id));
+
+              updated++;
+
+              if (updated % 50 === 0) {
+                console.log(`   → ${updated} clientes atualizados...`);
+              }
+            }
+          } else {
+            // Weekdays já está no formato correto
+            skipped++;
+          }
+        } catch (error: any) {
+          errors.push({
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            currentWeekdays: customer.weekdays,
+            error: error.message
+          });
+        }
+      }
+
+      console.log(`✅ Normalização concluída:`);
+      console.log(`   - Total de clientes analisados: ${allCustomers.length}`);
+      console.log(`   - Clientes com mudanças: ${changes.length}`);
+      console.log(`   - Clientes já normalizados: ${skipped}`);
+      console.log(`   - Clientes atualizados: ${updated}`);
+      console.log(`   - Erros: ${errors.length}`);
+
+      res.json({
+        mode: dryRun ? 'DRY RUN' : 'APLICADO',
+        totalCustomers: allCustomers.length,
+        changes: changes.length,
+        updated: updated,
+        skipped: skipped,
+        errors: errors.length,
+        details: changes.slice(0, 100), // Limitar a 100 para não sobrecarregar a resposta
+        errorDetails: errors,
+        message: dryRun 
+          ? `${changes.length} cliente(s) seriam normalizados (dry-run)`
+          : `${updated} cliente(s) normalizado(s) com sucesso`
+      });
+
+    } catch (error) {
+      console.error("❌ Error normalizing weekdays:", error);
+      res.status(500).json({ 
+        message: "Falha ao normalizar weekdays", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   });
 
