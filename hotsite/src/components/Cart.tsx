@@ -149,18 +149,28 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               </div>
             </div>
 
-            <button
-              onClick={onCheckout}
-              disabled={!meetsMinimum}
-              className={`w-full py-3 rounded-xl font-bold transition-all ${
-                meetsMinimum
-                  ? 'btn-primary'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
-              data-testid="btn-checkout"
-            >
-              {meetsMinimum ? 'Finalizar Pedido' : `Pedido Mínimo: R$ ${minimumOrder.toFixed(2)}`}
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={onClose}
+                className="w-full py-3 rounded-xl font-bold border-2 border-honest-green text-honest-green hover:bg-honest-green hover:bg-opacity-10 transition-all"
+                data-testid="btn-continue-shopping"
+              >
+                Continuar Comprando
+              </button>
+              
+              <button
+                onClick={onCheckout}
+                disabled={!meetsMinimum}
+                className={`w-full py-3 rounded-xl font-bold transition-all ${
+                  meetsMinimum
+                    ? 'btn-primary'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+                data-testid="btn-checkout"
+              >
+                {meetsMinimum ? 'Finalizar Pedido' : `Pedido Mínimo: R$ ${minimumOrder.toFixed(2)}`}
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -75,9 +75,8 @@ function HotsiteContent() {
       setCart([...cart, { ...product, price: correctPrice, quantity: 1 }]);
     }
     
-    // Feedback visual
+    // Abrir carrinho (permanece aberto até cliente fechar)
     setIsCartOpen(true);
-    setTimeout(() => setIsCartOpen(false), 2000);
   };
 
   const updateQuantity = (productId: string, quantity: number) => {
