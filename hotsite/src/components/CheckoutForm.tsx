@@ -590,22 +590,24 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     <span className="text-2xl">💳</span>
                   </label>
 
-                  <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
-                    <input
-                      type="radio"
-                      name="payment"
-                      value="card"
-                      checked={paymentMethod === 'card'}
-                      onChange={() => setPaymentMethod('card')}
-                      className="w-5 h-5"
-                      data-testid="payment-card"
-                    />
-                    <div className="flex-1">
-                      <div className="font-semibold">Cartão de Crédito/Débito</div>
-                      <div className="text-sm text-gray-600">Parcelamento disponível</div>
-                    </div>
-                    <span className="text-2xl">💳</span>
-                  </label>
+                  {customerType === 'pessoa_fisica' && (
+                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                      <input
+                        type="radio"
+                        name="payment"
+                        value="card"
+                        checked={paymentMethod === 'card'}
+                        onChange={() => setPaymentMethod('card')}
+                        className="w-5 h-5"
+                        data-testid="payment-card"
+                      />
+                      <div className="flex-1">
+                        <div className="font-semibold">Cartão de Crédito/Débito</div>
+                        <div className="text-sm text-gray-600">Parcelamento disponível</div>
+                      </div>
+                      <span className="text-2xl">💳</span>
+                    </label>
+                  )}
 
                   {customerType === 'pessoa_juridica' && (
                     <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
@@ -620,7 +622,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       />
                       <div className="flex-1">
                         <div className="font-semibold">Boleto Bancário</div>
-                        <div className="text-sm text-gray-600">Vence em 7 dias</div>
+                        <div className="text-sm text-gray-600">Sujeito à aprovação de crédito</div>
                       </div>
                       <span className="text-2xl">📄</span>
                     </label>
