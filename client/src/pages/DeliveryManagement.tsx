@@ -219,11 +219,11 @@ export default function DeliveryManagement() {
 
   // Funções de veículos
   const addVehicle = () => {
-    setVehicles([...vehicles, {
+    setVehicles(prev => [...prev, {
       type: 'moto',
-      startLatitude: -23.55052,
-      startLongitude: -46.633308,
-      startAddress: 'São Paulo - Depósito Principal',
+      startLatitude: -16.719458733340122,
+      startLongitude: -49.29937095026935,
+      startAddress: 'HONEST GOIANIA',
       timeWindowStart: '08:00',
       timeWindowEnd: '18:00',
       capacity: undefined
