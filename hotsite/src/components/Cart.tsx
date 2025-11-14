@@ -38,8 +38,15 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
   const missingAmount = minimumOrder - subtotal;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end md:items-center md:justify-center" data-testid="cart-modal">
-      <div className="bg-white w-full md:max-w-lg md:rounded-t-3xl rounded-t-3xl max-h-[90vh] flex flex-col">
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end md:items-center md:justify-center" 
+      data-testid="cart-modal"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white w-full md:max-w-lg md:rounded-t-3xl rounded-t-3xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-4 border-b flex items-center justify-between bg-honest-green text-white rounded-t-3xl">
           <h2 className="text-xl font-bold">Carrinho</h2>
