@@ -7862,6 +7862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.address, '') as "customerAddress",
           COALESCE(c.latitude, 0) as "customerLatitude",
           COALESCE(c.longitude, 0) as "customerLongitude",
+          c.weekdays as "customerWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           false as "exclusiveVehicle",
           ARRAY[]::text[] as "vehicleTypes",

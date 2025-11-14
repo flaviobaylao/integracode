@@ -45,6 +45,7 @@ interface DeliveryOrder {
   customerAddress: string;
   customerLatitude: string;
   customerLongitude: string;
+  customerWeekdays: string[] | null;
   averageDeliveryTime: number;
   exclusiveVehicle: boolean;
   vehicleTypes: string[];
@@ -422,6 +423,21 @@ export default function DeliveryManagement() {
                         <div className="text-sm text-muted-foreground flex items-center">
                           <MapPin className="h-3 w-3 mr-1" />
                           {order.customerAddress}
+                        </div>
+
+                        <div className="flex items-center space-x-4 text-xs text-gray-600">
+                          {order.customerLatitude !== '0' && order.customerLongitude !== '0' && (
+                            <span className="flex items-center">
+                              <MapPin className="h-3 w-3 mr-1" />
+                              📍 Lat: {Number(order.customerLatitude).toFixed(6)}, Lng: {Number(order.customerLongitude).toFixed(6)}
+                            </span>
+                          )}
+                          {order.customerWeekdays && order.customerWeekdays.length > 0 && (
+                            <span className="flex items-center">
+                              <Calendar className="h-3 w-3 mr-1" />
+                              Dias: {order.customerWeekdays.join(', ')}
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center space-x-4 text-xs text-gray-600">
