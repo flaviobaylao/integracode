@@ -7766,28 +7766,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Vehicle configurations are required" });
       }
 
-      // Buscar pedidos completos
-      const orders = await db.select({
-        id: salesCards.id,
-        customerId: salesCards.customerId,
-        customerName: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
-        customerAddress: customers.address,
-        customerLatitude: customers.latitude,
-        customerLongitude: customers.longitude,
-        averageDeliveryTime: customers.averageDeliveryTime,
-        exclusiveVehicle: salesCards.exclusiveVehicle,
-        vehicleTypes: salesCards.vehicleTypes,
-        isUrgent: salesCards.isUrgent,
-        saleValue: salesCards.saleValue,
-        products: salesCards.products,
-        scheduledDate: salesCards.scheduledDate,
-        completedDate: salesCards.completedDate,
-        paymentMethod: salesCards.paymentMethod,
-        operationType: salesCards.operationType,
-      })
-      .from(salesCards)
-      .innerJoin(customers, eq(salesCards.customerId, customers.id))
-      .where(inArray(salesCards.id, orderIds));
+      // Buscar pedidos completos com informação de urgência dos billings
+      // Usa LEFT JOIN LATERAL para prevenir colisões entre clientes
+      const ordersResult = await db.execute<{
+        id: string;
+        customerId: string;
+        customerName: string;
+        customerAddress: string;
+        customerLatitude: string;
+        customerLongitude: string;
+        averageDeliveryTime: number;
+        exclusiveVehicle: boolean;
+        vehicleTypes: string[];
+        isUrgent: boolean;
+        saleValue: number;
+        products: any;
+        scheduledDate: Date;
+        completedDate: Date;
+        paymentMethod: string;
+        operationType: string;
+      }>(sql`
+        SELECT 
+          sc.id,
+          sc.customer_id as "customerId",
+          COALESCE(c.fantasy_name, c.name) as "customerName",
+          c.address as "customerAddress",
+          c.latitude as "customerLatitude",
+          c.longitude as "customerLongitude",
+          COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
+          COALESCE(sc.exclusive_vehicle, false) as "exclusiveVehicle",
+          COALESCE(sc.vehicle_types, '[]'::jsonb) as "vehicleTypes",
+          COALESCE(billing_match.is_urgent, false) as "isUrgent",
+          sc.sale_value as "saleValue",
+          sc.products,
+          sc.scheduled_date as "scheduledDate",
+          sc.completed_date as "completedDate",
+          sc.payment_method as "paymentMethod",
+          sc.operation_type as "operationType"
+        FROM sales_cards sc
+        INNER JOIN customers c ON sc.customer_id = c.id
+        LEFT JOIN LATERAL (
+          SELECT b.is_urgent
+          FROM billings b
+          WHERE (
+              (sc.invoice_number IS NOT NULL AND b.invoice_number = sc.invoice_number)
+           OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id = sc.omie_order_id::varchar)
+          )
+            AND (
+              b.omie_customer_code IS NULL
+              OR c.omie_client_code IS NULL
+              OR b.omie_customer_code = c.omie_client_code
+            )
+          ORDER BY
+            CASE WHEN b.invoice_number = sc.invoice_number THEN 0 ELSE 1 END,
+            b.invoice_date DESC NULLS LAST,
+            b.updated_at DESC NULLS LAST
+          LIMIT 1
+        ) billing_match ON TRUE
+        WHERE sc.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
+      `);
+      
+      const orders = ordersResult.rows;
 
       // Validar que todos os pedidos têm coordenadas
       const invalidOrders = orders.filter(o => !o.customerLatitude || !o.customerLongitude);

@@ -149,3 +149,32 @@
   - ✅ Users can still customize address/coordinates for any vehicle
   - ✅ Prevents stale state issues with functional setState
   - ✅ Reduces manual data entry for most common scenario
+
+## Route Planning Error 500 Fix (COMPLETE)
+- **Issue**: Endpoint POST `/api/delivery-routes/plan` returned error 500 when trying to generate delivery routes
+- **Root Cause**: Query attempted to access `isUrgent` field from `sales_cards` table, but field only exists in `billings` table
+- **Solution**: Implemented LEFT JOIN LATERAL with `billings` table to fetch `isUrgent` correctly
+- **Implementation Details**:
+  - Uses LEFT JOIN LATERAL to match billings by `invoice_number` or `omie_order_id`
+  - Prevents cross-client collisions by filtering on `omie_customer_code` = `omie_client_code`
+  - Deterministic prioritization: invoice_number > omie_order_id > invoice_date > updated_at
+  - Graceful NULL handling for missing omie codes
+  - Type-safe: varchar for IDs, jsonb for vehicle_types
+- **Query Structure**:
+  ```sql
+  LEFT JOIN LATERAL (
+    SELECT b.is_urgent
+    FROM billings b
+    WHERE (sc.invoice_number IS NOT NULL AND b.invoice_number = sc.invoice_number)
+       OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id = sc.omie_order_id::varchar)
+      AND (b.omie_customer_code IS NULL OR c.omie_client_code IS NULL 
+           OR b.omie_customer_code = c.omie_client_code)
+    ORDER BY ...
+    LIMIT 1
+  ) billing_match ON TRUE
+  ```
+- **Impact**:
+  - ✅ Route planning endpoint now works correctly
+  - ✅ Urgent deliveries properly prioritized in route generation
+  - ✅ No cross-client billing collisions
+  - ✅ Handles NULL omie codes gracefully
