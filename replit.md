@@ -4,6 +4,32 @@
 
 # Recent Changes (Nov 14, 2025)
 
+## Driver Management Fix (COMPLETE)
+- **Issue**: Driver creation and deletion weren't working (reported by user)
+- **Root Causes**: 
+  1. Duplicate GET "/api/delivery-drivers" endpoint (lines 7568 and 7674 in routes.ts)
+  2. Read operations queried `users` table (role='motorista') while write operations targeted `delivery_drivers` table
+  3. Missing `isActive` field in createDeliveryDriver INSERT statement
+  4. SQL syntax error in updateDeliveryDriver using COALESCE with undefined values
+  5. Inconsistent response formats (snake_case vs camelCase)
+  6. Missing authentication on driver management endpoints
+- **Fix**: 
+  1. Removed duplicate endpoint definition
+  2. Updated all storage methods to consistently use `delivery_drivers` table (not users)
+  3. Added `isActive` field to CREATE (defaults to true)
+  4. Rewrote `updateDeliveryDriver` using proper Drizzle ORM `.update().set().where().returning()`
+  5. All CRUD methods now return consistent camelCase fields: `getDeliveryDrivers`, `getActiveDeliveryDrivers`, `createDeliveryDriver`, `updateDeliveryDriver`, `updateDriverLocation`
+  6. Added proper authentication with role-based access control:
+     - GET endpoints: admin, coordinator, administrative, vendedor (can view)
+     - POST/PUT endpoints: admin, coordinator, administrative only (can modify)
+  7. Imported `deliveryDrivers` table from schema into storage layer
+- **Testing**: 
+  - ✅ Driver creation test passed
+  - ✅ Driver update test passed
+  - ✅ Toggle status test passed
+  - ✅ All responses return proper camelCase matching frontend expectations
+- **Impact**: Complete driver CRUD functionality now works reliably. Drivers can be created, updated, status-toggled through the UI. Vendor users can view drivers for route assignment but cannot modify them. All data consistency issues resolved.
+
 ## Delivery Management Count Fix
 - **Issue**: Delivery management showed 73 clients while invoicing list showed 72 "aguardando rota" (should match)
 - **Root Cause**: `/api/deliveries` endpoint had incorrect NOT EXISTS subquery (lines 7727-7731). It tried to JOIN `billings.id` with `delivery_route_stops.sales_card_id`, but `sales_card_id` references `sales_cards` table, not `billings`. The subquery never found matches, so already-routed billings weren't filtered out.

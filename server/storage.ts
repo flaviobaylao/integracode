@@ -19,6 +19,7 @@ import {
   routeCheckpoints,
   deliveryRoutes,
   deliveryRouteStops,
+  deliveryDrivers,
   syncStatus,
   leads,
   type User,
@@ -2529,23 +2530,35 @@ export class DatabaseStorage implements IStorage {
     const result = await db.execute(sql`
       SELECT 
         id,
-        CONCAT(first_name, ' ', last_name) as name,
-        email as phone,
-        'moto' as "vehicleType",
-        '' as "licensePlate",
-        is_active as "isActive"
-      FROM users 
-      WHERE role = 'motorista' AND is_active = true
-      ORDER BY first_name, last_name
+        name,
+        phone,
+        vehicle_type as "vehicleType",
+        license_plate as "licensePlate",
+        is_active as "isActive",
+        current_location as "currentLocation",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      FROM delivery_drivers
+      ORDER BY name
     `);
     return result.rows;
   }
 
   async createDeliveryDriver(data: any): Promise<any> {
+    const isActive = data.isActive !== undefined ? data.isActive : true;
     const result = await db.execute(sql`
-      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, current_location)
-      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${data.currentLocation})
-      RETURNING *
+      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, is_active, current_location)
+      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${isActive}, ${data.currentLocation || null})
+      RETURNING 
+        id,
+        name,
+        phone,
+        vehicle_type as "vehicleType",
+        license_plate as "licensePlate",
+        is_active as "isActive",
+        current_location as "currentLocation",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
     `);
     return result.rows[0];
   }
@@ -2555,7 +2568,16 @@ export class DatabaseStorage implements IStorage {
       UPDATE delivery_drivers 
       SET current_location = ${location}, updated_at = NOW() 
       WHERE id = ${driverId}
-      RETURNING *
+      RETURNING 
+        id,
+        name,
+        phone,
+        vehicle_type as "vehicleType",
+        license_plate as "licensePlate",
+        is_active as "isActive",
+        current_location as "currentLocation",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
     `);
     return result.rows[0];
   }
@@ -3889,33 +3911,40 @@ export class DatabaseStorage implements IStorage {
     const result = await db.execute(sql`
       SELECT 
         id,
-        CONCAT(first_name, ' ', last_name) as name,
-        email as phone,
-        'moto' as "vehicleType",
-        '' as "licensePlate",
-        is_active as "isActive"
-      FROM users 
-      WHERE role = 'motorista' AND is_active = true
-      ORDER BY first_name, last_name
+        name,
+        phone,
+        vehicle_type as "vehicleType",
+        license_plate as "licensePlate",
+        is_active as "isActive",
+        current_location as "currentLocation",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      FROM delivery_drivers
+      WHERE is_active = true
+      ORDER BY name
     `);
     return result.rows || [];
   }
 
   async updateDeliveryDriver(id: string, data: any): Promise<any> {
-    const result = await db.execute(sql`
-      UPDATE delivery_drivers 
-      SET 
-        name = COALESCE(${data.name}, name),
-        phone = COALESCE(${data.phone}, phone),
-        vehicle_type = COALESCE(${data.vehicleType}, vehicle_type),
-        license_plate = COALESCE(${data.licensePlate}, license_plate),
-        is_active = COALESCE(${data.isActive}, is_active),
-        current_location = COALESCE(${data.currentLocation}, current_location),
-        updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING *
-    `);
-    return result.rows[0];
+    const updateData: any = {};
+    
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.phone !== undefined) updateData.phone = data.phone;
+    if (data.vehicleType !== undefined) updateData.vehicleType = data.vehicleType;
+    if (data.licensePlate !== undefined) updateData.licensePlate = data.licensePlate;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if (data.currentLocation !== undefined) updateData.currentLocation = data.currentLocation;
+    
+    updateData.updatedAt = new Date();
+    
+    const [result] = await db
+      .update(deliveryDrivers)
+      .set(updateData)
+      .where(eq(deliveryDrivers.id, id))
+      .returning();
+    
+    return result;
   }
 
   async getDeliveryStats(period: string): Promise<any> {
