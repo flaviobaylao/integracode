@@ -3154,43 +3154,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   console.log(`✅ [AUTO-CHECKOUT] Check-out automático realizado em ${checkOutTime.toLocaleTimeString('pt-BR')} com status "${visitStatus}"`);
                   console.log(`⏱️ [AUTO-CHECKOUT] Duração da visita: ${visitDuration} minutos`);
                   
-                  // Registrar checkpoint de check-out na rota diária
-                  const dailyRoute = await db.select()
-                    .from(dailyRoutes)
-                    .where(and(
-                      eq(dailyRoutes.sellerId, visit.sellerId),
-                      eq(dailyRoutes.routeDate, today)
-                    ))
-                    .limit(1);
-                  
-                  if (dailyRoute.length > 0) {
-                    console.log(`📍 [AUTO-CHECKOUT] Registrando checkpoint de check-out na rota ${dailyRoute[0].id}...`);
-                    
-                    // Buscar último checkpoint para calcular sequência
-                    const lastCheckpoint = await db.select()
-                      .from(routeCheckpoints)
-                      .where(eq(routeCheckpoints.dailyRouteId, dailyRoute[0].id))
-                      .orderBy(desc(routeCheckpoints.sequenceNumber))
+                  // Registrar checkpoint de check-out na rota diária (se existir)
+                  // Importante: nem todas as vendas/não-vendas acontecem durante rotas planejadas
+                  // CRITICAL: Envolver tudo em try-catch para não bloquear check-out se rota falhar
+                  try {
+                    const dailyRoute = await db.select()
+                      .from(dailyRoutes)
+                      .where(and(
+                        eq(dailyRoutes.sellerId, visit.sellerId),
+                        eq(dailyRoutes.routeDate, today)
+                      ))
                       .limit(1);
                     
-                    const nextSequence = lastCheckpoint.length > 0 
-                      ? (lastCheckpoint[0].sequenceNumber || 0) + 1 
-                      : 1;
-                    
-                    await db.insert(routeCheckpoints).values({
-                      dailyRouteId: dailyRoute[0].id,
-                      visitId: visit.id,
-                      customerId: visit.customerId,
-                      sellerId: visit.sellerId,
-                      checkpointType: 'check_out',
-                      checkpointLatitude: checkOutLat.toString(),
-                      checkpointLongitude: checkOutLon.toString(),
-                      checkpointTime: checkOutTime,
-                      sequenceNumber: nextSequence,
-                      isOffRoute: false
-                    });
-                    
-                    console.log(`✅ [AUTO-CHECKOUT] Checkpoint de check-out registrado com sucesso`);
+                    if (dailyRoute.length > 0) {
+                      console.log(`📍 [AUTO-CHECKOUT] Registrando checkpoint de check-out na rota ${dailyRoute[0].id}...`);
+                      
+                      // Usar função padronizada registerCheckpoint para garantir consistência
+                      const { registerCheckpoint } = await import('./routeOptimizationService');
+                      await registerCheckpoint(
+                        storage,
+                        dailyRoute[0].id,
+                        visit.id,
+                        visit.customerId,
+                        visit.sellerId,
+                        'check_out',
+                        parseFloat(checkOutLat),
+                        parseFloat(checkOutLon)
+                      );
+                      
+                      console.log(`✅ [AUTO-CHECKOUT] Checkpoint de check-out registrado com sucesso`);
+                    } else {
+                      console.log(`ℹ️ [AUTO-CHECKOUT] Sem rota diária - check-out registrado apenas na visita`);
+                    }
+                  } catch (routeError: any) {
+                    console.error(`⚠️ [AUTO-CHECKOUT] Erro ao processar checkpoint (rota/DB):`, routeError.message);
+                    // Não bloquear o check-out - visita já foi atualizada acima
                   }
                 }
               } else if (!visit.actualCheckIn) {
