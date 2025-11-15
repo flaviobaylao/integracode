@@ -1,4 +1,7 @@
-import { QueryClient, QueryFunction, QueryCache, MutationCache } from "@tanstack/react-query";
+import { QueryClient, QueryFunction, QueryCache, MutationCache, QueryClientProvider, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+// Re-exportar TUDO do React Query para forçar o Vite a usar um único bundle
+export { QueryClientProvider, useQuery, useMutation, useQueryClient, QueryCache, MutationCache, QueryClient };
 
 export class UnauthorizedError extends Error {
   constructor(message: string = "Sessão expirada. Por favor, faça login novamente.") {

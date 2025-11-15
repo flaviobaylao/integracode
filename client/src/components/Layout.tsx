@@ -5,7 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";

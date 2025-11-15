@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation } from "@/lib/queryClient";
 import {
   Dialog,
   DialogContent,

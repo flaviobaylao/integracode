@@ -13,7 +13,7 @@ import {
   Package,
   AlertTriangle
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@/lib/queryClient";
 
 interface DeliveryStatusProps {
   salesCardId: string;

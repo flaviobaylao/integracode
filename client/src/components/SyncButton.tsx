@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
