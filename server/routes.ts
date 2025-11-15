@@ -31,7 +31,7 @@ import {
   leads,
 } from "@shared/schema";
 import { z } from "zod";
-import { sql, eq, and, gte, lte, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
+import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -3106,15 +3106,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`🔄 [AUTO-CHECKOUT] Status mudando para "${data.status}" - verificando visita relacionada ao card ${id}...`);
             
             // Buscar visita relacionada a este sales card (mais recente da data de hoje)
-            const today = new Date().toISOString().split('T')[0];
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            console.log(`🔍 [AUTO-CHECKOUT DEBUG] Buscando visita para card ${id}`);
+            console.log(`   📅 Data range: ${today.toISOString()} até ${tomorrow.toISOString()}`);
+            
             const relatedVisits = await db.select()
               .from(visitAgenda)
               .where(and(
                 eq(visitAgenda.salesCardId, id),
-                eq(visitAgenda.visitDate, sql`DATE(${today})`)
+                gte(visitAgenda.scheduledDate, today),
+                lt(visitAgenda.scheduledDate, tomorrow)
               ))
               .orderBy(desc(visitAgenda.createdAt))
               .limit(1);
+            
+            console.log(`   📊 Visitas encontradas: ${relatedVisits.length}`);
             
             if (relatedVisits.length > 0) {
               const visit = relatedVisits[0];
