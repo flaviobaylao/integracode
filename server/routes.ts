@@ -3166,13 +3166,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   if (dailyRoute.length > 0) {
                     console.log(`📍 [AUTO-CHECKOUT] Registrando checkpoint de check-out na rota ${dailyRoute[0].id}...`);
                     
+                    // Buscar último checkpoint para calcular sequência
+                    const lastCheckpoint = await db.select()
+                      .from(routeCheckpoints)
+                      .where(eq(routeCheckpoints.dailyRouteId, dailyRoute[0].id))
+                      .orderBy(desc(routeCheckpoints.sequenceNumber))
+                      .limit(1);
+                    
+                    const nextSequence = lastCheckpoint.length > 0 
+                      ? (lastCheckpoint[0].sequenceNumber || 0) + 1 
+                      : 1;
+                    
                     await db.insert(routeCheckpoints).values({
                       dailyRouteId: dailyRoute[0].id,
                       visitId: visit.id,
+                      customerId: visit.customerId,
+                      sellerId: visit.sellerId,
                       checkpointType: 'check_out',
-                      latitude: checkOutLat,
-                      longitude: checkOutLon,
-                      timestamp: checkOutTime
+                      checkpointLatitude: checkOutLat.toString(),
+                      checkpointLongitude: checkOutLon.toString(),
+                      checkpointTime: checkOutTime,
+                      sequenceNumber: nextSequence,
+                      isOffRoute: false
                     });
                     
                     console.log(`✅ [AUTO-CHECKOUT] Checkpoint de check-out registrado com sucesso`);
