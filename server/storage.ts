@@ -2511,8 +2511,38 @@ export class DatabaseStorage implements IStorage {
 
   async createDeliveryHistory(data: any): Promise<any> {
     const result = await db.execute(sql`
-      INSERT INTO delivery_history (sales_card_id, status, timestamp, location, notes, driver_id)
-      VALUES (${data.salesCardId}, ${data.status}, ${data.timestamp || new Date()}, ${data.location}, ${data.notes}, ${data.driverId})
+      INSERT INTO delivery_history (
+        sales_card_id, 
+        invoice_number,
+        customer_id,
+        customer_name,
+        driver_id,
+        driver_name,
+        vehicle_type,
+        status, 
+        check_in_time,
+        check_out_time,
+        delivery_duration,
+        timestamp, 
+        location, 
+        notes
+      )
+      VALUES (
+        ${data.salesCardId}, 
+        ${data.invoiceNumber || null},
+        ${data.customerId || null},
+        ${data.customerName || null},
+        ${data.driverId || null},
+        ${data.driverName || null},
+        ${data.vehicleType || null},
+        ${data.status}, 
+        ${data.checkInTime || null},
+        ${data.checkOutTime || null},
+        ${data.deliveryDuration || null},
+        ${data.timestamp || new Date()}, 
+        ${data.location}, 
+        ${data.notes}
+      )
       RETURNING *
     `);
     return result.rows[0];

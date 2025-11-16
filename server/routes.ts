@@ -8243,6 +8243,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Registrar histórico de entrega
+  app.post("/api/delivery-history", authenticateUser, async (req: any, res) => {
+    try {
+      const data = req.body;
+      
+      // Validar campos obrigatórios
+      if (!data.salesCardId || !data.status) {
+        return res.status(400).json({ 
+          message: "Campos obrigatórios ausentes: salesCardId, status" 
+        });
+      }
+      
+      // Calcular delivery_duration se checkInTime e checkOutTime estiverem presentes
+      let deliveryDuration = data.deliveryDuration;
+      if (data.checkInTime && data.checkOutTime && !deliveryDuration) {
+        const checkIn = new Date(data.checkInTime);
+        const checkOut = new Date(data.checkOutTime);
+        deliveryDuration = Math.round((checkOut.getTime() - checkIn.getTime()) / 60000); // em minutos
+      }
+      
+      // Criar registro de histórico
+      const history = await storage.createDeliveryHistory({
+        salesCardId: data.salesCardId,
+        invoiceNumber: data.invoiceNumber,
+        customerId: data.customerId,
+        customerName: data.customerName,
+        driverId: data.driverId,
+        driverName: data.driverName,
+        vehicleType: data.vehicleType,
+        status: data.status,
+        checkInTime: data.checkInTime,
+        checkOutTime: data.checkOutTime,
+        deliveryDuration,
+        timestamp: data.timestamp || new Date(),
+        location: data.location,
+        notes: data.notes
+      });
+      
+      console.log(`✅ [DELIVERY-HISTORY] Histórico registrado para card ${data.salesCardId}`);
+      res.json({ message: "Histórico de entrega registrado com sucesso", history });
+    } catch (error: any) {
+      console.error("Error creating delivery history:", error);
+      res.status(500).json({ message: "Failed to create delivery history", error: error.message });
+    }
+  });
+
   // Webhook para App Entregas Honest (endpoints públicos para integração externa)
   app.post("/api/webhook/delivery-update", async (req, res) => {
     try {
