@@ -116,7 +116,7 @@ export function TransferConversationModal({
                   <SelectValue placeholder="Selecione um agente" />
                 </SelectTrigger>
                 <SelectContent>
-                  {availableAgents.map((agent) => (
+                  {availableAgents.filter(agent => agent.id && agent.id.trim() !== '').map((agent) => (
                     <SelectItem key={agent.id} value={agent.id}>
                       <div className="flex items-center gap-2">
                         <Avatar className="h-6 w-6">

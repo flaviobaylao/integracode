@@ -14571,10 +14571,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const httpServer = createServer(app);
+
   // Importar e registrar rotas do Chat Honest
   const { registerChatRoutes } = await import('./chat-routes.js');
-  await registerChatRoutes(app);
+  registerChatRoutes(app);
 
-  const httpServer = createServer(app);
   return httpServer;
 }

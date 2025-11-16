@@ -4,19 +4,34 @@ import { Badge } from "@/components/ui/badge";
 import { BarChart, Activity, TrendingUp, MessageCircle } from "lucide-react";
 
 export default function ChatAnalysis() {
-  const { data: analyses = [] } = useQuery<any[]>({
+  const { data: analyses = [], isLoading: loadingAnalyses } = useQuery<any[]>({
     queryKey: ["/api/chat/whatsapp/analyses"],
+    retry: false,
   });
 
-  const { data: conversations = [] } = useQuery<any[]>({
+  const { data: conversations = [], isLoading: loadingConversations } = useQuery<any[]>({
     queryKey: ["/api/chat/conversations"],
+    retry: false,
   });
+
+  const isLoading = loadingAnalyses || loadingConversations;
 
   const totalConversations = conversations.length;
   const resolvedConversations = conversations.filter((c: any) => c.status === "resolved").length;
   const avgResolutionRate = totalConversations > 0 
     ? Math.round((resolvedConversations / totalConversations) * 100) 
     : 0;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <Activity className="h-12 w-12 mx-auto mb-4 animate-pulse text-indigo-600" />
+          <p className="text-lg font-medium text-slate-900">Carregando análises...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-indigo-50">

@@ -1,18 +1,10 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
-import { WebSocketServer, WebSocket } from "ws";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
-import { chatGPTService } from "./chatgpt-service";
 import { whatsappService } from "./whatsapp-service";
-import { whatsappOfficialAPI } from "./whatsapp-official-api";
-import { evolutionAPIService } from "./evolution-api-service";
 import { telegramService } from "./telegram-service";
-import { whatsappAnalysisService } from "./whatsapp-analysis-service";
 import {
   insertChatAgentSchema,
-  insertChatCustomerSchema,
-  updateChatCustomerSchema,
   insertChatConversationSchema,
   insertChatMessageSchema,
   insertChatProductSchema,
@@ -20,9 +12,6 @@ import {
   insertChatOrderSchema,
   insertChatDeliverySchema,
   insertWhatsappConversationAnalysisSchema,
-  type ChatAgent,
-  type ChatConversation,
-  type ChatMessage,
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -30,110 +19,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
-interface WebSocketClient extends WebSocket {
-  agentId?: string;
-  isAlive?: boolean;
-}
-
-export function registerChatRoutes(app: Express): Server {
-  const httpServer = createServer(app);
-
-  // WebSocket server for real-time chat communication
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws/chat" });
-
-  const clients = new Set<WebSocketClient>();
-
-  // WebSocket connection handling
-  wss.on("connection", (ws: WebSocketClient) => {
-    console.log(`🔌 [CHAT] WebSocket client connected. Total clients: ${clients.size + 1}`);
-    clients.add(ws);
-    ws.isAlive = true;
-
-    ws.on("pong", () => {
-      ws.isAlive = true;
-    });
-
-    ws.on("message", async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-
-        switch (message.type) {
-          case "agent_connect":
-            ws.agentId = message.agentId;
-            await storage.updateChatAgentStatus(message.agentId, "online");
-            broadcast({
-              type: "agent_status_update",
-              agentId: message.agentId,
-              status: "online",
-            });
-            break;
-
-          case "agent_disconnect":
-            if (ws.agentId) {
-              await storage.updateChatAgentStatus(ws.agentId, "offline");
-              broadcast({
-                type: "agent_status_update",
-                agentId: ws.agentId,
-                status: "offline",
-              });
-            }
-            break;
-
-          case "typing":
-            // Broadcast typing indicator
-            broadcast({
-              type: "typing",
-              conversationId: message.conversationId,
-              agentId: ws.agentId,
-              isTyping: message.isTyping,
-            });
-            break;
-        }
-      } catch (error) {
-        console.error("[CHAT] WebSocket message error:", error);
-      }
-    });
-
-    ws.on("close", async () => {
-      console.log(`🔌 [CHAT] WebSocket client disconnected. Total clients: ${clients.size - 1}`);
-      clients.delete(ws);
-      if (ws.agentId) {
-        await storage.updateChatAgentStatus(ws.agentId, "offline");
-        broadcast({
-          type: "agent_status_update",
-          agentId: ws.agentId,
-          status: "offline",
-        });
-      }
-    });
-  });
-
-  // Heartbeat to detect broken connections
-  const interval = setInterval(() => {
-    clients.forEach((ws: WebSocketClient) => {
-      if (!ws.isAlive) {
-        clients.delete(ws);
-        return ws.terminate();
-      }
-      ws.isAlive = false;
-      ws.ping();
-    });
-  }, 30000);
-
-  wss.on("close", () => {
-    clearInterval(interval);
-  });
-
-  // Broadcast function for WebSocket messages
-  function broadcast(message: any) {
-    const data = JSON.stringify(message);
-    clients.forEach((client: WebSocketClient) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(data);
-      }
-    });
-  }
-
+export function registerChatRoutes(app: Express): void {
   // Configure multer for file uploads
   const uploadDir = path.join(process.cwd(), "uploads", "chat");
   if (!fs.existsSync(uploadDir)) {
@@ -247,7 +133,6 @@ export function registerChatRoutes(app: Express): Server {
       try {
         const validatedData = insertChatAgentSchema.parse(req.body);
         const agent = await storage.createChatAgent(validatedData);
-        broadcast({ type: "agent_created", agent });
         res.json(agent);
       } catch (error) {
         if (error instanceof z.ZodError) {
@@ -268,7 +153,6 @@ export function registerChatRoutes(app: Express): Server {
       try {
         const { id } = req.params;
         await storage.deleteChatAgent(id);
-        broadcast({ type: "agent_deleted", agentId: id });
         res.json({ success: true });
       } catch (error) {
         console.error("[CHAT] Delete agent error:", error);
@@ -308,7 +192,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const validatedData = insertChatConversationSchema.parse(req.body);
       const conversation = await storage.createChatConversation(validatedData);
-      broadcast({ type: "conversation_created", conversation });
       res.json(conversation);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -324,7 +207,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const { id } = req.params;
       const conversation = await storage.updateChatConversation(id, req.body);
-      broadcast({ type: "conversation_updated", conversation });
       res.json(conversation);
     } catch (error) {
       console.error("[CHAT] Update conversation error:", error);
@@ -353,14 +235,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const validatedData = insertChatMessageSchema.parse(req.body);
       const message = await storage.createChatMessage(validatedData);
-      
-      // Note: lastMessageTime is auto-updated on message creation via database triggers or app logic
-
-      broadcast({
-        type: "message_created",
-        message,
-        conversationId: validatedData.conversationId,
-      });
       
       res.json(message);
     } catch (error) {
@@ -489,7 +363,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const validatedData = insertChatOrderSchema.parse(req.body);
       const order = await storage.createChatOrder(validatedData);
-      broadcast({ type: "order_created", order });
       res.json(order);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -505,7 +378,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const { id } = req.params;
       const order = await storage.updateChatOrder(id, req.body);
-      broadcast({ type: "order_updated", order });
       res.json(order);
     } catch (error) {
       console.error("[CHAT] Update order error:", error);
@@ -544,7 +416,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const validatedData = insertChatDeliverySchema.parse(req.body);
       const delivery = await storage.createChatDelivery(validatedData);
-      broadcast({ type: "delivery_created", delivery });
       res.json(delivery);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -560,7 +431,6 @@ export function registerChatRoutes(app: Express): Server {
     try {
       const { id } = req.params;
       const delivery = await storage.updateChatDelivery(id, req.body);
-      broadcast({ type: "delivery_updated", delivery });
       res.json(delivery);
     } catch (error) {
       console.error("[CHAT] Update delivery error:", error);
@@ -660,6 +530,4 @@ export function registerChatRoutes(app: Express): Server {
   });
 
   console.log("✅ Chat routes registered successfully");
-
-  return httpServer;
 }
