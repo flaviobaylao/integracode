@@ -387,6 +387,13 @@ async function persistRoutePlan(
   const savedRoutes = [];
 
   for (const route of routes) {
+    // Validação defensiva: verificar coordenadas da rota
+    if (!route.startLatitude || !route.startLongitude || 
+        !isFinite(route.startLatitude) || !isFinite(route.startLongitude) ||
+        Math.abs(route.startLatitude) > 90 || Math.abs(route.startLongitude) > 180) {
+      throw new Error(`Rota com coordenadas de início inválidas: lat=${route.startLatitude}, lng=${route.startLongitude}`);
+    }
+
     // Criar rota de entrega
     const deliveryRoute = await storage.createDeliveryRoute({
       id: nanoid(),
@@ -405,6 +412,14 @@ async function persistRoutePlan(
 
     // Criar paradas da rota
     for (const stop of route.stops) {
+      // Validação defensiva: verificar coordenadas da parada
+      if (!stop.latitude || !stop.longitude || 
+          !isFinite(stop.latitude) || !isFinite(stop.longitude) ||
+          stop.latitude === 0 || stop.longitude === 0 ||
+          Math.abs(stop.latitude) > 90 || Math.abs(stop.longitude) > 180) {
+        throw new Error(`Parada "${stop.customerName}" com coordenadas inválidas: lat=${stop.latitude}, lng=${stop.longitude}`);
+      }
+
       await storage.createDeliveryRouteStop({
         id: nanoid(),
         routeId: deliveryRoute.id,

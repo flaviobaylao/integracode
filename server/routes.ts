@@ -7982,8 +7982,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.id, 'billing-' || b.id) as "customerId",
           COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
-          COALESCE(c.latitude, 0) as "customerLatitude",
-          COALESCE(c.longitude, 0) as "customerLongitude",
+          c.latitude as "customerLatitude",
+          c.longitude as "customerLongitude",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           COALESCE(b.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
@@ -8020,29 +8020,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validar que todos os pedidos têm coordenadas válidas
       console.log(`🔍 [ROUTE-PLANNING] Validando coordenadas de ${orders.length} pedidos...`);
       const invalidOrders = orders.filter(o => {
-        const lat = o.customerLatitude;
-        const lng = o.customerLongitude;
+        let lat = o.customerLatitude;
+        let lng = o.customerLongitude;
         
         console.log(`  → ${o.customerName}: lat=${lat} (type: ${typeof lat}), lng=${lng} (type: ${typeof lng})`);
         
-        // Verificar se é null, undefined, string vazia, ou "0"
-        if (!lat || !lng || lat === '' || lng === '' || lat === '0' || lng === '0') {
-          console.log(`    ❌ Falhou no primeiro check (null/empty/'0')`);
+        // Verificar se é null, undefined, string vazia
+        if (lat === null || lat === undefined || lng === null || lng === undefined) {
+          console.log(`    ❌ Coordenadas null/undefined`);
           return true;
         }
         
-        // Verificar se converte para número válido diferente de zero
-        const latNum = parseFloat(lat as string);
-        const lngNum = parseFloat(lng as string);
-        
-        const isInvalid = isNaN(latNum) || isNaN(lngNum) || latNum === 0 || lngNum === 0;
-        if (isInvalid) {
-          console.log(`    ❌ Falhou no segundo check: latNum=${latNum}, lngNum=${lngNum}`);
-        } else {
-          console.log(`    ✅ Coordenadas válidas`);
+        // Se for string, fazer trim
+        if (typeof lat === 'string') {
+          lat = lat.trim();
+        }
+        if (typeof lng === 'string') {
+          lng = lng.trim();
         }
         
-        return isInvalid;
+        // Verificar strings vazias ou inválidas
+        if (lat === '' || lng === '' || lat === 'NaN' || lng === 'NaN' || lat === 'Infinity' || lng === 'Infinity' || lat === '-Infinity' || lng === '-Infinity') {
+          console.log(`    ❌ Coordenadas vazias ou inválidas: lat="${lat}", lng="${lng}"`);
+          return true;
+        }
+        
+        // Converter para número e validar
+        const latNum = typeof lat === 'number' ? lat : parseFloat(lat as string);
+        const lngNum = typeof lng === 'number' ? lng : parseFloat(lng as string);
+        
+        // Verificar se é número válido
+        if (isNaN(latNum) || isNaN(lngNum) || !isFinite(latNum) || !isFinite(lngNum)) {
+          console.log(`    ❌ Não é número finito: latNum=${latNum}, lngNum=${lngNum}`);
+          return true;
+        }
+        
+        // Verificar se é zero (coordenada inválida)
+        if (latNum === 0 || lngNum === 0) {
+          console.log(`    ❌ Coordenadas zero: latNum=${latNum}, lngNum=${lngNum}`);
+          return true;
+        }
+        
+        // Verificar ranges geográficos válidos
+        if (Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
+          console.log(`    ❌ Fora do range geográfico: latNum=${latNum}, lngNum=${lngNum}`);
+          return true;
+        }
+        
+        console.log(`    ✅ Coordenadas válidas: lat=${latNum}, lng=${lngNum}`);
+        return false;
       });
       
       if (invalidOrders.length > 0) {
