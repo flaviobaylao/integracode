@@ -8091,24 +8091,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Converter billings para formato do serviço de roteirização
-      const deliveryOrders = orders.map(o => ({
-        id: o.id,
-        customerId: o.customerId,
-        customerName: o.customerName,
-        customerAddress: o.customerAddress,
-        customerLatitude: parseFloat(o.customerLatitude as string),
-        customerLongitude: parseFloat(o.customerLongitude as string),
-        averageDeliveryTime: o.averageDeliveryTime || 30,
-        exclusiveVehicle: false,
-        vehicleTypes: [],
-        isUrgent: o.isUrgent || false,
-        saleValue: parseFloat(o.saleValue as any) || 0,
-        products: o.products,
-        scheduledDate: o.scheduledDate,
-        completedDate: o.scheduledDate,
-        paymentMethod: o.paymentMethod,
-        operationType: o.operationType,
-      }));
+      const deliveryOrders = orders.map(o => {
+        const lat = parseFloat(o.customerLatitude as string);
+        const lng = parseFloat(o.customerLongitude as string);
+        
+        console.log(`📍 [CONVERSION] ${o.customerName}: rawLat=${o.customerLatitude}, rawLng=${o.customerLongitude}, parsedLat=${lat}, parsedLng=${lng}`);
+        
+        return {
+          id: o.id,
+          customerId: o.customerId,
+          customerName: o.customerName,
+          customerAddress: o.customerAddress,
+          customerLatitude: lat,
+          customerLongitude: lng,
+          averageDeliveryTime: o.averageDeliveryTime || 30,
+          exclusiveVehicle: false,
+          vehicleTypes: [],
+          isUrgent: o.isUrgent || false,
+          saleValue: parseFloat(o.saleValue as any) || 0,
+          products: o.products,
+          scheduledDate: o.scheduledDate,
+          completedDate: o.scheduledDate,
+          paymentMethod: o.paymentMethod,
+          operationType: o.operationType,
+        };
+      });
       
       console.log(`✅ [ROUTE-PLANNING] ${deliveryOrders.length} pedidos prontos para roteirização`);
 
