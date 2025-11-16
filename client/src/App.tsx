@@ -34,6 +34,11 @@ import ClearCache from "@/pages/ClearCache";
 import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
 import LeadsManagement from "@/pages/LeadsManagement";
+import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
+import WhatsAppSetup from "@/pages/WhatsAppSetup";
+import TelegramSetup from "@/pages/TelegramSetup";
+import ChatDeliveries from "@/pages/ChatDeliveries";
+import ChatAnalysis from "@/pages/ChatAnalysis";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -153,6 +158,11 @@ function Router() {
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/leads" component={LeadsManagement} />
+          <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
+          <Route path="/telemarketing/whatsapp" component={WhatsAppSetup} />
+          <Route path="/telemarketing/telegram" component={TelegramSetup} />
+          <Route path="/telemarketing/deliveries" component={ChatDeliveries} />
+          <Route path="/telemarketing/analysis" component={ChatAnalysis} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>

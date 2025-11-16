@@ -27,6 +27,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const isTelemarketing = user?.role === 'telemarketing';
   const [orderStepsOpen, setOrderStepsOpen] = useState(false);
   const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
+  const [telemarketingMenuOpen, setTelemarketingMenuOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -159,6 +160,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
   ];
 
+  const telemarketingMenuItems = [
+    { id: 'telemarketing-dashboard', label: 'Chat Honest', icon: 'fas fa-comments' },
+    { id: 'telemarketing-whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp' },
+    { id: 'telemarketing-telegram', label: 'Telegram', icon: 'fab fa-telegram' },
+    { id: 'telemarketing-deliveries', label: 'Entregas Chat', icon: 'fas fa-truck' },
+    { id: 'telemarketing-analysis', label: 'Análises', icon: 'fas fa-chart-bar' },
+  ];
+
   const orderStepsItems = [
     { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart' },
     { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice' },
@@ -180,6 +189,22 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   const handleMenuItemClick = (itemId: string) => {
     console.log('🖱️ Menu item clicado:', itemId);
+    
+    // Mapeamento específico para itens de telemarketing
+    const telemarketingRoutes: Record<string, string> = {
+      'telemarketing-dashboard': '/telemarketing/dashboard',
+      'telemarketing-whatsapp': '/telemarketing/whatsapp',
+      'telemarketing-telegram': '/telemarketing/telegram',
+      'telemarketing-deliveries': '/telemarketing/deliveries',
+      'telemarketing-analysis': '/telemarketing/analysis',
+    };
+    
+    if (telemarketingRoutes[itemId]) {
+      console.log('🔗 Navegando para rota de telemarketing:', telemarketingRoutes[itemId]);
+      window.location.href = telemarketingRoutes[itemId];
+      setMobileMenuOpen(false);
+      return;
+    }
     
     // Rotas que têm páginas próprias devem navegar diretamente
     const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'routes-management', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads'];
@@ -273,6 +298,42 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                         {deliveryMenuItems
                           .filter(item => canAccessReports || (isVendedor && ['delivery-dashboard', 'delivery-management'].includes(item.id)))
                           .map(item => (
+                          <Button
+                            key={item.id}
+                            variant="ghost"
+                            className={`w-full justify-start space-x-3 text-sm ${
+                              activeView === item.id
+                                ? 'text-honest-blue bg-blue-50'
+                                : 'text-gray-600 hover:bg-gray-50'
+                            }`}
+                            onClick={() => handleMenuItemClick(item.id)}
+                            data-testid={`menu-${item.id}`}
+                          >
+                            <i className={item.icon}></i>
+                            <span>{item.label}</span>
+                          </Button>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </li>
+                )}
+
+                {/* Menu Chat Honest (Telemarketing) */}
+                {canAccessReports && (
+                  <li>
+                    <Collapsible open={telemarketingMenuOpen} onOpenChange={setTelemarketingMenuOpen}>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                        >
+                          <i className="fas fa-comments"></i>
+                          <span className="font-medium">Chat Honest</span>
+                          {telemarketingMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                        {telemarketingMenuItems.map(item => (
                           <Button
                             key={item.id}
                             variant="ghost"
