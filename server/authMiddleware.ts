@@ -12,6 +12,14 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     console.log(`🔐 [AUTH] Session user: ${!!(req.session as any)?.user}`);
     console.log(`🔐 [AUTH] isAuthenticated: ${req.isAuthenticated?.()}`);
     
+    // Debug adicional para /api/deliveries
+    if (req.path === '/api/deliveries') {
+      console.log(`🔍 [DEBUG] Session ID: ${req.session?.id}`);
+      console.log(`🔍 [DEBUG] Session keys: ${Object.keys(req.session || {}).join(', ')}`);
+      console.log(`🔍 [DEBUG] Session.user: ${JSON.stringify((req.session as any)?.user, null, 2)}`);
+      console.log(`🔍 [DEBUG] req.user: ${JSON.stringify((req as any)?.user, null, 2)}`);
+    }
+    
     // Verificar sessão local primeiro (para admin Flavio)
     if ((req.session as any)?.user?.claims?.sub) {
       userId = (req.session as any).user.claims.sub;
@@ -27,6 +35,9 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     
     if (!userId) {
       console.log(`❌ [AUTH] No userId found`);
+      if (req.path === '/api/deliveries') {
+        console.log(`❌ [DEBUG /api/deliveries] Full session dump: ${JSON.stringify(req.session, null, 2)}`);
+      }
       return res.status(401).json({ message: "Unauthorized" });
     }
     
