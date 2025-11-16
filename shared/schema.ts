@@ -1376,3 +1376,369 @@ export type SellerAttendancePerformance = {
   totalCompleted: number; // Total de visitas completadas no mês
   overallPercentage: number; // Percentual geral do mês
 };
+
+// ============================================================
+// CHAT HONEST INTEGRATION - WhatsApp/Telegram Chat System
+// ============================================================
+
+// Chat Agents table - agentes de atendimento do chat (humanos e bots)
+export const chatAgents = pgTable("chat_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"), // Referência opcional ao users.id (null para bots)
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  type: text("type").notNull().default("human"), // human, bot
+  status: text("status").notNull().default("offline"), // online, offline, busy
+  activeConversations: integer("active_conversations").notNull().default(0),
+  totalConversations: integer("total_conversations").notNull().default(0),
+  lastActivity: timestamp("last_activity").defaultNow(),
+  lastHeartbeat: timestamp("last_heartbeat").defaultNow(),
+  averageResponseTime: integer("average_response_time").default(0), // em segundos
+  totalHandledTime: integer("total_handled_time").default(0), // tempo total em segundos
+});
+
+// Chat Customers table - clientes do WhatsApp/Telegram (separados dos customers de venda)
+export const chatCustomers = pgTable("chat_customers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  phone: text("phone").notNull().unique(),
+  totalConversations: integer("total_conversations").notNull().default(0),
+  lastContact: timestamp("last_contact").defaultNow(),
+});
+
+// Chat Conversations status enum
+export const chatConversationStatusEnum = pgEnum('chat_conversation_status', ['new', 'assigned', 'in-progress', 'resolved']);
+export const chatPriorityEnum = pgEnum('chat_priority', ['normal', 'urgent']);
+
+// Chat Conversations table
+export const chatConversations = pgTable("chat_conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull(),
+  agentId: varchar("agent_id"),
+  status: chatConversationStatusEnum("status").notNull().default("new"),
+  priority: chatPriorityEnum("priority").notNull().default("normal"),
+  lastMessageTime: timestamp("last_message_time").defaultNow(),
+  lastAgentResponseTime: timestamp("last_agent_response_time"),
+  assignedAt: timestamp("assigned_at"),
+  waitingTime: integer("waiting_time"),
+  responseTime: integer("response_time"),
+  createdAt: timestamp("created_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+// Chat Messages type enum
+export const chatMessageTypeEnum = pgEnum('chat_message_type', ['text', 'image', 'file', 'audio', 'video', 'document', 'location']);
+export const chatSenderTypeEnum = pgEnum('chat_sender_type', ['customer', 'agent', 'system']);
+
+// Chat Messages table
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  senderType: chatSenderTypeEnum("sender_type").notNull(),
+  content: text("content").notNull(),
+  messageType: chatMessageTypeEnum("message_type").notNull().default("text"),
+  mediaUrl: text("media_url"),
+  mediaType: text("media_type"),
+  mediaSize: integer("media_size"),
+  mediaFilename: text("media_filename"),
+  latitude: decimal("latitude", { precision: 10, scale: 7 }),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }),
+  locationName: text("location_name"),
+  timestamp: timestamp("timestamp").defaultNow(),
+  isRead: boolean("is_read").notNull().default(false),
+});
+
+// Chat Reports type enum
+export const chatReportTypeEnum = pgEnum('chat_report_type', ['daily', 'weekly', 'monthly', 'custom']);
+
+// Chat Reports table
+export const chatReports = pgTable("chat_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: chatReportTypeEnum("type").notNull(),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  data: jsonb("data").notNull(),
+  generatedBy: varchar("generated_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Chat Audit Log table
+export const chatAuditLog = pgTable("chat_audit_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"),
+  action: text("action").notNull(),
+  entityType: text("entity_type"),
+  entityId: varchar("entity_id"),
+  details: jsonb("details"),
+  timestamp: timestamp("timestamp").defaultNow(),
+});
+
+// Chat Products table - catálogo de produtos para o chat
+export const chatProducts = pgTable("chat_products", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  price: text("price").notNull(),
+  size: text("size"),
+  category: text("category").notNull().default("suco"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Chat Quick Messages type enum
+export const chatQuickMessageTypeEnum = pgEnum('chat_quick_message_type', ['text', 'product_menu', 'order_form']);
+
+// Chat Quick Messages table
+export const chatQuickMessages = pgTable("chat_quick_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  messageType: chatQuickMessageTypeEnum("message_type").notNull().default("text"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: varchar("created_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Chat Orders status enum
+export const chatOrderStatusEnum = pgEnum('chat_order_status', ['pending', 'confirmed', 'preparing', 'delivered', 'cancelled']);
+
+// Chat Orders table
+export const chatOrders = pgTable("chat_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  items: jsonb("items").notNull(),
+  totalAmount: text("total_amount").notNull(),
+  status: chatOrderStatusEnum("status").notNull().default("pending"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Chat Delivery Rejection Reasons table
+export const chatDeliveryRejectionReasons = pgTable("chat_delivery_rejection_reasons", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reason: varchar("reason", { length: 255 }).notNull(),
+  description: varchar("description", { length: 500 }),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Chat Deliveries status enum
+export const chatDeliveryStatusEnum = pgEnum('chat_delivery_status', ['pending', 'confirmed', 'rejected', 'delivered']);
+
+// Chat Deliveries table
+export const chatDeliveries = pgTable("chat_deliveries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id"),
+  deliveryPersonId: varchar("delivery_person_id"),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  customerPhone: varchar("customer_phone", { length: 50 }).notNull(),
+  customerAddress: text("customer_address").notNull(),
+  orderDetails: jsonb("order_details").notNull(),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  scheduledDate: timestamp("scheduled_date").notNull(),
+  status: chatDeliveryStatusEnum("status").default("pending").notNull(),
+  deliveryTime: timestamp("delivery_time"),
+  latitude: decimal("latitude", { precision: 10, scale: 8 }),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  rejectionReasonId: varchar("rejection_reason_id"),
+  rejectionNotes: text("rejection_notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// WhatsApp Conversation Analysis status enum
+export const whatsappAnalysisStatusEnum = pgEnum('whatsapp_analysis_status', ['pending', 'completed', 'failed']);
+
+// WhatsApp Conversation Analysis table
+export const whatsappConversationAnalysis = pgTable("whatsapp_conversation_analysis", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  rawConversationData: jsonb("raw_conversation_data").notNull(),
+  extractedData: jsonb("extracted_data").notNull(),
+  customerName: text("customer_name"),
+  companyRepresentative: text("company_representative"),
+  orderDate: timestamp("order_date"),
+  orderItems: jsonb("order_items"),
+  totalAmount: text("total_amount"),
+  analysisStatus: whatsappAnalysisStatusEnum("analysis_status").notNull().default("pending"),
+  analysisDate: timestamp("analysis_date").defaultNow(),
+  lastKnowledgeFileUpdate: timestamp("last_knowledge_file_update"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Knowledge Base table
+export const knowledgeBase = pgTable("knowledge_base", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fileName: text("file_name").notNull(),
+  filePath: text("file_path").notNull(),
+  fileSize: integer("file_size").notNull(),
+  conversationCount: integer("conversation_count").notNull().default(0),
+  lastGenerated: timestamp("last_generated").defaultNow(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Chat Honest - Insert Schemas
+export const insertChatAgentSchema = createInsertSchema(chatAgents).omit({
+  id: true,
+  activeConversations: true,
+  totalConversations: true,
+  lastActivity: true,
+  lastHeartbeat: true,
+  averageResponseTime: true,
+  totalHandledTime: true,
+});
+
+export const insertChatCustomerSchema = createInsertSchema(chatCustomers).omit({
+  id: true,
+  totalConversations: true,
+  lastContact: true,
+});
+
+export const updateChatCustomerSchema = createInsertSchema(chatCustomers).pick({
+  name: true,
+}).partial();
+
+export const insertChatConversationSchema = createInsertSchema(chatConversations).omit({
+  id: true,
+  lastMessageTime: true,
+  lastAgentResponseTime: true,
+  assignedAt: true,
+  waitingTime: true,
+  responseTime: true,
+  createdAt: true,
+  resolvedAt: true,
+});
+
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
+  id: true,
+  timestamp: true,
+});
+
+export const insertChatReportSchema = createInsertSchema(chatReports).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertChatAuditLogSchema = createInsertSchema(chatAuditLog).omit({
+  id: true,
+  timestamp: true,
+});
+
+export const insertChatProductSchema = createInsertSchema(chatProducts).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertChatQuickMessageSchema = createInsertSchema(chatQuickMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertChatOrderSchema = createInsertSchema(chatOrders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChatDeliveryRejectionReasonSchema = createInsertSchema(chatDeliveryRejectionReasons).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChatDeliverySchema = createInsertSchema(chatDeliveries).omit({
+  id: true,
+  deliveryTime: true,
+  latitude: true,
+  longitude: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertWhatsappConversationAnalysisSchema = createInsertSchema(whatsappConversationAnalysis).omit({
+  id: true,
+  analysisDate: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertKnowledgeBaseSchema = createInsertSchema(knowledgeBase).omit({
+  id: true,
+  lastGenerated: true,
+  createdAt: true,
+});
+
+// Chat Honest - Types
+export type ChatAgent = typeof chatAgents.$inferSelect;
+export type InsertChatAgent = z.infer<typeof insertChatAgentSchema>;
+
+export type ChatCustomer = typeof chatCustomers.$inferSelect;
+export type InsertChatCustomer = z.infer<typeof insertChatCustomerSchema>;
+export type UpdateChatCustomer = z.infer<typeof updateChatCustomerSchema>;
+
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
+
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+
+export type ChatReport = typeof chatReports.$inferSelect;
+export type InsertChatReport = z.infer<typeof insertChatReportSchema>;
+
+export type ChatAuditLog = typeof chatAuditLog.$inferSelect;
+export type InsertChatAuditLog = z.infer<typeof insertChatAuditLogSchema>;
+
+export type ChatProduct = typeof chatProducts.$inferSelect;
+export type InsertChatProduct = z.infer<typeof insertChatProductSchema>;
+
+export type ChatQuickMessage = typeof chatQuickMessages.$inferSelect;
+export type InsertChatQuickMessage = z.infer<typeof insertChatQuickMessageSchema>;
+
+export type ChatOrder = typeof chatOrders.$inferSelect;
+export type InsertChatOrder = z.infer<typeof insertChatOrderSchema>;
+
+export type ChatDeliveryRejectionReason = typeof chatDeliveryRejectionReasons.$inferSelect;
+export type InsertChatDeliveryRejectionReason = z.infer<typeof insertChatDeliveryRejectionReasonSchema>;
+
+export type ChatDelivery = typeof chatDeliveries.$inferSelect;
+export type InsertChatDelivery = z.infer<typeof insertChatDeliverySchema>;
+
+export type WhatsappConversationAnalysis = typeof whatsappConversationAnalysis.$inferSelect;
+export type InsertWhatsappConversationAnalysis = z.infer<typeof insertWhatsappConversationAnalysisSchema>;
+
+export type KnowledgeBase = typeof knowledgeBase.$inferSelect;
+export type InsertKnowledgeBase = z.infer<typeof insertKnowledgeBaseSchema>;
+
+// Chat Honest - Extended types for UI
+export type ChatConversationWithCustomer = ChatConversation & {
+  customer: ChatCustomer;
+  agent?: ChatAgent;
+  lastMessage?: ChatMessage;
+};
+
+export type ChatMessageWithSender = ChatMessage & {
+  sender?: ChatAgent | ChatCustomer;
+};
+
+export type ChatAgentWithUser = ChatAgent & {
+  user?: typeof users.$inferSelect;
+};
+
+export type ChatDeliveryWithPerson = ChatDelivery & {
+  deliveryPerson: {
+    id: string;
+    email: string;
+  };
+};
+
+export interface ChatDeliveryWithRelations extends ChatDelivery {
+  conversation?: ChatConversationWithCustomer;
+  deliveryPerson?: typeof users.$inferSelect;
+  rejectionReason?: ChatDeliveryRejectionReason;
+}
