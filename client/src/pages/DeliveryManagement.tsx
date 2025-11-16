@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import MissingCoordinatesModal from "@/components/MissingCoordinatesModal";
 import { 
   Truck, 
   Package, 
@@ -125,6 +126,11 @@ export default function DeliveryManagement() {
   // Estados para resultados da roteirização
   const [showResults, setShowResults] = useState(false);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
+  
+  // Estados para modal de coordenadas faltantes
+  const [showMissingCoordinates, setShowMissingCoordinates] = useState(false);
+  const [missingCoordinatesData, setMissingCoordinatesData] = useState<any[]>([]);
+  const [pendingRouteConfig, setPendingRouteConfig] = useState<{ orderIds: string[]; vehicles: VehicleConfig[]; routeDate: string } | null>(null);
 
   // Query para buscar pedidos aguardando rota
   const { data: orders, isLoading: isLoadingOrders, error: ordersError } = useQuery<DeliveryOrder[]>({
@@ -148,17 +154,25 @@ export default function DeliveryManagement() {
       setRoutePlan(data);
       setShowVehicleConfig(false);
       setShowResults(true);
+      setPendingRouteConfig(null); // Limpar config pendente
       toast({
         title: "Rotas planejadas com sucesso!",
         description: `${data.stats.assignedOrders} pedidos atribuídos em ${data.routes.length} rotas`,
       });
     },
     onError: (error: any) => {
-      toast({
-        title: "Erro ao planejar rotas",
-        description: error.message || "Erro desconhecido",
-        variant: "destructive",
-      });
+      // Detectar erro 422 (coordenadas faltantes)
+      if (error.status === 422 && error.code === 'MISSING_COORDINATES') {
+        setMissingCoordinatesData(error.missingCoordinates || []);
+        setShowMissingCoordinates(true);
+        // Não mostrar toast de erro, modal vai exibir a mensagem
+      } else {
+        toast({
+          title: "Erro ao planejar rotas",
+          description: error.message || "Erro desconhecido",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -262,11 +276,34 @@ export default function DeliveryManagement() {
       return;
     }
 
-    planRoutesMutation.mutate({
+    const routeConfig = {
       orderIds: Array.from(selectedOrders),
       vehicles,
       routeDate
-    });
+    };
+    
+    // Salvar configuração para tentar novamente após preencher coordenadas
+    setPendingRouteConfig(routeConfig);
+    
+    planRoutesMutation.mutate(routeConfig);
+  };
+  
+  // Callback quando coordenadas são salvas com sucesso
+  const handleCoordinatesSaved = () => {
+    setShowMissingCoordinates(false);
+    
+    // Tentar criar rota novamente com a configuração salva
+    if (pendingRouteConfig) {
+      toast({
+        title: "Coordenadas salvas!",
+        description: "Gerando rotas agora...",
+      });
+      
+      // Aguardar um pouco para garantir que o backend atualizou os dados
+      setTimeout(() => {
+        planRoutesMutation.mutate(pendingRouteConfig);
+      }, 500);
+    }
   };
 
   return (
@@ -840,6 +877,14 @@ export default function DeliveryManagement() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Modal para cadastrar coordenadas faltantes */}
+      <MissingCoordinatesModal
+        isOpen={showMissingCoordinates}
+        onClose={() => setShowMissingCoordinates(false)}
+        missingCoordinates={missingCoordinatesData}
+        onSuccess={handleCoordinatesSaved}
+      />
     </div>
   );
 }
