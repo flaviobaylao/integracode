@@ -7891,31 +7891,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.longitude, 0) as "customerLongitude",
           c.weekdays as "customerWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-          false as "exclusiveVehicle",
-          ARRAY[]::text[] as "vehicleTypes",
-          COALESCE(b.is_urgent, false) as "isUrgent",
+          COALESCE(sc.exclusive_vehicle, false) as "exclusiveVehicle",
+          COALESCE(sc.vehicle_types, ARRAY[]::text[]) as "vehicleTypes",
+          COALESCE(b.is_urgent, sc.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
           b.products,
           b.invoice_date as "scheduledDate",
           b.invoice_date as "completedDate",
           b.payment_method as "paymentMethod",
-          b.billing_type as "operationType"
+          b.billing_type as "operationType",
+          COALESCE(sc.delivery_weekdays, ARRAY[]::text[]) as "deliveryWeekdays",
+          COALESCE(sc.delivery_time_slots, ARRAY[]::text[]) as "deliveryTimeSlots",
+          COALESCE(sc.delivery_saturday_time_slots, ARRAY[]::text[]) as "deliverySaturdayTimeSlots"
         FROM billings b
         LEFT JOIN customers c ON (
           c.id = CONCAT('omie-client-', b.omie_customer_code)
           OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
           OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
         )
+        LEFT JOIN sales_cards sc ON (
+          (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
+          OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
+              AND sc.omie_order_id = b.omie_order_id::text)
+        )
         WHERE b.invoice_stage = 'Aguardando Rota'
           AND b.invoice_number IS NOT NULL
           AND b.invoice_date IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM delivery_route_stops drs
-            JOIN sales_cards sc ON sc.id = drs.sales_card_id
+            JOIN sales_cards sc2 ON sc2.id = drs.sales_card_id
             WHERE (
-              (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
-              OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
-                  AND sc.omie_order_id = b.omie_order_id::text)
+              (sc2.invoice_number IS NOT NULL AND sc2.invoice_number = b.invoice_number)
+              OR (sc2.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
+                  AND sc2.omie_order_id = b.omie_order_id::text)
             )
           )
         ORDER BY 
@@ -7925,13 +7933,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.invoice_date
       `);
       
-      // Processar os dados para garantir que customerWeekdays seja um array
+      // Processar os dados para garantir que os arrays sejam parseados corretamente
       const processedDeliveries = deliveries.rows.map((delivery: any) => ({
         ...delivery,
         customerWeekdays: delivery.customerWeekdays 
           ? (typeof delivery.customerWeekdays === 'string' 
               ? JSON.parse(delivery.customerWeekdays) 
               : delivery.customerWeekdays)
+          : [],
+        deliveryWeekdays: delivery.deliveryWeekdays 
+          ? (typeof delivery.deliveryWeekdays === 'string' 
+              ? JSON.parse(delivery.deliveryWeekdays) 
+              : delivery.deliveryWeekdays)
+          : [],
+        deliveryTimeSlots: delivery.deliveryTimeSlots 
+          ? (typeof delivery.deliveryTimeSlots === 'string' 
+              ? JSON.parse(delivery.deliveryTimeSlots) 
+              : delivery.deliveryTimeSlots)
+          : [],
+        deliverySaturdayTimeSlots: delivery.deliverySaturdayTimeSlots 
+          ? (typeof delivery.deliverySaturdayTimeSlots === 'string' 
+              ? JSON.parse(delivery.deliverySaturdayTimeSlots) 
+              : delivery.deliverySaturdayTimeSlots)
+          : [],
+        vehicleTypes: delivery.vehicleTypes 
+          ? (typeof delivery.vehicleTypes === 'string' 
+              ? JSON.parse(delivery.vehicleTypes) 
+              : delivery.vehicleTypes)
           : []
       }));
       
