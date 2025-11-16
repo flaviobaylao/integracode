@@ -36,6 +36,14 @@
     - Worked Hours Calculation: Real-time calculation from first check-in to last check-out, deducting lunch breaks.
     - Admin Route Management: Administrative users can manually add, delete, and optimize visits on daily routes.
     - Visit Schedule Management: Route generation queries `customers` table directly. Visit scheduling is calculated on-demand from customer's `weekdays`, `visitPeriodicity`, and last visit from `sales_cards`.
+    - **Advanced Route Validation System** (Nov 2025):
+        - **Vehicle Exclusivity**: Orders can require specific vehicle types (caminhão, carro, moto).
+        - **Weekday Validation**: Validates route date against customer's allowed weekdays before assignment.
+        - **Time Window Validation**: Ensures delivery time slots are compatible with vehicle operating hours.
+        - **Average Delivery Time**: Calculates per-customer average from delivery history (last 10 completed deliveries).
+        - **Proportional Distribution**: Balances workload across drivers using estimated work time (delivery + travel).
+        - **Delivery History Tracking**: Full history with invoice numbers, driver info, vehicle type, check-in/out times, and delivery duration.
+        - **API Endpoint**: POST /api/delivery-history for registering completed deliveries with automatic duration calculation.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.
