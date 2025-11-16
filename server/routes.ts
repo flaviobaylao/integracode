@@ -7892,7 +7892,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.weekdays as "customerWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           COALESCE(sc.exclusive_vehicle, false) as "exclusiveVehicle",
-          COALESCE(sc.vehicle_types, ARRAY[]::text[]) as "vehicleTypes",
+          COALESCE(to_jsonb(sc.vehicle_types), '[]'::jsonb) as "vehicleTypes",
           COALESCE(b.is_urgent, sc.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
           b.products,
@@ -7900,9 +7900,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.invoice_date as "completedDate",
           b.payment_method as "paymentMethod",
           b.billing_type as "operationType",
-          COALESCE(sc.delivery_weekdays, ARRAY[]::text[]) as "deliveryWeekdays",
-          COALESCE(sc.delivery_time_slots, ARRAY[]::text[]) as "deliveryTimeSlots",
-          COALESCE(sc.delivery_saturday_time_slots, ARRAY[]::text[]) as "deliverySaturdayTimeSlots"
+          COALESCE(to_jsonb(sc.delivery_weekdays), '[]'::jsonb) as "deliveryWeekdays",
+          COALESCE(to_jsonb(sc.delivery_time_slots), '[]'::jsonb) as "deliveryTimeSlots",
+          COALESCE(to_jsonb(sc.delivery_saturday_time_slots), '[]'::jsonb) as "deliverySaturdayTimeSlots"
         FROM billings b
         LEFT JOIN customers c ON (
           c.id = CONCAT('omie-client-', b.omie_customer_code)
