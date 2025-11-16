@@ -22,6 +22,19 @@ import {
   deliveryDrivers,
   syncStatus,
   leads,
+  chatAgents,
+  chatCustomers,
+  chatConversations,
+  chatMessages,
+  chatReports,
+  chatAuditLog,
+  chatProducts,
+  chatQuickMessages,
+  chatOrders,
+  chatDeliveries,
+  chatDeliveryRejectionReasons,
+  whatsappConversationAnalysis,
+  knowledgeBase,
   type User,
   type UpsertUser,
   type Route,
@@ -53,6 +66,33 @@ import {
   type InsertSyncStatus,
   type Lead,
   type InsertLead,
+  type ChatAgent,
+  type InsertChatAgent,
+  type ChatCustomer,
+  type InsertChatCustomer,
+  type UpdateChatCustomer,
+  type ChatConversation,
+  type InsertChatConversation,
+  type ChatMessage,
+  type InsertChatMessage,
+  type ChatReport,
+  type InsertChatReport,
+  type ChatAuditLog,
+  type InsertChatAuditLog,
+  type ChatProduct,
+  type InsertChatProduct,
+  type ChatQuickMessage,
+  type InsertChatQuickMessage,
+  type ChatOrder,
+  type InsertChatOrder,
+  type ChatDelivery,
+  type InsertChatDelivery,
+  type ChatDeliveryRejectionReason,
+  type InsertChatDeliveryRejectionReason,
+  type WhatsappConversationAnalysis,
+  type InsertWhatsappConversationAnalysis,
+  type KnowledgeBase,
+  type InsertKnowledgeBase,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -278,6 +318,62 @@ export interface IStorage {
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: string, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: string): Promise<void>;
+  
+  // Chat Agents operations
+  getChatAgents(): Promise<ChatAgent[]>;
+  createChatAgent(agent: InsertChatAgent): Promise<ChatAgent>;
+  deleteChatAgent(id: string): Promise<void>;
+  updateChatAgentStatus(id: string, status: string): Promise<ChatAgent>;
+  
+  // Chat Customers operations
+  getChatCustomers(): Promise<ChatCustomer[]>;
+  getChatCustomer(id: string): Promise<ChatCustomer | undefined>;
+  createChatCustomer(customer: InsertChatCustomer): Promise<ChatCustomer>;
+  updateChatCustomer(id: string, customer: UpdateChatCustomer): Promise<ChatCustomer>;
+  
+  // Chat Conversations operations
+  getChatConversations(): Promise<ChatConversation[]>;
+  getChatConversation(id: string): Promise<ChatConversation | undefined>;
+  createChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
+  updateChatConversation(id: string, conversation: Partial<InsertChatConversation>): Promise<ChatConversation>;
+  
+  // Chat Messages operations
+  getChatMessages(conversationId: string): Promise<ChatMessage[]>;
+  createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
+  
+  // Chat Products operations
+  getChatProducts(): Promise<ChatProduct[]>;
+  createChatProduct(product: InsertChatProduct): Promise<ChatProduct>;
+  updateChatProduct(id: string, product: Partial<InsertChatProduct>): Promise<ChatProduct>;
+  
+  // Chat Quick Messages operations
+  getChatQuickMessages(): Promise<ChatQuickMessage[]>;
+  createChatQuickMessage(message: InsertChatQuickMessage): Promise<ChatQuickMessage>;
+  
+  // Chat Orders operations
+  getChatOrders(): Promise<ChatOrder[]>;
+  createChatOrder(order: InsertChatOrder): Promise<ChatOrder>;
+  updateChatOrder(id: string, order: Partial<InsertChatOrder>): Promise<ChatOrder>;
+  
+  // Chat Deliveries operations
+  getChatDeliveries(): Promise<ChatDelivery[]>;
+  createChatDelivery(delivery: InsertChatDelivery): Promise<ChatDelivery>;
+  updateChatDelivery(id: string, delivery: Partial<InsertChatDelivery>): Promise<ChatDelivery>;
+  
+  // Chat Reports operations
+  createChatReport(report: InsertChatReport): Promise<ChatReport>;
+  getChatReports(): Promise<ChatReport[]>;
+  
+  // Chat Audit Log operations
+  createChatAuditLog(log: InsertChatAuditLog): Promise<ChatAuditLog>;
+  
+  // WhatsApp Analysis operations
+  createWhatsappAnalysis(analysis: InsertWhatsappConversationAnalysis): Promise<WhatsappConversationAnalysis>;
+  getWhatsappAnalyses(): Promise<WhatsappConversationAnalysis[]>;
+  
+  // Knowledge Base operations
+  createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
+  getKnowledgeBase(): Promise<KnowledgeBase[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -4888,6 +4984,194 @@ export class DatabaseStorage implements IStorage {
   
   async deleteLead(id: string): Promise<void> {
     await db.delete(leads).where(eq(leads.id, id));
+  }
+  
+  // Chat Agents operations
+  async getChatAgents(): Promise<ChatAgent[]> {
+    return await db.select().from(chatAgents);
+  }
+  
+  async createChatAgent(agentData: InsertChatAgent): Promise<ChatAgent> {
+    const [agent] = await db.insert(chatAgents).values(agentData).returning();
+    return agent;
+  }
+  
+  async deleteChatAgent(id: string): Promise<void> {
+    await db.delete(chatAgents).where(eq(chatAgents.id, id));
+  }
+  
+  async updateChatAgentStatus(id: string, status: string): Promise<ChatAgent> {
+    const [agent] = await db
+      .update(chatAgents)
+      .set({ status, lastActivity: new Date() })
+      .where(eq(chatAgents.id, id))
+      .returning();
+    return agent;
+  }
+  
+  // Chat Customers operations
+  async getChatCustomers(): Promise<ChatCustomer[]> {
+    return await db.select().from(chatCustomers);
+  }
+  
+  async getChatCustomer(id: string): Promise<ChatCustomer | undefined> {
+    const [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.id, id));
+    return customer;
+  }
+  
+  async createChatCustomer(customerData: InsertChatCustomer): Promise<ChatCustomer> {
+    const [customer] = await db.insert(chatCustomers).values(customerData).returning();
+    return customer;
+  }
+  
+  async updateChatCustomer(id: string, customerData: UpdateChatCustomer): Promise<ChatCustomer> {
+    const [customer] = await db
+      .update(chatCustomers)
+      .set(customerData)
+      .where(eq(chatCustomers.id, id))
+      .returning();
+    return customer;
+  }
+  
+  // Chat Conversations operations
+  async getChatConversations(): Promise<ChatConversation[]> {
+    return await db.select().from(chatConversations).orderBy(desc(chatConversations.lastMessageTime));
+  }
+  
+  async getChatConversation(id: string): Promise<ChatConversation | undefined> {
+    const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.id, id));
+    return conversation;
+  }
+  
+  async createChatConversation(conversationData: InsertChatConversation): Promise<ChatConversation> {
+    const [conversation] = await db.insert(chatConversations).values(conversationData).returning();
+    return conversation;
+  }
+  
+  async updateChatConversation(id: string, conversationData: Partial<InsertChatConversation>): Promise<ChatConversation> {
+    const [conversation] = await db
+      .update(chatConversations)
+      .set(conversationData)
+      .where(eq(chatConversations.id, id))
+      .returning();
+    return conversation;
+  }
+  
+  // Chat Messages operations
+  async getChatMessages(conversationId: string): Promise<ChatMessage[]> {
+    return await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(chatMessages.timestamp);
+  }
+  
+  async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
+    const [message] = await db.insert(chatMessages).values(messageData).returning();
+    return message;
+  }
+  
+  // Chat Products operations
+  async getChatProducts(): Promise<ChatProduct[]> {
+    return await db.select().from(chatProducts).where(eq(chatProducts.isActive, true));
+  }
+  
+  async createChatProduct(productData: InsertChatProduct): Promise<ChatProduct> {
+    const [product] = await db.insert(chatProducts).values(productData).returning();
+    return product;
+  }
+  
+  async updateChatProduct(id: string, productData: Partial<InsertChatProduct>): Promise<ChatProduct> {
+    const [product] = await db
+      .update(chatProducts)
+      .set(productData)
+      .where(eq(chatProducts.id, id))
+      .returning();
+    return product;
+  }
+  
+  // Chat Quick Messages operations
+  async getChatQuickMessages(): Promise<ChatQuickMessage[]> {
+    return await db.select().from(chatQuickMessages).where(eq(chatQuickMessages.isActive, true));
+  }
+  
+  async createChatQuickMessage(messageData: InsertChatQuickMessage): Promise<ChatQuickMessage> {
+    const [message] = await db.insert(chatQuickMessages).values(messageData).returning();
+    return message;
+  }
+  
+  // Chat Orders operations
+  async getChatOrders(): Promise<ChatOrder[]> {
+    return await db.select().from(chatOrders).orderBy(desc(chatOrders.createdAt));
+  }
+  
+  async createChatOrder(orderData: InsertChatOrder): Promise<ChatOrder> {
+    const [order] = await db.insert(chatOrders).values(orderData).returning();
+    return order;
+  }
+  
+  async updateChatOrder(id: string, orderData: Partial<InsertChatOrder>): Promise<ChatOrder> {
+    const [order] = await db
+      .update(chatOrders)
+      .set({ ...orderData, updatedAt: new Date() })
+      .where(eq(chatOrders.id, id))
+      .returning();
+    return order;
+  }
+  
+  // Chat Deliveries operations
+  async getChatDeliveries(): Promise<ChatDelivery[]> {
+    return await db.select().from(chatDeliveries).orderBy(desc(chatDeliveries.createdAt));
+  }
+  
+  async createChatDelivery(deliveryData: InsertChatDelivery): Promise<ChatDelivery> {
+    const [delivery] = await db.insert(chatDeliveries).values(deliveryData).returning();
+    return delivery;
+  }
+  
+  async updateChatDelivery(id: string, deliveryData: Partial<InsertChatDelivery>): Promise<ChatDelivery> {
+    const [delivery] = await db
+      .update(chatDeliveries)
+      .set({ ...deliveryData, updatedAt: new Date() })
+      .where(eq(chatDeliveries.id, id))
+      .returning();
+    return delivery;
+  }
+  
+  // Chat Reports operations
+  async createChatReport(reportData: InsertChatReport): Promise<ChatReport> {
+    const [report] = await db.insert(chatReports).values(reportData).returning();
+    return report;
+  }
+  
+  async getChatReports(): Promise<ChatReport[]> {
+    return await db.select().from(chatReports).orderBy(desc(chatReports.createdAt));
+  }
+  
+  // Chat Audit Log operations
+  async createChatAuditLog(logData: InsertChatAuditLog): Promise<ChatAuditLog> {
+    const [log] = await db.insert(chatAuditLog).values(logData).returning();
+    return log;
+  }
+  
+  // WhatsApp Analysis operations
+  async createWhatsappAnalysis(analysisData: InsertWhatsappConversationAnalysis): Promise<WhatsappConversationAnalysis> {
+    const [analysis] = await db.insert(whatsappConversationAnalysis).values(analysisData).returning();
+    return analysis;
+  }
+  
+  async getWhatsappAnalyses(): Promise<WhatsappConversationAnalysis[]> {
+    return await db.select().from(whatsappConversationAnalysis).orderBy(desc(whatsappConversationAnalysis.createdAt));
+  }
+  
+  // Knowledge Base operations
+  async createKnowledgeBase(kbData: InsertKnowledgeBase): Promise<KnowledgeBase> {
+    const [kb] = await db.insert(knowledgeBase).values(kbData).returning();
+    return kb;
+  }
+  
+  async getKnowledgeBase(): Promise<KnowledgeBase[]> {
+    return await db.select().from(knowledgeBase).where(eq(knowledgeBase.isActive, true)).orderBy(desc(knowledgeBase.createdAt));
   }
 }
 
