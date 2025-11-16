@@ -8116,6 +8116,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           completedDate: o.scheduledDate,
           paymentMethod: o.paymentMethod,
           operationType: o.operationType,
+          customerWeekdays: o.customerWeekdays, // Validar dia da semana permitido
+          deliveryTimeSlots: [], // Billings do Omie não têm restrição de horário
         };
       });
       

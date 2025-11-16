@@ -2491,11 +2491,19 @@ export class DatabaseStorage implements IStorage {
         c.address as customer_address,
         c.latitude as customer_latitude,
         c.longitude as customer_longitude,
-        COALESCE(c.average_delivery_time, 10) as average_delivery_time
+        c.weekdays as customer_weekdays,
+        COALESCE(c.average_delivery_time, 10) as average_delivery_time,
+        sc.delivery_time_slots as delivery_time_slots
       FROM sales_cards sc
       JOIN customers c ON sc.customer_id = c.id
       WHERE sc.status = 'completed' 
       AND sc.delivery_status IN ('pending', 'in_transit')
+      AND sc.id NOT IN (
+        SELECT DISTINCT drs.sales_card_id 
+        FROM delivery_route_stops drs
+        JOIN delivery_routes dr ON drs.route_id = dr.id
+        WHERE dr.status != 'cancelled'
+      )
       ORDER BY sc.scheduled_date ASC
     `);
     return result.rows as SalesCard[];

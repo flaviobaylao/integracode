@@ -21,6 +21,8 @@ interface DeliveryOrder {
   completedDate: Date;
   paymentMethod: string;
   operationType: string;
+  customerWeekdays?: string; // JSON array com dias da semana permitidos
+  deliveryTimeSlots?: string[]; // Array com horários permitidos (ex: ["08:00-12:00"])
 }
 
 interface VehicleConfig {
@@ -118,6 +120,109 @@ function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60000);
 }
 
+/**
+ * Converte data para nome do dia da semana em português
+ */
+function getWeekdayName(date: Date): string {
+  const weekdays = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+  return weekdays[date.getDay()];
+}
+
+/**
+ * Valida se o cliente pode receber entrega no dia da semana especificado
+ * @param customerWeekdays - Array JSON com os dias da semana permitidos para o cliente
+ * @param routeDate - Data da rota de entrega
+ * @returns true se o dia é permitido, false caso contrário
+ */
+function isValidDeliveryWeekday(customerWeekdays: string, routeDate: Date): boolean {
+  try {
+    const allowedDays = JSON.parse(customerWeekdays) as string[];
+    const routeWeekday = getWeekdayName(routeDate);
+    
+    return allowedDays.some(day => day.toLowerCase() === routeWeekday.toLowerCase());
+  } catch (error) {
+    console.error('Erro ao validar dia da semana:', error);
+    return false;
+  }
+}
+
+/**
+ * Valida se o horário da janela de entrega é compatível com os horários permitidos do cliente
+ * @param deliveryTimeSlots - Array JSON com os horários permitidos do cliente (ex: ["08:00-12:00", "14:00-18:00"])
+ * @param timeWindowStart - Horário de início da janela da rota (ex: "08:00")
+ * @param timeWindowEnd - Horário de fim da janela da rota (ex: "12:00")
+ * @returns true se há compatibilidade de horários, false caso contrário
+ */
+function isValidDeliveryTimeSlot(
+  deliveryTimeSlots: string[] | undefined,
+  timeWindowStart: string,
+  timeWindowEnd: string
+): boolean {
+  // Se não houver restrição de horários, aceitar qualquer janela
+  if (!deliveryTimeSlots || deliveryTimeSlots.length === 0) {
+    return true;
+  }
+  
+  try {
+    const routeStart = timeToMinutes(timeWindowStart);
+    const routeEnd = timeToMinutes(timeWindowEnd);
+    
+    // Verificar se a janela da rota se sobrepõe com algum dos horários permitidos
+    for (const slot of deliveryTimeSlots) {
+      const [slotStart, slotEnd] = slot.split('-');
+      const slotStartMin = timeToMinutes(slotStart);
+      const slotEndMin = timeToMinutes(slotEnd);
+      
+      // Verificar sobreposição de intervalos
+      if (routeStart < slotEndMin && routeEnd > slotStartMin) {
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Erro ao validar horário de entrega:', error);
+    return true; // Em caso de erro, permitir para não bloquear desnecessariamente
+  }
+}
+
+/**
+ * Calcula o tempo médio de entrega em minutos baseado no histórico de deliveries
+ * @param db - Instância do banco de dados
+ * @param customerId - ID do cliente
+ * @returns Tempo médio em minutos (padrão: 10 se não houver histórico)
+ */
+async function calculateAverageDeliveryTime(db: any, customerId: string): Promise<number> {
+  try {
+    const history = await db
+      .select()
+      .from('delivery_history')
+      .where({ customerId, status: 'delivered' })
+      .orderBy({ createdAt: 'desc' })
+      .limit(10); // Considerar as últimas 10 entregas
+    
+    if (!history || history.length === 0) {
+      return 10; // Padrão de 10 minutos se não houver histórico
+    }
+    
+    // Calcular média dos tempos de entrega
+    const validDurations = history
+      .map((h: any) => h.deliveryDuration)
+      .filter((d: number) => d && d > 0);
+    
+    if (validDurations.length === 0) {
+      return 10;
+    }
+    
+    const average = validDurations.reduce((sum: number, d: number) => sum + d, 0) / validDurations.length;
+    
+    return Math.round(average);
+  } catch (error) {
+    console.error('Erro ao calcular tempo médio de entrega:', error);
+    return 10;
+  }
+}
+
 // ==================== Main Algorithm ====================
 
 /**
@@ -126,12 +231,16 @@ function addMinutes(date: Date, minutes: number): Date {
  */
 function preprocessOrders(
   orders: DeliveryOrder[],
-  vehicles: VehicleConfig[]
+  vehicles: VehicleConfig[],
+  routeDate: Date
 ): {
   eligibleByVehicle: Map<number, DeliveryOrder[]>;
   urgentOrders: DeliveryOrder[];
   regularOrders: DeliveryOrder[];
+  invalidOrders: Array<{ order: DeliveryOrder; reason: string }>;
 } {
+  const invalidOrders: Array<{ order: DeliveryOrder; reason: string }> = [];
+  
   // Filtrar pedidos com coordenadas inválidas
   const validOrders = orders.filter(order => {
     const lat = Number(order.customerLatitude);
@@ -145,10 +254,24 @@ function preprocessOrders(
       lon !== 0;
     
     if (!hasValidCoords) {
-      console.warn(`Pedido ${order.id} ignorado: coordenadas inválidas (lat: ${order.customerLatitude}, lon: ${order.customerLongitude})`);
+      const reason = `Coordenadas inválidas (lat: ${order.customerLatitude}, lon: ${order.customerLongitude})`;
+      console.warn(`Pedido ${order.id} ignorado: ${reason}`);
+      invalidOrders.push({ order, reason });
+      return false;
     }
     
-    return hasValidCoords;
+    // Validar dia da semana permitido para entrega
+    if (order.customerWeekdays) {
+      if (!isValidDeliveryWeekday(order.customerWeekdays, routeDate)) {
+        const routeWeekday = getWeekdayName(routeDate);
+        const reason = `Dia da semana não permitido para entrega (rota: ${routeWeekday}, permitido: ${order.customerWeekdays})`;
+        console.warn(`Pedido ${order.id} ignorado: ${reason}`);
+        invalidOrders.push({ order, reason });
+        return false;
+      }
+    }
+    
+    return true;
   });
 
   if (validOrders.length === 0) {
@@ -166,12 +289,35 @@ function preprocessOrders(
 
   // Classificar pedidos
   for (const order of validOrders) {
+    let isEligibleForAnyVehicle = false;
+    
     // Verificar quais veículos podem atender este pedido
     vehicles.forEach((vehicle, idx) => {
-      if (isOrderCompatibleWithVehicle(order, vehicle.type)) {
-        eligibleByVehicle.get(idx)!.push(order);
+      // Validar compatibilidade de veículo
+      if (!isOrderCompatibleWithVehicle(order, vehicle.type)) {
+        return;
       }
+      
+      // Validar horário de entrega (se especificado)
+      if (order.deliveryTimeSlots && order.deliveryTimeSlots.length > 0) {
+        if (!isValidDeliveryTimeSlot(order.deliveryTimeSlots, vehicle.timeWindowStart, vehicle.timeWindowEnd)) {
+          return;
+        }
+      }
+      
+      eligibleByVehicle.get(idx)!.push(order);
+      isEligibleForAnyVehicle = true;
     });
+    
+    // Se não for elegível para nenhum veículo devido a restrições de horário/tipo, marcar como inválido
+    if (!isEligibleForAnyVehicle) {
+      const reason = order.exclusiveVehicle 
+        ? `Requer veículo exclusivo (${order.vehicleTypes.join(', ')}) não disponível ou incompatível com horários`
+        : `Horários de entrega incompatíveis com janelas disponíveis`;
+      console.warn(`Pedido ${order.id} ignorado: ${reason}`);
+      invalidOrders.push({ order, reason });
+      continue;
+    }
 
     // Separar urgentes de regulares
     if (order.isUrgent) {
@@ -181,7 +327,7 @@ function preprocessOrders(
     }
   }
 
-  return { eligibleByVehicle, urgentOrders, regularOrders };
+  return { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders };
 }
 
 /**
@@ -472,8 +618,16 @@ export async function planDeliveryRoutes(
   vehicles: VehicleConfig[],
   routeDate: Date
 ): Promise<RoutePlan> {
-  // FASE 1: Pré-processamento
-  const { eligibleByVehicle, urgentOrders, regularOrders } = preprocessOrders(orders, vehicles);
+  // FASE 1: Pré-processamento com validações de dia da semana e horário
+  const { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders } = preprocessOrders(orders, vehicles, routeDate);
+
+  // Log de pedidos inválidos
+  if (invalidOrders.length > 0) {
+    console.warn(`⚠️ ${invalidOrders.length} pedidos não puderam ser incluídos na rota:`);
+    invalidOrders.forEach(({ order, reason }) => {
+      console.warn(`  - ${order.customerName}: ${reason}`);
+    });
+  }
 
   // FASE 2: Atribuição de veículos
   const { assignments, unassigned } = assignOrdersToVehicles(
@@ -489,17 +643,18 @@ export async function planDeliveryRoutes(
   // FASE 4: Persistir rotas
   await persistRoutePlan(storage, routes, routeDate);
 
-  // Calcular estatísticas
+  // Calcular estatísticas (incluir invalid orders no total de unassigned)
   const totalDistance = routes.reduce((sum, r) => sum + r.totalDistance, 0);
   const assignedOrders = routes.reduce((sum, r) => sum + r.stops.length, 0);
+  const allUnassigned = [...unassigned, ...invalidOrders.map(i => i.order)];
 
   return {
     routes,
-    unassignedOrders: unassigned,
+    unassignedOrders: allUnassigned,
     stats: {
       totalOrders: orders.length,
       assignedOrders,
-      unassignedOrders: unassigned.length,
+      unassignedOrders: allUnassigned.length,
       totalDistance,
       totalVehicles: routes.length
     }

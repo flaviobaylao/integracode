@@ -370,15 +370,28 @@ export const messageHistory = pgTable("message_history", {
   sentAt: timestamp("sent_at").defaultNow(),
 });
 
-// Delivery history/tracking table
+// Delivery history/tracking table - Histórico completo de entregas realizadas
 export const deliveryHistory = pgTable("delivery_history", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceNumber: varchar("invoice_number").notNull(), // Chave primária lógica - número da nota fiscal
   salesCardId: varchar("sales_card_id").notNull(),
+  customerId: varchar("customer_id").notNull(), // ID do cliente que recebeu a entrega
+  customerName: varchar("customer_name").notNull(), // Nome do cliente
   status: deliveryStatusEnum("status").notNull(),
-  timestamp: timestamp("timestamp").defaultNow(),
+  timestamp: timestamp("timestamp").defaultNow(), // Data/hora da entrega
   location: varchar("location"), // Localização atual da entrega
   notes: text("notes"),
-  driverId: varchar("driver_id"),
+  
+  // Informações do motorista e veículo
+  driverId: varchar("driver_id").notNull(), // ID do motorista que efetuou a entrega
+  driverName: varchar("driver_name").notNull(), // Nome do motorista
+  vehicleType: varchar("vehicle_type").notNull(), // Tipo de veículo usado (caminhao, carro, moto)
+  
+  // Tempos de check-in e check-out
+  checkInTime: timestamp("check_in_time"), // Horário de check-in na entrega
+  checkOutTime: timestamp("check_out_time"), // Horário de check-out da entrega
+  deliveryDuration: integer("delivery_duration"), // Tempo total da entrega em minutos (check-out - check-in)
+  
   createdAt: timestamp("created_at").defaultNow(),
 });
 
