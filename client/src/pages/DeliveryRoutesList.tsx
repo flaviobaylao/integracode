@@ -91,7 +91,7 @@ export default function DeliveryRoutesList() {
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (routeId: string) => apiRequest(`/api/delivery-routes/${routeId}/cancel`, "PATCH"),
+    mutationFn: (routeId: string) => apiRequest("PATCH", `/api/delivery-routes/${routeId}/cancel`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
@@ -108,7 +108,7 @@ export default function DeliveryRoutesList() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (routeId: string) => apiRequest(`/api/delivery-routes/${routeId}`, "DELETE"),
+    mutationFn: (routeId: string) => apiRequest("DELETE", `/api/delivery-routes/${routeId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
@@ -157,12 +157,12 @@ export default function DeliveryRoutesList() {
             </div>
             <div>
               <label className="text-sm font-medium mb-2 block">Status</label>
-              <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+              <Select value={selectedStatus || "all"} onValueChange={(value) => setSelectedStatus(value === "all" ? "" : value)}>
                 <SelectTrigger data-testid="filter-status">
                   <SelectValue placeholder="Todos os status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="planned">Planejada</SelectItem>
                   <SelectItem value="in_progress">Em Andamento</SelectItem>
                   <SelectItem value="completed">Concluída</SelectItem>
