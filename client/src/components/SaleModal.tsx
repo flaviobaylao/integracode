@@ -1324,25 +1324,27 @@ Qualquer dúvida, estou à disposição.`;
                   
                   {/* Dias de semana (segunda a sexta) */}
                   <div className="space-y-3">
-                    <Label className="text-sm text-gray-600">Dias de semana:</Label>
-                    {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
-                      <div key={slot} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`weekday-${slot}`}
-                          checked={selectedWeekdaySlots.includes(slot)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedWeekdaySlots(prev => [...prev, slot]);
-                            } else {
-                              setSelectedWeekdaySlots(prev => prev.filter(s => s !== slot));
-                            }
-                          }}
-                        />
-                        <Label htmlFor={`weekday-${slot}`} className="text-sm">
-                          {slot}
-                        </Label>
-                      </div>
-                    ))}
+                    <Label className="text-sm text-gray-600">Horários de semana (Seg-Sex):</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
+                        <div key={slot} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`weekday-${slot}`}
+                            checked={selectedWeekdaySlots.includes(slot)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedWeekdaySlots(prev => [...prev, slot]);
+                              } else {
+                                setSelectedWeekdaySlots(prev => prev.filter(s => s !== slot));
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`weekday-${slot}`} className="text-sm">
+                            {slot}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <Separator />
@@ -1363,25 +1365,26 @@ Qualquer dúvida, estou à disposição.`;
                     {enableSaturdayDelivery && (
                       <div className="space-y-2 pl-6">
                         <Label className="text-sm text-gray-600">Horários aos sábados:</Label>
-                        {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
-                          <div key={slot} className="flex items-center space-x-2">
-                            <Checkbox
-                              id={`saturday-${slot}`}
-                              checked={selectedSaturdaySlots.includes(`${slot} aos sábados`)}
-                              onCheckedChange={(checked) => {
-                                const slotWithSuffix = `${slot} aos sábados`;
-                                if (checked) {
-                                  setSelectedSaturdaySlots(prev => [...prev, slotWithSuffix]);
-                                } else {
-                                  setSelectedSaturdaySlots(prev => prev.filter(s => s !== slotWithSuffix));
-                                }
-                              }}
-                            />
-                            <Label htmlFor={`saturday-${slot}`} className="text-sm">
-                              {slot} aos sábados
-                            </Label>
-                          </div>
-                        ))}
+                        <div className="grid grid-cols-3 gap-2">
+                          {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
+                            <div key={slot} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`saturday-${slot}`}
+                                checked={selectedSaturdaySlots.includes(slot)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setSelectedSaturdaySlots(prev => [...prev, slot]);
+                                  } else {
+                                    setSelectedSaturdaySlots(prev => prev.filter(s => s !== slot));
+                                  }
+                                }}
+                              />
+                              <Label htmlFor={`saturday-${slot}`} className="text-sm">
+                                {slot}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

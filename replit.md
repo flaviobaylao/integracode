@@ -44,6 +44,8 @@
         - **Proportional Distribution**: Balances workload across drivers using estimated work time (delivery + travel).
         - **Delivery History Tracking**: Full history with invoice numbers, driver info, vehicle type, check-in/out times, and delivery duration.
         - **API Endpoint**: POST /api/delivery-history for registering completed deliveries with automatic duration calculation.
+        - **Hourly Time Slots**: Changed from time ranges to hourly checkboxes (08:00-18:00 weekdays, 08:00-12:00 Saturdays) for granular scheduling.
+        - **Persistent Delivery Config**: Delivery preferences (vehicle types, delivery days, time slots) stored in customers table; editable from sales modal, delivery management, and customer edit modal; changes sync across all locations.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.

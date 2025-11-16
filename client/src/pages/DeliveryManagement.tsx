@@ -1139,8 +1139,8 @@ export default function DeliveryManagement() {
                 <Label className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</Label>
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
-                {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
+              <div className="grid grid-cols-4 gap-3">
+                {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
                   <div key={slot} className="flex items-center space-x-2">
                     <Checkbox
                       id={`time-slot-${slot}`}
@@ -1163,8 +1163,8 @@ export default function DeliveryManagement() {
                 <Label className="text-sm font-medium text-purple-900">Horários aos Sábados</Label>
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
-                {['08:00-10:00', '10:00-12:00'].map((slot) => (
+              <div className="grid grid-cols-4 gap-3">
+                {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
                   <div key={slot} className="flex items-center space-x-2">
                     <Checkbox
                       id={`saturday-slot-${slot}`}

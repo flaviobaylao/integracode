@@ -51,6 +51,11 @@ export default function CustomerEditModal({
     longitude: "",
     weekdays: [] as string[],
     visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
+    exclusiveVehicle: false,
+    vehicleTypes: [] as string[],
+    deliveryWeekdays: [] as string[],
+    deliveryTimeSlots: [] as string[],
+    deliverySaturdayTimeSlots: [] as string[],
   });
 
   const updateCustomerMutation = useMutation({
@@ -113,6 +118,52 @@ export default function CustomerEditModal({
     }));
   };
 
+  const toggleVehicleType = (type: string) => {
+    setFormData((prev) => {
+      const newTypes = prev.vehicleTypes.includes(type)
+        ? prev.vehicleTypes.filter(v => v !== type)
+        : [...prev.vehicleTypes, type];
+      
+      if (newTypes.length > 2) {
+        toast({
+          title: "Limite excedido",
+          description: "Selecione no máximo 2 tipos de veículos",
+          variant: "destructive",
+        });
+        return prev;
+      }
+      
+      return { ...prev, vehicleTypes: newTypes };
+    });
+  };
+
+  const toggleDeliveryWeekday = (day: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      deliveryWeekdays: prev.deliveryWeekdays.includes(day)
+        ? prev.deliveryWeekdays.filter(d => d !== day)
+        : [...prev.deliveryWeekdays, day]
+    }));
+  };
+
+  const toggleDeliveryTimeSlot = (slot: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      deliveryTimeSlots: prev.deliveryTimeSlots.includes(slot)
+        ? prev.deliveryTimeSlots.filter(s => s !== slot)
+        : [...prev.deliveryTimeSlots, slot]
+    }));
+  };
+
+  const toggleSaturdayTimeSlot = (slot: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      deliverySaturdayTimeSlots: prev.deliverySaturdayTimeSlots.includes(slot)
+        ? prev.deliverySaturdayTimeSlots.filter(s => s !== slot)
+        : [...prev.deliverySaturdayTimeSlots, slot]
+    }));
+  };
+
   // Update form data when customer changes
   useEffect(() => {
     if (customer) {
@@ -143,6 +194,11 @@ export default function CustomerEditModal({
         longitude: customer.longitude || "",
         weekdays: parsedWeekdays,
         visitPeriodicity: customer.visitPeriodicity || "semanal",
+        exclusiveVehicle: customer.exclusiveVehicle || false,
+        vehicleTypes: Array.isArray(customer.vehicleTypes) ? customer.vehicleTypes : [],
+        deliveryWeekdays: Array.isArray(customer.deliveryWeekdays) ? customer.deliveryWeekdays : [],
+        deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
+        deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
       });
     }
   }, [customer]);
@@ -353,6 +409,130 @@ export default function CustomerEditModal({
                 <SelectItem value="bimestral">Bimestral</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Configurações de Entrega */}
+          <div className="space-y-4 border-t pt-4">
+            <h3 className="font-semibold text-lg">Configurações de Entrega</h3>
+            
+            {/* Veículo Exclusivo */}
+            <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-orange-900">Veículo Exclusivo</Label>
+              
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="exclusive-vehicle-customer"
+                  checked={formData.exclusiveVehicle}
+                  onCheckedChange={(checked) => {
+                    setFormData(prev => ({
+                      ...prev,
+                      exclusiveVehicle: checked as boolean,
+                      vehicleTypes: checked ? prev.vehicleTypes : []
+                    }));
+                  }}
+                  data-testid="checkbox-exclusive-vehicle-customer"
+                />
+                <label htmlFor="exclusive-vehicle-customer" className="text-sm cursor-pointer">
+                  Entrega em veículo exclusivo?
+                </label>
+              </div>
+
+              {formData.exclusiveVehicle && (
+                <div className="ml-6 space-y-2">
+                  <Label className="text-sm font-medium">Tipos de Veículos (máximo 2)</Label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { value: 'caminhao', label: '🚛 Caminhão' },
+                      { value: 'carro', label: '🚗 Carro' },
+                      { value: 'moto', label: '🏍️ Moto' }
+                    ].map((vehicle) => (
+                      <div key={vehicle.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`vehicle-customer-${vehicle.value}`}
+                          checked={formData.vehicleTypes.includes(vehicle.value)}
+                          onCheckedChange={() => toggleVehicleType(vehicle.value)}
+                          data-testid={`checkbox-vehicle-customer-${vehicle.value}`}
+                        />
+                        <label htmlFor={`vehicle-customer-${vehicle.value}`} className="text-sm cursor-pointer">
+                          {vehicle.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Dias de Entrega */}
+            <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</Label>
+              
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { value: 'Seg', label: 'Seg' },
+                  { value: 'Ter', label: 'Ter' },
+                  { value: 'Qua', label: 'Qua' },
+                  { value: 'Qui', label: 'Qui' },
+                  { value: 'Sex', label: 'Sex' },
+                  { value: 'Sab', label: 'Sáb' },
+                  { value: 'Dom', label: 'Dom' },
+                ].map((day) => (
+                  <div key={day.value} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`delivery-weekday-customer-${day.value}`}
+                      checked={formData.deliveryWeekdays.includes(day.value)}
+                      onCheckedChange={() => toggleDeliveryWeekday(day.value)}
+                      data-testid={`checkbox-delivery-weekday-customer-${day.value}`}
+                    />
+                    <label htmlFor={`delivery-weekday-customer-${day.value}`} className="text-sm cursor-pointer">
+                      {day.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Horários de Entrega (Seg-Sex) */}
+            <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</Label>
+              
+              <div className="grid grid-cols-4 gap-3">
+                {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
+                  <div key={slot} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`time-slot-customer-${slot}`}
+                      checked={formData.deliveryTimeSlots.includes(slot)}
+                      onCheckedChange={() => toggleDeliveryTimeSlot(slot)}
+                      data-testid={`checkbox-time-slot-customer-${slot}`}
+                    />
+                    <label htmlFor={`time-slot-customer-${slot}`} className="text-sm cursor-pointer">
+                      {slot}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Horários de Entrega aos Sábados */}
+            <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-purple-900">Horários aos Sábados</Label>
+              
+              <div className="grid grid-cols-4 gap-3">
+                {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
+                  <div key={slot} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`saturday-slot-customer-${slot}`}
+                      checked={formData.deliverySaturdayTimeSlots.includes(slot)}
+                      onCheckedChange={() => toggleSaturdayTimeSlot(slot)}
+                      data-testid={`checkbox-saturday-slot-customer-${slot}`}
+                    />
+                    <label htmlFor={`saturday-slot-customer-${slot}`} className="text-sm cursor-pointer">
+                      {slot}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Botões */}
