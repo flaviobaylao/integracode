@@ -9442,7 +9442,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerLatitude,
         customerLongitude,
         boletoDays,
-        saveForReuse
+        saveForReuse,
+        exclusiveVehicle,
+        vehicleTypes
       } = req.body;
       
       // Use items as products for backward compatibility
@@ -9518,6 +9520,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
           customerLatitude: customerLatitude,
           customerLongitude: customerLongitude,
+          exclusiveVehicle: exclusiveVehicle || false,
+          vehicleTypes: vehicleTypes || [],
           notes: (salesCard.notes || '') + `\n\nPedido bloqueado: ${blockDetails}`
         };
 
@@ -9561,6 +9565,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliverySaturdayTimeSlots: deliverySaturdayTimeSlots || [],
         customerLatitude: customerLatitude,
         customerLongitude: customerLongitude,
+        exclusiveVehicle: exclusiveVehicle || false,
+        vehicleTypes: vehicleTypes || []
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);
