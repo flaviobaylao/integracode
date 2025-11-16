@@ -525,6 +525,13 @@ export const billings = pgTable("billings", {
   isCancelled: boolean("is_cancelled").notNull().default(false), // Se a nota foi cancelada
   isUrgent: boolean("is_urgent").notNull().default(false), // Entrega urgente (priorizada na roteirização)
   
+  // Configurações de entrega (para billings que não têm sales_card)
+  exclusiveVehicle: boolean("exclusive_vehicle").default(false), // Se requer veículo exclusivo
+  vehicleTypes: text("vehicle_types").array(), // Tipos de veículo permitidos: ['caminhão', 'carro', 'moto']
+  deliveryWeekdays: text("delivery_weekdays").array(), // Dias da semana para entrega
+  deliveryTimeSlots: text("delivery_time_slots").array(), // Horários de entrega (seg-sex)
+  deliverySaturdayTimeSlots: text("delivery_saturday_time_slots").array(), // Horários de entrega sábado
+  
   // Produtos da nota fiscal
   products: jsonb("products").$type<Array<{
     code: string;
