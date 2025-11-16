@@ -332,6 +332,12 @@ async function optimizeVehicleRoutes(
       const order = orders.find((o: DeliveryOrder) => o.id === point.id)!;
       const segment = optimized.segments[i];
 
+      console.log(`🔧 [OPTIMIZE] Processing stop for ${order.customerName}:`);
+      console.log(`   - order.customerLatitude: ${order.customerLatitude} (type: ${typeof order.customerLatitude})`);
+      console.log(`   - order.customerLongitude: ${order.customerLongitude} (type: ${typeof order.customerLongitude})`);
+      console.log(`   - Number(lat): ${Number(order.customerLatitude)}`);
+      console.log(`   - Number(lng): ${Number(order.customerLongitude)}`);
+
       // Tempo de viagem até esta parada (assumir 40 km/h médio)
       const travelTimeMinutes = (segment.distance / 40) * 60;
       const arrivalTime = addMinutes(currentTime, travelTimeMinutes);
