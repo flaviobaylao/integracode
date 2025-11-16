@@ -134,6 +134,24 @@ export default function DeliveryManagement() {
   const [showMissingCoordinates, setShowMissingCoordinates] = useState(false);
   const [missingCoordinatesData, setMissingCoordinatesData] = useState<any[]>([]);
   const [pendingRouteConfig, setPendingRouteConfig] = useState<{ orderIds: string[]; vehicles: VehicleConfig[]; routeDate: string } | null>(null);
+  
+  // Estados para edição de configurações de entrega
+  const [showDeliveryConfig, setShowDeliveryConfig] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<DeliveryOrder | null>(null);
+  const [deliveryConfigForm, setDeliveryConfigForm] = useState({
+    exclusiveVehicle: false,
+    vehicleTypes: [] as string[],
+    deliveryWeekdays: [] as string[],
+    deliveryTimeSlots: [] as string[],
+    deliverySaturdayTimeSlots: [] as string[],
+  });
+
+  // Query para buscar usuário atual
+  const { data: currentUser } = useQuery({
+    queryKey: ['/api/auth/user'],
+  });
+  
+  const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
   // Query para buscar pedidos aguardando rota
   const { data: orders, isLoading: isLoadingOrders, error: ordersError } = useQuery<DeliveryOrder[]>({
@@ -192,6 +210,28 @@ export default function DeliveryManagement() {
       });
     },
   });
+  
+  // Mutation para atualizar configurações de entrega do cliente
+  const updateDeliveryConfigMutation = useMutation({
+    mutationFn: async (data: { customerId: string; config: any }) => {
+      return await apiRequest('PUT', `/api/customers/${data.customerId}`, data.config);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+      setShowDeliveryConfig(false);
+      toast({
+        title: "Configurações atualizadas",
+        description: "As configurações de entrega do cliente foram atualizadas com sucesso.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao atualizar",
+        description: error.message || "Erro ao atualizar configurações de entrega",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Funções de seleção
   const handleSelectAll = () => {
@@ -220,6 +260,75 @@ export default function DeliveryManagement() {
     toggleUrgentMutation.mutate({
       id: orderId,
       isUrgent: !currentUrgent
+    });
+  };
+  
+  // Funções para edição de configurações de entrega
+  const handleOpenDeliveryConfig = (order: DeliveryOrder) => {
+    setEditingCustomer(order);
+    setDeliveryConfigForm({
+      exclusiveVehicle: order.exclusiveVehicle || false,
+      vehicleTypes: order.vehicleTypes || [],
+      deliveryWeekdays: order.deliveryWeekdays || [],
+      deliveryTimeSlots: order.deliveryTimeSlots || [],
+      deliverySaturdayTimeSlots: order.deliverySaturdayTimeSlots || [],
+    });
+    setShowDeliveryConfig(true);
+  };
+  
+  const handleSaveDeliveryConfig = () => {
+    if (!editingCustomer) return;
+    
+    updateDeliveryConfigMutation.mutate({
+      customerId: editingCustomer.customerId,
+      config: deliveryConfigForm,
+    });
+  };
+  
+  const toggleDeliveryWeekday = (day: string) => {
+    setDeliveryConfigForm(prev => ({
+      ...prev,
+      deliveryWeekdays: prev.deliveryWeekdays.includes(day)
+        ? prev.deliveryWeekdays.filter(d => d !== day)
+        : [...prev.deliveryWeekdays, day]
+    }));
+  };
+  
+  const toggleDeliveryTimeSlot = (slot: string) => {
+    setDeliveryConfigForm(prev => ({
+      ...prev,
+      deliveryTimeSlots: prev.deliveryTimeSlots.includes(slot)
+        ? prev.deliveryTimeSlots.filter(s => s !== slot)
+        : [...prev.deliveryTimeSlots, slot]
+    }));
+  };
+  
+  const toggleSaturdayTimeSlot = (slot: string) => {
+    setDeliveryConfigForm(prev => ({
+      ...prev,
+      deliverySaturdayTimeSlots: prev.deliverySaturdayTimeSlots.includes(slot)
+        ? prev.deliverySaturdayTimeSlots.filter(s => s !== slot)
+        : [...prev.deliverySaturdayTimeSlots, slot]
+    }));
+  };
+  
+  const toggleVehicleType = (type: string) => {
+    setDeliveryConfigForm(prev => {
+      const newTypes = prev.vehicleTypes.includes(type)
+        ? prev.vehicleTypes.filter(v => v !== type)
+        : [...prev.vehicleTypes, type];
+      
+      // Limitar a 2 tipos de veículos
+      if (newTypes.length > 2) {
+        toast({
+          title: "Limite excedido",
+          description: "Selecione no máximo 2 tipos de veículos",
+          variant: "destructive",
+        });
+        return prev;
+      }
+      
+      return { ...prev, vehicleTypes: newTypes };
     });
   };
 
@@ -571,17 +680,32 @@ export default function DeliveryManagement() {
                           </div>
                         )}
 
-                        <div className="flex items-center space-x-2 pt-1">
-                          <Checkbox
-                            id={`urgent-${order.id}`}
-                            checked={order.isUrgent || false}
-                            onCheckedChange={() => handleToggleUrgent(order.id, order.isUrgent || false)}
-                            data-testid={`checkbox-urgent-${order.id}`}
-                          />
-                          <Label htmlFor={`urgent-${order.id}`} className="cursor-pointer text-xs font-medium flex items-center text-gray-600">
-                            <Zap className="h-3 w-3 mr-1" />
-                            Marcar como urgente
-                          </Label>
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`urgent-${order.id}`}
+                              checked={order.isUrgent || false}
+                              onCheckedChange={() => handleToggleUrgent(order.id, order.isUrgent || false)}
+                              data-testid={`checkbox-urgent-${order.id}`}
+                            />
+                            <Label htmlFor={`urgent-${order.id}`} className="cursor-pointer text-xs font-medium flex items-center text-gray-600">
+                              <Zap className="h-3 w-3 mr-1" />
+                              Marcar como urgente
+                            </Label>
+                          </div>
+                          
+                          {isAdministrative && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOpenDeliveryConfig(order)}
+                              className="h-7 text-xs"
+                              data-testid={`button-edit-delivery-config-${order.id}`}
+                            >
+                              <Settings className="h-3 w-3 mr-1" />
+                              Editar Config. Entrega
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -911,6 +1035,168 @@ export default function DeliveryManagement() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para editar configurações de entrega do cliente */}
+      <Dialog open={showDeliveryConfig} onOpenChange={setShowDeliveryConfig}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-delivery-config">
+          <DialogHeader>
+            <DialogTitle>Configurações de Entrega</DialogTitle>
+            <DialogDescription>
+              Editar preferências de entrega para {editingCustomer?.customerName}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-6 py-4">
+            {/* Veículo Exclusivo */}
+            <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4 text-orange-600" />
+                <Label className="text-sm font-medium text-orange-900">Veículo Exclusivo</Label>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="exclusive-vehicle-config"
+                  checked={deliveryConfigForm.exclusiveVehicle}
+                  onCheckedChange={(checked) => {
+                    setDeliveryConfigForm(prev => ({
+                      ...prev,
+                      exclusiveVehicle: checked as boolean,
+                      vehicleTypes: checked ? prev.vehicleTypes : []
+                    }));
+                  }}
+                  data-testid="checkbox-exclusive-vehicle-config"
+                />
+                <Label htmlFor="exclusive-vehicle-config" className="text-sm cursor-pointer">
+                  Entrega em veículo exclusivo?
+                </Label>
+              </div>
+
+              {deliveryConfigForm.exclusiveVehicle && (
+                <div className="ml-6 space-y-2">
+                  <Label className="text-sm font-medium">Tipos de Veículos (máximo 2)</Label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { value: 'caminhao', label: '🚛 Caminhão' },
+                      { value: 'carro', label: '🚗 Carro' },
+                      { value: 'moto', label: '🏍️ Moto' }
+                    ].map((vehicle) => (
+                      <div key={vehicle.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`vehicle-config-${vehicle.value}`}
+                          checked={deliveryConfigForm.vehicleTypes.includes(vehicle.value)}
+                          onCheckedChange={() => toggleVehicleType(vehicle.value)}
+                          data-testid={`checkbox-vehicle-config-${vehicle.value}`}
+                        />
+                        <Label htmlFor={`vehicle-config-${vehicle.value}`} className="text-sm cursor-pointer">
+                          {vehicle.label}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Dias de Entrega */}
+            <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-blue-600" />
+                <Label className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</Label>
+              </div>
+              
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { value: 'Seg', label: 'Seg' },
+                  { value: 'Ter', label: 'Ter' },
+                  { value: 'Qua', label: 'Qua' },
+                  { value: 'Qui', label: 'Qui' },
+                  { value: 'Sex', label: 'Sex' },
+                  { value: 'Sab', label: 'Sáb' },
+                  { value: 'Dom', label: 'Dom' },
+                ].map((day) => (
+                  <div key={day.value} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`delivery-weekday-${day.value}`}
+                      checked={deliveryConfigForm.deliveryWeekdays.includes(day.value)}
+                      onCheckedChange={() => toggleDeliveryWeekday(day.value)}
+                      data-testid={`checkbox-delivery-weekday-${day.value}`}
+                    />
+                    <Label htmlFor={`delivery-weekday-${day.value}`} className="text-sm cursor-pointer">
+                      {day.label}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Horários de Entrega (Seg-Sex) */}
+            <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-green-600" />
+                <Label className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                {['08:00-10:00', '10:00-12:00', '14:00-16:00', '16:00-18:00'].map((slot) => (
+                  <div key={slot} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`time-slot-${slot}`}
+                      checked={deliveryConfigForm.deliveryTimeSlots.includes(slot)}
+                      onCheckedChange={() => toggleDeliveryTimeSlot(slot)}
+                      data-testid={`checkbox-time-slot-${slot}`}
+                    />
+                    <Label htmlFor={`time-slot-${slot}`} className="text-sm cursor-pointer">
+                      {slot}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Horários de Entrega aos Sábados */}
+            <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-purple-600" />
+                <Label className="text-sm font-medium text-purple-900">Horários aos Sábados</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                {['08:00-10:00', '10:00-12:00'].map((slot) => (
+                  <div key={slot} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`saturday-slot-${slot}`}
+                      checked={deliveryConfigForm.deliverySaturdayTimeSlots.includes(slot)}
+                      onCheckedChange={() => toggleSaturdayTimeSlot(slot)}
+                      data-testid={`checkbox-saturday-slot-${slot}`}
+                    />
+                    <Label htmlFor={`saturday-slot-${slot}`} className="text-sm cursor-pointer">
+                      {slot}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowDeliveryConfig(false)}
+              data-testid="button-cancel-delivery-config"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveDeliveryConfig}
+              disabled={updateDeliveryConfigMutation.isPending}
+              data-testid="button-save-delivery-config"
+            >
+              {updateDeliveryConfigMutation.isPending ? 'Salvando...' : 'Salvar Configurações'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
