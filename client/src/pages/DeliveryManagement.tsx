@@ -399,10 +399,15 @@ export default function DeliveryManagement() {
               <Input
                 id="route-date"
                 type="date"
+                min={new Date().toISOString().split('T')[0]}
                 value={routeDate}
                 onChange={(e) => setRouteDate(e.target.value)}
                 data-testid="input-route-date"
               />
+              <p className="text-xs text-muted-foreground">
+                <Calendar className="h-3 w-3 inline mr-1" />
+                Selecione a data de execução da rota
+              </p>
             </div>
 
             <div className="space-y-2">
