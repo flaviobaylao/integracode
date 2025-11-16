@@ -332,7 +332,8 @@ function preprocessOrders(
 
 /**
  * FASE 2: Atribuição de Veículos
- * Usa greedy assignment com prioridade para urgentes
+ * Usa distribuição proporcional com prioridade para urgentes
+ * Balanceia carga considerando tempo de trabalho estimado
  */
 function assignOrdersToVehicles(
   urgentOrders: DeliveryOrder[],
@@ -344,20 +345,31 @@ function assignOrdersToVehicles(
   unassigned: DeliveryOrder[];
 } {
   const assignments = new Map<number, DeliveryOrder[]>();
+  const vehicleWorkload = new Map<number, number>(); // Tempo de trabalho em minutos
   const assigned = new Set<string>();
   const unassigned: DeliveryOrder[] = [];
 
-  // Inicializar assignments
-  vehicles.forEach((_, idx) => {
+  // Inicializar assignments e workload
+  vehicles.forEach((vehicle, idx) => {
     assignments.set(idx, []);
+    
+    // Calcular janela de tempo disponível
+    const startMinutes = timeToMinutes(vehicle.timeWindowStart);
+    const endMinutes = timeToMinutes(vehicle.timeWindowEnd);
+    const availableTime = endMinutes - startMinutes;
+    
+    // Inicializar workload com tempo de almoço (30 min) já descontado
+    vehicleWorkload.set(idx, 30);
+    
+    console.log(`🚚 Veículo ${idx} (${vehicle.type}): ${availableTime} min disponíveis (${vehicle.timeWindowStart}-${vehicle.timeWindowEnd})`);
   });
 
-  // Processar pedidos urgentes primeiro
+  // Processar pedidos urgentes primeiro (prioridade máxima)
   for (const order of urgentOrders) {
     let bestVehicle = -1;
-    let minDistance = Infinity;
+    let minWorkload = Infinity;
 
-    // Encontrar veículo compatível mais próximo com capacidade
+    // Encontrar veículo compatível com menor carga atual
     vehicles.forEach((vehicle, idx) => {
       if (!eligibleByVehicle.get(idx)!.find(o => o.id === order.id)) {
         return; // Veículo não compatível
@@ -368,14 +380,19 @@ function assignOrdersToVehicles(
         return; // Veículo cheio
       }
 
-      const distance = distanceFromDepot(
-        vehicle.startLatitude,
-        vehicle.startLongitude,
-        order
-      );
+      // Verificar se tem tempo disponível
+      const startMinutes = timeToMinutes(vehicle.timeWindowStart);
+      const endMinutes = timeToMinutes(vehicle.timeWindowEnd);
+      const availableTime = endMinutes - startMinutes;
+      const currentWorkload = vehicleWorkload.get(idx)!;
+      
+      if (currentWorkload + order.averageDeliveryTime > availableTime) {
+        return; // Não cabe na janela de tempo
+      }
 
-      if (distance < minDistance) {
-        minDistance = distance;
+      // Selecionar veículo com menor carga (para distribuição equilibrada)
+      if (currentWorkload < minWorkload) {
+        minWorkload = currentWorkload;
         bestVehicle = idx;
       }
     });
@@ -383,19 +400,26 @@ function assignOrdersToVehicles(
     if (bestVehicle >= 0) {
       assignments.get(bestVehicle)!.push(order);
       assigned.add(order.id);
+      
+      // Atualizar workload (tempo de entrega + tempo médio de deslocamento)
+      const estimatedTravelTime = 15; // Estimativa de 15 min entre paradas
+      vehicleWorkload.set(bestVehicle, vehicleWorkload.get(bestVehicle)! + order.averageDeliveryTime + estimatedTravelTime);
+      
+      console.log(`🔴 URGENTE ${order.customerName} → Veículo ${bestVehicle} (carga: ${vehicleWorkload.get(bestVehicle)} min)`);
     } else {
       unassigned.push(order);
+      console.warn(`⚠️ Pedido urgente ${order.customerName} não pôde ser atribuído (sem veículos compatíveis ou com capacidade)`);
     }
   }
 
-  // Processar pedidos regulares
+  // Processar pedidos regulares com distribuição proporcional
   for (const order of regularOrders) {
     if (assigned.has(order.id)) continue;
 
     let bestVehicle = -1;
-    let minDistance = Infinity;
+    let minWorkload = Infinity;
 
-    // Encontrar veículo compatível mais próximo com capacidade
+    // Encontrar veículo compatível com menor carga atual
     vehicles.forEach((vehicle, idx) => {
       if (!eligibleByVehicle.get(idx)!.find(o => o.id === order.id)) {
         return; // Veículo não compatível
@@ -406,14 +430,19 @@ function assignOrdersToVehicles(
         return; // Veículo cheio
       }
 
-      const distance = distanceFromDepot(
-        vehicle.startLatitude,
-        vehicle.startLongitude,
-        order
-      );
+      // Verificar se tem tempo disponível
+      const startMinutes = timeToMinutes(vehicle.timeWindowStart);
+      const endMinutes = timeToMinutes(vehicle.timeWindowEnd);
+      const availableTime = endMinutes - startMinutes;
+      const currentWorkload = vehicleWorkload.get(idx)!;
+      
+      if (currentWorkload + order.averageDeliveryTime > availableTime) {
+        return; // Não cabe na janela de tempo
+      }
 
-      if (distance < minDistance) {
-        minDistance = distance;
+      // Selecionar veículo com menor carga (distribuição proporcional)
+      if (currentWorkload < minWorkload) {
+        minWorkload = currentWorkload;
         bestVehicle = idx;
       }
     });
@@ -421,10 +450,27 @@ function assignOrdersToVehicles(
     if (bestVehicle >= 0) {
       assignments.get(bestVehicle)!.push(order);
       assigned.add(order.id);
+      
+      // Atualizar workload
+      const estimatedTravelTime = 15; // Estimativa de 15 min entre paradas
+      vehicleWorkload.set(bestVehicle, vehicleWorkload.get(bestVehicle)! + order.averageDeliveryTime + estimatedTravelTime);
     } else {
       unassigned.push(order);
     }
   }
+
+  // Log final de distribuição
+  console.log('\n📊 DISTRIBUIÇÃO FINAL DE ENTREGAS:');
+  vehicles.forEach((vehicle, idx) => {
+    const deliveries = assignments.get(idx)!.length;
+    const workload = vehicleWorkload.get(idx)!;
+    const startMinutes = timeToMinutes(vehicle.timeWindowStart);
+    const endMinutes = timeToMinutes(vehicle.timeWindowEnd);
+    const availableTime = endMinutes - startMinutes;
+    const utilizacao = ((workload / availableTime) * 100).toFixed(1);
+    
+    console.log(`  Veículo ${idx} (${vehicle.type}): ${deliveries} entregas, ${workload}/${availableTime} min (${utilizacao}% utilização)`);
+  });
 
   return { assignments, unassigned };
 }
