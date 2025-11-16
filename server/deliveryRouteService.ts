@@ -426,15 +426,15 @@ async function persistRoutePlan(
         throw new Error(`Parada "${stop.customerName}" com coordenadas inválidas: lat=${stop.latitude}, lng=${stop.longitude}`);
       }
 
-      await storage.createDeliveryRouteStop({
+      const stopData = {
         id: nanoid(),
         routeId: deliveryRoute.id,
         salesCardId: stop.salesCardId,
         customerId: stop.customerId,
         customerName: stop.customerName,
         customerAddress: stop.customerAddress,
-        latitude: stop.latitude.toString(),
-        longitude: stop.longitude.toString(),
+        customerLatitude: stop.latitude.toString(),
+        customerLongitude: stop.longitude.toString(),
         estimatedArrival: stop.estimatedArrival,
         estimatedDeparture: stop.estimatedDeparture,
         estimatedServiceTime: stop.estimatedServiceTime.toString(),
@@ -443,7 +443,13 @@ async function persistRoutePlan(
         status: 'pending',
         createdAt: new Date(),
         updatedAt: new Date()
-      });
+      };
+
+      console.log(`💾 [PERSIST] Creating stop for ${stop.customerName}:`);
+      console.log(`   - stop.latitude: ${stop.latitude} → toString: "${stopData.customerLatitude}"`);
+      console.log(`   - stop.longitude: ${stop.longitude} → toString: "${stopData.customerLongitude}"`);
+
+      await storage.createDeliveryRouteStop(stopData);
     }
 
     savedRoutes.push({
