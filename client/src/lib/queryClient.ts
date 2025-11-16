@@ -22,7 +22,21 @@ async function throwIfResNotOk(res: Response) {
       try {
         const errorData = await res.json();
         console.log('🔴 API Error Response:', errorData);
-        throw new Error(errorData.message || JSON.stringify(errorData));
+        
+        // Criar um Error que preserva todos os campos do errorData
+        const error: any = new Error(errorData.message || JSON.stringify(errorData));
+        error.status = res.status;
+        error.code = errorData.code;
+        error.missingCoordinates = errorData.missingCoordinates;
+        
+        // Copiar quaisquer outros campos do errorData para o error
+        Object.keys(errorData).forEach(key => {
+          if (key !== 'message' && !(key in error)) {
+            error[key] = errorData[key];
+          }
+        });
+        
+        throw error;
       } catch (jsonError) {
         // Se falhar ao parsear JSON, lançar erro genérico
         console.log('⚠️ Failed to parse error JSON:', jsonError);
