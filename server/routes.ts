@@ -7963,6 +7963,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : []
       }));
       
+      // Log temporário para debug
+      console.log(`📦 [DELIVERIES] Retornando ${processedDeliveries.length} pedidos`);
+      if (processedDeliveries.length > 0) {
+        const sample = processedDeliveries[0];
+        console.log(`📦 [DELIVERIES] Exemplo (primeiro pedido):`);
+        console.log(`   - ID: ${sample.id}`);
+        console.log(`   - Invoice: ${sample.invoiceNumber}`);
+        console.log(`   - exclusiveVehicle: ${sample.exclusiveVehicle}`);
+        console.log(`   - vehicleTypes: ${JSON.stringify(sample.vehicleTypes)}`);
+        console.log(`   - deliveryWeekdays: ${JSON.stringify(sample.deliveryWeekdays)}`);
+        console.log(`   - deliveryTimeSlots: ${JSON.stringify(sample.deliveryTimeSlots)}`);
+        console.log(`   - deliverySaturdayTimeSlots: ${JSON.stringify(sample.deliverySaturdayTimeSlots)}`);
+      }
+      
       res.json(processedDeliveries);
     } catch (error: any) {
       console.error("Error fetching deliveries:", error);
