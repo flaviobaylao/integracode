@@ -8048,14 +8048,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (invalidOrders.length > 0) {
         console.warn(`⚠️ [ROUTE-PLANNING] ${invalidOrders.length} pedidos sem coordenadas válidas:`, 
                      invalidOrders.map(o => ({ id: o.id, name: o.customerName, lat: o.customerLatitude, lng: o.customerLongitude })));
-        return res.status(400).json({ 
-          message: `${invalidOrders.length} ${invalidOrders.length === 1 ? 'pedido não possui' : 'pedidos não possuem'} coordenadas de cliente cadastradas. Por favor, cadastre as coordenadas dos clientes antes de roteirizar.`,
-          invalidOrders: invalidOrders.map(o => ({ 
-            id: o.id, 
+        
+        // Retornar status 422 com detalhes dos clientes para modal de correção
+        return res.status(422).json({ 
+          code: 'MISSING_COORDINATES',
+          message: `${invalidOrders.length} ${invalidOrders.length === 1 ? 'pedido não possui' : 'pedidos não possuem'} coordenadas de cliente cadastradas.`,
+          missingCoordinates: invalidOrders.map(o => ({ 
+            billingId: o.id,
+            customerId: o.customerId,
             customerName: o.customerName, 
             address: o.customerAddress,
-            latitude: o.customerLatitude || 'não cadastrado',
-            longitude: o.customerLongitude || 'não cadastrado'
+            latitude: o.customerLatitude || '',
+            longitude: o.customerLongitude || ''
           }))
         });
       }
