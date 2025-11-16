@@ -1,6 +1,9 @@
 import { DatabaseStorage } from './storage';
 import { optimizeRoute, calculateDistance } from './routeOptimizationService';
 import { nanoid } from 'nanoid';
+import { db } from './db';
+import { deliveryHistory } from '../shared/schema';
+import { eq, desc, and } from 'drizzle-orm';
 
 // ==================== Data Structures ====================
 
@@ -188,33 +191,39 @@ function isValidDeliveryTimeSlot(
 
 /**
  * Calcula o tempo médio de entrega em minutos baseado no histórico de deliveries
- * @param db - Instância do banco de dados
  * @param customerId - ID do cliente
  * @returns Tempo médio em minutos (padrão: 10 se não houver histórico)
  */
-async function calculateAverageDeliveryTime(db: any, customerId: string): Promise<number> {
+async function calculateAverageDeliveryTime(customerId: string): Promise<number> {
   try {
     const history = await db
       .select()
-      .from('delivery_history')
-      .where({ customerId, status: 'delivered' })
-      .orderBy({ createdAt: 'desc' })
-      .limit(10); // Considerar as últimas 10 entregas
+      .from(deliveryHistory)
+      .where(
+        and(
+          eq(deliveryHistory.customerId, customerId),
+          eq(deliveryHistory.status, 'delivered')
+        )
+      )
+      .orderBy(desc(deliveryHistory.timestamp))
+      .limit(10); // Considerar as últimas 10 entregas concluídas
     
     if (!history || history.length === 0) {
       return 10; // Padrão de 10 minutos se não houver histórico
     }
     
-    // Calcular média dos tempos de entrega
+    // Calcular média dos tempos de entrega que foram concluídos (com delivery_duration)
     const validDurations = history
       .map((h: any) => h.deliveryDuration)
-      .filter((d: number) => d && d > 0);
+      .filter((d: number | null) => d && d > 0);
     
     if (validDurations.length === 0) {
       return 10;
     }
     
     const average = validDurations.reduce((sum: number, d: number) => sum + d, 0) / validDurations.length;
+    
+    console.log(`📊 [AVG-DELIVERY-TIME] Cliente ${customerId}: ${validDurations.length} entregas, média ${Math.round(average)} min`);
     
     return Math.round(average);
   } catch (error) {
