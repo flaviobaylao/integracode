@@ -991,9 +991,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Normalizar weekdays para formato abreviado padrão
-      let normalizedWeekdays: string[] | undefined = undefined;
+      let normalizedWeekdays: string | undefined = undefined;
       try {
-        normalizedWeekdays = normalizeWeekdays(req.body.weekdays);
+        const normalizedArray = normalizeWeekdays(req.body.weekdays);
+        // ✅ Converter array normalizado de volta para string JSON (formato do banco)
+        normalizedWeekdays = normalizedArray ? JSON.stringify(normalizedArray) : undefined;
       } catch (error: any) {
         return res.status(400).json({ 
           message: "Dias da semana inválidos",
@@ -1004,7 +1006,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Transformar strings vazias em null para campos numéricos
       const cleanedData = {
         ...req.body,
-        weekdays: normalizedWeekdays, // ✅ Usar weekdays normalizado
+        weekdays: normalizedWeekdays, // ✅ String JSON normalizada
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
