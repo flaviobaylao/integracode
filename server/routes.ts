@@ -29,6 +29,8 @@ import {
   dailyRoutes,
   routeCheckpoints,
   leads,
+  deliveryRoutes,
+  deliveryRouteStops,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -8161,6 +8163,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching route stops:", error);
       res.status(500).json({ message: "Failed to fetch route stops", error: error.message });
+    }
+  });
+
+  // Cancelar rota de entrega
+  app.patch("/api/delivery-routes/:routeId/cancel", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      
+      console.log(`🚫 [ROUTE-CANCEL] Cancelando rota ${routeId}`);
+      
+      // Atualizar status da rota para 'cancelled'
+      const updatedRoute = await storage.updateDeliveryRoute(routeId, {
+        status: 'cancelled',
+        updatedAt: new Date()
+      });
+      
+      if (!updatedRoute) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      console.log(`✅ [ROUTE-CANCEL] Rota ${routeId} cancelada com sucesso`);
+      res.json({ message: "Rota cancelada com sucesso", route: updatedRoute });
+    } catch (error: any) {
+      console.error("Error cancelling route:", error);
+      res.status(500).json({ message: "Failed to cancel route", error: error.message });
+    }
+  });
+
+  // Excluir rota de entrega e suas paradas
+  app.delete("/api/delivery-routes/:routeId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      
+      console.log(`🗑️ [ROUTE-DELETE] Excluindo rota ${routeId}`);
+      
+      // Primeiro, excluir todas as paradas da rota
+      await db.delete(deliveryRouteStops).where(eq(deliveryRouteStops.routeId, routeId));
+      
+      // Depois, excluir a rota
+      const deletedRoute = await db.delete(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, routeId))
+        .returning();
+      
+      if (deletedRoute.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      console.log(`✅ [ROUTE-DELETE] Rota ${routeId} excluída com sucesso`);
+      res.json({ message: "Rota excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting route:", error);
+      res.status(500).json({ message: "Failed to delete route", error: error.message });
     }
   });
 
