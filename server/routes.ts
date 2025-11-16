@@ -9571,20 +9571,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const salesCard = await storage.updateSalesCard(id, updateData);
 
-      // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
-      if (req.body.customerLatitude && req.body.customerLongitude) {
-        try {
-          const card = await storage.getSalesCard(id);
-          if (card) {
-            await storage.updateCustomer(card.customerId, {
-              latitude: req.body.customerLatitude,
-              longitude: req.body.customerLongitude
-            });
+      // Atualizar preferências do cliente após a venda (coordenadas, veículo, horários)
+      try {
+        const card = await storage.getSalesCard(id);
+        if (card && saveForReuse) {
+          const customerUpdateData: any = {};
+          
+          // Coordenadas GPS
+          if (req.body.customerLatitude && req.body.customerLongitude) {
+            customerUpdateData.latitude = req.body.customerLatitude;
+            customerUpdateData.longitude = req.body.customerLongitude;
           }
-        } catch (coordError) {
-          console.error('Erro ao atualizar coordenadas do cliente após venda:', coordError);
-          // Não falhar a finalização da venda se a atualização de coordenadas falhar
+          
+          // Configurações de entrega (veículo exclusivo e tipos)
+          if (exclusiveVehicle !== undefined) {
+            customerUpdateData.exclusiveVehicle = exclusiveVehicle;
+          }
+          if (vehicleTypes && vehicleTypes.length > 0) {
+            customerUpdateData.vehicleTypes = vehicleTypes;
+          }
+          
+          // Horários de entrega
+          if (deliveryTimeSlots && deliveryTimeSlots.length > 0) {
+            customerUpdateData.deliveryTimeSlots = deliveryTimeSlots;
+          }
+          if (deliverySaturdayTimeSlots && deliverySaturdayTimeSlots.length > 0) {
+            customerUpdateData.deliverySaturdayTimeSlots = deliverySaturdayTimeSlots;
+          }
+          
+          // Atualizar cliente se houver dados para atualizar
+          if (Object.keys(customerUpdateData).length > 0) {
+            await storage.updateCustomer(card.customerId, customerUpdateData);
+            console.log(`✅ Preferências atualizadas no cliente ${card.customerId}:`, customerUpdateData);
+          }
         }
+      } catch (updateError) {
+        console.error('Erro ao atualizar preferências do cliente após venda:', updateError);
+        // Não falhar a finalização da venda se a atualização falhar
       }
 
       // Get full card data with customer info for Omie
