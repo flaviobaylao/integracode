@@ -117,6 +117,13 @@ export const customers = pgTable("customers", {
   // Tempo médio de entrega em minutos (calculado com base em check-ins/check-outs dos entregadores)
   averageDeliveryTime: integer("average_delivery_time").notNull().default(10),
   
+  // Configurações de entrega (preferências padrão do cliente)
+  exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Se requer veículo exclusivo para entrega
+  vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos permitidos: ["caminhao", "carro", "moto"]
+  deliveryWeekdays: jsonb("delivery_weekdays").$type<string[]>().default([]), // Dias da semana para entrega
+  deliveryTimeSlots: jsonb("delivery_time_slots").$type<string[]>().default([]), // Horários de entrega (seg-sex)
+  deliverySaturdayTimeSlots: jsonb("delivery_saturday_time_slots").$type<string[]>().default([]), // Horários específicos para sábado
+  
   // Status no Omie (ativo/inativo)
   omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
