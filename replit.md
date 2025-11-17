@@ -46,6 +46,7 @@
     - Automated Check-out: Time-based (30 mins after check-in) and action-based (sale or "no sale" registered).
     - Worked Hours Calculation: Real-time calculation from first check-in to last check-out, deducting lunch breaks.
     - Admin Route Management: Administrative users can manually add, delete, and optimize visits on daily routes.
+    - **Visit Deletion Fix** (Nov 2025): Fixed critical bug preventing route visit deletion. System now supports flexible ID matching for both legacy format (simple entity IDs) and new format (prefixed stop IDs with timestamps). Deletion endpoint normalizes ID comparison to handle mixed format scenarios from data migrations.
     - Visit Schedule Management: Route generation queries `customers` table directly. Visit scheduling is calculated on-demand from customer's `weekdays`, `visitPeriodicity`, and last visit from `sales_cards`.
     - **Advanced Route Validation System** (Nov 2025):
         - **Vehicle Exclusivity**: Orders can require specific vehicle types (caminhão, carro, moto).

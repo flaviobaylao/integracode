@@ -11617,11 +11617,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Rota não encontrada' });
       }
       
-      // Remover visita do optimizedOrder (com tratamento para rotas antigas sem optimizedOrder)
+      // Log para debug em produção
+      console.log(`🗑️ [DELETE-VISIT] Tentando excluir visita ${visitId} da rota ${routeId}`);
+      console.log(`📋 [DELETE-VISIT] optimizedOrder atual:`, route.optimizedOrder);
+      
+      // Remover visita do optimizedOrder com suporte a múltiplos formatos de ID
       const currentOrder = (route.optimizedOrder as string[]) || [];
-      const newOrder = currentOrder.filter((id: string) => id !== visitId);
+      
+      // Detectar se visitId é formato novo (com prefixo) ou antigo (sem prefixo)
+      const visitIdHasPrefix = visitId.includes(':');
+      
+      // Filtrar com comparação inteligente
+      const newOrder = currentOrder.filter((id: string) => {
+        // 1. Comparação exata primeiro (match perfeito)
+        if (id === visitId) return false;
+        
+        // 2. Detectar formato do ID no array
+        const arrayIdHasPrefix = id.includes(':');
+        
+        // 3. Se ambos têm prefixo, APENAS comparar exatamente (evita deletar múltiplas visitas ao mesmo cliente)
+        if (visitIdHasPrefix && arrayIdHasPrefix) {
+          // Já verificamos comparação exata acima, então manter
+          return true;
+        }
+        
+        // 4. Se um tem prefixo e outro não (cenário de migração legacy), comparar entityIds
+        if (visitIdHasPrefix !== arrayIdHasPrefix) {
+          // Extrair entityId de ambos
+          const visitEntityId = visitIdHasPrefix 
+            ? visitId.split(':')[1]  // customer:123:timestamp -> 123
+            : visitId;                // 123 -> 123
+          
+          const arrayEntityId = arrayIdHasPrefix 
+            ? id.split(':')[1]        // customer:123:timestamp -> 123
+            : id;                      // 123 -> 123
+          
+          // Comparar entityIds
+          if (arrayEntityId === visitEntityId) return false;
+        }
+        
+        // Manter este ID
+        return true;
+      });
       
       if (currentOrder.length === newOrder.length) {
+        console.error(`❌ [DELETE-VISIT] Visita ${visitId} NÃO encontrada no optimizedOrder:`, currentOrder);
         return res.status(404).json({ message: 'Visita não encontrada na rota' });
       }
       
