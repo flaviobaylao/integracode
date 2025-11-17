@@ -7846,7 +7846,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerAddress: string;
         customerLatitude: string;
         customerLongitude: string;
-        customerWeekdays: any;
+        deliveryWeekdays: any;
+        deliveryTimeSlots: any;
+        deliverySaturdayTimeSlots: any;
+        exclusiveVehicle: boolean;
+        vehicleTypes: any;
         averageDeliveryTime: number;
         isUrgent: boolean;
         saleValue: number;
@@ -7865,7 +7869,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
-          c.weekdays as "customerWeekdays",
+          c.delivery_weekdays as "deliveryWeekdays",
+          c.delivery_time_slots as "deliveryTimeSlots",
+          c.delivery_saturday_time_slots as "deliverySaturdayTimeSlots",
+          c.exclusive_vehicle as "exclusiveVehicle",
+          c.vehicle_types as "vehicleTypes",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           COALESCE(b.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
@@ -7977,7 +7985,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const lat = parseFloat(o.customerLatitude as string);
         const lng = parseFloat(o.customerLongitude as string);
         
-        console.log(`📍 [CONVERSION] ${o.customerName}: rawLat=${o.customerLatitude}, rawLng=${o.customerLongitude}, parsedLat=${lat}, parsedLng=${lng}`);
+        // Parse JSON fields
+        const deliveryWeekdays = typeof o.deliveryWeekdays === 'string' 
+          ? JSON.parse(o.deliveryWeekdays) 
+          : (Array.isArray(o.deliveryWeekdays) ? o.deliveryWeekdays : null);
+        
+        const deliveryTimeSlots = typeof o.deliveryTimeSlots === 'string'
+          ? JSON.parse(o.deliveryTimeSlots)
+          : (Array.isArray(o.deliveryTimeSlots) ? o.deliveryTimeSlots : []);
+        
+        const vehicleTypes = typeof o.vehicleTypes === 'string'
+          ? JSON.parse(o.vehicleTypes)
+          : (Array.isArray(o.vehicleTypes) ? o.vehicleTypes : []);
+        
+        console.log(`📍 [CONVERSION] ${o.customerName}:`, {
+          lat, lng,
+          deliveryWeekdays,
+          deliveryTimeSlots,
+          exclusiveVehicle: o.exclusiveVehicle,
+          vehicleTypes
+        });
         
         return {
           id: o.id,
@@ -7987,8 +8014,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerLatitude: lat,
           customerLongitude: lng,
           averageDeliveryTime: o.averageDeliveryTime || 30,
-          exclusiveVehicle: false,
-          vehicleTypes: [],
+          exclusiveVehicle: o.exclusiveVehicle || false,
+          vehicleTypes: vehicleTypes,
           isUrgent: o.isUrgent || false,
           saleValue: parseFloat((o.saleValue as any) || 0),
           products: o.products,
@@ -7996,8 +8023,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           completedDate: o.scheduledDate || null,
           paymentMethod: o.paymentMethod || null,
           operationType: o.operationType || null,
-          customerWeekdays: Array.isArray(o.customerWeekdays) ? o.customerWeekdays : (o.customerWeekdays ? [o.customerWeekdays] : null), // null = sem restrição de dia
-          deliveryTimeSlots: [], // Billings do Omie não têm restrição de horário
+          customerWeekdays: deliveryWeekdays, // Dias de ENTREGA permitidos
+          deliveryTimeSlots: deliveryTimeSlots, // Horários de ENTREGA permitidos
         };
       });
       
