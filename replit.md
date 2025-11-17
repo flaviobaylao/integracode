@@ -99,6 +99,7 @@
     - **Photo Enforcement**: Leads require mandatory photos for check-in and check-out.
     - **Sales Card Access** (Nov 2025): Fixed bug preventing sellers from accessing lead cards in daily routes. System now properly extracts entityId from prefixed visit IDs ("lead:123:timestamp") to load the correct sales card, enabling sellers to treat visits, add observations, attach photos, and edit lead contact information.
 - **Order Synchronization Fix** (Nov 2025): Corrected critical data source mismatch in delivery management. System now correctly queries billings table with `invoice_stage = 'Aguardando Rota'` (Omie ERP data) instead of sales_cards with `status = 'completed'` (internal data), ensuring delivery management displays the accurate orders from Omie instead of incorrectly showing internal sales cards. Added proper TypeScript interface `PendingDelivery` to ensure type safety and prevent production failures.
+- **Delivery Management SQL Type Fix** (Nov 2025): Resolved critical PostgreSQL error "COALESCE could not convert type json to jsonb" in `getPendingDeliveries()` query. Fixed by casting `billings` table JSON fields to `::json` type (instead of `::jsonb`) while maintaining empty array fallbacks `'[]'::json` to ensure consistent array returns. This prevents null values from propagating to the frontend and breaking the delivery management page. All COALESCE expressions now use consistent JSON types, eliminating type mismatch errors while preserving data integrity through the `parseJsonField()` helper method.
 
 # External Dependencies
 
