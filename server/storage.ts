@@ -184,7 +184,7 @@ export interface IStorage {
   // Delivery operations
   updateSalesCardDeliveryStatus(id: string, data: any): Promise<SalesCard>;
   getSalesCardByTrackingCode(trackingCode: string): Promise<SalesCard | undefined>;
-  getPendingDeliveries(): Promise<SalesCard[]>;
+  getPendingDeliveries(): Promise<any[]>;
   createDeliveryHistory(data: any): Promise<any>;
   getDeliveryHistory(salesCardId: string): Promise<any[]>;
   getDeliveryDrivers(): Promise<any[]>;
@@ -2579,17 +2579,29 @@ export class DatabaseStorage implements IStorage {
     return result.rows[0] as SalesCard;
   }
 
-  async getPendingDeliveries(): Promise<SalesCard[]> {
+  async getPendingDeliveries(): Promise<any[]> {
     const result = await db.execute(sql`
       SELECT 
-        sc.*, 
-        c.name as customer_name, 
-        c.address as customer_address,
-        c.latitude as customer_latitude,
-        c.longitude as customer_longitude,
-        c.weekdays as customer_weekdays,
-        COALESCE(c.average_delivery_time, 10) as average_delivery_time,
-        sc.delivery_time_slots as delivery_time_slots
+        sc.id,
+        sc.customer_id as "customerId",
+        c.name as "customerName",
+        c.address as "customerAddress",
+        c.latitude as "customerLatitude",
+        c.longitude as "customerLongitude",
+        c.weekdays as "customerWeekdays",
+        COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
+        COALESCE(c.exclusive_vehicle, false) as "exclusiveVehicle",
+        COALESCE(c.vehicle_types, '[]') as "vehicleTypes",
+        COALESCE(sc.is_urgent, false) as "isUrgent",
+        COALESCE(sc.sale_value, 0) as "saleValue",
+        sc.products,
+        sc.scheduled_date as "scheduledDate",
+        sc.completed_date as "completedDate",
+        COALESCE(sc.payment_method, '') as "paymentMethod",
+        COALESCE(sc.operation_type, '') as "operationType",
+        COALESCE(c.delivery_weekdays, '[]') as "deliveryWeekdays",
+        COALESCE(c.delivery_time_slots, '[]') as "deliveryTimeSlots",
+        COALESCE(c.delivery_saturday_time_slots, '[]') as "deliverySaturdayTimeSlots"
       FROM sales_cards sc
       JOIN customers c ON sc.customer_id = c.id
       WHERE sc.status = 'completed' 
@@ -2602,7 +2614,29 @@ export class DatabaseStorage implements IStorage {
       )
       ORDER BY sc.scheduled_date ASC
     `);
-    return result.rows as SalesCard[];
+    
+    // Parse JSON fields to arrays
+    return result.rows.map((row: any) => ({
+      ...row,
+      customerWeekdays: this.parseJsonField(row.customerWeekdays, []),
+      vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
+      deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
+      deliveryTimeSlots: this.parseJsonField(row.deliveryTimeSlots, []),
+      deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, [])
+    }));
+  }
+
+  // Helper method to safely parse JSON fields
+  private parseJsonField(field: any, defaultValue: any = null): any {
+    if (field === null || field === undefined) return defaultValue;
+    if (typeof field === 'string') {
+      try {
+        return JSON.parse(field);
+      } catch {
+        return defaultValue;
+      }
+    }
+    return field; // Already parsed or is the correct type
   }
 
   async createDeliveryHistory(data: any): Promise<any> {
