@@ -62,7 +62,7 @@
             - Check-in/out buttons shown only when route is in progress
             - Test credentials: kaique@bebahonest.com.br / test123
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
-- **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation.
+- **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation. Customer details modal displays delivery configuration (delivery days, time slots for weekdays and Saturday, vehicle types, and exclusive vehicle requirement) with color-coded badges for easy identification.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration, 5-tier dynamic pricing system, server-side security, and automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Includes product gallery, customer reviews, stock management, order management page, and technical product details.

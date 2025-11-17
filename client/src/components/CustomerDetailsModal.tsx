@@ -27,7 +27,8 @@ import {
   AlertCircle,
   TrendingUp,
   History,
-  Plus
+  Plus,
+  Truck
 } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 
@@ -433,6 +434,141 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                         <p className="font-medium">{(customer as any).seller?.firstName} {(customer as any).seller?.lastName}</p>
                       </div>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Configurações de Entrega */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Truck className="h-5 w-5 text-blue-600" />
+                    <span>Configurações de Entrega</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Dias de Entrega */}
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Dias de Entrega</p>
+                      {(() => {
+                        // Try both camelCase and snake_case for compatibility
+                        const rawDays = (customer as any).deliveryWeekdays || (customer as any).delivery_weekdays;
+                        if (!rawDays || (Array.isArray(rawDays) && rawDays.length === 0)) {
+                          return <span className="text-sm text-gray-400">Não definido</span>;
+                        }
+                        
+                        try {
+                          const days = Array.isArray(rawDays) ? rawDays : JSON.parse(rawDays);
+                          return days.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {days.map((day: string) => (
+                                <Badge key={day} variant="outline" className="bg-blue-50 text-blue-700">
+                                  {day}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : <span className="text-sm text-gray-400">Não definido</span>;
+                        } catch {
+                          return <span className="text-sm text-gray-400">Não definido</span>;
+                        }
+                      })()}
+                    </div>
+
+                    {/* Configuração de Veículo */}
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Tipo de Entrega</p>
+                      <div className="space-y-2">
+                        {/* Try both camelCase and snake_case for compatibility */}
+                        {((customer as any).exclusiveVehicle || (customer as any).exclusive_vehicle) && (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700">
+                            🔒 Veículo Exclusivo Requerido
+                          </Badge>
+                        )}
+                        {(() => {
+                          const rawVehicles = (customer as any).vehicleTypes || (customer as any).vehicle_types;
+                          if (!rawVehicles || (Array.isArray(rawVehicles) && rawVehicles.length === 0)) {
+                            return <span className="text-sm text-gray-400">Todos os veículos permitidos</span>;
+                          }
+
+                          try {
+                            const vehicles = Array.isArray(rawVehicles) ? rawVehicles : JSON.parse(rawVehicles);
+                            const vehicleLabels: Record<string, string> = {
+                              'caminhão': 'Caminhão',
+                              'caminhao': 'Caminhão',
+                              'carro': 'Carro',
+                              'moto': 'Moto'
+                            };
+
+                            return vehicles.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {vehicles.map((vehicle: string) => (
+                                  <Badge key={vehicle} variant="outline" className="bg-green-50 text-green-700">
+                                    {vehicleLabels[vehicle] || vehicle}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : <span className="text-sm text-gray-400">Todos os veículos permitidos</span>;
+                          } catch {
+                            return <span className="text-sm text-gray-400">Todos os veículos permitidos</span>;
+                          }
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Horários de Entrega - Dias Úteis */}
+                  <div>
+                    <p className="text-sm text-gray-600 mb-2">Horários de Entrega (Dias Úteis)</p>
+                    {(() => {
+                      // Try both camelCase and snake_case for compatibility
+                      const rawSlots = (customer as any).deliveryTimeSlots || (customer as any).delivery_time_slots;
+                      if (!rawSlots || (Array.isArray(rawSlots) && rawSlots.length === 0)) {
+                        return <span className="text-sm text-gray-400">Não definido</span>;
+                      }
+
+                      try {
+                        const slots = Array.isArray(rawSlots) ? rawSlots : JSON.parse(rawSlots);
+                        return slots.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {slots.map((slot: string) => (
+                              <Badge key={slot} variant="outline" className="bg-orange-50 text-orange-700 font-mono">
+                                {slot}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : <span className="text-sm text-gray-400">Não definido</span>;
+                      } catch {
+                        return <span className="text-sm text-gray-400">Não definido</span>;
+                      }
+                    })()}
+                  </div>
+
+                  {/* Horários de Entrega - Sábado */}
+                  <div>
+                    <p className="text-sm text-gray-600 mb-2">Horários de Entrega (Sábado)</p>
+                    {(() => {
+                      // Try both camelCase and snake_case for compatibility
+                      const rawSlots = (customer as any).deliverySaturdayTimeSlots || (customer as any).delivery_saturday_time_slots;
+                      if (!rawSlots || (Array.isArray(rawSlots) && rawSlots.length === 0)) {
+                        return <span className="text-sm text-gray-400">Não definido</span>;
+                      }
+
+                      try {
+                        const slots = Array.isArray(rawSlots) ? rawSlots : JSON.parse(rawSlots);
+                        return slots.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {slots.map((slot: string) => (
+                              <Badge key={slot} variant="outline" className="bg-purple-50 text-purple-700 font-mono">
+                                {slot}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : <span className="text-sm text-gray-400">Não definido</span>;
+                      } catch {
+                        return <span className="text-sm text-gray-400">Não definido</span>;
+                      }
+                    })()}
                   </div>
                 </CardContent>
               </Card>

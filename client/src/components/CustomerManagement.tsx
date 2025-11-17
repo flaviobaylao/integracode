@@ -413,6 +413,7 @@ export default function CustomerManagement() {
                               setSelectedCustomer(customer);
                               setShowDetailsModal(true);
                             }}
+                            data-testid={`button-customer-details-${customer.id}`}
                           >
                             {(customer as any).fantasyName || customer.name}
                           </button>
