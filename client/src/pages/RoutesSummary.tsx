@@ -81,6 +81,17 @@ export default function RoutesSummary() {
       driverId: selectedDriver !== 'all' ? selectedDriver : undefined,
       savedOnly: 'true' // Mostrar apenas rotas que foram salvas na Gestão de Entregas
     }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedDate) params.append('routeDate', selectedDate);
+      if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
+      params.append('savedOnly', 'true');
+      
+      const url = `/api/delivery-routes?${params.toString()}`;
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch routes');
+      return res.json();
+    },
     enabled: !!selectedDate,
   });
 
