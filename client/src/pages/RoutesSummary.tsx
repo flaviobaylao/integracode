@@ -71,6 +71,7 @@ export default function RoutesSummary() {
   // Buscar entregadores
   const { data: drivers = [] } = useQuery<any[]>({
     queryKey: ['/api/delivery-drivers'],
+    staleTime: 5 * 60 * 1000, // Cache por 5 minutos
   });
 
   // Buscar rotas com filtros
