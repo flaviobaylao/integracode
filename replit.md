@@ -46,7 +46,13 @@
         - **API Endpoint**: POST /api/delivery-history for registering completed deliveries with automatic duration calculation.
         - **Hourly Time Slots**: Changed from time ranges to hourly checkboxes (08:00-18:00 weekdays, 08:00-12:00 Saturdays) for granular scheduling.
         - **Persistent Delivery Config**: Delivery preferences (vehicle types, delivery days, time slots) stored in customers table; editable from sales modal, delivery management, and customer edit modal; changes sync across all locations.
-        - **Driver App (Rota Entrega)**: Mobile-friendly app for delivery drivers at `/rota-entrega` with route visualization, GPS check-in/check-out, Waze integration, real-time progress tracking, and mandatory photo capture for all check-ins and check-outs.
+        - **Driver App (Rota Entrega)**: Simplified mobile-friendly app for delivery drivers at `/rota-entrega` with:
+            - Date filter for viewing deliveries
+            - Flat list of all deliveries sorted by stop order
+            - Summary statistics (Total, Pending, Completed)
+            - GPS check-in/check-out with mandatory photo capture
+            - Waze navigation integration
+            - Check-in/out buttons shown only when route is in progress
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.

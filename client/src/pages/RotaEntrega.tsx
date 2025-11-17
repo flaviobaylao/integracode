@@ -62,7 +62,6 @@ export default function RotaEntrega() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ type: 'checkin' | 'checkout', stopId: string, latitude: number, longitude: number } | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<File | null>(null);
@@ -80,6 +79,16 @@ export default function RotaEntrega() {
     },
     refetchInterval: 30000, // Atualiza a cada 30 segundos
   });
+
+  // Agrupar todas as entregas de todas as rotas em uma lista única
+  const allDeliveries = routes.flatMap(route => 
+    (route.stops || []).map(stop => ({
+      ...stop,
+      routeId: route.id,
+      routeStatus: route.status,
+      vehicleType: route.vehicleType
+    }))
+  ).sort((a, b) => a.stopOrder - b.stopOrder);
 
   const startRouteMutation = useMutation({
     mutationFn: async (routeId: string) => {
@@ -256,8 +265,10 @@ export default function RotaEntrega() {
     }
   };
 
-  const completedStops = (route: DeliveryRoute) => 
-    route.stops?.filter(s => s.status === 'completed').length || 0;
+  const totalDeliveries = allDeliveries.length;
+  const completedDeliveries = allDeliveries.filter(d => d.status === 'completed').length;
+  const pendingDeliveries = allDeliveries.filter(d => d.status === 'pending').length;
+  const pendingRoute = routes.find(r => r.status === 'pending');
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
@@ -267,10 +278,11 @@ export default function RotaEntrega() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Truck className="h-6 w-6" />
-              Minhas Rotas de Entrega
+              Minhas Entregas
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Date Filter */}
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-gray-600" />
               <input
@@ -281,6 +293,24 @@ export default function RotaEntrega() {
                 data-testid="input-delivery-date"
               />
             </div>
+
+            {/* Summary Stats */}
+            {!isLoading && totalDeliveries > 0 && (
+              <div className="grid grid-cols-3 gap-3 pt-2">
+                <div className="text-center p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-600">{totalDeliveries}</div>
+                  <div className="text-xs text-gray-600">Total</div>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 dark:bg-yellow-950 rounded-lg">
+                  <div className="text-2xl font-bold text-yellow-600">{pendingDeliveries}</div>
+                  <div className="text-xs text-gray-600">Pendentes</div>
+                </div>
+                <div className="text-center p-3 bg-green-50 dark:bg-green-950 rounded-lg">
+                  <div className="text-2xl font-bold text-green-600">{completedDeliveries}</div>
+                  <div className="text-xs text-gray-600">Concluídas</div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -289,205 +319,147 @@ export default function RotaEntrega() {
           <Card>
             <CardContent className="py-12 text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600 dark:text-gray-400">Carregando rotas...</p>
+              <p className="text-gray-600 dark:text-gray-400">Carregando entregas...</p>
             </CardContent>
           </Card>
         )}
 
         {/* Empty State */}
-        {!isLoading && routes.length === 0 && (
+        {!isLoading && allDeliveries.length === 0 && (
           <Card>
             <CardContent className="py-12 text-center">
               <Package className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Nenhuma rota encontrada</h3>
+              <h3 className="text-lg font-semibold mb-2">Nenhuma entrega encontrada</h3>
               <p className="text-gray-600 dark:text-gray-400">
-                Não há rotas de entrega programadas para esta data
+                Não há entregas programadas para esta data
               </p>
             </CardContent>
           </Card>
         )}
 
-        {/* Routes List */}
-        {routes.map((route) => {
-          const isExpanded = expandedRoute === route.id;
-          const completed = completedStops(route);
-          const total = route.totalDeliveries;
-          const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+        {/* Start Route Button (if route is planned) */}
+        {!isLoading && pendingRoute && (
+          <Button
+            onClick={() => startRouteMutation.mutate(pendingRoute.id)}
+            disabled={startRouteMutation.isPending}
+            className="w-full"
+            size="lg"
+            data-testid="button-start-route"
+          >
+            <PlayCircle className="mr-2 h-5 w-5" />
+            {startRouteMutation.isPending ? 'Iniciando Rota...' : 'Iniciar Rota de Entregas'}
+          </Button>
+        )}
 
-          return (
-            <Card key={route.id} className="overflow-hidden">
-              <CardHeader className="cursor-pointer" onClick={() => setExpandedRoute(isExpanded ? null : route.id)}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="text-3xl">{vehicleIcons[route.vehicleType] || '🚚'}</div>
-                    <div>
-                      <CardTitle className="text-lg">
-                        Rota {formatInTimeZone(new Date(route.routeDate), 'America/Sao_Paulo', 'dd/MM/yyyy')}
-                      </CardTitle>
-                      <p className="text-sm text-gray-600">
-                        {route.timeWindowStart && route.timeWindowEnd 
-                          ? `${route.timeWindowStart} - ${route.timeWindowEnd}`
-                          : 'Horário flexível'}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge className={statusColors[route.status]}>
-                    {statusLabels[route.status]}
-                  </Badge>
-                </div>
-              </CardHeader>
+        {/* Deliveries List */}
+        {!isLoading && allDeliveries.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="font-semibold text-lg px-1">Lista de Entregas</h3>
+            {allDeliveries.map((delivery) => {
+              const isCompleted = delivery.status === 'completed';
+              const isPending = delivery.status === 'pending';
 
-              <CardContent>
-                {/* Progress Bar */}
-                <div className="mb-4">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm font-medium">Progresso</span>
-                    <span className="text-sm text-gray-600">{completed}/{total} entregas</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-green-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </div>
+              return (
+                <Card
+                  key={delivery.id}
+                  className={`${
+                    isCompleted 
+                      ? 'border-green-300 bg-green-50 dark:bg-green-950' 
+                      : delivery.isPriority
+                      ? 'border-red-300 bg-red-50 dark:bg-red-950'
+                      : ''
+                  }`}
+                  data-testid={`delivery-${delivery.id}`}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className={`flex-shrink-0 w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
+                          isCompleted ? 'bg-green-600' : delivery.isPriority ? 'bg-red-600' : 'bg-gray-400'
+                        }`}>
+                          {delivery.stopOrder}
+                        </div>
+                        
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-semibold">{delivery.customerName}</p>
+                            {delivery.isPriority && (
+                              <Badge variant="destructive" className="text-xs">
+                                Urgente
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-2">
+                            <MapPin className="h-4 w-4" />
+                            {delivery.customerAddress}
+                          </p>
+                          {delivery.estimatedArrival && (
+                            <p className="text-xs text-blue-600 flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Previsto: {formatInTimeZone(new Date(delivery.estimatedArrival), 'America/Sao_Paulo', 'HH:mm')}
+                            </p>
+                          )}
+                          {delivery.completedAt && (
+                            <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
+                              <CheckCircle className="h-3 w-3" />
+                              Concluído: {formatInTimeZone(new Date(delivery.completedAt), 'America/Sao_Paulo', 'HH:mm')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
 
-                {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="flex items-center gap-2">
-                    <Navigation className="h-4 w-4 text-blue-600" />
-                    <span className="text-sm">{parseFloat(route.totalDistance).toFixed(1)} km</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Package className="h-4 w-4 text-purple-600" />
-                    <span className="text-sm">{total} entregas</span>
-                  </div>
-                </div>
-
-                {/* Start Route Button */}
-                {route.status === 'planned' && (
-                  <Button
-                    onClick={() => startRouteMutation.mutate(route.id)}
-                    disabled={startRouteMutation.isPending}
-                    className="w-full mb-4"
-                    data-testid={`button-start-route-${route.id}`}
-                  >
-                    <PlayCircle className="mr-2 h-4 w-4" />
-                    {startRouteMutation.isPending ? 'Iniciando...' : 'Iniciar Rota'}
-                  </Button>
-                )}
-
-                {/* Stops List */}
-                {isExpanded && route.stops && (
-                  <div className="space-y-2 mt-4 border-t pt-4">
-                    <h4 className="font-semibold mb-3">Paradas ({route.stops.length})</h4>
-                    {route.stops.map((stop, index) => {
-                      const isCompleted = stop.status === 'completed';
-                      const isPending = stop.status === 'pending';
-
-                      return (
-                        <div
-                          key={stop.id}
-                          className={`p-3 border rounded-lg ${
-                            isCompleted 
-                              ? 'border-green-200 bg-green-50 dark:bg-green-950' 
-                              : stop.isPriority
-                              ? 'border-red-300 bg-red-50 dark:bg-red-950'
-                              : 'border-gray-200 dark:border-gray-700'
-                          }`}
-                          data-testid={`stop-${stop.id}`}
+                      {/* Action Buttons */}
+                      <div className="flex flex-col gap-2">
+                        {/* Waze Button */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-blue-600"
+                          onClick={() => {
+                            window.open(
+                              `https://waze.com/ul?ll=${delivery.customerLatitude},${delivery.customerLongitude}&navigate=yes`,
+                              '_blank'
+                            );
+                          }}
+                          data-testid={`button-waze-${delivery.id}`}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-start gap-3 flex-1">
-                              <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
-                                isCompleted ? 'bg-green-600' : stop.isPriority ? 'bg-red-600' : 'bg-gray-400'
-                              }`}>
-                                {stop.stopOrder}
-                              </div>
-                              
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <p className="font-semibold">{stop.customerName}</p>
-                                  {stop.isPriority && (
-                                    <Badge variant="destructive" className="text-xs">
-                                      Urgente
-                                    </Badge>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-2">
-                                  <MapPin className="h-3 w-3" />
-                                  {stop.customerAddress}
-                                </p>
-                                {stop.estimatedArrival && (
-                                  <p className="text-xs text-blue-600 flex items-center gap-1">
-                                    <Clock className="h-3 w-3" />
-                                    Previsto: {formatInTimeZone(new Date(stop.estimatedArrival), 'America/Sao_Paulo', 'HH:mm')}
-                                  </p>
-                                )}
-                                {stop.completedAt && (
-                                  <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
-                                    <CheckCircle className="h-3 w-3" />
-                                    Concluído: {formatInTimeZone(new Date(stop.completedAt), 'America/Sao_Paulo', 'HH:mm')}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
+                          <Navigation className="h-4 w-4" />
+                        </Button>
 
-                            {/* Action Buttons */}
-                            <div className="flex flex-col gap-2">
-                              {/* Waze Button */}
+                        {/* Check-in/Check-out Buttons */}
+                        {delivery.routeStatus === 'in_progress' && (
+                          <>
+                            {isPending && (
                               <Button
                                 size="sm"
-                                variant="outline"
-                                className="text-blue-600"
-                                onClick={() => {
-                                  window.open(
-                                    `https://waze.com/ul?ll=${stop.customerLatitude},${stop.customerLongitude}&navigate=yes`,
-                                    '_blank'
-                                  );
-                                }}
-                                data-testid={`button-waze-${stop.id}`}
+                                variant="default"
+                                onClick={() => handleCheckIn(delivery.id)}
+                                data-testid={`button-checkin-${delivery.id}`}
                               >
-                                <Navigation className="h-4 w-4" />
+                                Check-in
                               </Button>
-
-                              {/* Check-in/Check-out Buttons */}
-                              {route.status === 'in_progress' && (
-                                <>
-                                  {isPending && (
-                                    <Button
-                                      size="sm"
-                                      variant="default"
-                                      onClick={() => handleCheckIn(stop.id)}
-                                      data-testid={`button-checkin-${stop.id}`}
-                                    >
-                                      Check-in
-                                    </Button>
-                                  )}
-                                  {!isPending && !isCompleted && (
-                                    <Button
-                                      size="sm"
-                                      variant="default"
-                                      className="bg-green-600 hover:bg-green-700"
-                                      onClick={() => handleCheckOut(stop.id)}
-                                      data-testid={`button-checkout-${stop.id}`}
-                                    >
-                                      Check-out
-                                    </Button>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
+                            )}
+                            {!isPending && !isCompleted && (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={() => handleCheckOut(delivery.id)}
+                                data-testid={`button-checkout-${delivery.id}`}
+                              >
+                                Check-out
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Photo Capture Modal */}
