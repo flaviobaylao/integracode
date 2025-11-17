@@ -7789,6 +7789,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Buscar sales_cards com status 'completed' ou 'invoiced' que ainda não têm rota
       const deliveryOrders = await storage.getPendingDeliveries();
+      
+      // Log detalhado para debug de configurações de entrega
+      if (deliveryOrders.length > 0) {
+        const sample = deliveryOrders[0];
+        console.log('📦 [GET /api/deliveries] Sample delivery order:', {
+          customerId: sample.customerId,
+          customerName: sample.customerName,
+          deliveryWeekdays: sample.deliveryWeekdays,
+          deliveryTimeSlots: sample.deliveryTimeSlots,
+          deliverySaturdayTimeSlots: sample.deliverySaturdayTimeSlots,
+          exclusiveVehicle: sample.exclusiveVehicle,
+          vehicleTypes: sample.vehicleTypes
+        });
+      }
+      
       res.json(deliveryOrders);
     } catch (error: any) {
       console.error("Error fetching pending delivery orders:", error);
