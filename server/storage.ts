@@ -2580,39 +2580,61 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingDeliveries(): Promise<any[]> {
+    // CORRIGIDO: Buscar de billings com invoice_stage = 'Aguardando Rota' (dados do Omie)
+    // Prioriza dados do sales_card mais recente quando existir
     const result = await db.execute(sql`
-      SELECT 
-        sc.id,
-        sc.customer_id as "customerId",
-        COALESCE(c.fantasy_name, c.name) as "customerName",
-        c.address as "customerAddress",
+      SELECT DISTINCT ON (b.id)
+        b.id,
+        b.invoice_number as "invoiceNumber",
+        b.omie_order_id as "omieOrderId",
+        b.order_number as "orderNumber",
+        COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
+        COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+        COALESCE(c.address, '') as "customerAddress",
         c.latitude as "customerLatitude",
         c.longitude as "customerLongitude",
         c.weekdays as "customerWeekdays",
-        COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
-        COALESCE(c.exclusive_vehicle, false) as "exclusiveVehicle",
-        COALESCE(c.vehicle_types, '[]') as "vehicleTypes",
-        COALESCE(sc.is_urgent, false) as "isUrgent",
-        COALESCE(sc.sale_value, 0) as "saleValue",
-        sc.products,
-        sc.scheduled_date as "scheduledDate",
-        sc.completed_date as "completedDate",
-        COALESCE(sc.payment_method, '') as "paymentMethod",
-        COALESCE(sc.operation_type, '') as "operationType",
-        COALESCE(c.delivery_weekdays, '[]') as "deliveryWeekdays",
-        COALESCE(c.delivery_time_slots, '[]') as "deliveryTimeSlots",
-        COALESCE(c.delivery_saturday_time_slots, '[]') as "deliverySaturdayTimeSlots"
-      FROM sales_cards sc
-      JOIN customers c ON sc.customer_id = c.id
-      WHERE sc.status = 'completed' 
-      AND sc.delivery_status IN ('pending', 'in_transit')
-      AND sc.id NOT IN (
-        SELECT DISTINCT drs.sales_card_id 
-        FROM delivery_route_stops drs
-        JOIN delivery_routes dr ON drs.route_id = dr.id
-        WHERE dr.status != 'cancelled'
+        COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
+        COALESCE(sc.exclusive_vehicle, c.exclusive_vehicle, b.exclusive_vehicle, false) as "exclusiveVehicle",
+        COALESCE(sc.vehicle_types, c.vehicle_types, to_jsonb(b.vehicle_types), '[]'::jsonb) as "vehicleTypes",
+        COALESCE(sc.is_urgent, b.is_urgent, false) as "isUrgent",
+        COALESCE(sc.sale_value, b.total_value) as "saleValue",
+        COALESCE(sc.products, b.products) as "products",
+        COALESCE(sc.scheduled_date, b.invoice_date) as "scheduledDate",
+        COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
+        COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
+        COALESCE(sc.operation_type, b.billing_type, '') as "operationType",
+        COALESCE(sc.delivery_weekdays, c.delivery_weekdays, to_jsonb(b.delivery_weekdays), '[]'::jsonb) as "deliveryWeekdays",
+        COALESCE(sc.delivery_time_slots, c.delivery_time_slots, to_jsonb(b.delivery_time_slots), '[]'::jsonb) as "deliveryTimeSlots",
+        COALESCE(sc.delivery_saturday_time_slots, c.delivery_saturday_time_slots, to_jsonb(b.delivery_saturday_time_slots), '[]'::jsonb) as "deliverySaturdayTimeSlots"
+      FROM billings b
+      LEFT JOIN customers c ON (
+        c.id = CONCAT('omie-client-', b.omie_customer_code)
+        OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
       )
-      ORDER BY sc.scheduled_date ASC
+      LEFT JOIN sales_cards sc ON (
+        (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
+        OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
+            AND sc.omie_order_id = b.omie_order_id::text)
+      )
+      WHERE b.invoice_stage = 'Aguardando Rota'
+        AND b.invoice_number IS NOT NULL
+        AND b.invoice_date IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM delivery_route_stops drs
+          JOIN sales_cards sc2 ON sc2.id = drs.sales_card_id
+          WHERE (
+            (sc2.invoice_number IS NOT NULL AND sc2.invoice_number = b.invoice_number)
+            OR (sc2.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
+                AND sc2.omie_order_id = b.omie_order_id::text)
+          )
+        )
+      ORDER BY 
+        b.id,
+        CASE WHEN sc.id IS NOT NULL THEN 0 ELSE 1 END,
+        sc.updated_at DESC NULLS LAST,
+        CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END
     `);
     
     // Parse JSON fields to arrays
