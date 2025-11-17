@@ -584,12 +584,6 @@ async function optimizeVehicleRoutes(
       console.log(`⚪ [REGULAR] Otimizados ${regularOrders.length} pedidos regulares após urgentes`);
     }
     
-    // Reconstruir optimized com todos os pontos na ordem correta
-    const optimized = {
-      orderedPoints: allOptimizedPoints,
-      segments: [] as any[] // Será recalculado abaixo
-    };
-
     // Calcular ETAs
     const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
     const startTime = new Date(routeDate);
@@ -598,13 +592,13 @@ async function optimizeVehicleRoutes(
 
     let currentTime = new Date(startTime);
     let totalDuration = 0;
+    let totalDistance = 0;
 
     const stops: RouteStop[] = [];
 
-    for (let i = 0; i < optimized.orderedPoints.length; i++) {
-      const point = optimized.orderedPoints[i];
+    for (let i = 0; i < allOptimizedPoints.length; i++) {
+      const point = allOptimizedPoints[i];
       const order = orders.find((o: DeliveryOrder) => o.id === point.id)!;
-      const segment = optimized.segments[i];
 
       console.log(`🔧 [OPTIMIZE] Processing stop for ${order.customerName}:`);
       console.log(`   - order.customerLatitude: ${order.customerLatitude} (type: ${typeof order.customerLatitude})`);
@@ -612,8 +606,29 @@ async function optimizeVehicleRoutes(
       console.log(`   - Number(lat): ${Number(order.customerLatitude)}`);
       console.log(`   - Number(lng): ${Number(order.customerLongitude)}`);
 
+      // Calcular distância do ponto anterior (ou depósito se for o primeiro)
+      let distanceFromPrevious: number;
+      if (i === 0) {
+        // Distância do depósito até primeira parada
+        distanceFromPrevious = calculateDistance(
+          vehicle.startLatitude,
+          vehicle.startLongitude,
+          point.latitude,
+          point.longitude
+        );
+      } else {
+        // Distância da parada anterior até esta
+        const prevPoint = allOptimizedPoints[i - 1];
+        distanceFromPrevious = calculateDistance(
+          prevPoint.latitude,
+          prevPoint.longitude,
+          point.latitude,
+          point.longitude
+        );
+      }
+
       // Tempo de viagem até esta parada (assumir 40 km/h médio)
-      const travelTimeMinutes = (segment.distance / 40) * 60;
+      const travelTimeMinutes = (distanceFromPrevious / 40) * 60;
       const arrivalTime = addMinutes(currentTime, travelTimeMinutes);
       
       // Tempo de serviço (entrega)
@@ -631,11 +646,12 @@ async function optimizeVehicleRoutes(
         estimatedDeparture: departureTime,
         estimatedServiceTime: serviceTime,
         stopOrder: i + 1,
-        distanceFromPrevious: segment.distance
+        distanceFromPrevious: distanceFromPrevious
       });
 
       currentTime = departureTime;
       totalDuration += travelTimeMinutes + serviceTime;
+      totalDistance += distanceFromPrevious;
     }
 
     routes.push({
@@ -646,7 +662,7 @@ async function optimizeVehicleRoutes(
       startLongitude: vehicle.startLongitude,
       startAddress: vehicle.startAddress,
       stops,
-      totalDistance: optimized.totalDistance,
+      totalDistance,
       totalDuration,
       routeDate
     });
