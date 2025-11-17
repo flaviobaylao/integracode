@@ -133,19 +133,34 @@ function getWeekdayName(date: Date): string {
 
 /**
  * Valida se o cliente pode receber entrega no dia da semana especificado
- * @param customerWeekdays - Array JSON com os dias da semana permitidos para o cliente
+ * @param customerWeekdays - Array ou string JSON com os dias da semana permitidos para o cliente (null = sem restrição)
  * @param routeDate - Data da rota de entrega
  * @returns true se o dia é permitido, false caso contrário
  */
-function isValidDeliveryWeekday(customerWeekdays: string, routeDate: Date): boolean {
+function isValidDeliveryWeekday(customerWeekdays: string | string[] | null | undefined, routeDate: Date): boolean {
   try {
-    const allowedDays = JSON.parse(customerWeekdays) as string[];
+    // Se for null/undefined, permitir qualquer dia (sem restrição)
+    if (!customerWeekdays || (Array.isArray(customerWeekdays) && customerWeekdays.length === 0)) {
+      return true;
+    }
+    
+    // Se já for array, usar direto; se for string, fazer parse
+    const allowedDays = Array.isArray(customerWeekdays) 
+      ? customerWeekdays 
+      : JSON.parse(customerWeekdays) as string[];
+    
     const routeWeekday = getWeekdayName(routeDate);
     
-    return allowedDays.some(day => day.toLowerCase() === routeWeekday.toLowerCase());
+    // Normalizar ambos os lados para comparação (remover acentos e lowercas)
+    const normalizedRouteDay = routeWeekday.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    
+    return allowedDays.some(day => {
+      const normalizedDay = day.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      return normalizedDay === normalizedRouteDay || normalizedDay.startsWith(normalizedRouteDay.substring(0, 3));
+    });
   } catch (error) {
-    console.error('Erro ao validar dia da semana:', error);
-    return false;
+    console.error('Erro ao validar dia da semana:', error, 'customerWeekdays:', customerWeekdays);
+    return true; // Em caso de erro, permitir para não bloquear desnecessariamente
   }
 }
 
