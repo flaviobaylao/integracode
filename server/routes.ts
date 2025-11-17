@@ -7846,6 +7846,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerAddress: string;
         customerLatitude: string;
         customerLongitude: string;
+        customerWeekdays: any;
         averageDeliveryTime: number;
         isUrgent: boolean;
         saleValue: number;
@@ -7864,6 +7865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
+          c.weekdays as "customerWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           COALESCE(b.is_urgent, false) as "isUrgent",
           b.total_value as "saleValue",
@@ -7994,7 +7996,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           completedDate: o.scheduledDate || null,
           paymentMethod: o.paymentMethod || null,
           operationType: o.operationType || null,
-          customerWeekdays: o.customerWeekdays || [], // Validar dia da semana permitido
+          customerWeekdays: Array.isArray(o.customerWeekdays) ? o.customerWeekdays : (o.customerWeekdays ? [o.customerWeekdays] : null), // null = sem restrição de dia
           deliveryTimeSlots: [], // Billings do Omie não têm restrição de horário
         };
       });
