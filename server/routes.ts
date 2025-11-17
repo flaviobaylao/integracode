@@ -8046,17 +8046,161 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Salvar rotas planejadas
+  app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routes } = req.body;
+
+      if (!routes || !Array.isArray(routes) || routes.length === 0) {
+        return res.status(400).json({ message: "Routes are required" });
+      }
+
+      console.log(`💾 [SAVE-ROUTES] Salvando ${routes.length} rotas planejadas`);
+
+      // Validar todos os driverIds ANTES do loop
+      for (const routePlan of routes) {
+        if (!routePlan.route?.driverId || routePlan.route.driverId.trim() === '') {
+          console.error('❌ [SAVE-ROUTES] driverId é obrigatório para todas as rotas');
+          return res.status(400).json({ message: "Driver ID is required for all routes" });
+        }
+        
+        // Validar campos numéricos obrigatórios
+        const route = routePlan.route;
+        if (isNaN(parseFloat(route.startLatitude)) || isNaN(parseFloat(route.startLongitude))) {
+          return res.status(400).json({ message: "Invalid coordinates for route start location" });
+        }
+        if (isNaN(parseFloat(route.totalDistance)) || parseFloat(route.totalDistance) < 0) {
+          return res.status(400).json({ message: "Invalid total distance" });
+        }
+        if (isNaN(parseInt(route.totalDuration)) || parseInt(route.totalDuration) < 0) {
+          return res.status(400).json({ message: "Invalid total duration" });
+        }
+        
+        // Validar paradas
+        if (!Array.isArray(routePlan.stops) || routePlan.stops.length === 0) {
+          return res.status(400).json({ message: "Routes must have at least one stop" });
+        }
+        
+        for (const stop of routePlan.stops) {
+          if (isNaN(parseFloat(stop.latitude)) || isNaN(parseFloat(stop.longitude))) {
+            return res.status(400).json({ message: `Invalid coordinates for stop: ${stop.customerName}` });
+          }
+          if (!stop.billingId) {
+            console.warn(`⚠️ [SAVE-ROUTES] Stop ${stop.customerName} missing billingId`);
+          }
+        }
+      }
+
+      const savedRoutes = [];
+      const allBillingIds: string[] = [];
+
+      for (const routePlan of routes) {
+        const { route, stops } = routePlan;
+
+        // Gerar nome da rota: ROTA-DATA-ENTREGADOR-NUMERO
+        const routeDate = new Date(route.routeDate);
+        const dateStr = routeDate.toISOString().split('T')[0]; // YYYY-MM-DD
+        const driverName = route.driverName.toUpperCase().replace(/\s+/g, '-');
+        
+        // Contar quantas rotas o motorista já tem nesta data
+        const existingCount = await storage.countRoutesForDriverOnDate(route.driverId, routeDate);
+        const routeNumber = existingCount + 1;
+        
+        const routeName = `ROTA-${dateStr}-${driverName}-${routeNumber}`;
+        
+        console.log(`📝 [SAVE-ROUTES] Gerando rota: ${routeName}`);
+
+        // Preparar dados da rota (converter números corretamente)
+        const routeData = {
+          routeName,
+          routeDate: routeDate,
+          driverId: route.driverId,
+          driverName: route.driverName,
+          vehicleType: route.vehicleType,
+          startLatitude: parseFloat(route.startLatitude) || 0,
+          startLongitude: parseFloat(route.startLongitude) || 0,
+          totalDistance: parseFloat(route.totalDistance) || 0,
+          totalDeliveries: stops.length,
+          totalDuration: parseInt(route.totalDuration) || 0,
+          timeWindowStart: route.timeWindowStart || '08:00',
+          timeWindowEnd: route.timeWindowEnd || '18:00',
+          status: 'planejada'
+        };
+
+        // Preparar dados das paradas (converter números corretamente)
+        const stopsData = stops.map((stop: any, index: number) => ({
+          salesCardId: stop.salesCardId,
+          billingId: stop.billingId || null,
+          customerId: stop.customerId,
+          customerName: stop.customerName,
+          customerAddress: stop.customerAddress,
+          customerLatitude: parseFloat(stop.latitude) || 0,
+          customerLongitude: parseFloat(stop.longitude) || 0,
+          stopOrder: index + 1,
+          estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
+          estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
+          estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
+          distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
+          isPriority: stop.isUrgent || false,
+          status: 'pending'
+        }));
+
+        // Salvar rota e paradas (usa transação internamente)
+        const { route: savedRoute, stops: savedStops } = await storage.saveRouteWithStops(routeData, stopsData);
+        
+        savedRoutes.push({
+          ...savedRoute,
+          stops: savedStops
+        });
+
+        // Coletar billingIds para atualizar status
+        const billingIds = stops
+          .map((stop: any) => stop.billingId)
+          .filter((id: any) => id);
+        
+        allBillingIds.push(...billingIds);
+
+        console.log(`✅ [SAVE-ROUTES] Rota ${routeName} salva com ${savedStops.length} paradas`);
+      }
+
+      // Atualizar status dos billings para "Em Rota"
+      if (allBillingIds.length > 0) {
+        await storage.updateBillingsStatus(allBillingIds, 'Em Rota');
+        console.log(`📦 [SAVE-ROUTES] ${allBillingIds.length} billings atualizados para "Em Rota"`);
+      }
+
+      res.json({
+        success: true,
+        message: `${savedRoutes.length} rotas salvas com sucesso`,
+        routes: savedRoutes
+      });
+    } catch (error: any) {
+      console.error("Error saving delivery routes:", error);
+      res.status(500).json({ message: "Failed to save delivery routes", error: error.message });
+    }
+  });
+
   // Buscar rotas de entrega
   app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const { status, routeDate } = req.query;
+      const { status, routeDate, driverId } = req.query;
       
       const filters: any = {};
       if (status) filters.status = status;
       if (routeDate) filters.routeDate = new Date(routeDate);
+      if (driverId) filters.driverId = driverId;
       
       const routes = await storage.getDeliveryRoutes(filters);
-      res.json(routes);
+      
+      // Para cada rota, buscar as paradas
+      const routesWithStops = await Promise.all(
+        routes.map(async (route) => {
+          const stops = await storage.getDeliveryRouteStops(route.id);
+          return { ...route, stops };
+        })
+      );
+      
+      res.json(routesWithStops);
     } catch (error: any) {
       console.error("Error fetching delivery routes:", error);
       res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });

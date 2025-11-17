@@ -201,7 +201,7 @@ export interface IStorage {
   getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
-  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]>;
+  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string }): Promise<any[]>;
   getDeliveryRoute(id: string): Promise<any | undefined>;
   createDeliveryRoute(route: any): Promise<any>;
   updateDeliveryRoute(id: string, route: any): Promise<any>;
@@ -209,6 +209,9 @@ export interface IStorage {
   createDeliveryRouteStop(stop: any): Promise<any>;
   getDeliveryRouteStops(routeId: string): Promise<any[]>;
   updateDeliveryRouteStop(id: string, stop: any): Promise<any>;
+  countRoutesForDriverOnDate(driverId: string, date: Date): Promise<number>;
+  saveRouteWithStops(route: any, stops: any[]): Promise<{ route: any; stops: any[] }>;
+  updateBillingsStatus(billingIds: string[], newStage: string): Promise<void>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -4335,20 +4338,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Delivery routes operations
-  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date }): Promise<any[]> {
+  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string }): Promise<any[]> {
     let query = db.select().from(deliveryRoutes);
     
     const conditions: any[] = [];
     if (filters?.status) {
       conditions.push(eq(deliveryRoutes.status, filters.status));
     }
+    if (filters?.driverId) {
+      conditions.push(eq(deliveryRoutes.driverId, filters.driverId));
+    }
     if (filters?.routeDate) {
-      const startOfDay = new Date(filters.routeDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(filters.routeDate);
-      endOfDay.setHours(23, 59, 59, 999);
-      conditions.push(gte(deliveryRoutes.routeDate, startOfDay));
-      conditions.push(lte(deliveryRoutes.routeDate, endOfDay));
+      conditions.push(eq(deliveryRoutes.routeDate, sql`${filters.routeDate}::date`));
     }
     
     if (conditions.length > 0) {
@@ -4401,6 +4402,48 @@ export class DatabaseStorage implements IStorage {
       .where(eq(deliveryRouteStops.id, id))
       .returning();
     return updated;
+  }
+
+  async countRoutesForDriverOnDate(driverId: string, date: Date): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(deliveryRoutes)
+      .where(
+        and(
+          eq(deliveryRoutes.driverId, driverId),
+          eq(deliveryRoutes.routeDate, sql`${date}::date`)
+        )
+      );
+    return result[0]?.count || 0;
+  }
+
+  async saveRouteWithStops(route: any, stops: any[]): Promise<{ route: any; stops: any[] }> {
+    // Usar transação para garantir atomicidade
+    return await db.transaction(async (tx) => {
+      // Salvar a rota
+      const [savedRoute] = await tx.insert(deliveryRoutes).values(route).returning();
+      
+      // Salvar as paradas com routeId
+      const stopsWithRouteId = stops.map(stop => ({
+        ...stop,
+        routeId: savedRoute.id
+      }));
+      
+      const savedStops = await tx.insert(deliveryRouteStops).values(stopsWithRouteId).returning();
+      
+      return { route: savedRoute, stops: savedStops };
+    });
+  }
+
+  async updateBillingsStatus(billingIds: string[], newStage: string): Promise<void> {
+    if (billingIds.length === 0) return;
+    
+    await db
+      .update(billings)
+      .set({ invoiceStage: newStage, updatedAt: new Date() })
+      .where(inArray(billings.id, billingIds));
+    
+    console.log(`✅ Atualizados ${billingIds.length} billings para status: ${newStage}`);
   }
 
   // Overdue debts operations

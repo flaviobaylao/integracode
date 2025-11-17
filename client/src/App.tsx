@@ -16,6 +16,7 @@ import Billings from "@/pages/Billings";
 import BlockedOrdersPage from "@/pages/BlockedOrders";
 import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
+import RoutesSummary from "@/pages/RoutesSummary";
 import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
@@ -146,7 +147,7 @@ function Router() {
           <Route path="/overdue-debts" component={OverdueDebtsPage} />
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
           <Route path="/delivery-management" component={DeliveryManagement} />
-          <Route path="/delivery-routes" component={DeliveryRoutesList} />
+          <Route path="/delivery-routes" component={RoutesSummary} />
           <Route path="/rota-entrega" component={RotaEntrega} />
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />

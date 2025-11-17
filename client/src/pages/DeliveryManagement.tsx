@@ -210,6 +210,30 @@ export default function DeliveryManagement() {
       });
     },
   });
+
+  const saveRoutesMutation = useMutation({
+    mutationFn: async (data: { routes: any[] }) => {
+      return await apiRequest('POST', '/api/delivery-routes/save', data);
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+      setShowResults(false);
+      setSelectedOrders(new Set());
+      setSelectAll(false);
+      setRoutePlan(null);
+      toast({
+        title: "Rotas salvas com sucesso!",
+        description: `${data.routes.length} rotas foram salvas e os pedidos estão agora "Em Rota"`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao salvar rotas",
+        description: error.message || "Erro ao salvar as rotas planejadas",
+        variant: "destructive",
+      });
+    },
+  });
   
   // Mutation para atualizar configurações de entrega do cliente
   const updateDeliveryConfigMutation = useMutation({
@@ -1023,14 +1047,49 @@ export default function DeliveryManagement() {
                 </div>
               )}
 
-              <div className="flex justify-end">
-                <Button onClick={() => {
-                  setShowResults(false);
-                  setSelectedOrders(new Set());
-                  setSelectAll(false);
-                  queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
-                }} data-testid="button-close-results">
+              <div className="flex justify-end space-x-2">
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    setShowResults(false);
+                    setSelectedOrders(new Set());
+                    setSelectAll(false);
+                    queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                  }} 
+                  data-testid="button-close-results"
+                >
                   Fechar
+                </Button>
+                <Button 
+                  onClick={() => {
+                    // Preparar dados para salvar
+                    const routesToSave = routePlan.routes.map((route: VehicleRoute) => ({
+                      route: {
+                        routeDate: pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0],
+                        driverId: route.driverId || '',
+                        driverName: route.driverName || 'Sem motorista',
+                        vehicleType: route.vehicleType,
+                        startLatitude: route.startLatitude,
+                        startLongitude: route.startLongitude,
+                        totalDistance: route.totalDistance,
+                        totalDuration: route.totalDuration,
+                        timeWindowStart: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowStart || '08:00',
+                        timeWindowEnd: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowEnd || '18:00',
+                      },
+                      stops: route.stops.map((stop: any) => ({
+                        ...stop,
+                        billingId: stop.salesCardId, // salesCardId é na verdade o billingId
+                        latitude: stop.latitude || stop.customerLatitude,
+                        longitude: stop.longitude || stop.customerLongitude,
+                      }))
+                    }));
+                    
+                    saveRoutesMutation.mutate({ routes: routesToSave });
+                  }}
+                  disabled={saveRoutesMutation.isPending}
+                  data-testid="button-save-routes"
+                >
+                  {saveRoutesMutation.isPending ? 'Salvando...' : 'Salvar Rotas'}
                 </Button>
               </div>
             </div>
