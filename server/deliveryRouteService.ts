@@ -519,6 +519,7 @@ function assignOrdersToVehicles(
  * FASE 3: Otimização por Veículo
  * Aplica Nearest Neighbor + 2-opt para cada veículo
  * Calcula ETAs baseado em tempo de serviço e distância
+ * PRIORIZA pedidos urgentes no início da rota
  */
 async function optimizeVehicleRoutes(
   assignments: Map<number, DeliveryOrder[]>,
@@ -532,21 +533,62 @@ async function optimizeVehicleRoutes(
 
     const vehicle = vehicles[vehicleIdx];
     
-    // Converter pedidos para pontos de rota
-    const routePoints = orders.map((order: DeliveryOrder) => ({
+    // Separar pedidos urgentes de regulares
+    const urgentOrders = orders.filter(o => o.isUrgent);
+    const regularOrders = orders.filter(o => !o.isUrgent);
+    
+    console.log(`📋 [OPTIMIZATION] Veículo ${vehicleIdx}: ${urgentOrders.length} urgentes, ${regularOrders.length} regulares`);
+    
+    // Converter para pontos de rota
+    const toRoutePoints = (orderList: DeliveryOrder[]) => orderList.map((order: DeliveryOrder) => ({
       id: order.id,
       latitude: order.customerLatitude,
       longitude: order.customerLongitude,
       customerName: order.customerName,
       customerAddress: order.customerAddress
     }));
-
-    // Otimizar ordem das paradas usando algoritmo existente
-    const optimized = await optimizeRoute(
-      vehicle.startLatitude,
-      vehicle.startLongitude,
-      routePoints
-    );
+    
+    let allOptimizedPoints: any[] = [];
+    
+    // Se houver urgentes, otimizar eles primeiro
+    if (urgentOrders.length > 0) {
+      const urgentPoints = toRoutePoints(urgentOrders);
+      const urgentOptimized = await optimizeRoute(
+        vehicle.startLatitude,
+        vehicle.startLongitude,
+        urgentPoints
+      );
+      allOptimizedPoints = urgentOptimized.orderedPoints;
+      console.log(`🔴 [URGENT] Otimizados ${urgentOrders.length} pedidos urgentes`);
+    }
+    
+    // Se houver regulares, otimizar eles depois dos urgentes
+    if (regularOrders.length > 0) {
+      const regularPoints = toRoutePoints(regularOrders);
+      
+      // Ponto de partida: último urgente ou depósito
+      const startLat = allOptimizedPoints.length > 0 
+        ? allOptimizedPoints[allOptimizedPoints.length - 1].latitude 
+        : vehicle.startLatitude;
+      const startLon = allOptimizedPoints.length > 0 
+        ? allOptimizedPoints[allOptimizedPoints.length - 1].longitude 
+        : vehicle.startLongitude;
+      
+      const regularOptimized = await optimizeRoute(
+        startLat,
+        startLon,
+        regularPoints
+      );
+      
+      allOptimizedPoints = [...allOptimizedPoints, ...regularOptimized.orderedPoints];
+      console.log(`⚪ [REGULAR] Otimizados ${regularOrders.length} pedidos regulares após urgentes`);
+    }
+    
+    // Reconstruir optimized com todos os pontos na ordem correta
+    const optimized = {
+      orderedPoints: allOptimizedPoints,
+      segments: [] as any[] // Será recalculado abaixo
+    };
 
     // Calcular ETAs
     const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
