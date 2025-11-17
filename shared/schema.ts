@@ -17,6 +17,74 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// ============================================================================
+// WEEKDAY CANONICAL TYPE & NORMALIZATION
+// ============================================================================
+
+export const WEEKDAY_CODES = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'] as const;
+export type WeekdayCode = typeof WEEKDAY_CODES[number];
+
+export const WeekdayArraySchema = z.array(z.enum(['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom']));
+
+const WEEKDAY_MAP: Record<string, WeekdayCode> = {
+  'seg': 'Seg', 'segunda': 'Seg', 'segunda-feira': 'Seg',
+  'ter': 'Ter', 'terca': 'Ter', 'terça': 'Ter', 'terca-feira': 'Ter', 'terça-feira': 'Ter',
+  'qua': 'Qua', 'quarta': 'Qua', 'quarta-feira': 'Qua',
+  'qui': 'Qui', 'quinta': 'Qui', 'quinta-feira': 'Qui',
+  'sex': 'Sex', 'sexta': 'Sex', 'sexta-feira': 'Sex',
+  'sab': 'Sab', 'sáb': 'Sab', 'sabado': 'Sab', 'sábado': 'Sab',
+  'dom': 'Dom', 'domingo': 'Dom',
+};
+
+export function normalizeWeekdayInput(input: any): WeekdayCode[] {
+  // Reject string literals "null" and "undefined" - these are invalid inputs
+  if (input === 'null' || input === 'undefined') {
+    throw new Error('Formato inválido de weekdays: valores "null" ou "undefined" não são permitidos');
+  }
+  
+  // Allow truly empty values
+  if (!input || input === '[]') return [];
+  
+  let weekdaysArray: any[];
+  
+  if (Array.isArray(input)) {
+    weekdaysArray = input;
+  } else if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      weekdaysArray = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      // Not valid JSON - try comma/semicolon separated
+      weekdaysArray = input.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+    }
+  } else {
+    // Reject unexpected types (objects, numbers, etc.)
+    throw new Error(`Formato inválido de weekdays: esperado array ou string, recebido ${typeof input}`);
+  }
+  
+  if (weekdaysArray.length === 0) return [];
+  
+  const normalized: WeekdayCode[] = [];
+  const unmapped: string[] = [];
+  
+  for (const day of weekdaysArray) {
+    const dayLower = day.toString().toLowerCase().trim();
+    const canonical = WEEKDAY_MAP[dayLower];
+    
+    if (canonical && !normalized.includes(canonical)) {
+      normalized.push(canonical);
+    } else if (!canonical) {
+      unmapped.push(day.toString());
+    }
+  }
+  
+  if (unmapped.length > 0) {
+    throw new Error(`Dias da semana inválidos: ${unmapped.join(', ')}`);
+  }
+  
+  return normalized;
+}
+
 // Session storage table.
 export const sessions = pgTable(
   "sessions",
