@@ -2597,7 +2597,7 @@ export class DatabaseStorage implements IStorage {
         c.weekdays as "customerWeekdays",
         COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
         COALESCE(sc.exclusive_vehicle, c.exclusive_vehicle, b.exclusive_vehicle, false) as "exclusiveVehicle",
-        COALESCE((sc.vehicle_types)::json, (c.vehicle_types)::json, (b.vehicle_types)::json, '[]'::json) as "vehicleTypes",
+        COALESCE((sc.vehicle_types)::json, (c.vehicle_types)::json, array_to_json(b.vehicle_types), '[]'::json) as "vehicleTypes",
         COALESCE(sc.is_urgent, b.is_urgent, false) as "isUrgent",
         COALESCE(sc.sale_value, b.total_value) as "saleValue",
         COALESCE(sc.products, b.products) as "products",
@@ -2605,9 +2605,9 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
         COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
         COALESCE(sc.operation_type, b.billing_type, '') as "operationType",
-        COALESCE((sc.delivery_weekdays)::json, (c.delivery_weekdays)::json, (b.delivery_weekdays)::json, '[]'::json) as "deliveryWeekdays",
-        COALESCE((sc.delivery_time_slots)::json, (c.delivery_time_slots)::json, (b.delivery_time_slots)::json, '[]'::json) as "deliveryTimeSlots",
-        COALESCE((sc.delivery_saturday_time_slots)::json, (c.delivery_saturday_time_slots)::json, (b.delivery_saturday_time_slots)::json, '[]'::json) as "deliverySaturdayTimeSlots"
+        COALESCE((sc.delivery_weekdays)::json, (c.delivery_weekdays)::json, array_to_json(b.delivery_weekdays), '[]'::json) as "deliveryWeekdays",
+        COALESCE((sc.delivery_time_slots)::json, (c.delivery_time_slots)::json, array_to_json(b.delivery_time_slots), '[]'::json) as "deliveryTimeSlots",
+        COALESCE((sc.delivery_saturday_time_slots)::json, (c.delivery_saturday_time_slots)::json, array_to_json(b.delivery_saturday_time_slots), '[]'::json) as "deliverySaturdayTimeSlots"
       FROM billings b
       LEFT JOIN customers c ON (
         c.id = CONCAT('omie-client-', b.omie_customer_code)
