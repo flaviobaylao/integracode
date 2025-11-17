@@ -25,6 +25,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const canAccessUsers = user?.role === 'admin';
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
+  const isMotorista = user?.role === 'motorista';
   const [orderStepsOpen, setOrderStepsOpen] = useState(false);
   const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
   const [telemarketingMenuOpen, setTelemarketingMenuOpen] = useState(false);
@@ -78,6 +79,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       label: isVendedor ? 'Minha Rota do Dia' : 'Rota do Dia', 
       icon: 'fas fa-map-marked-alt', 
       available: isVendedor || canAccessReports,
+      badge: null
+    },
+    { 
+      id: 'rota-entrega', 
+      label: 'Minhas Entregas', 
+      icon: 'fas fa-truck', 
+      available: isMotorista,
       badge: null
     },
     { 
@@ -183,6 +191,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       administrative: 'Administrativo',
       vendedor: 'Vendedor',
       telemarketing: 'Telemarketing',
+      motorista: 'Motorista',
     };
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
