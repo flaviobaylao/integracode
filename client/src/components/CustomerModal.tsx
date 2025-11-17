@@ -338,12 +338,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     mutationFn: async (data: InsertCustomer) => {
       const method = customer ? 'PUT' : 'POST';
       const url = customer ? `/api/customers/${customer.id}` : '/api/customers';
-      // Convert weekdays array to JSON string for API
-      const payload = {
-        ...data,
-        weekdays: typeof data.weekdays === 'string' ? data.weekdays : JSON.stringify(data.weekdays),
-      };
-      return await apiRequest(method, url, payload);
+      return await apiRequest(method, url, data);
     },
     onSuccess: (response: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });

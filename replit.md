@@ -26,6 +26,7 @@
     - **Motoristas**: Restricted access to only "Minhas Entregas" (/rota-entrega).
     - **Telemarketing**: Restricted access to Dashboard, Cards de Venda, Agenda de Vendas, Rota de Visitas, Clientes, and WhatsApp.
 - **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), normalization of weekday formats.
+    - **Weekday Update Fix** (Nov 2025): Fixed "dia inválido" error when updating customer visit weekdays. Frontend components now send weekdays as arrays instead of JSON strings to prevent double-encoding. Server's `normalizeWeekdays` function handles both formats for backward compatibility.
 - **Sales & Financial Management**: Sales card tracking with source and conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and sales goals dashboard. Includes a system for prioritizing urgent deliveries in route optimization.
 - **Delivery & Route Optimization**:
     - Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API.

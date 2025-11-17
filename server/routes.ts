@@ -814,6 +814,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Cliente não encontrado" });
       }
       
+      // Validate and normalize weekdays if provided
+      if (req.body.weekdays !== undefined) {
+        try {
+          const normalizedArray = normalizeWeekdays(req.body.weekdays);
+          // Convert array back to JSON string for database storage
+          req.body.weekdays = normalizedArray ? JSON.stringify(normalizedArray) : undefined;
+        } catch (error: any) {
+          return res.status(400).json({ 
+            message: "Dias da semana inválidos",
+            error: error.message 
+          });
+        }
+      }
+      
       // Clean data: transform empty strings to null for numeric fields
       const cleanedData: any = {};
       Object.keys(req.body).forEach(key => {

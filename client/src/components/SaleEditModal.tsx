@@ -526,7 +526,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     await updateCustomerMutation.mutateAsync({
       id: card.customer.id,
       data: {
-        weekdays: JSON.stringify(customerWeekdays),
+        weekdays: customerWeekdays,
         visitPeriodicity: customerVisitPeriodicity || null,
         phone: customerPhone,
         latitude: latitude || null,

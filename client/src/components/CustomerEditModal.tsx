@@ -61,12 +61,7 @@ export default function CustomerEditModal({
   const updateCustomerMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       if (!customer?.id) throw new Error("Customer ID is required");
-      // Convert weekdays array to JSON string for API
-      const payload = {
-        ...data,
-        weekdays: JSON.stringify(data.weekdays),
-      };
-      return await apiRequest("PATCH", `/api/customers/${customer.id}`, payload);
+      return await apiRequest("PATCH", `/api/customers/${customer.id}`, data);
     },
     onSuccess: () => {
       toast({

@@ -562,7 +562,7 @@ Qualquer dúvida, estou à disposição.`;
     if (hasChanged && customerWeekdays.length > 0) {
       try {
         await apiRequest('PUT', `/api/customers/${card.customer.id}`, {
-          weekdays: JSON.stringify(customerWeekdays)
+          weekdays: customerWeekdays
         });
         
         toast({
