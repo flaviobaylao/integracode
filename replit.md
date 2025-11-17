@@ -5,7 +5,10 @@
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
-- **Testing Credentials**: Always use flavio@bebahonest.com.br / M@riafe1 for login and testing.
+- **Testing Credentials**: 
+    - Admin: flavio@bebahonest.com.br / M@riafe1
+    - Motorista: kaique@bebahonest.com.br / test123
+    - Telemarketing: telemarketing@bebahonest.com.br / test123
 
 # System Architecture
 
@@ -19,7 +22,9 @@
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, React Hook Form with Zod for form handling.
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
-- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista). Motoristas have restricted access to only "Minhas Entregas" (/rota-entrega).
+- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista). 
+    - **Motoristas**: Restricted access to only "Minhas Entregas" (/rota-entrega).
+    - **Telemarketing**: Restricted access to Dashboard, Cards de Venda, Agenda de Vendas, Rota de Visitas, Clientes, and WhatsApp.
 - **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), normalization of weekday formats.
 - **Sales & Financial Management**: Sales card tracking with source and conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and sales goals dashboard. Includes a system for prioritizing urgent deliveries in route optimization.
 - **Delivery & Route Optimization**:

@@ -157,7 +157,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
-    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports || isTelemarketing, badge: null },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
   ];
 
@@ -267,6 +267,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {menuItems
                   .filter(item => item.available)
                   .filter(item => !isMotorista || item.id === 'rota-entrega')
+                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'whatsapp'].includes(item.id))
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -291,7 +292,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   ))}
                 
                 {/* Menu Sistema de Entregas */}
-                {(canAccessReports || isVendedor) && !isMotorista && (
+                {(canAccessReports || isVendedor) && !isMotorista && !isTelemarketing && (
                   <li>
                     <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
                       <CollapsibleTrigger asChild>
@@ -329,7 +330,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 )}
 
                 {/* Menu Chat Honest (Telemarketing) */}
-                {canAccessReports && !isMotorista && (
+                {canAccessReports && !isMotorista && !isTelemarketing && (
                   <li>
                     <Collapsible open={telemarketingMenuOpen} onOpenChange={setTelemarketingMenuOpen}>
                       <CollapsibleTrigger asChild>
@@ -469,6 +470,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               {menuItems
                 .filter(item => item.available)
                 .filter(item => !isMotorista || item.id === 'rota-entrega')
+                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'whatsapp'].includes(item.id))
                 .map(item => (
                   <li key={item.id}>
                     <Button
@@ -488,7 +490,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 ))}
               
               {/* Menu Sistema de Entregas */}
-              {(canAccessReports || isVendedor) && !isMotorista && (
+              {(canAccessReports || isVendedor) && !isMotorista && !isTelemarketing && (
                 <li>
                   <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
                     <CollapsibleTrigger asChild>
@@ -526,7 +528,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               )}
 
               {/* Menu Etapas dos Pedidos */}
-              {canAccessReports && !isMotorista && (
+              {canAccessReports && !isMotorista && !isTelemarketing && (
                 <li>
                   <Collapsible open={orderStepsOpen} onOpenChange={setOrderStepsOpen}>
                     <CollapsibleTrigger asChild>
