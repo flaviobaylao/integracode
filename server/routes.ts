@@ -8262,6 +8262,231 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== ENDPOINTS PARA MOTORISTAS ENTREGADORES ==========
+  
+  // Buscar rotas do motorista autenticado
+  app.get("/api/delivery-routes/driver/my-routes", authenticateUser, async (req: any, res) => {
+    try {
+      const { date } = req.query;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ message: "Usuário não autenticado" });
+      }
+      
+      console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista ${userId} para ${date || 'hoje'}`);
+      
+      // Buscar rotas onde o driverId corresponde ao userId
+      const targetDate = date ? new Date(date) : new Date();
+      targetDate.setHours(0, 0, 0, 0);
+      
+      const routes = await db.select().from(deliveryRoutes)
+        .where(
+          and(
+            eq(deliveryRoutes.driverId, userId),
+            sql`DATE(${deliveryRoutes.routeDate}) = ${targetDate.toISOString().split('T')[0]}`
+          )
+        )
+        .orderBy(asc(deliveryRoutes.createdAt));
+      
+      // Para cada rota, buscar as paradas
+      const routesWithStops = await Promise.all(
+        routes.map(async (route) => {
+          const stops = await db.select().from(deliveryRouteStops)
+            .where(eq(deliveryRouteStops.routeId, route.id))
+            .orderBy(asc(deliveryRouteStops.stopOrder));
+          
+          return {
+            ...route,
+            stops
+          };
+        })
+      );
+      
+      console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas`);
+      res.json(routesWithStops);
+    } catch (error: any) {
+      console.error("Error fetching driver routes:", error);
+      res.status(500).json({ message: "Failed to fetch driver routes", error: error.message });
+    }
+  });
+  
+  // Iniciar rota de entrega
+  app.post("/api/delivery-routes/:routeId/start", authenticateUser, async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const userId = req.user?.id;
+      
+      console.log(`🚀 [DRIVER-START] Motorista ${userId} iniciando rota ${routeId}`);
+      
+      // Verificar se o motorista é o responsável pela rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, routeId))
+        .limit(1);
+      
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      if (route[0].driverId !== userId) {
+        return res.status(403).json({ message: "Você não tem permissão para iniciar esta rota" });
+      }
+      
+      // Atualizar status da rota para 'in_progress'
+      const updatedRoute = await db.update(deliveryRoutes)
+        .set({ status: 'in_progress', updatedAt: new Date() })
+        .where(eq(deliveryRoutes.id, routeId))
+        .returning();
+      
+      console.log(`✅ [DRIVER-START] Rota ${routeId} iniciada`);
+      res.json({ message: "Rota iniciada com sucesso", route: updatedRoute[0] });
+    } catch (error: any) {
+      console.error("Error starting route:", error);
+      res.status(500).json({ message: "Failed to start route", error: error.message });
+    }
+  });
+  
+  // Check-in em uma parada (com foto obrigatória)
+  app.post("/api/delivery-routes/stops/:stopId/checkin", authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { latitude, longitude } = req.body;
+      const userId = req.user?.id;
+      
+      console.log(`📍 [DRIVER-CHECKIN] Motorista ${userId} fazendo check-in na parada ${stopId}`);
+      
+      // Verificar se foto foi enviada
+      if (!req.file) {
+        return res.status(400).json({ message: "Foto obrigatória para check-in" });
+      }
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      // Verificar se o motorista pertence à rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      
+      if (route.length === 0 || route[0].driverId !== userId) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+      
+      // Processar foto
+      const base64Photo = req.file.buffer.toString('base64');
+      const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      
+      const now = new Date();
+      
+      // Atualizar a parada (você pode adicionar campos de check-in no schema se necessário)
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ 
+          updatedAt: now
+          // Adicione campos como checkInTime, checkInLatitude, checkInLongitude, checkInPhoto se necessário
+        })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+      
+      console.log(`✅ [DRIVER-CHECKIN] Check-in realizado na parada ${stopId}`);
+      res.json({ 
+        message: "Check-in realizado com sucesso", 
+        stop: updatedStop[0],
+        checkInTime: now,
+        location: { latitude, longitude },
+        photoUrl
+      });
+    } catch (error: any) {
+      console.error("Error during check-in:", error);
+      res.status(500).json({ message: "Failed to check-in", error: error.message });
+    }
+  });
+  
+  // Check-out de uma parada (com foto obrigatória)
+  app.post("/api/delivery-routes/stops/:stopId/checkout", authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { latitude, longitude, notes } = req.body;
+      const userId = req.user?.id;
+      
+      console.log(`✅ [DRIVER-CHECKOUT] Motorista ${userId} fazendo check-out da parada ${stopId}`);
+      
+      // Verificar se foto foi enviada
+      if (!req.file) {
+        return res.status(400).json({ message: "Foto obrigatória para check-out" });
+      }
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      // Verificar se o motorista pertence à rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      
+      if (route.length === 0 || route[0].driverId !== userId) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+      
+      // Processar foto
+      const base64Photo = req.file.buffer.toString('base64');
+      const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      
+      const now = new Date();
+      
+      // Marcar parada como concluída
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ 
+          status: 'completed',
+          completedAt: now,
+          updatedAt: now
+        })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+      
+      // Verificar se todas as paradas da rota foram concluídas
+      const allStops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, stop[0].routeId));
+      
+      const allCompleted = allStops.every(s => s.status === 'completed');
+      
+      if (allCompleted) {
+        // Marcar rota como concluída
+        await db.update(deliveryRoutes)
+          .set({ status: 'completed', updatedAt: now })
+          .where(eq(deliveryRoutes.id, stop[0].routeId));
+        
+        console.log(`🎉 [DRIVER-CHECKOUT] Rota ${stop[0].routeId} totalmente concluída!`);
+      }
+      
+      console.log(`✅ [DRIVER-CHECKOUT] Check-out realizado na parada ${stopId}`);
+      res.json({ 
+        message: "Check-out realizado com sucesso", 
+        stop: updatedStop[0],
+        checkOutTime: now,
+        photoUrl,
+        routeCompleted: allCompleted,
+        location: { latitude, longitude }
+      });
+    } catch (error: any) {
+      console.error("Error during check-out:", error);
+      res.status(500).json({ message: "Failed to check-out", error: error.message });
+    }
+  });
+  
+  // ========== FIM DOS ENDPOINTS PARA MOTORISTAS ==========
+
   // Buscar entregas pendentes
   app.get("/api/deliveries/pending", async (req, res) => {
     try {
