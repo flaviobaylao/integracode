@@ -8149,6 +8149,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar rotas salvas com filtros
+  app.get("/api/delivery-routes", authenticateUser, async (req: any, res) => {
+    try {
+      const { routeDate, driverId, savedOnly } = req.query;
+      
+      console.log(`🔍 [GET-ROUTES] Filtrando rotas: date=${routeDate}, driver=${driverId}, savedOnly=${savedOnly}`);
+      
+      // Preparar filtros
+      const filters: any = {};
+      
+      if (routeDate) {
+        filters.routeDate = new Date(routeDate as string);
+      }
+      
+      if (driverId && driverId !== 'all') {
+        filters.driverId = driverId;
+      }
+      
+      if (savedOnly === 'true') {
+        filters.savedOnly = true;
+      }
+      
+      // Buscar rotas com filtros
+      const routes = await storage.getDeliveryRoutes(filters);
+      
+      console.log(`✅ [GET-ROUTES] Retornando ${routes.length} rotas`);
+      
+      res.json(routes);
+    } catch (error: any) {
+      console.error("❌ [GET-ROUTES] Error fetching delivery routes:", error);
+      res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });
+    }
+  });
+
   // Salvar rotas planejadas
   app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
