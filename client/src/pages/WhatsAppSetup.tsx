@@ -8,8 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { QrCode, CheckCircle, XCircle, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useAuth } from "@/hooks/useAuth";
+import Layout from "@/components/Layout";
 
-export default function WhatsAppSetup() {
+function WhatsAppSetupContent() {
   const { toast } = useToast();
   const [instanceName, setInstanceName] = useState("honest-sucos");
   const [apiKey, setApiKey] = useState("");
@@ -173,5 +175,29 @@ export default function WhatsAppSetup() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function WhatsAppSetup() {
+  const { user, isLoading } = useAuth();
+  const [activeView, setActiveView] = useState('whatsapp');
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-honest-blue"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    window.location.href = '/login';
+    return null;
+  }
+
+  return (
+    <Layout activeView={activeView} setActiveView={setActiveView} user={user as any}>
+      <WhatsAppSetupContent />
+    </Layout>
   );
 }
