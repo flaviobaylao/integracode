@@ -144,6 +144,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       coordinatesLocked: false,
       virtualService: false,
       serviceStartDate: undefined,
+      exclusiveVehicle: false,
+      vehicleTypes: [],
+      deliveryWeekdays: [],
+      deliveryTimeSlots: [],
+      deliverySaturdayTimeSlots: [],
     },
   });
 
@@ -159,6 +164,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       // Normalizar weekdays para o formato padrão abreviado
       const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
       const weekdaysJson = JSON.stringify(normalizedWeekdays);
+      
+      // Normalizar deliveryWeekdays (aceita arrays ou strings JSON, pode vir do Omie com nomes completos)
+      const normalizedDeliveryWeekdays = normalizeWeekdays((customer as any).deliveryWeekdays || []);
       
       form.reset({
         customerType: type,
@@ -183,6 +191,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         coordinatesLocked: (customer as any).coordinatesLocked || false,
         virtualService: (customer as any).virtualService || false,
         serviceStartDate: (customer as any).serviceStartDate || undefined,
+        exclusiveVehicle: (customer as any).exclusiveVehicle || false,
+        vehicleTypes: Array.isArray((customer as any).vehicleTypes) ? (customer as any).vehicleTypes : [],
+        deliveryWeekdays: normalizedDeliveryWeekdays,
+        deliveryTimeSlots: Array.isArray((customer as any).deliveryTimeSlots) ? (customer as any).deliveryTimeSlots : [],
+        deliverySaturdayTimeSlots: Array.isArray((customer as any).deliverySaturdayTimeSlots) ? (customer as any).deliverySaturdayTimeSlots : [],
       });
     } else {
       setCustomerType('pessoa_fisica');
@@ -209,6 +222,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         coordinatesLocked: false,
         virtualService: false,
         serviceStartDate: undefined,
+        exclusiveVehicle: false,
+        vehicleTypes: [],
+        deliveryWeekdays: [],
+        deliveryTimeSlots: [],
+        deliverySaturdayTimeSlots: [],
       });
     }
   }, [customer, form]);
@@ -1114,6 +1132,218 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     />
                   </div>
                 )}
+              </CardContent>
+            </Card>
+
+            {/* Configurações de Entrega */}
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="font-semibold text-lg mb-4">Configurações de Entrega</h3>
+                
+                {/* Veículo Exclusivo */}
+                <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg mb-4">
+                  <FormField
+                    control={form.control}
+                    name="exclusiveVehicle"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex items-center space-x-2">
+                          <FormControl>
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={(e) => {
+                                field.onChange(e.target.checked);
+                                if (!e.target.checked) {
+                                  form.setValue('vehicleTypes', []);
+                                }
+                              }}
+                              className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                              data-testid="checkbox-exclusive-vehicle"
+                            />
+                          </FormControl>
+                          <FormLabel className="text-sm font-medium text-orange-900 cursor-pointer">
+                            Entrega em veículo exclusivo?
+                          </FormLabel>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {form.watch('exclusiveVehicle') && (
+                    <div className="ml-6 space-y-2">
+                      <FormLabel className="text-sm font-medium">Tipos de Veículos (máximo 2)</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="vehicleTypes"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="grid grid-cols-3 gap-3">
+                              {[
+                                { value: 'caminhao', label: '🚛 Caminhão' },
+                                { value: 'carro', label: '🚗 Carro' },
+                                { value: 'moto', label: '🏍️ Moto' }
+                              ].map((vehicle) => (
+                                <div key={vehicle.value} className="flex items-center space-x-2">
+                                  <input
+                                    type="checkbox"
+                                    id={`vehicle-${vehicle.value}`}
+                                    checked={field.value?.includes(vehicle.value) || false}
+                                    onChange={(e) => {
+                                      const currentTypes = field.value || [];
+                                      if (e.target.checked) {
+                                        if (currentTypes.length >= 2) {
+                                          toast({
+                                            title: "Limite excedido",
+                                            description: "Selecione no máximo 2 tipos de veículos",
+                                            variant: "destructive",
+                                          });
+                                          return;
+                                        }
+                                        field.onChange([...currentTypes, vehicle.value]);
+                                      } else {
+                                        field.onChange(currentTypes.filter(v => v !== vehicle.value));
+                                      }
+                                    }}
+                                    className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                    data-testid={`checkbox-vehicle-${vehicle.value}`}
+                                  />
+                                  <label htmlFor={`vehicle-${vehicle.value}`} className="text-sm cursor-pointer">
+                                    {vehicle.label}
+                                  </label>
+                                </div>
+                              ))}
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Dias de Entrega */}
+                <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg mb-4">
+                  <FormLabel className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</FormLabel>
+                  <FormField
+                    control={form.control}
+                    name="deliveryWeekdays"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="grid grid-cols-4 gap-3">
+                          {[
+                            { value: 'Seg', label: 'Seg' },
+                            { value: 'Ter', label: 'Ter' },
+                            { value: 'Qua', label: 'Qua' },
+                            { value: 'Qui', label: 'Qui' },
+                            { value: 'Sex', label: 'Sex' },
+                            { value: 'Sab', label: 'Sáb' },
+                            { value: 'Dom', label: 'Dom' },
+                          ].map((day) => (
+                            <div key={day.value} className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                id={`delivery-weekday-${day.value}`}
+                                checked={field.value?.includes(day.value) || false}
+                                onChange={(e) => {
+                                  const currentDays = field.value || [];
+                                  if (e.target.checked) {
+                                    field.onChange([...currentDays, day.value]);
+                                  } else {
+                                    field.onChange(currentDays.filter(d => d !== day.value));
+                                  }
+                                }}
+                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                data-testid={`checkbox-delivery-weekday-${day.value}`}
+                              />
+                              <label htmlFor={`delivery-weekday-${day.value}`} className="text-sm cursor-pointer">
+                                {day.label}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Horários de Entrega (Seg-Sex) */}
+                <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg mb-4">
+                  <FormLabel className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</FormLabel>
+                  <FormField
+                    control={form.control}
+                    name="deliveryTimeSlots"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="grid grid-cols-4 gap-3">
+                          {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
+                            <div key={slot} className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                id={`time-slot-${slot}`}
+                                checked={field.value?.includes(slot) || false}
+                                onChange={(e) => {
+                                  const currentSlots = field.value || [];
+                                  if (e.target.checked) {
+                                    field.onChange([...currentSlots, slot]);
+                                  } else {
+                                    field.onChange(currentSlots.filter(s => s !== slot));
+                                  }
+                                }}
+                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                data-testid={`checkbox-time-slot-${slot}`}
+                              />
+                              <label htmlFor={`time-slot-${slot}`} className="text-sm cursor-pointer">
+                                {slot}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Horários de Entrega aos Sábados */}
+                <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
+                  <FormLabel className="text-sm font-medium text-purple-900">Horários aos Sábados</FormLabel>
+                  <FormField
+                    control={form.control}
+                    name="deliverySaturdayTimeSlots"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="grid grid-cols-4 gap-3">
+                          {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
+                            <div key={slot} className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                id={`saturday-slot-${slot}`}
+                                checked={field.value?.includes(slot) || false}
+                                onChange={(e) => {
+                                  const currentSlots = field.value || [];
+                                  if (e.target.checked) {
+                                    field.onChange([...currentSlots, slot]);
+                                  } else {
+                                    field.onChange(currentSlots.filter(s => s !== slot));
+                                  }
+                                }}
+                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                data-testid={`checkbox-saturday-slot-${slot}`}
+                              />
+                              <label htmlFor={`saturday-slot-${slot}`} className="text-sm cursor-pointer">
+                                {slot}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </CardContent>
             </Card>
 

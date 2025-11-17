@@ -68,6 +68,22 @@
             - Test credentials: kaique@bebahonest.com.br / test123
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation. Customer details modal displays delivery configuration (delivery days, time slots for weekdays and Saturday, vehicle types, and exclusive vehicle requirement) with color-coded badges for easy identification. System prioritizes displaying `fantasy_name` (trade name) over `name` (legal name) across all customer-facing interfaces.
+    - **Unified Customer Modals** (Nov 2025): Both "Editar Dados do Cliente" (Agenda de Vendas) and "Editar Cliente" (Gestão de Clientes) now have complete feature parity with all delivery configuration fields. Customer edit modal in "Gestão de Clientes" includes automatic normalization of delivery weekdays from legacy Omie data formats:
+        - Nome Fantasia (Fantasy Name)
+        - CPF/CNPJ with automatic person type switching
+        - CNPJ search with Receita Federal API (Gestão de Clientes only)
+        - GPS capture with Waze integration (Gestão de Clientes only)
+        - Dias da Semana de Visita (Visit Weekdays) - normalized on load
+        - Periodicidade de Visita (Visit Periodicity)
+        - Data de Início do Fornecimento (Service Start Date - Gestão de Clientes only)
+        - Atendimento Virtual (Virtual Service - Gestão de Clientes only)
+        - Configurações de Entrega completas (Complete Delivery Settings):
+            - Veículo Exclusivo (Exclusive Vehicle) with max 2 vehicle types validation
+            - Tipos de Veículos (Vehicle Types): Caminhão, Carro, Moto
+            - Dias de Entrega (Delivery Weekdays) - **normalized on load to handle legacy Omie formats**
+            - Horários de Entrega Seg-Sex (Weekday Time Slots: 08:00-18:00)
+            - Horários aos Sábados (Saturday Time Slots: 08:00-12:00)
+        - **Data Normalization**: Uses enhanced `normalizeWeekdays()` function to automatically convert legacy Omie data formats (JSON strings, PostgreSQL arrays, full weekday names) to canonical codes ('Seg', 'Ter', etc.) preventing data corruption and validation errors
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection (CPF/CNPJ with Receita Federal API), customer recognition/registration, 5-tier dynamic pricing system, server-side security, and automatic order registration in Sistema Integra as `sales_cards` (source: 'hotsite'). Includes product gallery, customer reviews, stock management, order management page, and technical product details.
