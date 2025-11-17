@@ -7988,13 +7988,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           exclusiveVehicle: false,
           vehicleTypes: [],
           isUrgent: o.isUrgent || false,
-          saleValue: parseFloat(o.saleValue as any) || 0,
+          saleValue: parseFloat((o.saleValue as any) || 0),
           products: o.products,
-          scheduledDate: o.scheduledDate,
-          completedDate: o.scheduledDate,
-          paymentMethod: o.paymentMethod,
-          operationType: o.operationType,
-          customerWeekdays: o.customerWeekdays, // Validar dia da semana permitido
+          scheduledDate: o.scheduledDate || null,
+          completedDate: o.scheduledDate || null,
+          paymentMethod: o.paymentMethod || null,
+          operationType: o.operationType || null,
+          customerWeekdays: o.customerWeekdays || [], // Validar dia da semana permitido
           deliveryTimeSlots: [], // Billings do Omie não têm restrição de horário
         };
       });
