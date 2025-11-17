@@ -700,7 +700,7 @@ async function persistRoutePlan(
       startLongitude: route.startLongitude.toString(),
       startAddress: route.startAddress,
       totalDistance: route.totalDistance.toString(),
-      totalDuration: route.totalDuration.toString(),
+      totalDuration: Math.round(route.totalDuration), // Arredondar para inteiro
       status: 'pending',
       createdAt: new Date(),
       updatedAt: new Date()
@@ -727,7 +727,7 @@ async function persistRoutePlan(
         customerLongitude: stop.longitude.toString(),
         estimatedArrival: stop.estimatedArrival,
         estimatedDeparture: stop.estimatedDeparture,
-        estimatedServiceTime: stop.estimatedServiceTime.toString(),
+        estimatedServiceTime: Math.round(stop.estimatedServiceTime), // Arredondar para inteiro
         stopOrder: stop.stopOrder,
         distanceFromPrevious: stop.distanceFromPrevious.toString(),
         status: 'pending',
