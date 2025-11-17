@@ -50,12 +50,29 @@ export function normalizeWeekdayInput(input: any): WeekdayCode[] {
   if (Array.isArray(input)) {
     weekdaysArray = input;
   } else if (typeof input === 'string') {
-    try {
-      const parsed = JSON.parse(input);
-      weekdaysArray = Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-      // Not valid JSON - try comma/semicolon separated
-      weekdaysArray = input.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+    // Convert PostgreSQL array format {value1,value2} to JSON array format [value1,value2]
+    let normalized = input.trim();
+    if (normalized.startsWith('{') && normalized.endsWith('}')) {
+      // PostgreSQL array: {"Qua"} or {Seg,Qui}
+      normalized = normalized.slice(1, -1); // Remove outer braces
+      // Parse elements (handle both quoted and unquoted)
+      const elements = [];
+      const regex = /"([^"]*)"|([^,]+)/g;
+      let match;
+      while ((match = regex.exec(normalized)) !== null) {
+        const element = (match[1] || match[2]).trim();
+        if (element) elements.push(element);
+      }
+      weekdaysArray = elements;
+    } else {
+      // Try JSON parse first
+      try {
+        const parsed = JSON.parse(normalized);
+        weekdaysArray = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        // Not valid JSON - try comma/semicolon separated
+        weekdaysArray = normalized.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+      }
     }
   } else {
     // Reject unexpected types (objects, numbers, etc.)
@@ -68,13 +85,21 @@ export function normalizeWeekdayInput(input: any): WeekdayCode[] {
   const unmapped: string[] = [];
   
   for (const day of weekdaysArray) {
-    const dayLower = day.toString().toLowerCase().trim();
-    const canonical = WEEKDAY_MAP[dayLower];
+    const dayStr = day.toString().trim();
     
-    if (canonical && !normalized.includes(canonical)) {
-      normalized.push(canonical);
-    } else if (!canonical) {
-      unmapped.push(day.toString());
+    // Handle legacy data: split tokens that contain separators (/, ;, " e ", etc.)
+    // Example: "Seg/Qui" → ["Seg", "Qui"], "segunda e quarta" → ["segunda", "quarta"]
+    const subDays = dayStr.split(/[\/;,]|\s+e\s+/).map(d => d.trim()).filter(d => d);
+    
+    for (const subDay of subDays) {
+      const dayLower = subDay.toLowerCase().trim();
+      const canonical = WEEKDAY_MAP[dayLower];
+      
+      if (canonical && !normalized.includes(canonical)) {
+        normalized.push(canonical);
+      } else if (!canonical) {
+        unmapped.push(subDay);
+      }
     }
   }
   
