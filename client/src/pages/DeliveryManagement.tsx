@@ -1150,6 +1150,9 @@ export default function DeliveryManagement() {
                 </Button>
                 <Button 
                   onClick={() => {
+                    console.log('🔍 [SAVE-ROUTES-FRONTEND] pendingRouteConfig:', pendingRouteConfig);
+                    console.log('🔍 [SAVE-ROUTES-FRONTEND] routeDate será:', pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0]);
+                    
                     // Preparar dados para salvar
                     const routesToSave = routePlan.routes.map((route: VehicleRoute) => ({
                       route: {
