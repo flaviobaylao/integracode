@@ -511,18 +511,22 @@ export const deliveryDrivers = pgTable("delivery_drivers", {
 // Delivery routes table - Rotas de entrega planejadas
 export const deliveryRoutes = pgTable("delivery_routes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  routeDate: timestamp("route_date").notNull(),
+  routeName: varchar("route_name").notNull(), // ROTA-DATA-ENTREGADOR-NUMERO
+  routeDate: date("route_date").notNull(),
   vehicleType: varchar("vehicle_type").notNull(), // caminhao, carro, moto
-  driverId: varchar("driver_id"), // ID do motorista (se já atribuído)
+  driverId: varchar("driver_id").notNull(), // ID do motorista
+  driverName: varchar("driver_name").notNull(), // Nome do motorista
   startLatitude: decimal("start_latitude", { precision: 10, scale: 8 }).notNull(),
   startLongitude: decimal("start_longitude", { precision: 11, scale: 8 }).notNull(),
-  totalDistance: decimal("total_distance", { precision: 10, scale: 2 }), // Distância total em km
+  totalDistance: decimal("total_distance", { precision: 10, scale: 2 }).notNull(), // Distância total em km
   totalDeliveries: integer("total_deliveries").notNull().default(0),
-  estimatedDuration: integer("estimated_duration"), // Duração estimada em minutos
+  totalDuration: integer("total_duration").notNull(), // Duração total em minutos
   estimatedReturnTime: timestamp("estimated_return_time"), // Horário estimado de retorno
   timeWindowStart: varchar("time_window_start"), // Início da janela de horário (ex: "08:00")
   timeWindowEnd: varchar("time_window_end"), // Fim da janela de horário (ex: "12:00")
-  status: varchar("status").notNull().default('planned'), // planned, in_progress, completed, cancelled
+  status: varchar("status").notNull().default('planejada'), // planejada, em_andamento, concluida, cancelada
+  startTime: timestamp("start_time"), // Quando o entregador iniciou a rota
+  endTime: timestamp("end_time"), // Quando o entregador finalizou a rota
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -532,6 +536,7 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   routeId: varchar("route_id").notNull(),
   salesCardId: varchar("sales_card_id").notNull(),
+  billingId: varchar("billing_id"), // ID do billing (nota fiscal) relacionado
   customerId: varchar("customer_id").notNull(),
   customerName: varchar("customer_name").notNull(),
   customerAddress: text("customer_address").notNull(),
@@ -539,10 +544,14 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }).notNull(),
   stopOrder: integer("stop_order").notNull(), // Ordem da parada na rota
   estimatedArrival: timestamp("estimated_arrival"), // Horário estimado de chegada
-  estimatedDuration: integer("estimated_duration").notNull().default(10), // Tempo estimado de permanência em minutos
+  estimatedDeparture: timestamp("estimated_departure"), // Horário estimado de saída
+  estimatedServiceTime: integer("estimated_service_time").notNull().default(10), // Tempo estimado de permanência em minutos
   distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // Distância da parada anterior em km
   isPriority: boolean("is_priority").notNull().default(false),
-  status: varchar("status").notNull().default('pending'), // pending, completed, failed
+  status: varchar("status").notNull().default('pending'), // pending, in_progress, completed, failed
+  checkInTime: timestamp("check_in_time"), // Horário real de check-in
+  checkOutTime: timestamp("check_out_time"), // Horário real de check-out
+  photos: jsonb("photos").$type<string[]>().default([]), // Array de URLs de fotos
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1879,3 +1888,4 @@ export interface PendingDelivery {
   deliveryTimeSlots: string[];
   deliverySaturdayTimeSlots: string[];
 }
+
