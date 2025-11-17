@@ -67,16 +67,24 @@ export default function DeliveryRoutesList() {
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
+  const [selectedDriver, setSelectedDriver] = useState<string>('');
   const [routeToDelete, setRouteToDelete] = useState<string | null>(null);
   const [routeToCancel, setRouteToCancel] = useState<string | null>(null);
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
 
+  // Buscar motoristas
+  const { data: drivers = [] } = useQuery<any[]>({
+    queryKey: ['/api/delivery-drivers'],
+    staleTime: 5 * 60 * 1000,
+  });
+
   const queryParams = new URLSearchParams();
   if (selectedDate) queryParams.append('routeDate', selectedDate);
   if (selectedStatus) queryParams.append('status', selectedStatus);
+  if (selectedDriver) queryParams.append('driverId', selectedDriver);
 
   const { data: routes = [], isLoading } = useQuery<DeliveryRoute[]>({
-    queryKey: ['/api/delivery-routes', selectedDate, selectedStatus],
+    queryKey: ['/api/delivery-routes', selectedDate, selectedStatus, selectedDriver],
   });
 
   const { data: stops = {} } = useQuery<Record<string, DeliveryRouteStop[]>>({
@@ -145,7 +153,7 @@ export default function DeliveryRoutesList() {
           <CardTitle>Filtros</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Data da Rota</label>
               <Input
@@ -154,6 +162,22 @@ export default function DeliveryRoutesList() {
                 onChange={(e) => setSelectedDate(e.target.value)}
                 data-testid="filter-date"
               />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Entregador</label>
+              <Select value={selectedDriver || "all"} onValueChange={(value) => setSelectedDriver(value === "all" ? "" : value)}>
+                <SelectTrigger data-testid="filter-driver">
+                  <SelectValue placeholder="Todos os entregadores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {drivers.filter(d => d.isActive).map((driver) => (
+                    <SelectItem key={driver.id} value={driver.id}>
+                      {driver.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-sm font-medium mb-2 block">Status</label>
@@ -185,7 +209,7 @@ export default function DeliveryRoutesList() {
             <Truck className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-lg font-medium mb-2">Nenhuma rota encontrada</p>
             <p className="text-muted-foreground">
-              {selectedDate || selectedStatus ? 'Tente ajustar os filtros' : 'Nenhuma rota foi planejada ainda'}
+              {selectedDate || selectedStatus || selectedDriver ? 'Tente ajustar os filtros' : 'Nenhuma rota foi planejada ainda'}
             </p>
           </CardContent>
         </Card>
