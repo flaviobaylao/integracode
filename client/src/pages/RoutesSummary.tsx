@@ -74,9 +74,13 @@ export default function RoutesSummary() {
     staleTime: 5 * 60 * 1000, // Cache por 5 minutos
   });
 
-  // Buscar rotas com filtros
+  // Buscar rotas com filtros - apenas rotas salvas
   const { data: routes = [], isLoading } = useQuery<DeliveryRoute[]>({
-    queryKey: ['/api/delivery-routes', { routeDate: selectedDate, driverId: selectedDriver !== 'all' ? selectedDriver : undefined }],
+    queryKey: ['/api/delivery-routes', { 
+      routeDate: selectedDate, 
+      driverId: selectedDriver !== 'all' ? selectedDriver : undefined,
+      savedOnly: 'true' // Mostrar apenas rotas que foram salvas na Gestão de Entregas
+    }],
     enabled: !!selectedDate,
   });
 

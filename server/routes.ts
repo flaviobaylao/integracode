@@ -8183,12 +8183,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Buscar rotas de entrega
   app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const { status, routeDate, driverId } = req.query;
+      const { status, routeDate, driverId, savedOnly } = req.query;
       
       const filters: any = {};
       if (status) filters.status = status;
       if (routeDate) filters.routeDate = new Date(routeDate);
       if (driverId) filters.driverId = driverId;
+      if (savedOnly === 'true') filters.savedOnly = true; // Filtrar apenas rotas salvas (com routeName)
       
       const routes = await storage.getDeliveryRoutes(filters);
       

@@ -201,7 +201,7 @@ export interface IStorage {
   getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
-  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string }): Promise<any[]>;
+  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string; savedOnly?: boolean }): Promise<any[]>;
   getDeliveryRoute(id: string): Promise<any | undefined>;
   createDeliveryRoute(route: any): Promise<any>;
   updateDeliveryRoute(id: string, route: any): Promise<any>;
@@ -4338,7 +4338,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Delivery routes operations
-  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string }): Promise<any[]> {
+  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string; savedOnly?: boolean }): Promise<any[]> {
     let query = db.select().from(deliveryRoutes);
     
     const conditions: any[] = [];
@@ -4350,6 +4350,10 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.routeDate) {
       conditions.push(eq(deliveryRoutes.routeDate, sql`${filters.routeDate}::date`));
+    }
+    if (filters?.savedOnly) {
+      // Filtrar apenas rotas salvas (que têm routeName)
+      conditions.push(isNotNull(deliveryRoutes.routeName));
     }
     
     if (conditions.length > 0) {
