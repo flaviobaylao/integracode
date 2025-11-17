@@ -63,6 +63,7 @@ import {
   type InsertBilling,
   type ExportedReport,
   type SyncStatus,
+  type PendingDelivery,
   type InsertSyncStatus,
   type Lead,
   type InsertLead,
@@ -184,7 +185,7 @@ export interface IStorage {
   // Delivery operations
   updateSalesCardDeliveryStatus(id: string, data: any): Promise<SalesCard>;
   getSalesCardByTrackingCode(trackingCode: string): Promise<SalesCard | undefined>;
-  getPendingDeliveries(): Promise<any[]>;
+  getPendingDeliveries(): Promise<PendingDelivery[]>;
   createDeliveryHistory(data: any): Promise<any>;
   getDeliveryHistory(salesCardId: string): Promise<any[]>;
   getDeliveryDrivers(): Promise<any[]>;
@@ -2579,7 +2580,7 @@ export class DatabaseStorage implements IStorage {
     return result.rows[0] as SalesCard;
   }
 
-  async getPendingDeliveries(): Promise<any[]> {
+  async getPendingDeliveries(): Promise<PendingDelivery[]> {
     // CORRIGIDO: Buscar de billings com invoice_stage = 'Aguardando Rota' (dados do Omie)
     // Prioriza dados do sales_card mais recente quando existir
     const result = await db.execute(sql`

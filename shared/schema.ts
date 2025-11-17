@@ -1849,3 +1849,33 @@ export interface ChatDeliveryWithRelations extends ChatDelivery {
   deliveryPerson?: typeof users.$inferSelect;
   rejectionReason?: ChatDeliveryRejectionReason;
 }
+
+// ============================================================================
+// PENDING DELIVERY TYPE (for getPendingDeliveries from billings)
+// ============================================================================
+
+export interface PendingDelivery {
+  id: string;
+  invoiceNumber: string;
+  omieOrderId: string | null;
+  orderNumber: string | null;
+  customerId: string;
+  customerName: string;
+  customerAddress: string;
+  customerLatitude: string | null;
+  customerLongitude: string | null;
+  customerWeekdays: string[] | null;
+  averageDeliveryTime: number;
+  exclusiveVehicle: boolean;
+  vehicleTypes: string[];
+  isUrgent: boolean;
+  saleValue: number | null;
+  products: unknown | null;
+  scheduledDate: string | null;
+  completedDate: string | null;
+  paymentMethod: string | null;
+  operationType: string | null;
+  deliveryWeekdays: string[];
+  deliveryTimeSlots: string[];
+  deliverySaturdayTimeSlots: string[];
+}
