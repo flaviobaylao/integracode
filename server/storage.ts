@@ -2600,7 +2600,7 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.vehicle_types::text, c.vehicle_types::text, b.vehicle_types::text, '[]')::json as "vehicleTypes",
         COALESCE(sc.is_urgent, b.is_urgent, false) as "isUrgent",
         COALESCE(sc.sale_value, b.total_value) as "saleValue",
-        COALESCE(sc.products, b.products) as "products",
+        COALESCE(sc.products::text, b.products::text, '[]')::json as "products",
         COALESCE(sc.scheduled_date, b.invoice_date) as "scheduledDate",
         COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
         COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
