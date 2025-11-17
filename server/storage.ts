@@ -2584,7 +2584,7 @@ export class DatabaseStorage implements IStorage {
       SELECT 
         sc.id,
         sc.customer_id as "customerId",
-        c.name as "customerName",
+        COALESCE(c.fantasy_name, c.name) as "customerName",
         c.address as "customerAddress",
         c.latitude as "customerLatitude",
         c.longitude as "customerLongitude",
