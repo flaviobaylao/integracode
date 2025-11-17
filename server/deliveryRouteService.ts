@@ -93,7 +93,12 @@ function isOrderCompatibleWithVehicle(
     return true;
   }
   
-  // Se requer veículo exclusivo, verificar se o tipo está na lista permitida
+  // Se requer veículo exclusivo mas não especificou tipos, aceitar qualquer um
+  if (!order.vehicleTypes || order.vehicleTypes.length === 0) {
+    return true;
+  }
+  
+  // Se especificou tipos, verificar se o tipo está na lista permitida
   return order.vehicleTypes.includes(vehicleType);
 }
 
@@ -166,7 +171,7 @@ function isValidDeliveryWeekday(customerWeekdays: string | string[] | null | und
 
 /**
  * Valida se o horário da janela de entrega é compatível com os horários permitidos do cliente
- * @param deliveryTimeSlots - Array JSON com os horários permitidos do cliente (ex: ["08:00-12:00", "14:00-18:00"])
+ * @param deliveryTimeSlots - Array com horários permitidos (ex: ["08:00", "09:00"] ou ["08:00-12:00"])
  * @param timeWindowStart - Horário de início da janela da rota (ex: "08:00")
  * @param timeWindowEnd - Horário de fim da janela da rota (ex: "12:00")
  * @returns true se há compatibilidade de horários, false caso contrário
@@ -187,19 +192,30 @@ function isValidDeliveryTimeSlot(
     
     // Verificar se a janela da rota se sobrepõe com algum dos horários permitidos
     for (const slot of deliveryTimeSlots) {
-      const [slotStart, slotEnd] = slot.split('-');
-      const slotStartMin = timeToMinutes(slotStart);
-      const slotEndMin = timeToMinutes(slotEnd);
-      
-      // Verificar sobreposição de intervalos
-      if (routeStart < slotEndMin && routeEnd > slotStartMin) {
-        return true;
+      // Se for intervalo (formato "08:00-12:00")
+      if (slot.includes('-')) {
+        const [slotStart, slotEnd] = slot.split('-');
+        const slotStartMin = timeToMinutes(slotStart);
+        const slotEndMin = timeToMinutes(slotEnd);
+        
+        // Verificar sobreposição de intervalos
+        if (routeStart < slotEndMin && routeEnd > slotStartMin) {
+          return true;
+        }
+      } else {
+        // Se for horário individual (formato "08:00"), verificar se está dentro da janela
+        const slotMin = timeToMinutes(slot);
+        
+        // Horário individual está dentro da janela do veículo?
+        if (slotMin >= routeStart && slotMin < routeEnd) {
+          return true;
+        }
       }
     }
     
     return false;
   } catch (error) {
-    console.error('Erro ao validar horário de entrega:', error);
+    console.error('Erro ao validar horário de entrega:', error, 'slots:', deliveryTimeSlots);
     return true; // Em caso de erro, permitir para não bloquear desnecessariamente
   }
 }
