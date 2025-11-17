@@ -28,9 +28,13 @@ import {
   Calendar,
   Clock,
   Settings,
-  RefreshCw
+  RefreshCw,
+  Map
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   Select,
   SelectContent,
@@ -1001,6 +1005,90 @@ export default function DeliveryManagement() {
                         <MapPin className="h-4 w-4 inline mr-1" />
                         Partida: {route.startAddress}
                       </div>
+                      
+                      {/* Mapa da Rota */}
+                      {(() => {
+                        // Calcular centro do mapa baseado nas coordenadas dos stops
+                        const validStops = route.stops.filter((stop: any) => {
+                          const lat = parseFloat(stop.latitude || stop.customerLatitude);
+                          const lng = parseFloat(stop.longitude || stop.customerLongitude);
+                          return lat && lng && !isNaN(lat) && !isNaN(lng);
+                        });
+                        
+                        if (validStops.length === 0) {
+                          return (
+                            <div className="mb-4 border rounded-lg p-4 bg-gray-50 text-center text-muted-foreground">
+                              <Map className="h-6 w-6 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Mapa não disponível - coordenadas ausentes</p>
+                            </div>
+                          );
+                        }
+                        
+                        const firstStop = validStops[0];
+                        const centerLat = parseFloat(firstStop.latitude || firstStop.customerLatitude);
+                        const centerLng = parseFloat(firstStop.longitude || firstStop.customerLongitude);
+                        
+                        return (
+                          <div className="mb-4 border rounded-lg overflow-hidden" style={{ height: '300px' }}>
+                            <MapContainer
+                              center={[centerLat, centerLng]}
+                              zoom={12}
+                              style={{ height: '100%', width: '100%' }}
+                              scrollWheelZoom={false}
+                            >
+                              <TileLayer
+                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                              />
+                          
+                          {/* Marcadores das paradas */}
+                          {route.stops.map((stop: any, stopIdx: number) => {
+                            const lat = parseFloat(stop.latitude || stop.customerLatitude);
+                            const lng = parseFloat(stop.longitude || stop.customerLongitude);
+                            
+                            if (!lat || !lng || isNaN(lat) || isNaN(lng)) return null;
+                            
+                            return (
+                              <Marker
+                                key={stopIdx}
+                                position={[lat, lng]}
+                                icon={L.divIcon({
+                                  html: `<div style="background-color: #10b981; width: 30px; height: 30px; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3); font-size: 12px;">${stop.stopOrder}</div>`,
+                                  className: '',
+                                  iconSize: [30, 30],
+                                  iconAnchor: [15, 15]
+                                })}
+                              >
+                                <Popup>
+                                  <strong>Parada {stop.stopOrder}</strong><br />
+                                  {stop.customerName}<br />
+                                  <span className="text-xs text-gray-600">
+                                    ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </Popup>
+                              </Marker>
+                            );
+                          })}
+                          
+                          {/* Linha conectando todos os pontos */}
+                          <Polyline
+                            positions={route.stops
+                              .map((stop: any) => {
+                                const lat = parseFloat(stop.latitude || stop.customerLatitude);
+                                const lng = parseFloat(stop.longitude || stop.customerLongitude);
+                                return lat && lng && !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
+                              })
+                              .filter((pos: any) => pos !== null)
+                            }
+                            color="#3b82f6"
+                            weight={3}
+                            opacity={0.7}
+                          />
+                        </MapContainer>
+                      </div>
+                    );
+                  })()}
+                      
                       <div className="space-y-2">
                         {route.stops.map((stop, stopIdx) => (
                           <div key={stopIdx} className="flex items-start space-x-3 py-2 border-l-2 border-blue-200 pl-4">
