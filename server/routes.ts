@@ -830,6 +830,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Processar campos de configuração de entrega (JSONB arrays)
+      const deliveryConfigFields = [
+        'deliveryWeekdays',
+        'deliveryTimeSlots', 
+        'deliverySaturdayTimeSlots',
+        'vehicleTypes'
+      ];
+      
+      for (const field of deliveryConfigFields) {
+        if (req.body[field] !== undefined) {
+          // Garantir que seja um array válido
+          if (Array.isArray(req.body[field])) {
+            // Já é array, manter como está (será convertido para JSONB pelo Drizzle)
+            req.body[field] = req.body[field];
+          } else if (req.body[field] === null || req.body[field] === '') {
+            // Se for null ou string vazia, converter para array vazio
+            req.body[field] = [];
+          } else {
+            // Tentar parsear se for string
+            try {
+              req.body[field] = JSON.parse(req.body[field]);
+            } catch {
+              req.body[field] = [];
+            }
+          }
+          
+          console.log(`✅ [CUSTOMER-UPDATE] ${field}:`, req.body[field]);
+        }
+      }
+      
+      // Processar exclusiveVehicle (boolean)
+      if (req.body.exclusiveVehicle !== undefined) {
+        req.body.exclusiveVehicle = Boolean(req.body.exclusiveVehicle);
+      }
+      
       // Clean data: transform empty strings to null for numeric fields
       const cleanedData: any = {};
       Object.keys(req.body).forEach(key => {
@@ -847,7 +882,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('✅ Cliente atualizado:', {
         id: updatedCustomer.id,
         weekdays: updatedCustomer.weekdays,
-        visitPeriodicity: updatedCustomer.visitPeriodicity
+        visitPeriodicity: updatedCustomer.visitPeriodicity,
+        deliveryWeekdays: updatedCustomer.deliveryWeekdays,
+        deliveryTimeSlots: updatedCustomer.deliveryTimeSlots,
+        deliverySaturdayTimeSlots: updatedCustomer.deliverySaturdayTimeSlots,
+        exclusiveVehicle: updatedCustomer.exclusiveVehicle,
+        vehicleTypes: updatedCustomer.vehicleTypes
       });
       
       // Atualizar automaticamente os salesCards futuros com os novos dados do cliente
