@@ -179,7 +179,7 @@ export default function DeliveryManagement() {
       setRoutePlan(data);
       setShowVehicleConfig(false);
       setShowResults(true);
-      setPendingRouteConfig(null); // Limpar config pendente
+      // NÃO limpar pendingRouteConfig aqui - será usado ao salvar as rotas
       toast({
         title: "Rotas planejadas com sucesso!",
         description: `${data.stats.assignedOrders} pedidos atribuídos em ${data.routes.length} rotas`,
@@ -225,6 +225,7 @@ export default function DeliveryManagement() {
       setSelectedOrders(new Set());
       setSelectAll(false);
       setRoutePlan(null);
+      setPendingRouteConfig(null); // Limpar config após salvar rotas
       toast({
         title: "Rotas salvas com sucesso!",
         description: `${data.routes.length} rotas foram salvas e os pedidos estão agora "Em Rota"`,
@@ -1142,6 +1143,7 @@ export default function DeliveryManagement() {
                     setShowResults(false);
                     setSelectedOrders(new Set());
                     setSelectAll(false);
+                    setPendingRouteConfig(null); // Limpar config ao fechar modal
                     queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
                   }} 
                   data-testid="button-close-results"
