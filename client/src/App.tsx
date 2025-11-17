@@ -160,6 +160,7 @@ function Router() {
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/leads" component={LeadsManagement} />
+          <Route path="/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
           <Route path="/telemarketing/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/telegram" component={TelegramSetup} />
