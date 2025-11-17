@@ -97,6 +97,7 @@
     - **Access Control**: Administrative users create/delete leads; all view; sellers update assigned leads.
     - **Route Integration**: Unified `visitStops` field allows mixing customers and leads on daily routes.
     - **Photo Enforcement**: Leads require mandatory photos for check-in and check-out.
+    - **Sales Card Access** (Nov 2025): Fixed bug preventing sellers from accessing lead cards in daily routes. System now properly extracts entityId from prefixed visit IDs ("lead:123:timestamp") to load the correct sales card, enabling sellers to treat visits, add observations, attach photos, and edit lead contact information.
 
 # External Dependencies
 

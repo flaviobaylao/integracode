@@ -402,10 +402,22 @@ export default function DailyRouteView() {
     : user;
   const hasHomeCoordinates = currentSeller?.homeLatitude && currentSeller?.homeLongitude;
 
-  // Função para abrir detalhes do card de vendas
-  const handleOpenCardDetails = async (customerId: string) => {
+  // Função para abrir detalhes do card de vendas (suporta customers e leads)
+  const handleOpenCardDetails = async (visitId: string) => {
     try {
-      // Buscar sales_cards da data da rota filtrados por este cliente
+      // Extrair entityId do visitId (suporta "customer:123:ts", "lead:456:ts" e "123")
+      let entityId = visitId;
+      let visitType: 'customer' | 'lead' = 'customer';
+      
+      if (visitId.includes(':')) {
+        const parts = visitId.split(':');
+        visitType = parts[0] as 'customer' | 'lead'; // customer ou lead
+        entityId = parts[1]; // 123
+      }
+      
+      console.log(`🔍 [CARD-DETAILS] Abrindo card para ${visitType} ${entityId} (visitId: ${visitId})`);
+      
+      // Buscar sales_cards da data da rota filtrados por esta entidade
       const routeDate = route?.routeDate || selectedDate;
       const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
       
@@ -413,14 +425,14 @@ export default function DailyRouteView() {
         throw new Error('Nenhum card encontrado para esta data');
       }
       
-      // Filtrar pelo customerId
-      const card = response.cards.find((c: any) => c.customerId === customerId);
+      // Filtrar pelo entityId (customerId para customers, customerId contendo leadId para leads)
+      const card = response.cards.find((c: any) => c.customerId === entityId);
       
       if (!card) {
         toast({
           variant: "destructive",
           title: "Card não encontrado",
-          description: "Não há card de vendas para este cliente na data selecionada.",
+          description: `Não há card de vendas para ${visitType === 'lead' ? 'este lead' : 'este cliente'} na data selecionada.`,
         });
         return;
       }
@@ -437,11 +449,23 @@ export default function DailyRouteView() {
     }
   };
 
-  // Função para abrir modal de edição do card
-  const handleEditCard = async (customerId: string, e: React.MouseEvent) => {
+  // Função para abrir modal de edição do card (suporta customers e leads)
+  const handleEditCard = async (visitId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevenir que abra o modal de detalhes
     try {
-      // Buscar sales_cards da data da rota filtrados por este cliente
+      // Extrair entityId do visitId (suporta "customer:123:ts", "lead:456:ts" e "123")
+      let entityId = visitId;
+      let visitType: 'customer' | 'lead' = 'customer';
+      
+      if (visitId.includes(':')) {
+        const parts = visitId.split(':');
+        visitType = parts[0] as 'customer' | 'lead'; // customer ou lead
+        entityId = parts[1]; // 123
+      }
+      
+      console.log(`✏️ [CARD-EDIT] Editando card para ${visitType} ${entityId} (visitId: ${visitId})`);
+      
+      // Buscar sales_cards da data da rota filtrados por esta entidade
       const routeDate = route?.routeDate || selectedDate;
       const response = await apiRequest('GET', `/api/sales-cards/by-date/${routeDate}`);
       
@@ -449,14 +473,14 @@ export default function DailyRouteView() {
         throw new Error('Nenhum card encontrado para esta data');
       }
       
-      // Filtrar pelo customerId
-      const card = response.cards.find((c: any) => c.customerId === customerId);
+      // Filtrar pelo entityId (customerId para customers, customerId contendo leadId para leads)
+      const card = response.cards.find((c: any) => c.customerId === entityId);
       
       if (!card) {
         toast({
           variant: "destructive",
           title: "Card não encontrado",
-          description: "Não há card de vendas para este cliente na data selecionada.",
+          description: `Não há card de vendas para ${visitType === 'lead' ? 'este lead' : 'este cliente'} na data selecionada.`,
         });
         return;
       }
