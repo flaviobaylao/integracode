@@ -1149,6 +1149,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Processar campos de configuração de entrega (JSONB arrays)
+      const deliveryConfigFields = [
+        'deliveryWeekdays',
+        'deliveryTimeSlots', 
+        'deliverySaturdayTimeSlots',
+        'vehicleTypes'
+      ];
+      
+      for (const field of deliveryConfigFields) {
+        if (req.body[field] !== undefined) {
+          // Garantir que seja um array válido
+          if (Array.isArray(req.body[field])) {
+            // Já é array, manter como está (será convertido para JSONB pelo Drizzle)
+            req.body[field] = req.body[field];
+          } else if (req.body[field] === null || req.body[field] === '') {
+            // Se for null ou string vazia, converter para array vazio
+            req.body[field] = [];
+          } else {
+            // Tentar parsear se for string
+            try {
+              req.body[field] = JSON.parse(req.body[field]);
+            } catch {
+              req.body[field] = [];
+            }
+          }
+          
+          console.log(`✅ [CUSTOMER-UPDATE-PUT] ${field}:`, req.body[field]);
+        }
+      }
+      
+      // Processar exclusiveVehicle (boolean)
+      if (req.body.exclusiveVehicle !== undefined) {
+        req.body.exclusiveVehicle = Boolean(req.body.exclusiveVehicle);
+        console.log(`✅ [CUSTOMER-UPDATE-PUT] exclusiveVehicle:`, req.body.exclusiveVehicle);
+      }
+      
       // Transformar strings vazias em null para campos numéricos
       const data = {
         ...req.body,
@@ -1238,6 +1274,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const customer = await storage.updateCustomer(id, data);
+      
+      // Log de confirmação das configurações de entrega salvas
+      console.log('✅ [PUT] Cliente atualizado:', {
+        id: customer.id,
+        name: customer.name,
+        deliveryWeekdays: customer.deliveryWeekdays,
+        deliveryTimeSlots: customer.deliveryTimeSlots,
+        deliverySaturdayTimeSlots: customer.deliverySaturdayTimeSlots,
+        exclusiveVehicle: customer.exclusiveVehicle,
+        vehicleTypes: customer.vehicleTypes
+      });
+      
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
