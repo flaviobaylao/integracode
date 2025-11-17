@@ -266,6 +266,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               <ul className="space-y-2 mt-4">
                 {menuItems
                   .filter(item => item.available)
+                  .filter(item => !isMotorista || item.id === 'rota-entrega')
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -290,7 +291,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   ))}
                 
                 {/* Menu Sistema de Entregas */}
-                {(canAccessReports || isVendedor) && (
+                {(canAccessReports || isVendedor) && !isMotorista && (
                   <li>
                     <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
                       <CollapsibleTrigger asChild>
@@ -328,7 +329,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 )}
 
                 {/* Menu Chat Honest (Telemarketing) */}
-                {canAccessReports && (
+                {canAccessReports && !isMotorista && (
                   <li>
                     <Collapsible open={telemarketingMenuOpen} onOpenChange={setTelemarketingMenuOpen}>
                       <CollapsibleTrigger asChild>
@@ -467,6 +468,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             <ul className="space-y-2">
               {menuItems
                 .filter(item => item.available)
+                .filter(item => !isMotorista || item.id === 'rota-entrega')
                 .map(item => (
                   <li key={item.id}>
                     <Button
@@ -486,7 +488,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 ))}
               
               {/* Menu Sistema de Entregas */}
-              {(canAccessReports || isVendedor) && (
+              {(canAccessReports || isVendedor) && !isMotorista && (
                 <li>
                   <Collapsible open={deliveryMenuOpen} onOpenChange={setDeliveryMenuOpen}>
                     <CollapsibleTrigger asChild>
@@ -524,7 +526,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               )}
 
               {/* Menu Etapas dos Pedidos */}
-              {canAccessReports && (
+              {canAccessReports && !isMotorista && (
                 <li>
                   <Collapsible open={orderStepsOpen} onOpenChange={setOrderStepsOpen}>
                     <CollapsibleTrigger asChild>

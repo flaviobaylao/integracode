@@ -19,7 +19,7 @@
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, React Hook Form with Zod for form handling.
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
-- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing).
+- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista). Motoristas have restricted access to only "Minhas Entregas" (/rota-entrega).
 - **Data Handling**: ISO UTC for dates with timezone conversion to America/Sao_Paulo, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), normalization of weekday formats.
 - **Sales & Financial Management**: Sales card tracking with source and conditional payment terms, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and sales goals dashboard. Includes a system for prioritizing urgent deliveries in route optimization.
 - **Delivery & Route Optimization**:
@@ -47,12 +47,14 @@
         - **Hourly Time Slots**: Changed from time ranges to hourly checkboxes (08:00-18:00 weekdays, 08:00-12:00 Saturdays) for granular scheduling.
         - **Persistent Delivery Config**: Delivery preferences (vehicle types, delivery days, time slots) stored in customers table; editable from sales modal, delivery management, and customer edit modal; changes sync across all locations.
         - **Driver App (Rota Entrega)**: Simplified mobile-friendly app for delivery drivers at `/rota-entrega` with:
+            - Restricted access: Motorista role users only see "Minhas Entregas" menu item
             - Date filter for viewing deliveries
             - Flat list of all deliveries sorted by stop order
             - Summary statistics (Total, Pending, Completed)
             - GPS check-in/check-out with mandatory photo capture
             - Waze navigation integration
             - Check-in/out buttons shown only when route is in progress
+            - Test credentials: kaique@bebahonest.com.br / test123
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering for sales schedules and customer data. Customer inactivation.
 - **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, invoices. Order blocking system. Hotsite orders can be sent to Omie ERP, automatically creating customers if needed, with robust validation for mandatory fields and numeric values.
