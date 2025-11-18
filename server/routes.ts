@@ -845,30 +845,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Validate and normalize weekdays if provided
+      let normalizedWeekdays: string[] | null = null;
       if (req.body.weekdays !== undefined) {
         try {
-          const normalizedArray = normalizeWeekdayInput(req.body.weekdays);
+          normalizedWeekdays = normalizeWeekdayInput(req.body.weekdays);
           // Convert array back to JSON string for database storage (always returns array, never null)
-          req.body.weekdays = JSON.stringify(normalizedArray);
+          req.body.weekdays = JSON.stringify(normalizedWeekdays);
           
           // 🚚 CALCULAR AUTOMATICAMENTE OS DIAS DE ENTREGA
           // Os dias de entrega são os próximos 2 dias úteis após os dias de rota
           // Exemplo: rota SEG → entrega TER, QUA
-          const deliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedArray);
+          const deliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
           req.body.deliveryWeekdays = deliveryDays;
           
-          console.log(`📅 [AUTO-DELIVERY-DAYS] Dias de rota: ${normalizedArray.join(', ')} → Dias de entrega: ${deliveryDays.join(', ')}`);
+          console.log(`📅 [AUTO-DELIVERY-DAYS] Dias de rota: ${normalizedWeekdays.join(', ')} → Dias de entrega: ${deliveryDays.join(', ')}`);
         } catch (error: any) {
           return res.status(400).json({ 
             message: "Dias da semana inválidos",
             error: error.message 
           });
         }
+      } else {
+        // Se weekdays não foi fornecido, mas o cliente já tem weekdays, recalcular deliveryWeekdays
+        if (existingCustomer.weekdays) {
+          try {
+            const parsedWeekdays = typeof existingCustomer.weekdays === 'string' 
+              ? JSON.parse(existingCustomer.weekdays) 
+              : existingCustomer.weekdays;
+            if (Array.isArray(parsedWeekdays) && parsedWeekdays.length > 0) {
+              const deliveryDays = calculateDeliveryDaysFromMultipleRoutes(parsedWeekdays);
+              req.body.deliveryWeekdays = deliveryDays;
+              console.log(`📅 [AUTO-DELIVERY-DAYS-RECALC] Recalculando dias de entrega: ${parsedWeekdays.join(', ')} → ${deliveryDays.join(', ')}`);
+            }
+          } catch (error) {
+            console.error('Erro ao recalcular deliveryWeekdays:', error);
+          }
+        }
       }
       
       // Processar campos de configuração de entrega (JSONB arrays)
+      // NOTA: deliveryWeekdays é calculado automaticamente, NÃO deve ser editado manualmente
       const deliveryConfigFields = [
-        'deliveryWeekdays',
         'deliveryTimeSlots', 
         'deliverySaturdayTimeSlots',
         'vehicleTypes'
@@ -4264,11 +4281,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Converter para formato do sistema
           const converted = omieService.convertClientToSystemFormat(omieClient);
+          
+          // Normalizar weekdays e calcular dias de entrega automaticamente
+          const defaultWeekdays = ["Seg", "Ter", "Qua", "Qui", "Sex"];
+          const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+          const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+          
           const systemClient = {
             ...converted,
             // Usar sellerId do Omie se disponível, senão usar sellerId da planilha
             sellerId: converted.sellerId || sellerId || '',
-            weekdays: "segunda,terça,quarta,quinta,sexta" // Padrão
+            weekdays: JSON.stringify(normalizedWeekdays),
+            deliveryWeekdays: autoDeliveryDays
           };
 
           // Verificar se cliente já existe (por CPF/CNPJ)
@@ -4380,10 +4404,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Prioridade: Omie > Existente > Default (NUNCA sobrescrever vendedor existente)
               const finalSellerId = converted.sellerId || existingCustomer?.sellerId || defaultSellerId || '';
               
+              // Normalizar weekdays e calcular dias de entrega automaticamente
+              const defaultWeekdays = ["Seg", "Ter", "Qua", "Qui", "Sex"];
+              const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+              const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+              
               const systemClient = {
                 ...converted,
                 sellerId: finalSellerId,
-                weekdays: "segunda,terça,quarta,quinta,sexta"
+                weekdays: JSON.stringify(normalizedWeekdays),
+                deliveryWeekdays: autoDeliveryDays
               };
               
               if (existingCustomer) {
@@ -15024,6 +15054,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("❌ Error normalizing weekdays:", error);
       res.status(500).json({ 
         message: "Falha ao normalizar weekdays", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  // ========================================
+  // RECALCULATE DELIVERY DAYS MIGRATION
+  // ========================================
+  
+  app.post('/api/admin/recalculate-delivery-days', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      // Apenas admin pode executar migrações de dados
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Acesso negado. Apenas admin." });
+      }
+
+      const { dryRun = true } = req.body;
+
+      console.log(`🚚 Iniciando recálculo de dias de entrega (dryRun: ${dryRun})...`);
+
+      // Buscar todos os clientes com weekdays não-null
+      const allCustomers = await db
+        .select()
+        .from(customers)
+        .where(isNotNull(customers.weekdays));
+
+      console.log(`📊 Encontrados ${allCustomers.length} clientes com dias de visita definidos`);
+
+      const changes: any[] = [];
+      const errors: any[] = [];
+      let updated = 0;
+      let skipped = 0;
+
+      for (const customer of allCustomers) {
+        try {
+          // Parse weekdays
+          const parsedWeekdays = typeof customer.weekdays === 'string' 
+            ? JSON.parse(customer.weekdays) 
+            : customer.weekdays;
+
+          if (!Array.isArray(parsedWeekdays) || parsedWeekdays.length === 0) {
+            skipped++;
+            continue;
+          }
+
+          // Calcular dias de entrega corretos
+          const correctDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(parsedWeekdays);
+          
+          // Verificar se os dias atuais estão diferentes dos corretos
+          const currentDeliveryDays = Array.isArray(customer.deliveryWeekdays) 
+            ? customer.deliveryWeekdays 
+            : [];
+          
+          const needsUpdate = JSON.stringify(currentDeliveryDays.sort()) !== JSON.stringify(correctDeliveryDays.sort());
+
+          if (needsUpdate) {
+            const change = {
+              customerId: customer.id,
+              customerName: customer.fantasyName || customer.name,
+              visitDays: parsedWeekdays.join(', '),
+              beforeDelivery: currentDeliveryDays.join(', ') || 'Vazio',
+              afterDelivery: correctDeliveryDays.join(', ')
+            };
+            
+            changes.push(change);
+
+            // Se não for dry-run, atualizar
+            if (!dryRun) {
+              await db
+                .update(customers)
+                .set({ deliveryWeekdays: correctDeliveryDays })
+                .where(eq(customers.id, customer.id));
+
+              updated++;
+
+              if (updated % 50 === 0) {
+                console.log(`   → ${updated} clientes atualizados...`);
+              }
+            }
+          } else {
+            // Dias de entrega já estão corretos
+            skipped++;
+          }
+        } catch (error: any) {
+          errors.push({
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            currentWeekdays: customer.weekdays,
+            error: error.message
+          });
+        }
+      }
+
+      console.log(`✅ Recálculo concluído:`);
+      console.log(`   - Total de clientes analisados: ${allCustomers.length}`);
+      console.log(`   - Clientes com mudanças: ${changes.length}`);
+      console.log(`   - Clientes já corretos: ${skipped}`);
+      console.log(`   - Clientes atualizados: ${updated}`);
+      console.log(`   - Erros: ${errors.length}`);
+
+      res.json({
+        mode: dryRun ? 'DRY RUN' : 'APLICADO',
+        totalCustomers: allCustomers.length,
+        changes: changes.length,
+        updated: updated,
+        skipped: skipped,
+        errors: errors.length,
+        details: changes.slice(0, 100), // Limitar a 100 para não sobrecarregar a resposta
+        errorDetails: errors,
+        message: dryRun 
+          ? `${changes.length} cliente(s) teriam dias de entrega recalculados (dry-run)`
+          : `${updated} cliente(s) com dias de entrega recalculados com sucesso`
+      });
+
+    } catch (error) {
+      console.error("❌ Error recalculating delivery days:", error);
+      res.status(500).json({ 
+        message: "Falha ao recalcular dias de entrega", 
         error: error instanceof Error ? error.message : String(error) 
       });
     }
