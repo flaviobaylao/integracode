@@ -1874,18 +1874,27 @@ export class OmieService {
       
       console.log(`✅ Nota validada: ID=${finalOmieId}, Número=${finalInvoiceNumber}`);
       
+      // Extrair número do pedido
+      const orderNumber = pedidoCompleto?.cabecalho?.numero_pedido?.toString() || 
+                         invoice.compl?.nPed?.toString() || 
+                         finalInvoiceNumber; // Fallback para número da NF
+      
       const billingData = {
+        omieOrderId: pedidoId || null, // ✅ CORREÇÃO: Incluir ID do pedido do Omie
+        orderNumber, // ✅ CORREÇÃO: Incluir número do pedido
         omieInvoiceId: finalOmieId,
         invoiceNumber: finalInvoiceNumber,
         customerFantasyName,
         customerDocument,
         cfop,
         invoiceDate,
+        orderDate: invoiceDate, // ✅ CORREÇÃO: Usar data da nota fiscal como data do pedido
         totalValue: parseFloat(totalValue.toString()),
         dueDate,
         paymentMethod,
         sellerName,
         sellerId,
+        omieCustomerCode: clientCode, // ✅ CORREÇÃO: Incluir código do cliente do Omie
         billingType: this.determineBillingType(cfop),
         invoiceStatus: (() => {
           // Buscar status SEFAZ, filtrar valores vazios
