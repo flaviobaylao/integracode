@@ -4360,7 +4360,25 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions)) as any;
     }
     
-    return await query.orderBy(desc(deliveryRoutes.routeDate));
+    const routes = await query.orderBy(desc(deliveryRoutes.routeDate));
+    
+    // Buscar as paradas de cada rota
+    const routesWithStops = await Promise.all(
+      routes.map(async (route) => {
+        const stops = await db
+          .select()
+          .from(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.routeId, route.id))
+          .orderBy(deliveryRouteStops.stopOrder);
+        
+        return {
+          ...route,
+          stops
+        };
+      })
+    );
+    
+    return routesWithStops;
   }
 
   async getDeliveryRoute(id: string): Promise<any | undefined> {

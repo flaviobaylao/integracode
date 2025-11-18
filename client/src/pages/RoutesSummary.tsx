@@ -266,7 +266,8 @@ export default function RoutesSummary() {
               {/* Lista de Paradas */}
               <div className="space-y-3">
                 <h3 className="font-semibold">Paradas da Rota</h3>
-                {selectedRouteData.stops.map((stop) => {
+                {selectedRouteData.stops && selectedRouteData.stops.length > 0 ? (
+                  selectedRouteData.stops.map((stop) => {
                   const deliveryDuration = calculateDeliveryDuration(stop.checkInTime, stop.checkOutTime);
                   
                   return (
@@ -353,7 +354,12 @@ export default function RoutesSummary() {
                       </CardContent>
                     </Card>
                   );
-                })}
+                })
+                ) : (
+                  <div className="text-center text-muted-foreground py-8">
+                    Nenhuma parada cadastrada para esta rota
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
