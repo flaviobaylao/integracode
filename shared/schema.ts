@@ -548,9 +548,13 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   estimatedServiceTime: integer("estimated_service_time").notNull().default(10), // Tempo estimado de permanência em minutos
   distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // Distância da parada anterior em km
   isPriority: boolean("is_priority").notNull().default(false),
-  status: varchar("status").notNull().default('pending'), // pending, in_progress, completed, failed
+  status: varchar("status").notNull().default('pendente'), // pendente, efetuada, em_pausa, devolvida
   checkInTime: timestamp("check_in_time"), // Horário real de check-in
+  checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }), // Coordenadas do check-in
+  checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }),
   checkOutTime: timestamp("check_out_time"), // Horário real de check-out
+  checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }), // Coordenadas do check-out
+  checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }),
   photos: jsonb("photos").$type<string[]>().default([]), // Array de URLs de fotos
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),

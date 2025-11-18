@@ -21,7 +21,8 @@ import {
   Package,
   Image as ImageIcon,
   CheckCircle2,
-  Circle
+  Circle,
+  XCircle
 } from "lucide-react";
 import { format } from 'date-fns';
 
@@ -109,12 +110,27 @@ export default function RoutesSummary() {
     return <Badge variant={config.variant}>{config.label}</Badge>;
   };
 
+  const getDeliveryStatusBadge = (status: string) => {
+    const variants: Record<string, { variant: any; label: string; className: string }> = {
+      pendente: { variant: 'secondary', label: 'PENDENTE', className: 'bg-gray-200 text-gray-700' },
+      efetuada: { variant: 'default', label: 'EFETUADA', className: 'bg-green-500 text-white' },
+      em_pausa: { variant: 'outline', label: 'EM PAUSA', className: 'bg-yellow-500 text-white' },
+      devolvida: { variant: 'destructive', label: 'DEVOLVIDA', className: 'bg-red-500 text-white' },
+    };
+
+    const config = variants[status] || { variant: 'secondary', label: status.toUpperCase(), className: '' };
+    return <Badge variant={config.variant} className={config.className}>{config.label}</Badge>;
+  };
+
   const getStopStatusIcon = (stop: RouteStop) => {
-    if (stop.completedAt || stop.checkOutTime) {
+    if (stop.status === 'efetuada' || stop.completedAt || stop.checkOutTime) {
       return <CheckCircle2 className="h-5 w-5 text-green-600" />;
     }
-    if (stop.checkInTime) {
+    if (stop.status === 'em_pausa' || stop.checkInTime) {
       return <Clock className="h-5 w-5 text-blue-600 animate-pulse" />;
+    }
+    if (stop.status === 'devolvida') {
+      return <XCircle className="h-5 w-5 text-red-600" />;
     }
     return <Circle className="h-5 w-5 text-gray-400" />;
   };
