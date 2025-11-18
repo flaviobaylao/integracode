@@ -649,7 +649,7 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF, Dias de Entrega e Dias de Recebimento */}
+                        {/* Informações destacadas: NF e Dias de Entrega (calculados - 2 dias úteis após visita) */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
@@ -662,16 +662,8 @@ export default function DeliveryManagement() {
                           {order.deliveryWeekdays && order.deliveryWeekdays.length > 0 && (
                             <div className="flex items-center gap-1">
                               <Truck className="h-4 w-4 text-purple-600" />
-                              <span className="text-sm font-medium text-purple-700">
-                                Entrega: {formatDeliveryDays(order.deliveryWeekdays as any)}
-                              </span>
-                            </div>
-                          )}
-                          {(order as any).receivingWeekdays && (order as any).receivingWeekdays.length > 0 && (
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-4 w-4 text-green-600" />
                               <span className="text-base font-bold text-gray-900">
-                                Recebimento: {formatDeliveryDays((order as any).receivingWeekdays as any)}
+                                Entrega: {formatDeliveryDays(order.deliveryWeekdays as any)}
                               </span>
                             </div>
                           )}
