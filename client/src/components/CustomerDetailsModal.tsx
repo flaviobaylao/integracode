@@ -438,12 +438,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                 </CardContent>
               </Card>
 
-              {/* Configurações de Entrega */}
+              {/* Configurações de Recebimento */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
                     <Truck className="h-5 w-5 text-blue-600" />
-                    <span>Configurações de Entrega</span>
+                    <span>Configurações de Recebimento</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -517,9 +517,9 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     </div>
                   </div>
 
-                  {/* Horários de Entrega - Dias Úteis */}
+                  {/* Horários de Recebimento - Dias Úteis */}
                   <div>
-                    <p className="text-sm text-gray-600 mb-2">Horários de Entrega (Dias Úteis)</p>
+                    <p className="text-sm text-gray-600 mb-2">Horários de Recebimento (Dias Úteis)</p>
                     {(() => {
                       // Try both camelCase and snake_case for compatibility
                       const rawSlots = (customer as any).deliveryTimeSlots || (customer as any).delivery_time_slots;
@@ -544,9 +544,9 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     })()}
                   </div>
 
-                  {/* Horários de Entrega - Sábado */}
+                  {/* Horários de Recebimento - Sábado */}
                   <div>
-                    <p className="text-sm text-gray-600 mb-2">Horários de Entrega (Sábado)</p>
+                    <p className="text-sm text-gray-600 mb-2">Horários de Recebimento (Sábado)</p>
                     {(() => {
                       // Try both camelCase and snake_case for compatibility
                       const rawSlots = (customer as any).deliverySaturdayTimeSlots || (customer as any).delivery_saturday_time_slots;

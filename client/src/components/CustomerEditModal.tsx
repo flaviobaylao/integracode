@@ -406,9 +406,9 @@ export default function CustomerEditModal({
             </Select>
           </div>
 
-          {/* Configurações de Entrega */}
+          {/* Configurações de Recebimento */}
           <div className="space-y-4 border-t pt-4">
-            <h3 className="font-semibold text-lg">Configurações de Entrega</h3>
+            <h3 className="font-semibold text-lg">Configurações de Recebimento</h3>
             
             {/* Veículo Exclusivo */}
             <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
@@ -458,9 +458,9 @@ export default function CustomerEditModal({
               )}
             </div>
 
-            {/* Dias de Entrega */}
+            {/* Dias de Recebimento */}
             <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</Label>
+              <Label className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</Label>
               
               <div className="grid grid-cols-4 gap-3">
                 {[
@@ -487,9 +487,9 @@ export default function CustomerEditModal({
               </div>
             </div>
 
-            {/* Horários de Entrega (Seg-Sex) */}
+            {/* Horários de Recebimento (Seg-Sex) */}
             <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</Label>
+              <Label className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</Label>
               
               <div className="grid grid-cols-4 gap-3">
                 {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
@@ -508,9 +508,9 @@ export default function CustomerEditModal({
               </div>
             </div>
 
-            {/* Horários de Entrega aos Sábados */}
+            {/* Horários de Recebimento aos Sábados */}
             <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-purple-900">Horários aos Sábados</Label>
+              <Label className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</Label>
               
               <div className="grid grid-cols-4 gap-3">
                 {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (

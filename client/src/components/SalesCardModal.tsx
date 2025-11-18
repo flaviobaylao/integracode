@@ -572,17 +572,17 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
             {errors.notes && <p className="text-sm text-red-500 mt-1">{errors.notes}</p>}
           </div>
 
-          {/* Configurações de Entrega */}
+          {/* Configurações de Recebimento */}
           <div className="border-t border-gray-200 pt-6">
             <div className="mb-4">
               <div className="flex items-center space-x-2 mb-3">
                 <Truck className="h-5 w-5 text-blue-600" />
-                <Label className="text-base font-semibold">Configurações de Entrega</Label>
+                <Label className="text-base font-semibold">Configurações de Recebimento</Label>
               </div>
               
               {/* Dias da Semana */}
               <div className="mb-6">
-                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Entrega</Label>
+                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Recebimento</Label>
                 <div className="grid grid-cols-2 gap-3">
                   {weekdays.map((day) => (
                     <div key={day.value} className="flex items-center space-x-2">
@@ -603,11 +603,11 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                 </div>
               </div>
 
-              {/* Horários de Entrega */}
+              {/* Horários de Recebimento */}
               <div>
                 <div className="flex items-center space-x-2 mb-3">
                   <Clock className="h-4 w-4 text-blue-600" />
-                  <Label className="text-sm font-medium">Horários Disponíveis para Entrega</Label>
+                  <Label className="text-sm font-medium">Horários Disponíveis para Recebimento</Label>
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   {timeSlots.map((time) => (

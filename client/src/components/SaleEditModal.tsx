@@ -1082,18 +1082,18 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
             </CardContent>
           </Card>
 
-          {/* Configurações de Entrega */}
+          {/* Configurações de Recebimento */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Truck className="h-5 w-5 text-blue-600" />
-                <span>Configurações de Entrega</span>
+                <span>Configurações de Recebimento</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               {/* Dias da Semana */}
               <div className="mb-6">
-                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Entrega</Label>
+                <Label className="text-sm font-medium mb-3 block">Dias da Semana para Recebimento</Label>
                 <div className="grid grid-cols-2 gap-3">
                   {weekdays.map((day) => (
                     <div key={day.value} className="flex items-center space-x-2">
@@ -1114,11 +1114,11 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 </div>
               </div>
 
-              {/* Horários de Entrega */}
+              {/* Horários de Recebimento */}
               <div>
                 <div className="flex items-center space-x-2 mb-3">
                   <Clock className="h-4 w-4 text-blue-600" />
-                  <Label className="text-sm font-medium">Horários Disponíveis para Entrega</Label>
+                  <Label className="text-sm font-medium">Horários Disponíveis para Recebimento</Label>
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   {timeSlots.map((time) => (

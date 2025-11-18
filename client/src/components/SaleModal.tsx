@@ -1318,9 +1318,9 @@ Qualquer dúvida, estou à disposição.`;
                   </div>
                 )}
 
-                {/* Dias de Entrega */}
+                {/* Dias de Recebimento */}
                 <div className="space-y-3">
-                  <Label className="text-sm font-medium">Dias e Horários de Entrega:</Label>
+                  <Label className="text-sm font-medium">Dias e Horários de Recebimento:</Label>
                   
                   {/* Dias de semana (segunda a sexta) */}
                   <div className="space-y-3">

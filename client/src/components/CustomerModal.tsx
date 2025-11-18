@@ -1135,10 +1135,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
               </CardContent>
             </Card>
 
-            {/* Configurações de Entrega */}
+            {/* Configurações de Recebimento */}
             <Card>
               <CardContent className="pt-6">
-                <h3 className="font-semibold text-lg mb-4">Configurações de Entrega</h3>
+                <h3 className="font-semibold text-lg mb-4">Configurações de Recebimento</h3>
                 
                 {/* Veículo Exclusivo */}
                 <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg mb-4">
@@ -1223,9 +1223,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   )}
                 </div>
 
-                {/* Dias de Entrega */}
+                {/* Dias de Recebimento */}
                 <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg mb-4">
-                  <FormLabel className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</FormLabel>
+                  <FormLabel className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</FormLabel>
                   <FormField
                     control={form.control}
                     name="deliveryWeekdays"
@@ -1269,9 +1269,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   />
                 </div>
 
-                {/* Horários de Entrega (Seg-Sex) */}
+                {/* Horários de Recebimento (Seg-Sex) */}
                 <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg mb-4">
-                  <FormLabel className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</FormLabel>
+                  <FormLabel className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</FormLabel>
                   <FormField
                     control={form.control}
                     name="deliveryTimeSlots"
@@ -1307,9 +1307,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   />
                 </div>
 
-                {/* Horários de Entrega aos Sábados */}
+                {/* Horários de Recebimento aos Sábados */}
                 <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
-                  <FormLabel className="text-sm font-medium text-purple-900">Horários aos Sábados</FormLabel>
+                  <FormLabel className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</FormLabel>
                   <FormField
                     control={form.control}
                     name="deliverySaturdayTimeSlots"

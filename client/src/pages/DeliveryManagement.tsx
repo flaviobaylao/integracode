@@ -1217,13 +1217,13 @@ export default function DeliveryManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal para editar configurações de entrega do cliente */}
+      {/* Modal para editar configurações de recebimento do cliente */}
       <Dialog open={showDeliveryConfig} onOpenChange={setShowDeliveryConfig}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-delivery-config">
           <DialogHeader>
-            <DialogTitle>Configurações de Entrega</DialogTitle>
+            <DialogTitle>Configurações de Recebimento</DialogTitle>
             <DialogDescription>
-              Editar preferências de entrega para {editingCustomer?.customerName}
+              Editar preferências de recebimento para {editingCustomer?.customerName}
             </DialogDescription>
           </DialogHeader>
           
@@ -1279,11 +1279,11 @@ export default function DeliveryManagement() {
               )}
             </div>
 
-            {/* Dias de Entrega */}
+            {/* Dias de Recebimento */}
             <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg">
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-blue-600" />
-                <Label className="text-sm font-medium text-blue-900">Dias da Semana para Entrega</Label>
+                <Label className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</Label>
               </div>
               
               <div className="grid grid-cols-4 gap-3">
@@ -1311,11 +1311,11 @@ export default function DeliveryManagement() {
               </div>
             </div>
 
-            {/* Horários de Entrega (Seg-Sex) */}
+            {/* Horários de Recebimento (Seg-Sex) */}
             <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-green-600" />
-                <Label className="text-sm font-medium text-green-900">Horários de Entrega (Seg-Sex)</Label>
+                <Label className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</Label>
               </div>
               
               <div className="grid grid-cols-4 gap-3">
@@ -1335,11 +1335,11 @@ export default function DeliveryManagement() {
               </div>
             </div>
 
-            {/* Horários de Entrega aos Sábados */}
+            {/* Horários de Recebimento aos Sábados */}
             <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-purple-600" />
-                <Label className="text-sm font-medium text-purple-900">Horários aos Sábados</Label>
+                <Label className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</Label>
               </div>
               
               <div className="grid grid-cols-4 gap-3">
