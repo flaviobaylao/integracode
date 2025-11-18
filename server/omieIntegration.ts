@@ -716,18 +716,16 @@ export class OmieService {
       
       // MAPEAMENTO OFICIAL DAS ETAPAS DE NOTAS FISCAIS - HONEST SUCOS
       // ============================================================
-      // DOCUMENTAÇÃO: Mapeamento atualizado em 18/11/2025 após análise de dados reais
-      // O Omie retorna etapa 20 para notas recém-emitidas (não etapa 80 como esperado)
-      // Processo: NF emitida → Aguardando Rota (etapa 20) → [alocação manual] → Em Rota → Entregue
+      // DOCUMENTAÇÃO: Este mapeamento foi validado em 14/09/2025 após análise
+      // dos dados reais do Omie ERP. NUNCA alterar sem validação prévia.
+      // Processo: NF emitida → Aguardando Rota → Em Rota → Entregue
       // ============================================================
       
       // Etapa 10: Pedidos (não são notas fiscais)
       this.stageNamesCache.set('10', 'Pedido de Venda');
       
-      // Etapa 20: Notas fiscais emitidas aguardando alocação em rota
-      // CORRIGIDO: Mudado de "Em Rota" para "Aguardando Rota" (18/11/2025)
-      // Motivo: Omie retorna etapa 20 para NFs recém-emitidas, não etapa 80
-      this.stageNamesCache.set('20', 'Aguardando Rota');
+      // Etapa 20: Notas que estão em rota de entrega
+      this.stageNamesCache.set('20', 'Em Rota');
       
       // Etapas 50/60: Notas emitidas/faturadas
       this.stageNamesCache.set('50', 'Faturado');
@@ -736,7 +734,7 @@ export class OmieService {
       // Etapa 70: Notas entregues ao cliente final
       this.stageNamesCache.set('70', 'Entregue');
       
-      // Etapa 80: Notas prontas aguardando definição de rota (raramente usado pelo Omie)
+      // Etapa 80: Notas prontas aguardando definição de rota
       this.stageNamesCache.set('80', 'Aguardando Rota');
     }
   }
