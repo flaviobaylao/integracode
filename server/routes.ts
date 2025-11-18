@@ -14294,10 +14294,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`✅ Cliente existente - mantendo configurações: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
         
-        // Atualizar informações se necessário
+        // Atualizar todas as informações do cliente
         await storage.updateCustomer(customerId, {
-          address: validatedData.customer.address,
-          name: validatedData.customer.name
+          name: validatedData.customer.name,
+          email: validatedData.customer.email,
+          phone: validatedData.customer.phone,
+          address: validatedData.customer.address
         });
         
       } else {
