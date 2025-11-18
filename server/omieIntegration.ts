@@ -873,6 +873,27 @@ export class OmieService {
 
   // ==================== MÉTODOS DE FATURAMENTO ====================
   
+  // Método para carregar todos os customers em cache (otimização para evitar N+1 queries)
+  private async loadCustomersCache(): Promise<Map<string, any>> {
+    try {
+      console.log('📦 Carregando cache de customers...');
+      const allCustomers = await db.select().from(customers);
+      const cache = new Map<string, any>();
+      
+      for (const customer of allCustomers) {
+        if (customer.omieClientCode) {
+          cache.set(customer.omieClientCode, customer);
+        }
+      }
+      
+      console.log(`✅ Cache carregado: ${cache.size} customers`);
+      return cache;
+    } catch (error) {
+      console.error('❌ Erro ao carregar cache de customers:', error);
+      return new Map(); // Retorna Map vazio em caso de erro
+    }
+  }
+  
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
   async listOrders(page: number = 1, pageSize: number = 50, dateFrom: string = '', dateTo: string = ''): Promise<any> {
     try {
@@ -954,6 +975,9 @@ export class OmieService {
       console.log(`🔄 Sincronizando TODOS os pedidos do Omie (faturados e não faturados)...`);
       console.log(`🔐 Chaves configuradas: app_key=${this.appKey ? 'SIM' : 'NÃO'}, app_secret=${this.appSecret ? 'SIM' : 'NÃO'}`);
       
+      // Carregar cache de customers para evitar N+1 queries
+      const customersCache = await this.loadCustomersCache();
+      
       let totalProcessed = 0;
       let imported = 0;
       let updated = 0;
@@ -995,7 +1019,7 @@ export class OmieService {
           
           for (const order of orders) {
             try {
-              const billingData = await this.transformOrderToBilling(order);
+              const billingData = await this.transformOrderToBilling(order, customersCache);
               if (billingData) {
                 // Usar validação centralizada para salvar no storage
                 const result = await this.storage.saveBillingIfValid(billingData);
@@ -1366,7 +1390,7 @@ export class OmieService {
           
           for (const invoice of invoices) {
             try {
-              const billingData = await this.transformInvoiceToBilling(invoice);
+              const billingData = await this.transformInvoiceToBilling(invoice, customersCache);
               if (billingData) {
                 // Usar validação centralizada para salvar no storage
                 const result = await this.storage.saveBillingIfValid(billingData);
@@ -1436,7 +1460,7 @@ export class OmieService {
   }
 
   // Método para transformar dados de PEDIDOS do Omie para formato do sistema
-  private async transformOrderToBilling(order: any): Promise<any> {
+  private async transformOrderToBilling(order: any, customersCache?: Map<string, any>): Promise<any> {
     try {
       // DEBUG: Mostrar estrutura do pedido
       console.log(`🔧 DEBUG: Estrutura do pedido recebido:`, JSON.stringify({
@@ -1630,20 +1654,33 @@ export class OmieService {
         }
       }
       
-      // Buscar delivery_weekdays do customer no banco de dados
+      // Buscar delivery_weekdays do customer (usa cache se disponível para evitar N+1 queries)
       let deliveryWeekdays: string[] = [];
       if (clientCode) {
         try {
-          const [customer] = await db
-            .select()
-            .from(customers)
-            .where(eq(customers.omieClientCode, clientCode));
+          let customer = customersCache?.get(clientCode);
           
-          if (customer && customer.deliveryWeekdays) {
-            // deliveryWeekdays vem como JSONB do banco, precisa ser parseado
-            deliveryWeekdays = Array.isArray(customer.deliveryWeekdays) 
-              ? customer.deliveryWeekdays 
-              : JSON.parse(JSON.stringify(customer.deliveryWeekdays));
+          // Se não tem cache, busca direto no banco
+          if (!customer) {
+            const [dbCustomer] = await db
+              .select()
+              .from(customers)
+              .where(eq(customers.omieClientCode, clientCode));
+            customer = dbCustomer;
+          }
+          
+          if (customer?.deliveryWeekdays) {
+            // deliveryWeekdays vem como JSONB do banco (Drizzle já parseia automaticamente)
+            if (Array.isArray(customer.deliveryWeekdays)) {
+              deliveryWeekdays = customer.deliveryWeekdays;
+            } else if (typeof customer.deliveryWeekdays === 'string') {
+              try {
+                const parsed = JSON.parse(customer.deliveryWeekdays);
+                deliveryWeekdays = Array.isArray(parsed) ? parsed : [];
+              } catch {
+                deliveryWeekdays = [];
+              }
+            }
             console.log(`✅ Copiando delivery_weekdays do cliente ${clientCode}: ${deliveryWeekdays.join(', ')}`);
           }
         } catch (error) {
@@ -1686,7 +1723,7 @@ export class OmieService {
   }
 
   // Método para transformar dados da API Omie para formato do sistema (LEGADO - apenas notas fiscais)
-  private async transformInvoiceToBilling(invoice: any): Promise<any> {
+  private async transformInvoiceToBilling(invoice: any, customersCache?: Map<string, any>): Promise<any> {
     try {
       console.log(`🔧 Transformando nota fiscal: ${invoice.ide?.nNF || 'SEM_NUMERO'}`);
       
@@ -1904,6 +1941,40 @@ export class OmieService {
                          invoice.compl?.nPed?.toString() || 
                          finalInvoiceNumber; // Fallback para número da NF
       
+      // Buscar delivery_weekdays do customer (usa cache se disponível para evitar N+1 queries)
+      let deliveryWeekdays: string[] = [];
+      if (clientCode) {
+        try {
+          let customer = customersCache?.get(clientCode);
+          
+          // Se não tem cache, busca direto no banco
+          if (!customer) {
+            const [dbCustomer] = await db
+              .select()
+              .from(customers)
+              .where(eq(customers.omieClientCode, clientCode));
+            customer = dbCustomer;
+          }
+          
+          if (customer?.deliveryWeekdays) {
+            // deliveryWeekdays vem como JSONB do banco (Drizzle já parseia automaticamente)
+            if (Array.isArray(customer.deliveryWeekdays)) {
+              deliveryWeekdays = customer.deliveryWeekdays;
+            } else if (typeof customer.deliveryWeekdays === 'string') {
+              try {
+                const parsed = JSON.parse(customer.deliveryWeekdays);
+                deliveryWeekdays = Array.isArray(parsed) ? parsed : [];
+              } catch {
+                deliveryWeekdays = [];
+              }
+            }
+            console.log(`✅ Copiando delivery_weekdays do cliente ${clientCode}: ${deliveryWeekdays.join(', ')}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar delivery_weekdays do cliente ${clientCode}:`, error);
+        }
+      }
+      
       const billingData = {
         omieOrderId: pedidoId || null, // ✅ CORREÇÃO: Incluir ID do pedido do Omie
         orderNumber, // ✅ CORREÇÃO: Incluir número do pedido
@@ -1940,7 +2011,8 @@ export class OmieService {
           quantity: parseFloat(item.prod?.qCom || '0'),
           unitPrice: parseFloat(item.prod?.vUnCom || '0'),
           totalPrice: parseFloat(item.prod?.vProd || '0')
-        })) || []
+        })) || [],
+        deliveryWeekdays // ✅ Copiar delivery_weekdays do customer
       };
       
       return billingData;
@@ -3041,6 +3113,9 @@ export class OmieService {
   }> {
     try {
       console.log('🔄 Iniciando sincronização de TODAS as notas fiscais históricas (apenas NF-e autorizadas)...');
+      
+      // Carregar cache de customers para evitar N+1 queries
+      const customersCache = await this.loadCustomersCache();
       
       let totalProcessed = 0;
       let imported = 0;
