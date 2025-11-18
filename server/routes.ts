@@ -8642,6 +8642,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Excluir parada individual de uma rota
+  app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role;
+      
+      console.log(`🗑️ [DELETE-STOP] Usuário ${userId} (${userRole}) excluindo parada ${stopId}`);
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      const billingId = stop[0].billingId;
+      const routeId = stop[0].routeId;
+      
+      // Verificar permissões (admin, coordinator, administrative podem excluir)
+      if (!['admin', 'coordinator', 'administrative'].includes(userRole)) {
+        return res.status(403).json({ message: "Você não tem permissão para excluir paradas" });
+      }
+      
+      // Excluir a parada
+      await db.delete(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId));
+      
+      // Retornar billing para "Aguardando Rota"
+      if (billingId) {
+        await storage.updateBillingsStatus([billingId], 'Aguardando Rota');
+        console.log(`📦 [DELETE-STOP] Billing ${billingId} retornado para "Aguardando Rota"`);
+      }
+      
+      console.log(`✅ [DELETE-STOP] Parada ${stopId} excluída da rota ${routeId}`);
+      res.json({ 
+        message: "Parada excluída com sucesso",
+        billingId,
+        routeId
+      });
+    } catch (error: any) {
+      console.error("Error deleting stop:", error);
+      res.status(500).json({ message: "Failed to delete stop", error: error.message });
+    }
+  });
+  
+  // Excluir rota completa
+  app.delete("/api/delivery-routes/:routeId", authenticateUser, async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role;
+      
+      console.log(`🗑️ [DELETE-ROUTE] Usuário ${userId} (${userRole}) excluindo rota ${routeId}`);
+      
+      // Verificar permissões (admin, coordinator, administrative podem excluir)
+      if (!['admin', 'coordinator', 'administrative'].includes(userRole)) {
+        return res.status(403).json({ message: "Você não tem permissão para excluir rotas" });
+      }
+      
+      // Buscar todas as paradas da rota
+      const stops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, routeId));
+      
+      // Coletar todos os billingIds
+      const billingIds = stops
+        .map(stop => stop.billingId)
+        .filter(id => id !== null) as string[];
+      
+      console.log(`📦 [DELETE-ROUTE] Encontradas ${stops.length} paradas com ${billingIds.length} billings`);
+      
+      // Excluir todas as paradas
+      await db.delete(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, routeId));
+      
+      // Excluir a rota
+      await db.delete(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, routeId));
+      
+      // Retornar todos os billings para "Aguardando Rota"
+      if (billingIds.length > 0) {
+        await storage.updateBillingsStatus(billingIds, 'Aguardando Rota');
+        console.log(`📦 [DELETE-ROUTE] ${billingIds.length} billings retornados para "Aguardando Rota"`);
+      }
+      
+      console.log(`✅ [DELETE-ROUTE] Rota ${routeId} excluída com sucesso`);
+      res.json({ 
+        message: "Rota excluída com sucesso",
+        stopsDeleted: stops.length,
+        billingsReturned: billingIds.length
+      });
+    } catch (error: any) {
+      console.error("Error deleting route:", error);
+      res.status(500).json({ message: "Failed to delete route", error: error.message });
+    }
+  });
+  
   // ========== FIM DOS ENDPOINTS PARA MOTORISTAS ==========
 
   // Buscar entregas pendentes
