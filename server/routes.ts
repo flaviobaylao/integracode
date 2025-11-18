@@ -3739,6 +3739,125 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Migrate receiving weekdays (admin only) - populate receiving_weekdays and clean duplicates from delivery_weekdays
+  app.post('/api/admin/migrate-receiving-weekdays', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { dryRun = true } = req.body;
+      
+      console.log(`\n🔄 Starting receiving weekdays migration (dryRun: ${dryRun})...`);
+      
+      // Buscar todos os clientes
+      const allCustomers = await storage.getCustomers();
+      
+      const stats = {
+        totalAnalyzed: 0,
+        deliveryWeekdaysNormalized: 0,
+        receivingWeekdaysPopulated: 0,
+        alreadyCorrect: 0,
+        changes: [] as any[]
+      };
+      
+      for (const customer of allCustomers) {
+        stats.totalAnalyzed++;
+        
+        let needsUpdate = false;
+        const updates: any = {};
+        
+        // Parse delivery_weekdays
+        let deliveryWeekdays: string[] = [];
+        try {
+          if (customer.deliveryWeekdays) {
+            deliveryWeekdays = normalizeWeekdayInput(customer.deliveryWeekdays);
+          }
+        } catch (error) {
+          console.error(`Error normalizing delivery_weekdays for customer ${customer.id}:`, error);
+        }
+        
+        // Parse receiving_weekdays
+        let receivingWeekdays: string[] = [];
+        try {
+          if (customer.receivingWeekdays) {
+            receivingWeekdays = normalizeWeekdayInput(customer.receivingWeekdays);
+          }
+        } catch (error) {
+          console.error(`Error normalizing receiving_weekdays for customer ${customer.id}:`, error);
+        }
+        
+        // Remover duplicatas de delivery_weekdays
+        const uniqueDeliveryWeekdays = Array.from(new Set(deliveryWeekdays));
+        if (uniqueDeliveryWeekdays.length !== deliveryWeekdays.length || 
+            JSON.stringify(uniqueDeliveryWeekdays) !== JSON.stringify(deliveryWeekdays)) {
+          updates.deliveryWeekdays = uniqueDeliveryWeekdays;
+          needsUpdate = true;
+          stats.deliveryWeekdaysNormalized++;
+        }
+        
+        // Popular receiving_weekdays se estiver vazio
+        if (receivingWeekdays.length === 0 && uniqueDeliveryWeekdays.length > 0) {
+          updates.receivingWeekdays = uniqueDeliveryWeekdays;
+          needsUpdate = true;
+          stats.receivingWeekdaysPopulated++;
+        }
+        
+        // Registrar mudanças
+        if (needsUpdate) {
+          const change = {
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            before: {
+              deliveryWeekdays,
+              receivingWeekdays
+            },
+            after: {
+              deliveryWeekdays: updates.deliveryWeekdays || deliveryWeekdays,
+              receivingWeekdays: updates.receivingWeekdays || receivingWeekdays
+            }
+          };
+          
+          if (stats.changes.length < 100) {
+            stats.changes.push(change);
+          }
+          
+          // Aplicar mudanças se não for dry-run
+          if (!dryRun) {
+            await db.execute(sql`
+              UPDATE customers 
+              SET 
+                delivery_weekdays = ${JSON.stringify(updates.deliveryWeekdays || deliveryWeekdays)}::jsonb,
+                receiving_weekdays = ${JSON.stringify(updates.receivingWeekdays || receivingWeekdays)}::jsonb
+              WHERE id = ${customer.id}
+            `);
+          }
+        } else {
+          stats.alreadyCorrect++;
+        }
+      }
+      
+      console.log(`✅ Migration completed:`, {
+        totalAnalyzed: stats.totalAnalyzed,
+        deliveryWeekdaysNormalized: stats.deliveryWeekdaysNormalized,
+        receivingWeekdaysPopulated: stats.receivingWeekdaysPopulated,
+        alreadyCorrect: stats.alreadyCorrect
+      });
+      
+      res.json({
+        success: true,
+        dryRun,
+        stats,
+        message: dryRun 
+          ? 'Dry run completed. Review the stats and run with dryRun:false to apply changes.'
+          : 'Migration completed successfully!'
+      });
+    } catch (error: any) {
+      console.error("Error running migration:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Migration failed", 
+        error: error.message 
+      });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
