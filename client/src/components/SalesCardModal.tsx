@@ -682,7 +682,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                       htmlFor="exclusive-vehicle" 
                       className="text-sm font-normal cursor-pointer"
                     >
-                      Entrega em veículo exclusivo?
+                      Recebimento em veículo exclusivo?
                     </Label>
                   </div>
 

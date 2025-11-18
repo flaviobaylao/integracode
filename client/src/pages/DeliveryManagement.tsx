@@ -759,7 +759,7 @@ export default function DeliveryManagement() {
                               data-testid={`button-edit-delivery-config-${order.id}`}
                             >
                               <Settings className="h-3 w-3 mr-1" />
-                              Editar Config. Entrega
+                              Editar Config. Recebimento
                             </Button>
                           )}
                         </div>
@@ -1249,7 +1249,7 @@ export default function DeliveryManagement() {
                   data-testid="checkbox-exclusive-vehicle-config"
                 />
                 <Label htmlFor="exclusive-vehicle-config" className="text-sm cursor-pointer">
-                  Entrega em veículo exclusivo?
+                  Recebimento em veículo exclusivo?
                 </Label>
               </div>
 
