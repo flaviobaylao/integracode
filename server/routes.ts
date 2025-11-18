@@ -886,9 +886,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Processar campos de configuração de RECEBIMENTO (JSONB arrays)
-      // IMPORTANTE: deliveryTimeSlots/deliverySaturdayTimeSlots = Horários em que o CLIENTE ACEITA RECEBER mercadorias
-      // NOTA: deliveryWeekdays (dias de execução) é calculado automaticamente, NÃO deve ser editado manualmente
+      // IMPORTANTE DISTINÇÃO DE CONCEITOS:
+      // - receivingWeekdays = DIAS em que o CLIENTE ACEITA RECEBER mercadorias (configurado manualmente via checkboxes)
+      // - deliveryTimeSlots/deliverySaturdayTimeSlots = HORÁRIOS em que o CLIENTE ACEITA RECEBER mercadorias
+      // - deliveryWeekdays = DIAS DE EXECUÇÃO (calculado automaticamente - 2 dias úteis após dia de rota)
       const deliveryConfigFields = [
+        'receivingWeekdays',  // Dias da semana em que cliente aceita receber (configurado manualmente)
         'deliveryTimeSlots',  // Horários de recebimento em dias úteis
         'deliverySaturdayTimeSlots',  // Horários de recebimento aos sábados
         'vehicleTypes'
@@ -1050,7 +1053,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cleanedData = {
         ...req.body,
         weekdays: normalizedWeekdays, // ✅ String JSON normalizada
-        deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente
+        deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente (2 dias úteis após rota)
+        receivingWeekdays: req.body.receivingWeekdays || [], // ✅ Dias de recebimento configurados manualmente (quando cliente aceita receber)
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
