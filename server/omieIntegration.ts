@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
+import { db } from './db';
+import { customers } from '@shared/schema';
+import { eq } from 'drizzle-orm';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -1627,6 +1630,27 @@ export class OmieService {
         }
       }
       
+      // Buscar delivery_weekdays do customer no banco de dados
+      let deliveryWeekdays: string[] = [];
+      if (clientCode) {
+        try {
+          const [customer] = await db
+            .select()
+            .from(customers)
+            .where(eq(customers.omieClientCode, clientCode));
+          
+          if (customer && customer.deliveryWeekdays) {
+            // deliveryWeekdays vem como JSONB do banco, precisa ser parseado
+            deliveryWeekdays = Array.isArray(customer.deliveryWeekdays) 
+              ? customer.deliveryWeekdays 
+              : JSON.parse(JSON.stringify(customer.deliveryWeekdays));
+            console.log(`✅ Copiando delivery_weekdays do cliente ${clientCode}: ${deliveryWeekdays.join(', ')}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar delivery_weekdays do cliente ${clientCode}:`, error);
+        }
+      }
+      
       const billingData = {
         omieOrderId,
         orderNumber,
@@ -1646,7 +1670,8 @@ export class OmieService {
         billingType,
         invoiceStatus: this.mapSefazStatus('emitida'), // Pedidos faturados sempre têm status "emitida"
         invoiceStage,
-        products
+        products,
+        deliveryWeekdays // ✅ Copiar delivery_weekdays do customer
       };
       
       console.log(`🔧 DEBUG BILLING STATUS: invoiceStatus="${billingData.invoiceStatus}", mapeado de "emitida"`);
