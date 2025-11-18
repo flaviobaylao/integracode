@@ -810,6 +810,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem editar dados de clientes." });
       }
       
+      // Se o ID começa com "billing-", estamos atualizando coordenadas de um billing
+      if (id.startsWith('billing-')) {
+        const billingId = id.replace('billing-', '');
+        
+        // Atualizar apenas latitude e longitude no billing
+        if (req.body.latitude !== undefined && req.body.longitude !== undefined) {
+          await db.update(billingsTable)
+            .set({
+              latitude: req.body.latitude ? String(req.body.latitude) : null,
+              longitude: req.body.longitude ? String(req.body.longitude) : null
+            })
+            .where(eq(billingsTable.id, billingId));
+          
+          console.log(`📍 [BILLING-COORDS] Coordenadas atualizadas para billing ${billingId}`);
+          
+          // Retornar um objeto simulando um customer
+          return res.json({
+            id,
+            latitude: req.body.latitude,
+            longitude: req.body.longitude,
+            message: "Coordenadas atualizadas com sucesso"
+          });
+        }
+        
+        return res.status(400).json({ message: "Apenas latitude e longitude podem ser atualizadas para billings" });
+      }
+      
       // Check if customer exists
       const existingCustomer = await storage.getCustomer(id);
       if (!existingCustomer) {
@@ -8382,33 +8409,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Excluir rota de entrega e suas paradas
-  app.delete("/api/delivery-routes/:routeId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const { routeId } = req.params;
-      
-      console.log(`🗑️ [ROUTE-DELETE] Excluindo rota ${routeId}`);
-      
-      // Primeiro, excluir todas as paradas da rota
-      await db.delete(deliveryRouteStops).where(eq(deliveryRouteStops.routeId, routeId));
-      
-      // Depois, excluir a rota
-      const deletedRoute = await db.delete(deliveryRoutes)
-        .where(eq(deliveryRoutes.id, routeId))
-        .returning();
-      
-      if (deletedRoute.length === 0) {
-        return res.status(404).json({ message: "Rota não encontrada" });
-      }
-      
-      console.log(`✅ [ROUTE-DELETE] Rota ${routeId} excluída com sucesso`);
-      res.json({ message: "Rota excluída com sucesso" });
-    } catch (error: any) {
-      console.error("Error deleting route:", error);
-      res.status(500).json({ message: "Failed to delete route", error: error.message });
-    }
-  });
-
   // ========== ENDPOINTS PARA MOTORISTAS ENTREGADORES ==========
   
   // Buscar rotas do motorista autenticado
@@ -8643,7 +8643,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Excluir parada individual de uma rota
-  app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, async (req: any, res) => {
+  app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { stopId } = req.params;
       const userId = req.user?.id;
@@ -8662,11 +8662,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const billingId = stop[0].billingId;
       const routeId = stop[0].routeId;
-      
-      // Verificar permissões (admin, coordinator, administrative podem excluir)
-      if (!['admin', 'coordinator', 'administrative'].includes(userRole)) {
-        return res.status(403).json({ message: "Você não tem permissão para excluir paradas" });
-      }
       
       // Excluir a parada
       await db.delete(deliveryRouteStops)
@@ -8691,18 +8686,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Excluir rota completa
-  app.delete("/api/delivery-routes/:routeId", authenticateUser, async (req: any, res) => {
+  app.delete("/api/delivery-routes/:routeId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routeId } = req.params;
       const userId = req.user?.id;
       const userRole = req.user?.role;
       
       console.log(`🗑️ [DELETE-ROUTE] Usuário ${userId} (${userRole}) excluindo rota ${routeId}`);
-      
-      // Verificar permissões (admin, coordinator, administrative podem excluir)
-      if (!['admin', 'coordinator', 'administrative'].includes(userRole)) {
-        return res.status(403).json({ message: "Você não tem permissão para excluir rotas" });
-      }
       
       // Buscar todas as paradas da rota
       const stops = await db.select().from(deliveryRouteStops)
