@@ -7878,6 +7878,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('📦 [GET /api/deliveries] Sample delivery order:', {
           customerId: sample.customerId,
           customerName: sample.customerName,
+          receivingWeekdays: sample.receivingWeekdays,
           deliveryWeekdays: sample.deliveryWeekdays,
           deliveryTimeSlots: sample.deliveryTimeSlots,
           deliverySaturdayTimeSlots: sample.deliverySaturdayTimeSlots,

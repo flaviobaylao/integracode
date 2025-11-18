@@ -1889,7 +1889,8 @@ export interface PendingDelivery {
   completedDate: string | null;
   paymentMethod: string | null;
   operationType: string | null;
-  deliveryWeekdays: string[];
+  receivingWeekdays: string[]; // Dias que cliente aceita receber (configurado manualmente)
+  deliveryWeekdays: string[]; // Dias preferidos de entrega (calculado automaticamente)
   deliveryTimeSlots: string[];
   deliverySaturdayTimeSlots: string[];
 }

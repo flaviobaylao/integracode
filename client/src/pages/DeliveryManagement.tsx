@@ -704,7 +704,7 @@ export default function DeliveryManagement() {
                         </div>
 
                         {/* Informações de recebimento do card */}
-                        {((order as any).receivingWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
+                        {((order as any).receivingWeekdays?.length > 0 || (order as any).deliveryWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
                           <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
                             <div className="text-xs font-semibold text-blue-900">📅 Programação de Recebimento:</div>
                             {(order as any).receivingWeekdays?.length > 0 && (
@@ -713,6 +713,15 @@ export default function DeliveryManagement() {
                                   <Calendar className="h-3 w-3 mr-1" />
                                   <span className="font-medium">Dias de Recebimento:</span>
                                   <span className="ml-1 font-semibold">{formatDeliveryDays((order as any).receivingWeekdays as any)}</span>
+                                </div>
+                              </div>
+                            )}
+                            {(order as any).deliveryWeekdays?.length > 0 && (
+                              <div className="space-y-0.5">
+                                <div className="flex items-center text-xs text-green-800">
+                                  <Truck className="h-3 w-3 mr-1" />
+                                  <span className="font-medium">Dias de Entrega (calculados):</span>
+                                  <span className="ml-1 font-semibold">{formatDeliveryDays((order as any).deliveryWeekdays as any)}</span>
                                 </div>
                               </div>
                             )}

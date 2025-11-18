@@ -2608,6 +2608,7 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
         COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
         COALESCE(sc.operation_type, b.billing_type, '') as "operationType",
+        COALESCE(c.receiving_weekdays::text, '[]')::json as "receivingWeekdays",
         COALESCE(sc.delivery_weekdays::text, c.delivery_weekdays::text, b.delivery_weekdays::text, '[]')::json as "deliveryWeekdays",
         COALESCE(sc.delivery_time_slots::text, c.delivery_time_slots::text, b.delivery_time_slots::text, '[]')::json as "deliveryTimeSlots",
         COALESCE(sc.delivery_saturday_time_slots::text, c.delivery_saturday_time_slots::text, b.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
@@ -2646,6 +2647,7 @@ export class DatabaseStorage implements IStorage {
       ...row,
       customerWeekdays: this.parseJsonField(row.customerWeekdays, []),
       vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
+      receivingWeekdays: this.parseJsonField(row.receivingWeekdays, []),
       deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
       deliveryTimeSlots: this.parseJsonField(row.deliveryTimeSlots, []),
       deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, [])
