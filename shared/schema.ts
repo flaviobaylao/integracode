@@ -213,9 +213,10 @@ export const customers = pgTable("customers", {
   // Configurações de entrega (preferências padrão do cliente)
   exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Se requer veículo exclusivo para entrega
   vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos permitidos: ["caminhao", "carro", "moto"]
-  deliveryWeekdays: jsonb("delivery_weekdays").$type<string[]>().default([]), // Dias da semana para entrega
-  deliveryTimeSlots: jsonb("delivery_time_slots").$type<string[]>().default([]), // Horários de entrega (seg-sex)
-  deliverySaturdayTimeSlots: jsonb("delivery_saturday_time_slots").$type<string[]>().default([]), // Horários específicos para sábado
+  deliveryWeekdays: jsonb("delivery_weekdays").$type<string[]>().default([]), // Dias da semana para entrega (calculados automaticamente: 2 dias úteis após dia de visita)
+  receivingWeekdays: jsonb("receiving_weekdays").$type<string[]>().default([]), // Dias da semana em que o cliente aceita receber mercadorias (configurado manualmente via checkboxes)
+  deliveryTimeSlots: jsonb("delivery_time_slots").$type<string[]>().default([]), // Horários de recebimento (seg-sex) - quando cliente aceita receber
+  deliverySaturdayTimeSlots: jsonb("delivery_saturday_time_slots").$type<string[]>().default([]), // Horários de recebimento aos sábados - quando cliente aceita receber
   
   // Status no Omie (ativo/inativo)
   omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
