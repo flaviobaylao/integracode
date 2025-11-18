@@ -63,7 +63,8 @@ interface DeliveryOrder {
   completedDate: string;
   paymentMethod: string;
   operationType: string;
-  receivingWeekdays: string[];  // Dias em que cliente aceita receber (configurado manualmente)
+  deliveryWeekdays: string[];  // Dias de entrega (calculado - 2 dias úteis após visita) - APENAS SINALIZAÇÃO
+  receivingWeekdays: string[];  // Dias de recebimento (configurado manualmente) - USADO PARA ROTEIRIZAÇÃO
   deliveryTimeSlots: string[];
   deliverySaturdayTimeSlots: string[];
 }
@@ -648,13 +649,21 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF e Dias de Recebimento */}
+                        {/* Informações destacadas: NF, Dias de Entrega e Dias de Recebimento */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
                               <Package className="h-4 w-4 text-blue-600" />
                               <span className="text-base font-bold text-gray-900">
                                 NF: {order.invoiceNumber}
+                              </span>
+                            </div>
+                          )}
+                          {order.deliveryWeekdays && order.deliveryWeekdays.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <Truck className="h-4 w-4 text-purple-600" />
+                              <span className="text-sm font-medium text-purple-700">
+                                Entrega: {formatDeliveryDays(order.deliveryWeekdays as any)}
                               </span>
                             </div>
                           )}

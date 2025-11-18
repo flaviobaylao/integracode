@@ -1053,8 +1053,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cleanedData = {
         ...req.body,
         weekdays: normalizedWeekdays, // ✅ String JSON normalizada
-        deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente (2 dias úteis após rota)
-        receivingWeekdays: req.body.receivingWeekdays || autoDeliveryDays, // ✅ Inicializar com dias calculados se não fornecido
+        deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente (2 dias úteis após rota) - APENAS SINALIZAÇÃO
+        receivingWeekdays: req.body.receivingWeekdays || [], // ✅ Dias de recebimento (configurado MANUALMENTE) - USADO PARA ROTEIRIZAÇÃO
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
