@@ -75,23 +75,44 @@ export function calculateDeliveryDaysFromMultipleRoutes(routeDays: string[]): We
  * @param deliveryDays - Array de dias de entrega
  * @returns String formatada (ex: "Terça e Quarta")
  */
-export function formatDeliveryDays(deliveryDays: WeekdayCode[]): string {
-  const dayNames: Record<WeekdayCode, string> = {
+export function formatDeliveryDays(deliveryDays: WeekdayCode[] | string[]): string {
+  const dayNames: Record<string, string> = {
     'SEG': 'Segunda',
+    'Seg': 'Segunda',
+    'seg': 'Segunda',
     'TER': 'Terça',
+    'Ter': 'Terça',
+    'ter': 'Terça',
     'QUA': 'Quarta',
+    'Qua': 'Quarta',
+    'qua': 'Quarta',
     'QUI': 'Quinta',
+    'Qui': 'Quinta',
+    'qui': 'Quinta',
     'SEX': 'Sexta',
+    'Sex': 'Sexta',
+    'sex': 'Sexta',
     'SAB': 'Sábado',
-    'DOM': 'Domingo'
+    'Sab': 'Sábado',
+    'sab': 'Sábado',
+    'DOM': 'Domingo',
+    'Dom': 'Domingo',
+    'dom': 'Domingo'
   };
   
-  if (deliveryDays.length === 0) return 'Nenhum dia';
-  if (deliveryDays.length === 1) return dayNames[deliveryDays[0]];
-  if (deliveryDays.length === 2) return `${dayNames[deliveryDays[0]]} e ${dayNames[deliveryDays[1]]}`;
+  if (!deliveryDays || deliveryDays.length === 0) return 'Nenhum dia';
+  
+  // Filtrar dias válidos e mapear para nomes
+  const validDays = deliveryDays
+    .filter(day => day && dayNames[day])
+    .map(day => dayNames[day]);
+  
+  if (validDays.length === 0) return 'Nenhum dia';
+  if (validDays.length === 1) return validDays[0];
+  if (validDays.length === 2) return `${validDays[0]} e ${validDays[1]}`;
   
   // Para 3 ou mais dias
-  const lastDay = deliveryDays[deliveryDays.length - 1];
-  const otherDays = deliveryDays.slice(0, -1).map(d => dayNames[d]).join(', ');
-  return `${otherDays} e ${dayNames[lastDay]}`;
+  const lastDay = validDays[validDays.length - 1];
+  const otherDays = validDays.slice(0, -1).join(', ');
+  return `${otherDays} e ${lastDay}`;
 }
