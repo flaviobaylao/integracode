@@ -165,6 +165,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'delivery-dashboard', label: 'Dashboard de Entregas', icon: 'fas fa-tachometer-alt' },
     { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast' },
     { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route' },
+    { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt' },
     { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie' },
     { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
   ];

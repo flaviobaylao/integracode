@@ -41,6 +41,7 @@ import WhatsAppSetup from "@/pages/WhatsAppSetup";
 import TelegramSetup from "@/pages/TelegramSetup";
 import ChatDeliveries from "@/pages/ChatDeliveries";
 import ChatAnalysis from "@/pages/ChatAnalysis";
+import ClientsMap from "@/pages/ClientsMap";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -148,6 +149,7 @@ function Router() {
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
           <Route path="/delivery-management" component={DeliveryManagement} />
           <Route path="/delivery-routes" component={RoutesSummary} />
+          <Route path="/mapa-clientes" component={ClientsMap} />
           <Route path="/rota-entrega" component={RotaEntrega} />
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
