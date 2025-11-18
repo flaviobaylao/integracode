@@ -1,23 +1,17 @@
+import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Users } from "lucide-react";
-
-interface Customer {
-  id: string;
-  name: string;
-  fantasyName: string;
-  address: string;
-  phone: string;
-  weekdays: string;
-  isActive: boolean;
-  latitude: string;
-  longitude: string;
-}
+import { MapPin, Users, Pencil, AlertCircle } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import CustomerEditModal from "@/components/CustomerEditModal";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Customer } from "@shared/schema";
 
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
@@ -127,10 +121,18 @@ function createCustomIcon(color: string) {
 }
 
 export default function ClientsMap() {
+  const { user } = useAuth();
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Controle de acesso: apenas administrativos
+  const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
+
   // Query para buscar todos os clientes ativos
   const { data: customers = [], isLoading } = useQuery<Customer[]>({
     queryKey: ['/api/customers'],
     queryFn: () => apiRequest('GET', '/api/customers'),
+    enabled: !!canAccess,
   });
 
   // Filtrar apenas clientes ativos com coordenadas válidas
@@ -161,6 +163,34 @@ export default function ClientsMap() {
           Number(activeCustomersWithCoords[0].longitude),
         ]
       : defaultCenter;
+
+  const handleEditCustomer = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setIsEditModalOpen(true);
+  };
+
+  const handleCloseEditModal = () => {
+    setIsEditModalOpen(false);
+    setSelectedCustomer(null);
+  };
+
+  // Verificar acesso
+  if (!canAccess) {
+    return (
+      <div className="space-y-6" data-testid="clients-map-page">
+        <Card>
+          <CardContent className="p-6">
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Você não tem permissão para acessar o Mapa de Clientes. Esta página é restrita a usuários administrativos.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6" data-testid="clients-map-page">
@@ -234,14 +264,14 @@ export default function ClientsMap() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="h-[600px] flex items-center justify-center">
+            <div className="h-[calc(100vh-320px)] min-h-[600px] flex items-center justify-center">
               <p className="text-muted-foreground">Carregando mapa...</p>
             </div>
           ) : activeCustomersWithCoords.length > 0 ? (
             <MapContainer
               center={mapCenter}
               zoom={12}
-              style={{ height: '600px', width: '100%' }}
+              style={{ height: 'calc(100vh - 320px)', minHeight: '600px', width: '100%' }}
               data-testid="map-container"
             >
               <TileLayer
@@ -261,7 +291,7 @@ export default function ClientsMap() {
                     icon={createCustomIcon(color)}
                   >
                     <Popup>
-                      <div className="space-y-2 min-w-[200px]">
+                      <div className="space-y-3 min-w-[220px]">
                         <h3 className="font-bold text-base">
                           {customer.fantasyName || customer.name}
                         </h3>
@@ -275,6 +305,15 @@ export default function ClientsMap() {
                           </p>
                           <p>📞 {customer.phone}</p>
                         </div>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleEditCustomer(customer)}
+                          data-testid={`button-edit-customer-${customer.id}`}
+                        >
+                          <Pencil className="h-3 w-3 mr-2" />
+                          Editar Cliente
+                        </Button>
                       </div>
                     </Popup>
                   </Marker>
@@ -282,7 +321,7 @@ export default function ClientsMap() {
               })}
             </MapContainer>
           ) : (
-            <div className="h-[600px] flex items-center justify-center">
+            <div className="h-[calc(100vh-320px)] min-h-[600px] flex items-center justify-center">
               <div className="text-center space-y-2">
                 <MapPin className="h-12 w-12 mx-auto text-gray-300" />
                 <p className="text-muted-foreground">
@@ -293,6 +332,13 @@ export default function ClientsMap() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal de Edição de Cliente */}
+      <CustomerEditModal
+        isOpen={isEditModalOpen}
+        onClose={handleCloseEditModal}
+        customer={selectedCustomer}
+      />
     </div>
   );
 }
