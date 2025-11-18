@@ -43,6 +43,7 @@ import bcrypt from 'bcrypt';
 import path from 'path';
 import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
+import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 
 // Configurar multer para upload de arquivos
 const upload = multer({ 
@@ -849,6 +850,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const normalizedArray = normalizeWeekdayInput(req.body.weekdays);
           // Convert array back to JSON string for database storage (always returns array, never null)
           req.body.weekdays = JSON.stringify(normalizedArray);
+          
+          // 🚚 CALCULAR AUTOMATICAMENTE OS DIAS DE ENTREGA
+          // Os dias de entrega são os próximos 2 dias úteis após os dias de rota
+          // Exemplo: rota SEG → entrega TER, QUA
+          const deliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedArray);
+          req.body.deliveryWeekdays = deliveryDays;
+          
+          console.log(`📅 [AUTO-DELIVERY-DAYS] Dias de rota: ${normalizedArray.join(', ')} → Dias de entrega: ${deliveryDays.join(', ')}`);
         } catch (error: any) {
           return res.status(400).json({ 
             message: "Dias da semana inválidos",
@@ -998,10 +1007,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Normalizar weekdays para formato abreviado padrão
       let normalizedWeekdays: string = '[]';
+      let autoDeliveryDays: string[] = [];
       try {
         const normalizedArray = normalizeWeekdayInput(req.body.weekdays);
         // ✅ Converter array normalizado de volta para string JSON (formato do banco)
         normalizedWeekdays = JSON.stringify(normalizedArray);
+        
+        // 🚚 CALCULAR AUTOMATICAMENTE OS DIAS DE ENTREGA
+        // Os dias de entrega são os próximos 2 dias úteis após os dias de rota
+        // Exemplo: rota SEG → entrega TER, QUA
+        autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedArray);
+        
+        console.log(`📅 [AUTO-DELIVERY-DAYS-CREATE] Dias de rota: ${normalizedArray.join(', ')} → Dias de entrega: ${autoDeliveryDays.join(', ')}`);
       } catch (error: any) {
         return res.status(400).json({ 
           message: "Dias da semana inválidos",
@@ -1013,6 +1030,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cleanedData = {
         ...req.body,
         weekdays: normalizedWeekdays, // ✅ String JSON normalizada
+        deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
