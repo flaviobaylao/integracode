@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@/lib/queryClient";
+import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,9 +22,22 @@ import {
   Image as ImageIcon,
   CheckCircle2,
   Circle,
-  XCircle
+  XCircle,
+  Trash2
 } from "lucide-react";
 import { format } from 'date-fns';
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface RouteStop {
   id: string;
@@ -68,6 +81,7 @@ export default function RoutesSummary() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
+  const { toast } = useToast();
 
   // Buscar entregadores
   const { data: drivers = [] } = useQuery<any[]>({
@@ -94,6 +108,49 @@ export default function RoutesSummary() {
       return res.json();
     },
     enabled: !!selectedDate,
+  });
+
+  // Mutation para excluir parada individual
+  const deleteStopMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('DELETE', `/api/delivery-routes/stops/${stopId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Parada excluída",
+        description: "A entrega foi removida da rota e retornará para Gestão de Rotas.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao excluir parada",
+        description: error.message || "Não foi possível excluir a parada.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para excluir rota completa
+  const deleteRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('DELETE', `/api/delivery-routes/${routeId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setSelectedRoute(null); // Fechar detalhes da rota excluída
+      toast({
+        title: "Rota excluída",
+        description: "Todas as entregas foram removidas e retornarão para Gestão de Rotas.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao excluir rota",
+        description: error.message || "Não foi possível excluir a rota.",
+        variant: "destructive",
+      });
+    }
   });
 
   const activeDrivers = drivers.filter(d => d.isActive);
@@ -253,9 +310,42 @@ export default function RoutesSummary() {
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
               <span>Detalhes da Rota: {selectedRouteData.routeName}</span>
-              <Button variant="outline" size="sm" onClick={() => setSelectedRoute(null)}>
-                Fechar
-              </Button>
+              <div className="flex gap-2">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button 
+                      variant="destructive" 
+                      size="sm"
+                      data-testid="button-delete-route"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Excluir Rota
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Excluir Rota Completa?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Tem certeza que deseja excluir esta rota? Todas as {selectedRouteData.totalDeliveries} entregas 
+                        serão removidas e retornarão para a aba "Gestão de Rotas" para que possam ser incluídas em novas rotas.
+                        Esta ação não pode ser desfeita.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => deleteRouteMutation.mutate(selectedRouteData.id)}
+                        className="bg-red-600 hover:bg-red-700"
+                      >
+                        Confirmar Exclusão
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <Button variant="outline" size="sm" onClick={() => setSelectedRoute(null)}>
+                  Fechar
+                </Button>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -312,8 +402,41 @@ export default function RoutesSummary() {
                                   {stop.customerAddress}
                                 </div>
                               </div>
-                              <div>
+                              <div className="flex items-center gap-2">
                                 {getDeliveryStatusBadge(stop.status)}
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                      data-testid={`button-delete-stop-${stop.id}`}
+                                    >
+                                      <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Excluir Entrega da Rota?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Tem certeza que deseja remover a entrega de <strong>{stop.customerName}</strong> desta rota? 
+                                        O pedido retornará para a aba "Gestão de Rotas" e poderá ser incluído em uma nova rota.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          deleteStopMutation.mutate(stop.id);
+                                        }}
+                                        className="bg-red-600 hover:bg-red-700"
+                                      >
+                                        Confirmar Exclusão
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
                               </div>
                             </div>
 
