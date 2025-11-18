@@ -852,8 +852,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Convert array back to JSON string for database storage (always returns array, never null)
           req.body.weekdays = JSON.stringify(normalizedWeekdays);
           
-          // 🚚 CALCULAR AUTOMATICAMENTE OS DIAS DE ENTREGA
-          // Os dias de entrega são os próximos 2 dias úteis após os dias de rota
+          // 🚚 CALCULAR AUTOMATICAMENTE OS DIAS DE ENTREGA (EXECUÇÃO)
+          // IMPORTANTE: Distinção de conceitos:
+          // - deliveryTimeSlots/deliverySaturdayTimeSlots = DIAS/HORÁRIOS DE RECEBIMENTO (quando cliente aceita receber)
+          // - deliveryWeekdays (calculado) = DIAS DE ENTREGA/EXECUÇÃO (dias preferenciais para executar entrega - 2 dias úteis após rota)
           // Exemplo: rota SEG → entrega TER, QUA
           const deliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
           req.body.deliveryWeekdays = deliveryDays;
@@ -883,11 +885,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Processar campos de configuração de entrega (JSONB arrays)
-      // NOTA: deliveryWeekdays é calculado automaticamente, NÃO deve ser editado manualmente
+      // Processar campos de configuração de RECEBIMENTO (JSONB arrays)
+      // IMPORTANTE: deliveryTimeSlots/deliverySaturdayTimeSlots = Horários em que o CLIENTE ACEITA RECEBER mercadorias
+      // NOTA: deliveryWeekdays (dias de execução) é calculado automaticamente, NÃO deve ser editado manualmente
       const deliveryConfigFields = [
-        'deliveryTimeSlots', 
-        'deliverySaturdayTimeSlots',
+        'deliveryTimeSlots',  // Horários de recebimento em dias úteis
+        'deliverySaturdayTimeSlots',  // Horários de recebimento aos sábados
         'vehicleTypes'
       ];
       
