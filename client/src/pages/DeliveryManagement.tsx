@@ -46,6 +46,7 @@ import { formatDeliveryDays } from "@shared/deliveryDaysCalculator";
 
 interface DeliveryOrder {
   id: string;
+  invoiceNumber: string;
   customerId: string;
   customerName: string;
   customerAddress: string;
