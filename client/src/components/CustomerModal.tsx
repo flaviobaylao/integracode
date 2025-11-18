@@ -146,7 +146,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       serviceStartDate: undefined,
       exclusiveVehicle: false,
       vehicleTypes: [],
-      deliveryWeekdays: [],
+      receivingWeekdays: [],
       deliveryTimeSlots: [],
       deliverySaturdayTimeSlots: [],
     },
@@ -165,8 +165,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
       const weekdaysJson = JSON.stringify(normalizedWeekdays);
       
-      // Normalizar deliveryWeekdays (aceita arrays ou strings JSON, pode vir do Omie com nomes completos)
-      const normalizedDeliveryWeekdays = normalizeWeekdays((customer as any).deliveryWeekdays || []);
+      // Normalizar receivingWeekdays (dias em que cliente aceita receber - configurado manualmente)
+      const normalizedReceivingWeekdays = normalizeWeekdays((customer as any).receivingWeekdays || []);
       
       form.reset({
         customerType: type,
@@ -193,7 +193,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         serviceStartDate: (customer as any).serviceStartDate || undefined,
         exclusiveVehicle: (customer as any).exclusiveVehicle || false,
         vehicleTypes: Array.isArray((customer as any).vehicleTypes) ? (customer as any).vehicleTypes : [],
-        deliveryWeekdays: normalizedDeliveryWeekdays,
+        receivingWeekdays: normalizedReceivingWeekdays,
         deliveryTimeSlots: Array.isArray((customer as any).deliveryTimeSlots) ? (customer as any).deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray((customer as any).deliverySaturdayTimeSlots) ? (customer as any).deliverySaturdayTimeSlots : [],
       });
@@ -224,7 +224,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         serviceStartDate: undefined,
         exclusiveVehicle: false,
         vehicleTypes: [],
-        deliveryWeekdays: [],
+        receivingWeekdays: [],
         deliveryTimeSlots: [],
         deliverySaturdayTimeSlots: [],
       });
@@ -1228,7 +1228,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                   <FormLabel className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</FormLabel>
                   <FormField
                     control={form.control}
-                    name="deliveryWeekdays"
+                    name="receivingWeekdays"
                     render={({ field }) => (
                       <FormItem>
                         <div className="grid grid-cols-4 gap-3">
@@ -1244,7 +1244,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <div key={day.value} className="flex items-center space-x-2">
                               <input
                                 type="checkbox"
-                                id={`delivery-weekday-${day.value}`}
+                                id={`receiving-weekday-${day.value}`}
                                 checked={field.value?.includes(day.value) || false}
                                 onChange={(e) => {
                                   const currentDays = field.value || [];
@@ -1255,9 +1255,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                   }
                                 }}
                                 className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
-                                data-testid={`checkbox-delivery-weekday-${day.value}`}
+                                data-testid={`checkbox-receiving-weekday-${day.value}`}
                               />
-                              <label htmlFor={`delivery-weekday-${day.value}`} className="text-sm cursor-pointer">
+                              <label htmlFor={`receiving-weekday-${day.value}`} className="text-sm cursor-pointer">
                                 {day.label}
                               </label>
                             </div>

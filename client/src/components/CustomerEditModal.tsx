@@ -53,7 +53,7 @@ export default function CustomerEditModal({
     visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
     exclusiveVehicle: false,
     vehicleTypes: [] as string[],
-    deliveryWeekdays: [] as string[],
+    receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
   });
@@ -132,12 +132,12 @@ export default function CustomerEditModal({
     });
   };
 
-  const toggleDeliveryWeekday = (day: string) => {
+  const toggleReceivingWeekday = (day: string) => {
     setFormData((prev) => ({
       ...prev,
-      deliveryWeekdays: prev.deliveryWeekdays.includes(day)
-        ? prev.deliveryWeekdays.filter(d => d !== day)
-        : [...prev.deliveryWeekdays, day]
+      receivingWeekdays: prev.receivingWeekdays.includes(day)
+        ? prev.receivingWeekdays.filter(d => d !== day)
+        : [...prev.receivingWeekdays, day]
     }));
   };
 
@@ -191,7 +191,7 @@ export default function CustomerEditModal({
         visitPeriodicity: customer.visitPeriodicity || "semanal",
         exclusiveVehicle: customer.exclusiveVehicle || false,
         vehicleTypes: Array.isArray(customer.vehicleTypes) ? customer.vehicleTypes : [],
-        deliveryWeekdays: Array.isArray(customer.deliveryWeekdays) ? customer.deliveryWeekdays : [],
+        receivingWeekdays: Array.isArray((customer as any).receivingWeekdays) ? (customer as any).receivingWeekdays : [],
         deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
       });
@@ -474,12 +474,12 @@ export default function CustomerEditModal({
                 ].map((day) => (
                   <div key={day.value} className="flex items-center space-x-2">
                     <Checkbox
-                      id={`delivery-weekday-customer-${day.value}`}
-                      checked={formData.deliveryWeekdays.includes(day.value)}
-                      onCheckedChange={() => toggleDeliveryWeekday(day.value)}
-                      data-testid={`checkbox-delivery-weekday-customer-${day.value}`}
+                      id={`receiving-weekday-customer-${day.value}`}
+                      checked={formData.receivingWeekdays.includes(day.value)}
+                      onCheckedChange={() => toggleReceivingWeekday(day.value)}
+                      data-testid={`checkbox-receiving-weekday-customer-${day.value}`}
                     />
-                    <label htmlFor={`delivery-weekday-customer-${day.value}`} className="text-sm cursor-pointer">
+                    <label htmlFor={`receiving-weekday-customer-${day.value}`} className="text-sm cursor-pointer">
                       {day.label}
                     </label>
                   </div>
