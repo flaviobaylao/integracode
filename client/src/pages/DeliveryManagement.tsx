@@ -647,6 +647,26 @@ export default function DeliveryManagement() {
                             R$ {(Number(order.saleValue) || 0).toFixed(2)}
                           </span>
                         </div>
+
+                        {/* Informações destacadas: NF e Dias de Entrega */}
+                        <div className="flex items-center gap-4 flex-wrap">
+                          {order.invoiceNumber && (
+                            <div className="flex items-center gap-1">
+                              <Package className="h-4 w-4 text-blue-600" />
+                              <span className="text-base font-bold text-gray-900">
+                                NF: {order.invoiceNumber}
+                              </span>
+                            </div>
+                          )}
+                          {order.deliveryWeekdays && order.deliveryWeekdays.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4 text-green-600" />
+                              <span className="text-base font-bold text-gray-900">
+                                Entrega: {formatDeliveryDays(order.deliveryWeekdays as any)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                         
                         <div className="text-sm text-muted-foreground flex items-center">
                           <MapPin className="h-3 w-3 mr-1" />
