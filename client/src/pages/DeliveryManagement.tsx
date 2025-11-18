@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatDeliveryDays } from "@shared/deliveryDaysCalculator";
 
 interface DeliveryOrder {
   id: string;
@@ -684,25 +685,30 @@ export default function DeliveryManagement() {
                         {/* Informações de entrega do card */}
                         {(order.deliveryWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
                           <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
-                            <div className="text-xs font-semibold text-blue-900">📅 Programação de Entrega do Card:</div>
+                            <div className="text-xs font-semibold text-blue-900">📅 Programação de Entrega:</div>
                             {order.deliveryWeekdays?.length > 0 && (
-                              <div className="flex items-center text-xs text-blue-800">
-                                <Calendar className="h-3 w-3 mr-1" />
-                                <span className="font-medium">Dias:</span>
-                                <span className="ml-1">{order.deliveryWeekdays.join(', ')}</span>
+                              <div className="space-y-0.5">
+                                <div className="flex items-center text-xs text-blue-800">
+                                  <Calendar className="h-3 w-3 mr-1" />
+                                  <span className="font-medium">Dias de Entrega:</span>
+                                  <span className="ml-1 font-semibold">{formatDeliveryDays(order.deliveryWeekdays as any)}</span>
+                                </div>
+                                <div className="text-[10px] text-blue-600 ml-4 italic">
+                                  ↳ Calculado automaticamente: 2 dias úteis após dia de rota
+                                </div>
                               </div>
                             )}
                             {order.deliveryTimeSlots?.length > 0 && (
                               <div className="flex items-center text-xs text-blue-800">
                                 <Clock className="h-3 w-3 mr-1" />
-                                <span className="font-medium">Horários:</span>
+                                <span className="font-medium">Horários (seg-sex):</span>
                                 <span className="ml-1">{order.deliveryTimeSlots.join(', ')}</span>
                               </div>
                             )}
                             {order.deliverySaturdayTimeSlots?.length > 0 && (
                               <div className="flex items-center text-xs text-blue-800">
                                 <Clock className="h-3 w-3 mr-1" />
-                                <span className="font-medium">Sábados:</span>
+                                <span className="font-medium">Horários (sáb):</span>
                                 <span className="ml-1">{order.deliverySaturdayTimeSlots.join(', ')}</span>
                               </div>
                             )}
