@@ -3858,6 +3858,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Fix billings missing delivery_weekdays (admin only)
+  app.post('/api/admin/fix-billing-delivery-days', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log(`\n🔧 Fixing billings with missing delivery_weekdays...`);
+      
+      // Copiar delivery_weekdays do customer para billings que estão vazios
+      const result = await db.execute(sql`
+        UPDATE billings b
+        SET delivery_weekdays = ARRAY(SELECT jsonb_array_elements_text(c.delivery_weekdays))
+        FROM customers c
+        WHERE (b.delivery_weekdays IS NULL OR b.delivery_weekdays = '{}')
+          AND b.invoice_stage = 'Aguardando Rota'
+          AND b.omie_customer_code = c.omie_client_code
+          AND c.delivery_weekdays IS NOT NULL 
+          AND c.delivery_weekdays != '[]'::jsonb
+      `);
+      
+      const fixedCount = result.rowCount || 0;
+      
+      console.log(`✅ Fixed ${fixedCount} billings`);
+      
+      res.json({
+        success: true,
+        fixedCount,
+        message: `Successfully copied delivery_weekdays from customers to ${fixedCount} billings`
+      });
+    } catch (error: any) {
+      console.error("Error fixing billings:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to fix billings", 
+        error: error.message 
+      });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
