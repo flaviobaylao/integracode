@@ -448,12 +448,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Dias de Entrega */}
+                    {/* Dias de Recebimento */}
                     <div>
-                      <p className="text-sm text-gray-600 mb-2">Dias de Entrega</p>
+                      <p className="text-sm text-gray-600 mb-2">Dias de Recebimento</p>
                       {(() => {
-                        // Try both camelCase and snake_case for compatibility
-                        const rawDays = (customer as any).deliveryWeekdays || (customer as any).delivery_weekdays;
+                        // Usar receivingWeekdays (dias em que cliente aceita receber)
+                        const rawDays = (customer as any).receivingWeekdays || (customer as any).receiving_weekdays;
                         if (!rawDays || (Array.isArray(rawDays) && rawDays.length === 0)) {
                           return <span className="text-sm text-gray-400">Não definido</span>;
                         }

@@ -63,7 +63,7 @@ interface DeliveryOrder {
   completedDate: string;
   paymentMethod: string;
   operationType: string;
-  deliveryWeekdays: string[];
+  receivingWeekdays: string[];  // Dias em que cliente aceita receber (configurado manualmente)
   deliveryTimeSlots: string[];
   deliverySaturdayTimeSlots: string[];
 }
@@ -147,7 +147,7 @@ export default function DeliveryManagement() {
   const [deliveryConfigForm, setDeliveryConfigForm] = useState({
     exclusiveVehicle: false,
     vehicleTypes: [] as string[],
-    deliveryWeekdays: [] as string[],
+    receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
   });
@@ -294,13 +294,13 @@ export default function DeliveryManagement() {
     });
   };
   
-  // Funções para edição de configurações de entrega
+  // Funções para edição de configurações de recebimento
   const handleOpenDeliveryConfig = (order: DeliveryOrder) => {
     setEditingCustomer(order);
     setDeliveryConfigForm({
       exclusiveVehicle: order.exclusiveVehicle || false,
       vehicleTypes: order.vehicleTypes || [],
-      deliveryWeekdays: order.deliveryWeekdays || [],
+      receivingWeekdays: order.receivingWeekdays || [],
       deliveryTimeSlots: order.deliveryTimeSlots || [],
       deliverySaturdayTimeSlots: order.deliverySaturdayTimeSlots || [],
     });
@@ -316,12 +316,12 @@ export default function DeliveryManagement() {
     });
   };
   
-  const toggleDeliveryWeekday = (day: string) => {
+  const toggleReceivingWeekday = (day: string) => {
     setDeliveryConfigForm(prev => ({
       ...prev,
-      deliveryWeekdays: prev.deliveryWeekdays.includes(day)
-        ? prev.deliveryWeekdays.filter(d => d !== day)
-        : [...prev.deliveryWeekdays, day]
+      receivingWeekdays: prev.receivingWeekdays.includes(day)
+        ? prev.receivingWeekdays.filter(d => d !== day)
+        : [...prev.receivingWeekdays, day]
     }));
   };
   
@@ -648,7 +648,7 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF e Dias de Entrega */}
+                        {/* Informações destacadas: NF e Dias de Recebimento */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
@@ -658,11 +658,11 @@ export default function DeliveryManagement() {
                               </span>
                             </div>
                           )}
-                          {order.deliveryWeekdays && order.deliveryWeekdays.length > 0 && (
+                          {(order as any).receivingWeekdays && (order as any).receivingWeekdays.length > 0 && (
                             <div className="flex items-center gap-1">
                               <Calendar className="h-4 w-4 text-green-600" />
                               <span className="text-base font-bold text-gray-900">
-                                Entrega: {formatDeliveryDays(order.deliveryWeekdays as any)}
+                                Recebimento: {formatDeliveryDays((order as any).receivingWeekdays as any)}
                               </span>
                             </div>
                           )}
@@ -703,19 +703,16 @@ export default function DeliveryManagement() {
                           )}
                         </div>
 
-                        {/* Informações de entrega do card */}
-                        {(order.deliveryWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
+                        {/* Informações de recebimento do card */}
+                        {((order as any).receivingWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
                           <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
-                            <div className="text-xs font-semibold text-blue-900">📅 Programação de Entrega:</div>
-                            {order.deliveryWeekdays?.length > 0 && (
+                            <div className="text-xs font-semibold text-blue-900">📅 Programação de Recebimento:</div>
+                            {(order as any).receivingWeekdays?.length > 0 && (
                               <div className="space-y-0.5">
                                 <div className="flex items-center text-xs text-blue-800">
                                   <Calendar className="h-3 w-3 mr-1" />
-                                  <span className="font-medium">Dias de Entrega:</span>
-                                  <span className="ml-1 font-semibold">{formatDeliveryDays(order.deliveryWeekdays as any)}</span>
-                                </div>
-                                <div className="text-[10px] text-blue-600 ml-4 italic">
-                                  ↳ Calculado automaticamente: 2 dias úteis após dia de rota
+                                  <span className="font-medium">Dias de Recebimento:</span>
+                                  <span className="ml-1 font-semibold">{formatDeliveryDays((order as any).receivingWeekdays as any)}</span>
                                 </div>
                               </div>
                             )}
@@ -1298,12 +1295,12 @@ export default function DeliveryManagement() {
                 ].map((day) => (
                   <div key={day.value} className="flex items-center space-x-2">
                     <Checkbox
-                      id={`delivery-weekday-${day.value}`}
-                      checked={deliveryConfigForm.deliveryWeekdays.includes(day.value)}
-                      onCheckedChange={() => toggleDeliveryWeekday(day.value)}
-                      data-testid={`checkbox-delivery-weekday-${day.value}`}
+                      id={`receiving-weekday-${day.value}`}
+                      checked={deliveryConfigForm.receivingWeekdays.includes(day.value)}
+                      onCheckedChange={() => toggleReceivingWeekday(day.value)}
+                      data-testid={`checkbox-receiving-weekday-${day.value}`}
                     />
-                    <Label htmlFor={`delivery-weekday-${day.value}`} className="text-sm cursor-pointer">
+                    <Label htmlFor={`receiving-weekday-${day.value}`} className="text-sm cursor-pointer">
                       {day.label}
                     </Label>
                   </div>
