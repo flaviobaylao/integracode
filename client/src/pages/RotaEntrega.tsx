@@ -39,17 +39,17 @@ interface DeliveryRoute {
 }
 
 const statusLabels: Record<string, string> = {
-  planned: 'Planejada',
-  in_progress: 'Em Andamento',
-  completed: 'Concluída',
-  cancelled: 'Cancelada'
+  pendente: 'Pendente',
+  efetuada: 'Efetuada',
+  em_pausa: 'Em Pausa',
+  devolvida: 'Devolvida'
 };
 
 const statusColors: Record<string, string> = {
-  planned: 'bg-blue-100 text-blue-800',
-  in_progress: 'bg-yellow-100 text-yellow-800',
-  completed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-gray-100 text-gray-800'
+  pendente: 'bg-gray-100 text-gray-800',
+  efetuada: 'bg-green-100 text-green-800',
+  em_pausa: 'bg-yellow-100 text-yellow-800',
+  devolvida: 'bg-red-100 text-red-800'
 };
 
 const vehicleIcons: Record<string, string> = {
@@ -266,9 +266,9 @@ export default function RotaEntrega() {
   };
 
   const totalDeliveries = allDeliveries.length;
-  const completedDeliveries = allDeliveries.filter(d => d.status === 'completed').length;
-  const pendingDeliveries = allDeliveries.filter(d => d.status === 'pending').length;
-  const pendingRoute = routes.find(r => r.status === 'pending');
+  const completedDeliveries = allDeliveries.filter(d => d.status === 'efetuada').length;
+  const pendingDeliveries = allDeliveries.filter(d => d.status === 'pendente').length;
+  const pendingRoute = routes.find(r => r.status === 'planejada');
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
@@ -356,8 +356,8 @@ export default function RotaEntrega() {
           <div className="space-y-3">
             <h3 className="font-semibold text-lg px-1">Lista de Entregas</h3>
             {allDeliveries.map((delivery) => {
-              const isCompleted = delivery.status === 'completed';
-              const isPending = delivery.status === 'pending';
+              const isCompleted = delivery.status === 'efetuada';
+              const isPending = delivery.status === 'pendente';
 
               return (
                 <Card
@@ -427,7 +427,7 @@ export default function RotaEntrega() {
                         </Button>
 
                         {/* Check-in/Check-out Buttons */}
-                        {delivery.routeStatus === 'in_progress' && (
+                        {delivery.routeStatus === 'em_andamento' && (
                           <>
                             {isPending && (
                               <Button

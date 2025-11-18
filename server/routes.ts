@@ -8479,9 +8479,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Você não tem permissão para iniciar esta rota" });
       }
       
-      // Atualizar status da rota para 'in_progress'
+      // Atualizar status da rota para 'em_andamento'
       const updatedRoute = await db.update(deliveryRoutes)
-        .set({ status: 'in_progress', updatedAt: new Date() })
+        .set({ status: 'em_andamento', startTime: new Date(), updatedAt: new Date() })
         .where(eq(deliveryRoutes.id, routeId))
         .returning();
       
@@ -8531,11 +8531,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const now = new Date();
       
-      // Atualizar a parada (você pode adicionar campos de check-in no schema se necessário)
+      // Atualizar a parada com check-in, coordenadas e foto
+      const currentPhotos = (stop[0].photos as string[]) || [];
       const updatedStop = await db.update(deliveryRouteStops)
         .set({ 
+          checkInTime: now,
+          checkInLatitude: latitude?.toString(),
+          checkInLongitude: longitude?.toString(),
+          photos: [...currentPhotos, photoUrl], // Adiciona foto ao array
+          status: 'em_pausa',
           updatedAt: now
-          // Adicione campos como checkInTime, checkInLatitude, checkInLongitude, checkInPhoto se necessário
         })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
@@ -8592,10 +8597,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const now = new Date();
       
-      // Marcar parada como concluída
+      // Marcar parada como concluída com coordenadas e foto
+      const currentPhotos = (stop[0].photos as string[]) || [];
       const updatedStop = await db.update(deliveryRouteStops)
         .set({ 
-          status: 'completed',
+          checkOutTime: now,
+          checkOutLatitude: latitude?.toString(),
+          checkOutLongitude: longitude?.toString(),
+          photos: [...currentPhotos, photoUrl], // Adiciona foto ao array
+          status: 'efetuada',
           completedAt: now,
           updatedAt: now
         })
@@ -8606,12 +8616,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allStops = await db.select().from(deliveryRouteStops)
         .where(eq(deliveryRouteStops.routeId, stop[0].routeId));
       
-      const allCompleted = allStops.every(s => s.status === 'completed');
+      const allCompleted = allStops.every(s => s.status === 'efetuada');
       
       if (allCompleted) {
         // Marcar rota como concluída
         await db.update(deliveryRoutes)
-          .set({ status: 'completed', updatedAt: now })
+          .set({ status: 'concluida', endTime: now, updatedAt: now })
           .where(eq(deliveryRoutes.id, stop[0].routeId));
         
         console.log(`🎉 [DRIVER-CHECKOUT] Rota ${stop[0].routeId} totalmente concluída!`);

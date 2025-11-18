@@ -295,7 +295,7 @@ export default function RoutesSummary() {
                           </div>
                           <div className="flex-1 space-y-2">
                             <div className="flex items-center justify-between">
-                              <div>
+                              <div className="flex-1">
                                 <div className="font-semibold flex items-center">
                                   <span className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full mr-2">
                                     #{stop.stopOrder}
@@ -311,6 +311,9 @@ export default function RoutesSummary() {
                                   <MapPin className="h-3 w-3 mr-1" />
                                   {stop.customerAddress}
                                 </div>
+                              </div>
+                              <div>
+                                {getDeliveryStatusBadge(stop.status)}
                               </div>
                             </div>
 
