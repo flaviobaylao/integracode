@@ -164,14 +164,15 @@ export default function RotaDoDia() {
       
       return response;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       toast({
         title: "Rota vazia criada!",
         description: "Agora você pode adicionar clientes manualmente.",
       });
       
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await refetch();  // Força atualização imediata da UI
     },
     onError: (error: any) => {
       toast({
