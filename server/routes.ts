@@ -3899,24 +3899,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log(`\n🔧 Fixing customers with incorrect delivery_weekdays...`);
       
-      // Resetar delivery_weekdays para customers que têm todos os dias mas weekdays vazio/nulo
-      // Isso corrige o problema do fallback incorreto de ["Seg", "Ter", "Qua", "Qui", "Sex"]
-      const result = await db.execute(sql`
-        UPDATE customers
-        SET delivery_weekdays = '[]'::jsonb
-        WHERE (weekdays IS NULL OR weekdays = '[]'::jsonb OR weekdays = 'null'::jsonb)
-          AND delivery_weekdays IS NOT NULL 
-          AND delivery_weekdays != '[]'::jsonb
-      `);
+      // Buscar TODOS os customers
+      const allCustomers = await db.select().from(customers);
+      console.log(`📊 Total customers: ${allCustomers.length}`);
       
-      const fixedCount = result.rowCount || 0;
+      // Identificar o fallback problemático (case-insensitive, order-insensitive)
+      const problematicFallback = ["Seg", "Ter", "Qua", "Qui", "Sex"].map(d => d.toLowerCase()).sort();
       
-      console.log(`✅ Fixed ${fixedCount} customers`);
+      let fixedCount = 0;
+      let alreadyCorrect = 0;
+      
+      for (const customer of allCustomers) {
+        const currentDeliveryDays = customer.deliveryWeekdays || [];
+        
+        // Normalizar para comparação (lowercase, sorted)
+        const normalizedCurrentDays = currentDeliveryDays.map((d: string) => d.toLowerCase()).sort();
+        
+        // Verificar se tem o fallback problemático
+        const hasFallback = JSON.stringify(normalizedCurrentDays) === JSON.stringify(problematicFallback);
+        
+        if (hasFallback) {
+          // Recalcular baseado nos weekdays
+          const weekdays = Array.isArray(customer.weekdays) ? customer.weekdays : [];
+          let newDeliveryWeekdays: string[] = [];
+          
+          if (weekdays.length > 0) {
+            // Tem weekdays configurados, calcular corretamente
+            newDeliveryWeekdays = calculateDeliveryDaysFromMultipleRoutes(weekdays);
+          } else {
+            // Não tem weekdays, deixar vazio
+            newDeliveryWeekdays = [];
+          }
+          
+          // Atualizar no banco
+          await db.update(customers)
+            .set({ deliveryWeekdays: newDeliveryWeekdays })
+            .where(eq(customers.id, customer.id));
+          
+          fixedCount++;
+          console.log(`✅ Fixed customer ${customer.id} (${customer.fantasyName || customer.name}): ${JSON.stringify(weekdays)} → ${JSON.stringify(newDeliveryWeekdays)}`);
+        } else {
+          alreadyCorrect++;
+        }
+      }
+      
+      console.log(`\n📊 Summary:`);
+      console.log(`   Total analyzed: ${allCustomers.length}`);
+      console.log(`   Fixed: ${fixedCount}`);
+      console.log(`   Already correct: ${alreadyCorrect}`);
       
       res.json({
         success: true,
+        totalAnalyzed: allCustomers.length,
         fixedCount,
-        message: `Successfully reset delivery_weekdays for ${fixedCount} customers without visit days configured`
+        alreadyCorrect,
+        message: `Successfully recalculated delivery_weekdays for ${fixedCount} customers with incorrect fallback`
       });
     } catch (error: any) {
       console.error("Error fixing customers:", error);
