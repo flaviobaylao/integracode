@@ -3920,7 +3920,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (hasFallback) {
           // Recalcular baseado nos weekdays
-          const weekdays = Array.isArray(customer.weekdays) ? customer.weekdays : [];
+          // weekdays pode ser array ou string JSON, precisamos normalizar
+          let weekdays: string[] = [];
+          try {
+            if (Array.isArray(customer.weekdays)) {
+              weekdays = customer.weekdays;
+            } else if (typeof customer.weekdays === 'string' && customer.weekdays.trim().length > 0) {
+              // Tentar fazer parse do JSON string
+              weekdays = JSON.parse(customer.weekdays);
+            }
+          } catch (e) {
+            console.warn(`⚠️  Failed to parse weekdays for customer ${customer.id}: ${customer.weekdays}`);
+            weekdays = [];
+          }
+          
           let newDeliveryWeekdays: string[] = [];
           
           if (weekdays.length > 0) {
