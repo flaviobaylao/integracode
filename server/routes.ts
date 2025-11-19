@@ -3894,6 +3894,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Fix customers with incorrect delivery_weekdays (admin only)
+  app.post('/api/admin/fix-customer-delivery-days', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log(`\n🔧 Fixing customers with incorrect delivery_weekdays...`);
+      
+      // Resetar delivery_weekdays para customers que têm todos os dias mas weekdays vazio/nulo
+      // Isso corrige o problema do fallback incorreto de ["Seg", "Ter", "Qua", "Qui", "Sex"]
+      const result = await db.execute(sql`
+        UPDATE customers
+        SET delivery_weekdays = '[]'::jsonb
+        WHERE (weekdays IS NULL OR weekdays = '[]'::jsonb OR weekdays = 'null'::jsonb)
+          AND delivery_weekdays IS NOT NULL 
+          AND delivery_weekdays != '[]'::jsonb
+      `);
+      
+      const fixedCount = result.rowCount || 0;
+      
+      console.log(`✅ Fixed ${fixedCount} customers`);
+      
+      res.json({
+        success: true,
+        fixedCount,
+        message: `Successfully reset delivery_weekdays for ${fixedCount} customers without visit days configured`
+      });
+    } catch (error: any) {
+      console.error("Error fixing customers:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to fix customers", 
+        error: error.message 
+      });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
@@ -4567,9 +4601,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const finalSellerId = converted.sellerId || existingCustomer?.sellerId || defaultSellerId || '';
               
               // Normalizar weekdays e calcular dias de entrega automaticamente
-              const defaultWeekdays = ["Seg", "Ter", "Qua", "Qui", "Sex"];
-              const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
-              const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+              // ✅ CORREÇÃO: Não usar fallback de "todos os dias" se weekdays não estiver definido
+              // Se cliente não tem dias de visita configurados, delivery_weekdays deve ficar vazio
+              const normalizedWeekdays = converted.weekdays ? normalizeWeekdayInput(converted.weekdays) : [];
+              const autoDeliveryDays = normalizedWeekdays.length > 0 
+                ? calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays)
+                : [];
               
               const systemClient = {
                 ...converted,
