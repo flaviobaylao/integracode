@@ -10954,6 +10954,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Criar rota vazia para um vendedor (permite adicionar visitas manualmente depois)
+  app.post('/api/daily-routes/create-empty', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { sellerId, date } = req.body;
+      
+      if (!sellerId) {
+        return res.status(400).json({ message: 'sellerId é obrigatório' });
+      }
+      
+      if (!date) {
+        return res.status(400).json({ message: 'Data é obrigatória' });
+      }
+
+      // Parse date string as UTC midnight
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
+      
+      // Verificar se já existe rota para este dia
+      const existingRoute = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      
+      if (existingRoute) {
+        return res.status(409).json({ 
+          message: 'Já existe uma rota para este vendedor nesta data',
+          routeId: existingRoute.id,
+          existingRoute: true
+        });
+      }
+
+      // Buscar informações do vendedor
+      const seller = await storage.getUserById(sellerId);
+      
+      if (!seller) {
+        return res.status(404).json({ message: 'Vendedor não encontrado' });
+      }
+
+      if (!seller.homeLatitude || !seller.homeLongitude) {
+        return res.status(400).json({ 
+          message: 'Vendedor não possui coordenadas de residência cadastradas. Configure as coordenadas antes de criar uma rota.' 
+        });
+      }
+
+      // Criar rota vazia
+      const startOfDay = new Date(routeDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const routeData = {
+        sellerId,
+        routeDate: startOfDay,
+        startLatitude: seller.homeLatitude.toString(),
+        startLongitude: seller.homeLongitude.toString(),
+        startAddress: `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`,
+        optimizedOrder: [], // Rota vazia
+        totalEstimatedDistance: '0',
+        totalActualDistance: '0',
+        totalVisits: 0,
+        completedVisits: 0,
+        routeStatus: 'pending'
+      };
+
+      console.log(`🆕 [CREATE-EMPTY-ROUTE] Criando rota vazia para ${seller.firstName} em ${date}`);
+      const route = await storage.createDailyRoute(routeData);
+
+      res.json({
+        success: true,
+        message: 'Rota vazia criada com sucesso. Agora você pode adicionar clientes e leads manualmente.',
+        routeId: route.id,
+        sellerId,
+        sellerName: `${seller.firstName} ${seller.lastName || ''}`,
+        routeDate: startOfDay,
+        totalVisits: 0
+      });
+    } catch (error: any) {
+      console.error('Erro ao criar rota vazia:', error);
+      res.status(500).json({ 
+        message: 'Erro ao criar rota vazia',
+        error: error.message 
+      });
+    }
+  });
+
   // Buscar rota do dia atual para um vendedor
   app.get('/api/daily-routes/:sellerId/today', authenticateUser, async (req: any, res) => {
     try {
