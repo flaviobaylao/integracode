@@ -422,10 +422,10 @@ export default function RotaDoDia() {
     };
   }, [route]);
 
-  const handleVisitClick = async (customerId: string) => {
+  const handleVisitClick = async (entityId: string) => {
     try {
-      setLoadingCardId(customerId);
-      const response = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, {
+      setLoadingCardId(entityId);
+      const response = await fetch(`/api/customers/${entityId}/sales-card/${selectedDate}`, {
         credentials: 'include'
       });
       
@@ -438,6 +438,11 @@ export default function RotaDoDia() {
       setShowCardModal(true);
     } catch (error) {
       console.error('Erro ao abrir card de vendas:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao abrir card",
+        description: "Não foi possível carregar os detalhes desta visita."
+      });
     } finally {
       setLoadingCardId(null);
     }
@@ -882,7 +887,7 @@ export default function RotaDoDia() {
                       <div className="flex items-start justify-between gap-3">
                         <div 
                           className="flex items-start gap-3 flex-1 cursor-pointer"
-                          onClick={() => handleVisitClick(visit.customerId || visit.entityId)}
+                          onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId))}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'

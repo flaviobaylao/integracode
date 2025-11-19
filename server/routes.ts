@@ -3571,6 +3571,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get or create sales card for a specific customer on a specific date
+  // NOTA: customerId pode ser um leadId (leads também usam sales_cards com leadId como customerId)
   app.get('/api/customers/:customerId/sales-card/:date', authenticateUser, async (req: any, res) => {
     try {
       const { customerId, date } = req.params;
@@ -3586,46 +3587,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar todos os sales cards daquele dia
       const cardsOnDate = await storage.getSalesCardsByDate(targetDate);
       
-      // Filtrar pelo customerId
+      // Filtrar pelo customerId (pode ser customerId ou leadId)
       const existingCard = cardsOnDate.find(card => card.customerId === customerId);
       
       if (existingCard) {
         return res.json(existingCard);
       }
 
-      // Se não existe, criar um novo sales card para aquele dia
+      // Se não existe card, verificar se é um customer ou lead
       const customer = await storage.getCustomer(customerId);
-      if (!customer) {
-        return res.status(404).json({ message: "Customer not found" });
+      
+      if (customer) {
+        // É um customer regular
+        // Determinar sellerId - usar o do cliente ou o usuário atual se for vendedor
+        let sellerId = customer.sellerId || user.id;
+        
+        // Se o usuário é vendedor, forçar usar o próprio ID
+        if (user.role === 'vendedor') {
+          sellerId = user.id;
+        }
+
+        // Criar novo sales card com campos obrigatórios
+        // NOTA: source='rota_do_dia' permite criar card mesmo fora dos weekdays configurados
+        // (cliente pode ter sido adicionado manualmente à rota)
+        const newCard = await storage.createSalesCard({
+          customerId,
+          sellerId,
+          scheduledDate: targetDate,
+          status: 'open',
+          source: 'rota_do_dia',
+          routeDay: 'Seg', // Default
+          recurrenceType: 'semanal',
+          exclusiveVehicle: false,
+          vehicleTypes: [],
+        });
+
+        // Buscar card completo com relações
+        const fullCard = await storage.getSalesCard(newCard.id);
+        return res.json(fullCard);
       }
 
-      // Determinar sellerId - usar o do cliente ou o usuário atual se for vendedor
-      let sellerId = customer.sellerId || user.id;
+      // Verificar se é um lead
+      const lead = await storage.getLead(customerId);
       
-      // Se o usuário é vendedor, forçar usar o próprio ID
-      if (user.role === 'vendedor') {
-        sellerId = user.id;
+      if (lead) {
+        // É um lead - criar sales_card com leadId como customerId
+        let sellerId = lead.assignedTo || user.id;
+        
+        // Se o usuário é vendedor, forçar usar o próprio ID
+        if (user.role === 'vendedor') {
+          sellerId = user.id;
+        }
+
+        console.log(`📋 Criando sales_card para LEAD ${lead.fantasyName} (${customerId}) na data ${date}`);
+
+        const newCard = await storage.createSalesCard({
+          customerId, // leadId vai aqui
+          sellerId,
+          scheduledDate: targetDate,
+          status: 'open',
+          source: 'rota_do_dia',
+          routeDay: 'Seg', // Default
+          recurrenceType: 'semanal',
+          exclusiveVehicle: false,
+          vehicleTypes: [],
+        });
+
+        // Buscar card completo com relações
+        const fullCard = await storage.getSalesCard(newCard.id);
+        return res.json(fullCard);
       }
 
-      // Criar novo sales card com campos obrigatórios
-      // NOTA: source='rota_do_dia' permite criar card mesmo fora dos weekdays configurados
-      // (cliente pode ter sido adicionado manualmente à rota)
-      const newCard = await storage.createSalesCard({
-        customerId,
-        sellerId,
-        scheduledDate: targetDate,
-        status: 'open',
-        source: 'rota_do_dia',
-        routeDay: 'Seg', // Default
-        recurrenceType: 'semanal',
-        exclusiveVehicle: false,
-        vehicleTypes: [],
-      });
+      // Nem customer nem lead encontrado
+      return res.status(404).json({ message: "Customer or Lead not found" });
 
-      // Buscar card completo com relações
-      const fullCard = await storage.getSalesCard(newCard.id);
-      
-      res.json(fullCard);
     } catch (error) {
       console.error("Error getting/creating sales card for date:", error);
       res.status(500).json({ message: "Failed to get/create sales card" });
