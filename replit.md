@@ -31,7 +31,7 @@
     - **Advanced Logic**: Unified optimization for customers and leads, 3-layer deduplication, route allocation based on service start dates, and calculation of executed route distance.
     - **Driver Interface**: "Rota do Dia" page with auto-refreshing visualization, metrics, interactive map, and photo markers. Smart visit list with inline check-in/check-out, color-coded status, and location validation.
     - **Automation**: Automated check-out (time-based or action-based). Real-time worked hours calculation.
-    - **Admin Control**: Administrative users can manually add, delete, and optimize visits.
+    - **Admin Control**: Administrative users can manually add, delete, and optimize visits. **Empty Route Creation** (November 19, 2025): New endpoints allow creating empty routes for sellers without scheduled visits. POST `/api/daily-routes/create-empty` creates a completely empty route, and POST `/api/daily-routes/generate` now accepts `allowEmpty: true` parameter to create empty routes when no visits are scheduled. This enables flexible manual route management where admins can add customers/leads to routes even without programmed visits.
     - **Advanced Validation**: Supports vehicle exclusivity, weekday validation, time window validation, average delivery time calculation, and proportional workload distribution.
     - **Delivery History**: Comprehensive tracking with API endpoint for registering completed deliveries and automatic duration calculation.
     - **Scheduling**: Hourly time slots for granular scheduling. Persistent delivery configurations stored in customer profiles and synced across locations.
