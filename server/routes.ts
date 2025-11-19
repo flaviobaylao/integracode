@@ -10872,7 +10872,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/daily-routes/generate', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
-      const { sellerId, date } = req.body;
+      const { sellerId, date, allowEmpty } = req.body;
       
       // Vendedor só pode gerar sua própria rota
       const targetSellerId = user.role === 'vendedor' ? user.id : (sellerId || user.id);
@@ -10937,6 +10937,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🆕 DEBUG: Nenhuma rota existente - gerando nova rota para sellerId: ${targetSellerId}, date: ${routeDate.toISOString()}`);
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
       console.log(`✅ DEBUG: generateDailyRoute retornou - routeId: ${result.routeId}, totalVisits: ${result.totalVisits}`);
+      
+      // Se não há visitas E allowEmpty está ativado, criar rota vazia
+      if (!result.routeId && allowEmpty) {
+        console.log(`📭 [ALLOW-EMPTY] Nenhuma visita programada, mas allowEmpty=true. Criando rota vazia...`);
+        
+        const seller = await storage.getUserById(targetSellerId);
+        
+        if (!seller) {
+          return res.status(404).json({ message: 'Vendedor não encontrado' });
+        }
+
+        if (!seller.homeLatitude || !seller.homeLongitude) {
+          return res.status(400).json({ 
+            message: 'Vendedor não possui coordenadas de residência cadastradas.' 
+          });
+        }
+
+        const startOfDay = new Date(routeDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const emptyRouteData = {
+          sellerId: targetSellerId,
+          routeDate: startOfDay,
+          startLatitude: seller.homeLatitude.toString(),
+          startLongitude: seller.homeLongitude.toString(),
+          startAddress: `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`,
+          optimizedOrder: [],
+          totalEstimatedDistance: '0',
+          totalActualDistance: '0',
+          totalVisits: 0,
+          completedVisits: 0,
+          routeStatus: 'pending'
+        };
+
+        const emptyRoute = await storage.createDailyRoute(emptyRouteData);
+        
+        return res.json({
+          success: true,
+          regenerated: false,
+          routeId: emptyRoute.id,
+          totalVisits: 0,
+          totalEstimatedDistance: 0,
+          warnings: ['Nenhuma visita programada para esta data. Rota vazia criada.'],
+          suspiciousCoordinates: [],
+          emptyRoute: true
+        });
+      }
       
       res.json({
         success: true,
