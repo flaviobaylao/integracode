@@ -51,6 +51,7 @@
 - **Leads Management**: Lead tracking system fully integrated with route optimization. Access control allows administrative users to create/delete leads, all users to view, and sellers to update assigned leads. Mandatory photo enforcement for check-in/check-out for leads. Sellers can access and update lead cards within daily routes.
 - **Order Synchronization**: Correct synchronization of pending deliveries by querying Omie ERP data (`invoice_stage = 'Aguardando Rota'`) from the `billings` table.
 - **Delivery Management SQL Type Fix**: Resolved PostgreSQL type conversion errors by explicitly casting JSON fields to `::json` and using consistent empty array fallbacks.
+- **Virtual Customer Filter Fix** (November 19, 2025): Fixed critical bug where virtual customers (virtual_service = true) were appearing in driver's daily routes. Added `AND c.virtual_service = false` filter to the LEFT JOIN customers clause in `getPendingDeliveries()` method in server/storage.ts. This ensures only physical delivery customers are included in route planning.
 
 # External Dependencies
 
