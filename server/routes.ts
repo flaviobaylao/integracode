@@ -11035,11 +11035,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Vendedor não encontrado' });
       }
 
-      if (!seller.homeLatitude || !seller.homeLongitude) {
-        return res.status(400).json({ 
-          message: 'Vendedor não possui coordenadas de residência cadastradas. Configure as coordenadas antes de criar uma rota.' 
-        });
-      }
+      // Para rotas vazias, usar coordenadas padrão se vendedor não tiver configurado
+      // As coordenadas serão usadas apenas quando houver visitas e a rota for otimizada
+      const startLatitude = seller.homeLatitude?.toString() || '-23.5505';  // Coordenadas padrão de São Paulo
+      const startLongitude = seller.homeLongitude?.toString() || '-46.6333';
+      const startAddress = seller.homeLatitude && seller.homeLongitude
+        ? `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`
+        : `São Paulo, SP (padrão)`;
 
       // Criar rota vazia
       const startOfDay = new Date(routeDate);
@@ -11048,9 +11050,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const routeData = {
         sellerId,
         routeDate: startOfDay,
-        startLatitude: seller.homeLatitude.toString(),
-        startLongitude: seller.homeLongitude.toString(),
-        startAddress: `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`,
+        startLatitude,
+        startLongitude,
+        startAddress,
         optimizedOrder: [], // Rota vazia
         totalEstimatedDistance: '0',
         totalActualDistance: '0',

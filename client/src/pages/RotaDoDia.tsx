@@ -124,7 +124,8 @@ export default function RotaDoDia() {
     mutationFn: async () => {
       const response = await apiRequest('POST', '/api/daily-routes/generate', {
         sellerId: selectedSellerId,
-        date: selectedDate
+        date: selectedDate,
+        allowEmpty: true
       });
       
       return response;
@@ -150,6 +151,33 @@ export default function RotaDoDia() {
         variant: "destructive",
         title: "Erro ao gerar rota",
         description: error.message || "Ocorreu um erro ao gerar a rota",
+      });
+    },
+  });
+
+  const createEmptyRouteMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/daily-routes/create-empty', {
+        sellerId: selectedSellerId,
+        date: selectedDate
+      });
+      
+      return response;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Rota vazia criada!",
+        description: "Agora você pode adicionar clientes manualmente.",
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao criar rota vazia",
+        description: error.message || "Ocorreu um erro ao criar a rota vazia",
       });
     },
   });
@@ -532,24 +560,44 @@ export default function RotaDoDia() {
               Não há visitas programadas para esta data
             </p>
             {isAdmin && (
-              <Button 
-                variant="default" 
-                data-testid="button-generate-route"
-                onClick={() => generateRouteMutation.mutate()}
-                disabled={generateRouteMutation.isPending || !selectedSellerId}
-              >
-                {generateRouteMutation.isPending ? (
-                  <>
-                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                    Gerando...
-                  </>
-                ) : (
-                  <>
-                    <Route className="mr-2 h-4 w-4" />
-                    Gerar Rota
-                  </>
-                )}
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+                <Button 
+                  variant="default" 
+                  data-testid="button-generate-route"
+                  onClick={() => generateRouteMutation.mutate()}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
+                >
+                  {generateRouteMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Gerando...
+                    </>
+                  ) : (
+                    <>
+                      <Route className="mr-2 h-4 w-4" />
+                      Gerar Rota
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  data-testid="button-create-empty-route"
+                  onClick={() => createEmptyRouteMutation.mutate()}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
+                >
+                  {createEmptyRouteMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Criando...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Criar Rota Vazia
+                    </>
+                  )}
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>
