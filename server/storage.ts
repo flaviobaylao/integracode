@@ -2614,9 +2614,10 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.delivery_saturday_time_slots::text, c.delivery_saturday_time_slots::text, b.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
       FROM billings b
       LEFT JOIN customers c ON (
-        c.id = CONCAT('omie-client-', b.omie_customer_code)
+        (c.id = CONCAT('omie-client-', b.omie_customer_code)
         OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+        AND c.virtual_service = false
       )
       LEFT JOIN sales_cards sc ON (
         (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
