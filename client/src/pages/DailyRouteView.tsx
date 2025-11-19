@@ -968,6 +968,29 @@ export default function DailyRouteView() {
 
           {/* Visitas */}
           <div className="space-y-2">
+            {(!orderedVisits || orderedVisits.length === 0) && (
+              <div className="p-6 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-center">
+                <Users className="h-12 w-12 mx-auto text-blue-400 mb-3" />
+                <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                  Rota Vazia
+                </h3>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
+                  Esta rota não possui visitas programadas. {isAdmin ? 'Use o botão "Adicionar Cliente" acima para adicionar clientes manualmente.' : 'Entre em contato com seu gerente para adicionar clientes.'}
+                </p>
+                {isAdmin && (
+                  <Button
+                    onClick={() => setShowAddCustomerModal(true)}
+                    variant="default"
+                    size="sm"
+                    className="bg-blue-600 hover:bg-blue-700"
+                    data-testid="button-add-first-customer"
+                  >
+                    <Users className="mr-2 h-4 w-4" />
+                    Adicionar Primeiro Cliente
+                  </Button>
+                )}
+              </div>
+            )}
             {orderedVisits && orderedVisits.map((visit: any, index: number) => {
               const status = getVisitStatus(visit);
               const checkpoint = route.checkpoints?.find(cp => cp.visitId === visit.id);
