@@ -664,6 +664,11 @@ export default function DeliveryManagement() {
                                 URGENTE
                               </Badge>
                             )}
+                            {(!order.customerId || order.customerId.startsWith('billing-')) && (
+                              <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50">
+                                ⚠️ Sem Cliente
+                              </Badge>
+                            )}
                           </div>
                           <span className="text-sm text-gray-600">
                             R$ {(Number(order.saleValue) || 0).toFixed(2)}
