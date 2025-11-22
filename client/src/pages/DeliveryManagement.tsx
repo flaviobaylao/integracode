@@ -297,6 +297,16 @@ export default function DeliveryManagement() {
   
   // Funções para edição de configurações de recebimento
   const handleOpenDeliveryConfig = (order: DeliveryOrder) => {
+    // Validar se o customerId é válido (não começa com 'billing-')
+    if (!order.customerId || order.customerId.startsWith('billing-')) {
+      toast({
+        title: "Cliente não cadastrado",
+        description: "Este pedido não está vinculado a um cliente cadastrado no sistema. Por favor, cadastre o cliente primeiro antes de configurar as preferências de entrega.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setEditingCustomer(order);
     setDeliveryConfigForm({
       exclusiveVehicle: order.exclusiveVehicle || false,
@@ -310,6 +320,17 @@ export default function DeliveryManagement() {
   
   const handleSaveDeliveryConfig = () => {
     if (!editingCustomer) return;
+    
+    // Validação adicional de segurança
+    if (!editingCustomer.customerId || editingCustomer.customerId.startsWith('billing-')) {
+      toast({
+        title: "Cliente não cadastrado",
+        description: "Não é possível salvar configurações para um pedido sem cliente cadastrado.",
+        variant: "destructive",
+      });
+      setShowDeliveryConfig(false);
+      return;
+    }
     
     updateDeliveryConfigMutation.mutate({
       customerId: editingCustomer.customerId,
