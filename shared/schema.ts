@@ -1862,6 +1862,9 @@ export type InsertChatDelivery = z.infer<typeof insertChatDeliverySchema>;
 export type WhatsappConversationAnalysis = typeof whatsappConversationAnalysis.$inferSelect;
 export type InsertWhatsappConversationAnalysis = z.infer<typeof insertWhatsappConversationAnalysisSchema>;
 
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+export type InsertWhatsappMessage = z.infer<typeof insertWhatsappMessageSchema>;
+
 export type KnowledgeBase = typeof knowledgeBase.$inferSelect;
 export type InsertKnowledgeBase = z.infer<typeof insertKnowledgeBaseSchema>;
 

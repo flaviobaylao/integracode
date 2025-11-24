@@ -214,6 +214,11 @@ export interface IStorage {
   updateBillingsStatus(billingIds: string[], newStage: string): Promise<void>;
   addStopsToRoute(routeId: string, billingIds: string[]): Promise<any[]>;
   
+  // WhatsApp messaging operations
+  saveWhatsappMessage(message: any): Promise<any>;
+  getWhatsappMessageHistory(customerId?: string, senderId?: string, limit?: number): Promise<any[]>;
+  getWhatsappMessagesByPhone(phone: string, limit?: number): Promise<any[]>;
+  
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
     todaySales: number;
@@ -4524,6 +4529,37 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`✅ ${newStopsData.length} paradas adicionadas à rota ${routeId}`);
     return savedStops;
+  }
+
+  // WhatsApp messaging operations
+  async saveWhatsappMessage(message: any): Promise<any> {
+    const [saved] = await db.insert(whatsappMessages).values(message).returning();
+    return saved;
+  }
+
+  async getWhatsappMessageHistory(customerId?: string, senderId?: string, limit = 100): Promise<any[]> {
+    let query = db.select().from(whatsappMessages);
+    const conditions: any[] = [];
+    
+    if (customerId) {
+      conditions.push(eq(whatsappMessages.customerId, customerId));
+    }
+    if (senderId) {
+      conditions.push(eq(whatsappMessages.senderId, senderId));
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+    
+    return await query.orderBy(desc(whatsappMessages.sentAt)).limit(limit);
+  }
+
+  async getWhatsappMessagesByPhone(phone: string, limit = 100): Promise<any[]> {
+    return await db.select().from(whatsappMessages)
+      .where(eq(whatsappMessages.recipientPhone, phone))
+      .orderBy(desc(whatsappMessages.sentAt))
+      .limit(limit);
   }
 
   // Overdue debts operations
