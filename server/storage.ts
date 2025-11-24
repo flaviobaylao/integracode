@@ -2585,7 +2585,7 @@ export class DatabaseStorage implements IStorage {
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
     // CORRIGIDO: Buscar de billings com invoice_stage = 'Aguardando Rota' (dados do Omie)
-    // Prioriza dados do sales_card mais recente quando existir
+    // Prioriza: sales_card > customer vinculado > fallback para dados do Omie
     const result = await db.execute(sql`
       SELECT DISTINCT ON (b.id)
         b.id,
@@ -2594,9 +2594,9 @@ export class DatabaseStorage implements IStorage {
         b.order_number as "orderNumber",
         COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
         COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
-        COALESCE(c.address, '') as "customerAddress",
-        c.latitude as "customerLatitude",
-        c.longitude as "customerLongitude",
+        COALESCE(c.address, b.customer_address, '') as "customerAddress",
+        COALESCE(c.latitude, b.customer_latitude) as "customerLatitude",
+        COALESCE(c.longitude, b.customer_longitude) as "customerLongitude",
         c.weekdays as "customerWeekdays",
         COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
         COALESCE(sc.exclusive_vehicle, c.exclusive_vehicle, b.exclusive_vehicle, false) as "exclusiveVehicle",
