@@ -212,6 +212,7 @@ export interface IStorage {
   countRoutesForDriverOnDate(driverId: string, date: Date): Promise<number>;
   saveRouteWithStops(route: any, stops: any[]): Promise<{ route: any; stops: any[] }>;
   updateBillingsStatus(billingIds: string[], newStage: string): Promise<void>;
+  addStopsToRoute(routeId: string, billingIds: string[]): Promise<any[]>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -4470,6 +4471,59 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(billings.id, billingIds));
     
     console.log(`✅ Atualizados ${billingIds.length} billings para status: ${newStage}`);
+  }
+
+  async addStopsToRoute(routeId: string, billingIds: string[]): Promise<any[]> {
+    // Buscar a rota existente
+    const route = await this.getDeliveryRoute(routeId);
+    if (!route) {
+      throw new Error(`Rota ${routeId} não encontrada`);
+    }
+
+    // Buscar os billings para extrair dados
+    const newStopsData: any[] = [];
+    let maxStopOrder = 0;
+
+    // Obter paradas existentes para determinar próxima ordem
+    const existingStops = await this.getDeliveryRouteStops(routeId);
+    if (existingStops.length > 0) {
+      maxStopOrder = Math.max(...existingStops.map(s => s.stopOrder || 0));
+    }
+
+    for (const billingId of billingIds) {
+      const billing = await db.query.billings.findFirst({
+        where: (billings, { eq }) => eq(billings.id, billingId)
+      });
+
+      if (billing) {
+        maxStopOrder++;
+        newStopsData.push({
+          routeId,
+          billingId,
+          customerId: billing.customerId,
+          customerName: billing.customerName,
+          customerAddress: billing.customerAddress,
+          customerLatitude: billing.customerLatitude || 0,
+          customerLongitude: billing.customerLongitude || 0,
+          stopOrder: maxStopOrder,
+          estimatedServiceTime: 30,
+          status: 'pending'
+        });
+      }
+    }
+
+    // Inserir novas paradas
+    const savedStops = await db.insert(deliveryRouteStops).values(newStopsData).returning();
+    
+    // Atualizar status dos billings
+    await this.updateBillingsStatus(billingIds, 'Em Rota');
+    
+    // Atualizar totalDeliveries da rota
+    const totalDeliveries = (route.totalDeliveries || 0) + newStopsData.length;
+    await db.update(deliveryRoutes).set({ totalDeliveries, updatedAt: new Date() }).where(eq(deliveryRoutes.id, routeId));
+    
+    console.log(`✅ ${newStopsData.length} paradas adicionadas à rota ${routeId}`);
+    return savedStops;
   }
 
   // Overdue debts operations
