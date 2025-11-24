@@ -1010,6 +1010,7 @@ export default function DeliveryManagement() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Vehicle Configuration Modal */}
       <Dialog open={showVehicleConfig} onOpenChange={setShowVehicleConfig}>
