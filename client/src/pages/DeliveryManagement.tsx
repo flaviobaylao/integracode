@@ -122,7 +122,25 @@ interface RoutePlan {
   };
 }
 
-// Função helper para obter cor e dias baseado na data de faturamento
+// Função helper para contar dias úteis (seg-sex) entre duas datas
+function countBusinessDays(startDate: Date, endDate: Date): number {
+  let count = 0;
+  const current = new Date(startDate);
+  current.setHours(0, 0, 0, 0);
+  endDate.setHours(0, 0, 0, 0);
+  
+  while (current < endDate) {
+    const dayOfWeek = current.getDay();
+    // 1 = segunda, 2 = terça, 3 = quarta, 4 = quinta, 5 = sexta
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+}
+
+// Função helper para obter cor e dias úteis baseado na data de faturamento
 function getInvoiceDateInfo(dateString: string): { color: string; bgColor: string; daysAgo: number; formattedDate: string } {
   if (!dateString) return { color: 'text-gray-600', bgColor: 'bg-gray-100', daysAgo: -1, formattedDate: 'Data desconhecida' };
   
@@ -131,8 +149,8 @@ function getInvoiceDateInfo(dateString: string): { color: string; bgColor: strin
   today.setHours(0, 0, 0, 0);
   invoiceDate.setHours(0, 0, 0, 0);
   
-  const diffTime = today.getTime() - invoiceDate.getTime();
-  const daysAgo = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  // Contar apenas dias úteis
+  const businessDaysAgo = countBusinessDays(invoiceDate, today);
   
   const formattedDate = invoiceDate.toLocaleDateString('pt-BR', { 
     day: '2-digit', 
@@ -140,13 +158,13 @@ function getInvoiceDateInfo(dateString: string): { color: string; bgColor: strin
     year: 'numeric' 
   });
   
-  // Verde: hoje, Laranja: 1 dia atrás, Vermelho: 2+ dias atrás
-  if (daysAgo === 0) {
-    return { color: 'text-green-700', bgColor: 'bg-green-100 border border-green-300', daysAgo, formattedDate };
-  } else if (daysAgo === 1) {
-    return { color: 'text-orange-700', bgColor: 'bg-orange-100 border border-orange-300', daysAgo, formattedDate };
+  // Verde: hoje (0 dias úteis), Laranja: 1 dia útil atrás, Vermelho: 2+ dias úteis atrás
+  if (businessDaysAgo === 0) {
+    return { color: 'text-green-700', bgColor: 'bg-green-100 border border-green-300', daysAgo: businessDaysAgo, formattedDate };
+  } else if (businessDaysAgo === 1) {
+    return { color: 'text-orange-700', bgColor: 'bg-orange-100 border border-orange-300', daysAgo: businessDaysAgo, formattedDate };
   } else {
-    return { color: 'text-red-700', bgColor: 'bg-red-100 border border-red-300', daysAgo, formattedDate };
+    return { color: 'text-red-700', bgColor: 'bg-red-100 border border-red-300', daysAgo: businessDaysAgo, formattedDate };
   }
 }
 
