@@ -2584,16 +2584,66 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
-    // CORRIGIDO: Buscar de billings com invoice_stage = 'Aguardando Rota' (dados do Omie)
-    // Prioriza dados do sales_card mais recente quando existir
+    // REFATORADO: Lógica de matching CORRIGIDA para garantir vinculação com clientes
+    // 3 critérios de matching aplicados em ordem de prioridade
     const result = await db.execute(sql`
-      SELECT DISTINCT ON (b.id)
-        b.id,
-        b.invoice_number as "invoiceNumber",
-        b.omie_order_id as "omieOrderId",
-        b.order_number as "orderNumber",
-        COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
-        COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+      WITH customer_matches AS (
+        -- Buscar todos os billings aguardando rota
+        SELECT 
+          b.id,
+          b.invoice_number,
+          b.omie_order_id,
+          b.order_number,
+          b.customer_fantasy_name,
+          b.customer_document,
+          b.omie_customer_code,
+          b.invoice_date,
+          b.total_value,
+          b.products,
+          b.payment_method,
+          b.billing_type,
+          b.exclusive_vehicle,
+          b.vehicle_types,
+          b.is_urgent,
+          b.delivery_weekdays,
+          -- Encontrar o melhor match de cliente
+          COALESCE(
+            -- Critério 1: Match por OMIE Customer Code (MAIS PRECISO)
+            (SELECT c.id FROM customers c 
+             WHERE c.virtual_service = false 
+             AND c.id = ('omie-client-' || b.omie_customer_code::text)
+             LIMIT 1),
+            -- Critério 2: Match por CNPJ (SE NÃO TIVER OMIE CODE)
+            (SELECT c.id FROM customers c 
+             WHERE c.virtual_service = false 
+             AND b.customer_document IS NOT NULL
+             AND c.cnpj IS NOT NULL
+             AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+             LIMIT 1),
+            -- Critério 3: Match por CPF (FALLBACK)
+            (SELECT c.id FROM customers c 
+             WHERE c.virtual_service = false 
+             AND b.customer_document IS NOT NULL
+             AND c.cpf IS NOT NULL
+             AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+             LIMIT 1)
+          ) AS matched_customer_id
+        FROM billings b
+        WHERE b.invoice_stage = 'Aguardando Rota'
+          AND b.invoice_number IS NOT NULL
+          AND b.invoice_date IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM delivery_route_stops drs
+            WHERE drs.billing_id = b.id
+          )
+      )
+      SELECT 
+        cm.id,
+        cm.invoice_number as "invoiceNumber",
+        cm.omie_order_id as "omieOrderId",
+        cm.order_number as "orderNumber",
+        COALESCE(cm.matched_customer_id, 'billing-' || cm.id) as "customerId",
+        COALESCE(c.fantasy_name, c.name, cm.customer_fantasy_name) as "customerName",
         c.cpf as "customerCpf",
         c.cnpj as "customerCnpj",
         COALESCE(c.address, '') as "customerAddress",
@@ -2601,48 +2651,22 @@ export class DatabaseStorage implements IStorage {
         c.longitude as "customerLongitude",
         c.weekdays as "customerWeekdays",
         COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-        COALESCE(sc.exclusive_vehicle, c.exclusive_vehicle, b.exclusive_vehicle, false) as "exclusiveVehicle",
-        COALESCE(sc.vehicle_types::text, c.vehicle_types::text, b.vehicle_types::text, '[]')::json as "vehicleTypes",
-        COALESCE(sc.is_urgent, b.is_urgent, false) as "isUrgent",
-        COALESCE(sc.sale_value, b.total_value) as "saleValue",
-        COALESCE(sc.products::text, b.products::text, '[]')::json as "products",
-        COALESCE(sc.scheduled_date, b.invoice_date) as "scheduledDate",
-        COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
-        COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
-        COALESCE(sc.operation_type, b.billing_type, '') as "operationType",
+        COALESCE(c.exclusive_vehicle, cm.exclusive_vehicle, false) as "exclusiveVehicle",
+        COALESCE(c.vehicle_types::text, cm.vehicle_types::text, '[]')::json as "vehicleTypes",
+        COALESCE(cm.is_urgent, false) as "isUrgent",
+        cm.total_value as "saleValue",
+        cm.products::json as "products",
+        cm.invoice_date as "scheduledDate",
+        cm.invoice_date as "completedDate",
+        cm.payment_method as "paymentMethod",
+        cm.billing_type as "operationType",
         COALESCE(c.receiving_weekdays::text, '[]')::json as "receivingWeekdays",
-        COALESCE(sc.delivery_weekdays::text, c.delivery_weekdays::text, b.delivery_weekdays::text, '[]')::json as "deliveryWeekdays",
-        COALESCE(sc.delivery_time_slots::text, c.delivery_time_slots::text, b.delivery_time_slots::text, '[]')::json as "deliveryTimeSlots",
-        COALESCE(sc.delivery_saturday_time_slots::text, c.delivery_saturday_time_slots::text, b.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
-      FROM billings b
-      LEFT JOIN customers c ON (
-        (c.id = CONCAT('omie-client-', b.omie_customer_code)
-        OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-        AND c.virtual_service = false
-      )
-      LEFT JOIN sales_cards sc ON (
-        (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
-        OR (sc.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
-            AND sc.omie_order_id = b.omie_order_id::text)
-      )
-      WHERE b.invoice_stage = 'Aguardando Rota'
-        AND b.invoice_number IS NOT NULL
-        AND b.invoice_date IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM delivery_route_stops drs
-          JOIN sales_cards sc2 ON sc2.id = drs.sales_card_id
-          WHERE (
-            (sc2.invoice_number IS NOT NULL AND sc2.invoice_number = b.invoice_number)
-            OR (sc2.omie_order_id IS NOT NULL AND b.omie_order_id IS NOT NULL 
-                AND sc2.omie_order_id = b.omie_order_id::text)
-          )
-        )
-      ORDER BY 
-        b.id,
-        CASE WHEN sc.id IS NOT NULL THEN 0 ELSE 1 END,
-        sc.updated_at DESC NULLS LAST,
-        CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END
+        COALESCE(c.delivery_weekdays::text, cm.delivery_weekdays::text, '[]')::json as "deliveryWeekdays",
+        COALESCE(c.delivery_time_slots::text, '[]')::json as "deliveryTimeSlots",
+        COALESCE(c.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
+      FROM customer_matches cm
+      LEFT JOIN customers c ON c.id = cm.matched_customer_id AND c.virtual_service = false
+      ORDER BY cm.invoice_date DESC, cm.customer_fantasy_name
     `);
     
     // Parse JSON fields to arrays
