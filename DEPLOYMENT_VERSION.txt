@@ -1,0 +1,12 @@
+DEPLOYMENT VERSION: 2025-11-24 21:03
+BUILD: SQL_FIX_DEPLOYED
+HASH: 66a6b2c8d6e99ce26565307e2699db16
+
+CORREÇÕES APLICADAS:
+- Sintaxe SQL corrigida: CONCAT → 'omie-client-' || code::text
+- customerId agora retorna 'omie-client-XXXXX' em vez de 'billing-XXXXX'
+- Service Worker atualizado: integra-v15-2025-11-24-sql-fix-deployed
+- Frontend atualizado: DailyRouteView 2025-11-24 20:50
+- Backend atualizado: BUILD_VERSION 20251124_203644_SQL_FIX
+
+Este arquivo força o Replit a reconhecer mudanças no projeto.
