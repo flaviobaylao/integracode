@@ -149,14 +149,24 @@ function getInvoiceDateInfo(dateString: string): { color: string; bgColor: strin
   today.setHours(0, 0, 0, 0);
   invoiceDate.setHours(0, 0, 0, 0);
   
-  // Contar apenas dias úteis
-  const businessDaysAgo = countBusinessDays(invoiceDate, today);
-  
   const formattedDate = invoiceDate.toLocaleDateString('pt-BR', { 
     day: '2-digit', 
     month: '2-digit', 
     year: 'numeric' 
   });
+  
+  // Validação: se a data é futura, é um erro de sincronização do Omie
+  if (invoiceDate > today) {
+    return { 
+      color: 'text-red-700', 
+      bgColor: 'bg-red-100 border border-red-300', 
+      daysAgo: -1, 
+      formattedDate: `⚠️ ${formattedDate} (DATA FUTURA!)` 
+    };
+  }
+  
+  // Contar apenas dias úteis
+  const businessDaysAgo = countBusinessDays(invoiceDate, today);
   
   // Verde: hoje (0 dias úteis), Laranja: 1 dia útil atrás, Vermelho: 2+ dias úteis atrás
   if (businessDaysAgo === 0) {
