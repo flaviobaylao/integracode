@@ -29,8 +29,10 @@ import {
   Clock,
   Settings,
   RefreshCw,
-  Map
+  Map,
+  Phone
 } from "lucide-react";
+import { WhatsAppMessageModal } from "@/components/WhatsAppMessageModal";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';

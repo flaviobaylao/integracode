@@ -322,7 +322,19 @@ export default function LeadsManagement() {
                 {lead.phone && (
                   <div className="flex items-center gap-1 text-sm">
                     <Phone className="h-3 w-3" />
-                    {lead.phone}
+                    <span>{lead.phone}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setWhatsappLead(lead);
+                        setWhatsappModalOpen(true);
+                      }}
+                      className="text-green-600 hover:text-green-700 hover:bg-green-50 h-5 w-5 p-0 ml-auto"
+                      data-testid={`button-whatsapp-lead-${lead.id}`}
+                    >
+                      💬
+                    </Button>
                   </div>
                 )}
               </CardDescription>
@@ -505,6 +517,16 @@ export default function LeadsManagement() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {whatsappLead && (
+        <WhatsAppMessageModal
+          open={whatsappModalOpen}
+          onOpenChange={setWhatsappModalOpen}
+          customerPhone={whatsappLead.phone}
+          customerName={whatsappLead.fantasyName}
+          customerId={whatsappLead.id}
+        />
+      )}
     </div>
   );
 }
