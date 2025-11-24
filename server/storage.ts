@@ -2622,7 +2622,7 @@ export class DatabaseStorage implements IStorage {
       LEFT JOIN customers c ON (
         c.virtual_service = false
         AND (
-          (b.omie_customer_code IS NOT NULL AND c.id = 'omie-client-' || b.omie_customer_code::text)
+          (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
           OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
           OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
         )
