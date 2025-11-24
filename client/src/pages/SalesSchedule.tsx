@@ -13,7 +13,6 @@ import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import CustomerInactivateModal from "@/components/CustomerInactivateModal";
-import { WhatsAppMessageModal } from "@/components/WhatsAppMessageModal";
 import {
   Calendar,
   Clock,
@@ -124,8 +123,6 @@ export default function SalesSchedule() {
   const [isCustomerInactivateModalOpen, setIsCustomerInactivateModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
-  const [whatsappCard, setWhatsappCard] = useState<SalesCardWithRelations | null>(null);
 
   // Buscar lista de vendedores (apenas para admin/coordinator/administrative)
   const { data: sellers } = useQuery({
@@ -730,18 +727,6 @@ export default function SalesSchedule() {
                         <div className="flex items-center space-x-2">
                           <Phone className="h-4 w-4" />
                           <span>{card.customer.phone}</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setWhatsappCard(card);
-                              setWhatsappModalOpen(true);
-                            }}
-                            className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                            data-testid={`button-whatsapp-${card.id}`}
-                          >
-                            💬
-                          </Button>
                         </div>
                         <div className="flex items-center space-x-2">
                           <Calendar className="h-4 w-4" />

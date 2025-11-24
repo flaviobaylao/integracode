@@ -212,12 +212,6 @@ export interface IStorage {
   countRoutesForDriverOnDate(driverId: string, date: Date): Promise<number>;
   saveRouteWithStops(route: any, stops: any[]): Promise<{ route: any; stops: any[] }>;
   updateBillingsStatus(billingIds: string[], newStage: string): Promise<void>;
-  addStopsToRoute(routeId: string, billingIds: string[]): Promise<any[]>;
-  
-  // WhatsApp messaging operations
-  saveWhatsappMessage(message: any): Promise<any>;
-  getWhatsappMessageHistory(customerId?: string, senderId?: string, limit?: number): Promise<any[]>;
-  getWhatsappMessagesByPhone(phone: string, limit?: number): Promise<any[]>;
   
   // Dashboard stats
   getDashboardStats(sellerId?: string): Promise<{
@@ -2591,7 +2585,7 @@ export class DatabaseStorage implements IStorage {
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
     // CORRIGIDO: Buscar de billings com invoice_stage = 'Aguardando Rota' (dados do Omie)
-    // Prioriza: sales_card > customer vinculado > fallback para dados do Omie
+    // Prioriza dados do sales_card mais recente quando existir
     const result = await db.execute(sql`
       SELECT DISTINCT ON (b.id)
         b.id,
@@ -2610,7 +2604,7 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.is_urgent, b.is_urgent, false) as "isUrgent",
         COALESCE(sc.sale_value, b.total_value) as "saleValue",
         COALESCE(sc.products::text, b.products::text, '[]')::json as "products",
-        b.invoice_date as "scheduledDate",
+        COALESCE(sc.scheduled_date, b.invoice_date) as "scheduledDate",
         COALESCE(sc.completed_date, b.invoice_date) as "completedDate",
         COALESCE(sc.payment_method, b.payment_method, '') as "paymentMethod",
         COALESCE(sc.operation_type, b.billing_type, '') as "operationType",
@@ -2620,12 +2614,10 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.delivery_saturday_time_slots::text, c.delivery_saturday_time_slots::text, b.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
       FROM billings b
       LEFT JOIN customers c ON (
-        c.virtual_service = false
-        AND (
-          (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
-          OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-          OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-        )
+        (c.id = CONCAT('omie-client-', b.omie_customer_code)
+        OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+        AND c.virtual_service = false
       )
       LEFT JOIN sales_cards sc ON (
         (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
@@ -2647,7 +2639,8 @@ export class DatabaseStorage implements IStorage {
       ORDER BY 
         b.id,
         CASE WHEN sc.id IS NOT NULL THEN 0 ELSE 1 END,
-        sc.updated_at DESC NULLS LAST
+        sc.updated_at DESC NULLS LAST,
+        CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END
     `);
     
     // Parse JSON fields to arrays
@@ -4381,22 +4374,9 @@ export class DatabaseStorage implements IStorage {
           .where(eq(deliveryRouteStops.routeId, route.id))
           .orderBy(deliveryRouteStops.stopOrder);
         
-        // Converter tipos numéricos para strings para compatibilidade com frontend
-        const formattedStops = stops.map(stop => ({
-          ...stop,
-          customerLatitude: String(stop.customerLatitude || ''),
-          customerLongitude: String(stop.customerLongitude || ''),
-          distanceFromPrevious: String(stop.distanceFromPrevious || '0'),
-          photos: stop.photos || []
-        }));
-        
         return {
           ...route,
-          totalDistance: String(route.totalDistance || '0'),
-          totalDuration: Number(route.totalDuration || 0),
-          startLatitude: String(route.startLatitude || ''),
-          startLongitude: String(route.startLongitude || ''),
-          stops: formattedStops
+          stops
         };
       })
     );
@@ -4489,90 +4469,6 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(billings.id, billingIds));
     
     console.log(`✅ Atualizados ${billingIds.length} billings para status: ${newStage}`);
-  }
-
-  async addStopsToRoute(routeId: string, billingIds: string[]): Promise<any[]> {
-    // Buscar a rota existente
-    const route = await this.getDeliveryRoute(routeId);
-    if (!route) {
-      throw new Error(`Rota ${routeId} não encontrada`);
-    }
-
-    // Buscar os billings para extrair dados
-    const newStopsData: any[] = [];
-    let maxStopOrder = 0;
-
-    // Obter paradas existentes para determinar próxima ordem
-    const existingStops = await this.getDeliveryRouteStops(routeId);
-    if (existingStops.length > 0) {
-      maxStopOrder = Math.max(...existingStops.map(s => s.stopOrder || 0));
-    }
-
-    for (const billingId of billingIds) {
-      const billing = await db.query.billings.findFirst({
-        where: (billings, { eq }) => eq(billings.id, billingId)
-      });
-
-      if (billing) {
-        maxStopOrder++;
-        newStopsData.push({
-          routeId,
-          billingId,
-          customerId: billing.customerId,
-          customerName: billing.customerName,
-          customerAddress: billing.customerAddress,
-          customerLatitude: billing.customerLatitude || 0,
-          customerLongitude: billing.customerLongitude || 0,
-          stopOrder: maxStopOrder,
-          estimatedServiceTime: 30,
-          status: 'pending'
-        });
-      }
-    }
-
-    // Inserir novas paradas
-    const savedStops = await db.insert(deliveryRouteStops).values(newStopsData).returning();
-    
-    // Atualizar status dos billings
-    await this.updateBillingsStatus(billingIds, 'Em Rota');
-    
-    // Atualizar totalDeliveries da rota
-    const totalDeliveries = (route.totalDeliveries || 0) + newStopsData.length;
-    await db.update(deliveryRoutes).set({ totalDeliveries, updatedAt: new Date() }).where(eq(deliveryRoutes.id, routeId));
-    
-    console.log(`✅ ${newStopsData.length} paradas adicionadas à rota ${routeId}`);
-    return savedStops;
-  }
-
-  // WhatsApp messaging operations
-  async saveWhatsappMessage(message: any): Promise<any> {
-    const [saved] = await db.insert(whatsappMessages).values(message).returning();
-    return saved;
-  }
-
-  async getWhatsappMessageHistory(customerId?: string, senderId?: string, limit = 100): Promise<any[]> {
-    let query = db.select().from(whatsappMessages);
-    const conditions: any[] = [];
-    
-    if (customerId) {
-      conditions.push(eq(whatsappMessages.customerId, customerId));
-    }
-    if (senderId) {
-      conditions.push(eq(whatsappMessages.senderId, senderId));
-    }
-    
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-    
-    return await query.orderBy(desc(whatsappMessages.sentAt)).limit(limit);
-  }
-
-  async getWhatsappMessagesByPhone(phone: string, limit = 100): Promise<any[]> {
-    return await db.select().from(whatsappMessages)
-      .where(eq(whatsappMessages.recipientPhone, phone))
-      .orderBy(desc(whatsappMessages.sentAt))
-      .limit(limit);
   }
 
   // Overdue debts operations

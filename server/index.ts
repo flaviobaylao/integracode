@@ -5,11 +5,6 @@ import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
 
-// 🔥 MARCADOR DE VERSÃO - SQL FIX DEPLOYED
-const BUILD_VERSION = "20251124_203644_SQL_FIX";
-console.log(`🚀 Sistema Integra iniciando - Versão: ${BUILD_VERSION}`);
-console.log(`✅ Correção SQL aplicada: customerId com prefixo 'omie-client-' em vez de 'billing-'`);
-
 const app = express();
 
 // MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas

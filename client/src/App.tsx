@@ -43,7 +43,6 @@ import ChatDeliveries from "@/pages/ChatDeliveries";
 import ChatAnalysis from "@/pages/ChatAnalysis";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
-import WhatsAppMessenger from "@/pages/WhatsAppMessenger";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -166,7 +165,6 @@ function Router() {
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/leads" component={LeadsManagement} />
           <Route path="/whatsapp" component={WhatsAppSetup} />
-          <Route path="/whatsapp-messenger" component={WhatsAppMessenger} />
           <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
           <Route path="/telemarketing/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/telegram" component={TelegramSetup} />

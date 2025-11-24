@@ -1221,7 +1221,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Processar campos de configuração de entrega (JSONB arrays)
       const deliveryConfigFields = [
         'deliveryWeekdays',
-        'receivingWeekdays',  // DIAS QUE O CLIENTE ACEITA RECEBER
         'deliveryTimeSlots', 
         'deliverySaturdayTimeSlots',
         'vehicleTypes'
@@ -1851,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admins podem excluir metas
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Only admins can delete sales goals" });
       }
       
@@ -8347,17 +8346,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.billing_type as "operationType"
         FROM billings b
         LEFT JOIN customers c ON (
-          c.virtual_service = false
-          AND (
-            (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
-            OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-            OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-          )
+          c.id = CONCAT('omie-client-', b.omie_customer_code)
+          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
         )
         WHERE b.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
         ORDER BY 
           b.id, 
-          CASE WHEN c.id = ('omie-client-' || b.omie_customer_code::text) THEN 0 ELSE 1 END,
+          CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END,
           c.id NULLS LAST,
           b.invoice_date
       `);
@@ -8513,6 +8509,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar rotas salvas com filtros
+  app.get("/api/delivery-routes", authenticateUser, async (req: any, res) => {
+    try {
+      const { routeDate, driverId, savedOnly } = req.query;
+      
+      console.log(`🔍 [GET-ROUTES] Filtrando rotas: date=${routeDate}, driver=${driverId}, savedOnly=${savedOnly}`);
+      
+      // Preparar filtros
+      const filters: any = {};
+      
+      if (routeDate) {
+        filters.routeDate = new Date(routeDate as string);
+      }
+      
+      if (driverId && driverId !== 'all') {
+        filters.driverId = driverId;
+      }
+      
+      if (savedOnly === 'true') {
+        filters.savedOnly = true;
+      }
+      
+      // Buscar rotas com filtros
+      const routes = await storage.getDeliveryRoutes(filters);
+      
+      console.log(`✅ [GET-ROUTES] Retornando ${routes.length} rotas`);
+      
+      res.json(routes);
+    } catch (error: any) {
+      console.error("❌ [GET-ROUTES] Error fetching delivery routes:", error);
+      res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });
+    }
+  });
 
   // Salvar rotas planejadas
   app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
@@ -9035,32 +9064,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Adicionar paradas a uma rota existente
-  app.post("/api/delivery-routes/:routeId/add-stops", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const { routeId } = req.params;
-      const { billingIds } = req.body;
-
-      if (!Array.isArray(billingIds) || billingIds.length === 0) {
-        return res.status(400).json({ message: "billingIds array is required" });
-      }
-
-      console.log(`➕ [ADD-STOPS] Adicionando ${billingIds.length} paradas à rota ${routeId}`);
-
-      const newStops = await storage.addStopsToRoute(routeId, billingIds);
-
-      console.log(`✅ [ADD-STOPS] ${newStops.length} paradas adicionadas com sucesso`);
-      res.json({
-        success: true,
-        message: `${newStops.length} paradas adicionadas com sucesso`,
-        stops: newStops
-      });
-    } catch (error: any) {
-      console.error("Error adding stops to route:", error);
-      res.status(500).json({ message: "Failed to add stops", error: error.message });
-    }
-  });
-
   // ========== FIM DOS ENDPOINTS PARA MOTORISTAS ==========
 
   // Buscar entregas pendentes
@@ -10913,7 +10916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.omie_client_code,
           -- Teste de match
           CASE 
-            WHEN c.id = ('omie-client-' || b.omie_customer_code::text) THEN 'MATCH_OMIE_CODE'
+            WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 'MATCH_OMIE_CODE'
             WHEN REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g') THEN 'MATCH_CPF'
             WHEN REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g') THEN 'MATCH_CNPJ'
             ELSE 'NO_MATCH'
@@ -10922,12 +10925,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.id, 'billing-' || b.id) as generated_customer_id
         FROM billings b
         LEFT JOIN customers c ON (
-          c.virtual_service = false
-          AND (
-            (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
-            OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-            OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-          )
+          (c.id = CONCAT('omie-client-', b.omie_customer_code)
+          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+          AND c.virtual_service = false
         )
         WHERE b.invoice_stage = 'Aguardando Rota'
           AND b.invoice_number IS NOT NULL
@@ -13626,7 +13627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
@@ -13710,7 +13711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
@@ -15034,7 +15035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar correções de dados
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
       
@@ -15176,7 +15177,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar sincronizações manuais
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
       
@@ -15245,7 +15246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
 
@@ -15353,7 +15354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
 
@@ -15463,7 +15464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar migrações de dados
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Acesso negado. Apenas admin." });
       }
 
@@ -15579,7 +15580,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar migrações de dados
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ message: "Acesso negado. Apenas admin." });
       }
 
@@ -15817,7 +15818,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       
       // Apenas admin pode deletar
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      if (user.role !== 'admin') {
         return res.status(403).json({ 
           message: 'Acesso negado. Apenas administradores podem deletar leads.' 
         });
@@ -15829,140 +15830,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Erro ao deletar lead:', error);
       res.status(500).json({ message: 'Erro ao deletar lead' });
-    }
-  });
-
-  // ========== EVOLUTION API - WHATSAPP MESSAGING ==========
-  app.post('/api/whatsapp/send-message', authenticateUser, async (req: any, res) => {
-    try {
-      const { number, text } = req.body;
-
-      if (!number || !text) {
-        return res.status(400).json({ message: 'Número e mensagem são obrigatórios' });
-      }
-
-      const baseURL = process.env.EVOLUTION_API_BASE_URL;
-      const apiKey = process.env.EVOLUTION_API_KEY;
-      const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
-
-      if (!baseURL || !apiKey || !instanceName) {
-        console.error('❌ Evolution API não está configurada');
-        return res.status(503).json({ message: 'Evolution API não está configurada' });
-      }
-
-      try {
-        const response = await fetch(`${baseURL}/message/sendText`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            number: number.replace(/\D/g, ''),
-            text: text,
-            instance: instanceName
-          })
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          console.error('❌ Erro ao enviar via Evolution API:', errorData);
-          return res.status(response.status).json({ 
-            message: 'Erro ao enviar mensagem WhatsApp',
-            details: errorData
-          });
-        }
-
-        const result = await response.json();
-        console.log(`✅ Mensagem enviada para ${number} via Evolution API`);
-        
-        res.json({
-          success: true,
-          message: 'Mensagem enviada com sucesso',
-          data: result
-        });
-      } catch (evolutionError: any) {
-        console.error('❌ Erro na requisição Evolution API:', evolutionError);
-        res.status(500).json({ 
-          message: 'Erro ao conectar com Evolution API',
-          error: evolutionError.message 
-        });
-      }
-    } catch (error: any) {
-      console.error('Error sending WhatsApp message:', error);
-      res.status(500).json({ message: 'Erro ao processar mensagem', error: error.message });
-    }
-  });
-
-  // Histórico de mensagens WhatsApp
-  app.get("/api/whatsapp/history", authenticateUser, async (req: any, res) => {
-    try {
-      const { customerId, limit } = req.query;
-      const userId = req.user?.id;
-      const messages = await storage.getWhatsappMessageHistory(customerId, userId, parseInt(limit) || 100);
-      res.json(messages);
-    } catch (error: any) {
-      console.error("Error fetching WhatsApp history:", error);
-      res.status(500).json({ message: "Failed to fetch message history", error: error.message });
-    }
-  });
-
-  // Enviar mensagem WhatsApp com salvamento em histórico
-  app.post('/api/whatsapp/send-with-history', authenticateUser, async (req: any, res) => {
-    try {
-      const { number, text, customerId, recipientName } = req.body;
-      const userId = req.user?.id;
-      const userName = req.user?.firstName || req.user?.email || 'Sistema';
-      
-      if (!number || !text) {
-        return res.status(400).json({ message: 'Número e mensagem são obrigatórios' });
-      }
-
-      const baseURL = process.env.EVOLUTION_API_BASE_URL;
-      const apiKey = process.env.EVOLUTION_API_KEY;
-      const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
-
-      if (!baseURL || !apiKey || !instanceName) {
-        return res.status(503).json({ message: 'Evolution API não configurada' });
-      }
-
-      const response = await fetch(`${baseURL}/message/sendText`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          number: number.replace(/\D/g, ''),
-          text: text,
-          instance: instanceName
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        return res.status(response.status).json({ message: 'Erro ao enviar', details: errorData });
-      }
-
-      const result = await response.json();
-      
-      // Salvar no histórico
-      await storage.saveWhatsappMessage({
-        senderId: userId,
-        senderName: userName,
-        recipientPhone: number.replace(/\D/g, ''),
-        recipientName: recipientName || 'Cliente',
-        customerId: customerId || null,
-        messageText: text,
-        messageType: 'text',
-        status: 'sent',
-        evolutionMessageId: result.messageId
-      });
-
-      res.json({ success: true, message: 'Mensagem enviada', data: result });
-    } catch (error: any) {
-      console.error('Erro ao enviar WhatsApp:', error);
-      res.status(500).json({ message: 'Erro ao processar', error: error.message });
     }
   });
 

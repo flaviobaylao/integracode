@@ -97,9 +97,9 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
       return res.status(401).json({ message: "Unauthorized" });
     }
     
-    // Verificar se o usuário existe no banco e tem role administrativa
+    // Verificar se o usuário existe no banco e é admin
     const user = await storage.getUser(userId);
-    if (!user || !user.isActive || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+    if (!user || !user.isActive || user.role !== 'admin') {
       return res.status(403).json({ message: "Admin access required" });
     }
     

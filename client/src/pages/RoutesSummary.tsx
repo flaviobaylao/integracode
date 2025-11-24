@@ -23,17 +23,8 @@ import {
   CheckCircle2,
   Circle,
   XCircle,
-  Trash2,
-  Plus
+  Trash2
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -90,8 +81,6 @@ export default function RoutesSummary() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
-  const [showAddDeliveryDialog, setShowAddDeliveryDialog] = useState(false);
-  const [selectedBillings, setSelectedBillings] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   // Buscar entregadores
@@ -101,29 +90,24 @@ export default function RoutesSummary() {
   });
 
   // Buscar rotas com filtros - apenas rotas salvas
-  const { data: routes = [], isLoading, error: routesError } = useQuery<DeliveryRoute[]>({
+  const { data: routes = [], isLoading } = useQuery<DeliveryRoute[]>({
     queryKey: ['/api/delivery-routes', { 
       routeDate: selectedDate, 
-      driverId: selectedDriver !== 'all' ? selectedDriver : undefined
+      driverId: selectedDriver !== 'all' ? selectedDriver : undefined,
+      savedOnly: 'true' // Mostrar apenas rotas que foram salvas na Gestão de Entregas
     }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedDate) params.append('routeDate', selectedDate);
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
+      params.append('savedOnly', 'true');
       
       const url = `/api/delivery-routes?${params.toString()}`;
-      return apiRequest('GET', url);
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch routes');
+      return res.json();
     },
     enabled: !!selectedDate,
-    staleTime: 0,
-    refetchInterval: 30000,
-  });
-
-  // Buscar billings pendentes (não alocadas em rotas)
-  const { data: pendingBillings = [] } = useQuery<any[]>({
-    queryKey: ['/api/deliveries'],
-    queryFn: () => apiRequest('GET', '/api/deliveries'),
-    refetchInterval: 30000,
   });
 
   // Mutation para excluir parada individual
@@ -164,29 +148,6 @@ export default function RoutesSummary() {
       toast({
         title: "Erro ao excluir rota",
         description: error.message || "Não foi possível excluir a rota.",
-        variant: "destructive",
-      });
-    }
-  });
-
-  // Mutation para adicionar paradas à rota
-  const addDeliveryMutation = useMutation({
-    mutationFn: async (data: { routeId: string; billingIds: string[] }) => {
-      return await apiRequest('POST', `/api/delivery-routes/${data.routeId}/add-stops`, { billingIds: data.billingIds });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
-      setShowAddDeliveryDialog(false);
-      setSelectedBillings(new Set());
-      toast({
-        title: "Entregas adicionadas",
-        description: "As entregas foram adicionadas à rota com sucesso.",
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao adicionar entregas",
-        description: error.message || "Não foi possível adicionar as entregas.",
         variant: "destructive",
       });
     }
@@ -285,23 +246,6 @@ export default function RoutesSummary() {
         </CardContent>
       </Card>
 
-      {/* Erro ao carregar rotas */}
-      {routesError && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <p className="text-red-700 font-semibold">Erro ao carregar rotas:</p>
-            <p className="text-red-600 text-sm mt-1">{(routesError as any)?.message || 'Erro desconhecido'}</p>
-            <Button 
-              size="sm" 
-              onClick={() => window.location.reload()}
-              className="mt-3"
-            >
-              Recarregar Página
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Lista de Rotas */}
       {isLoading ? (
         <Card>
@@ -312,7 +256,7 @@ export default function RoutesSummary() {
       ) : routes.length === 0 ? (
         <Card>
           <CardContent className="pt-6 text-center text-muted-foreground">
-            Nenhuma rota encontrada para os filtros selecionados. Acesse "Gestão de Entregas" para criar novas rotas.
+            Nenhuma rota encontrada para os filtros selecionados.
           </CardContent>
         </Card>
       ) : (
@@ -367,15 +311,6 @@ export default function RoutesSummary() {
             <CardTitle className="flex items-center justify-between">
               <span>Detalhes da Rota: {selectedRouteData.routeName}</span>
               <div className="flex gap-2">
-                <Button 
-                  variant="default" 
-                  size="sm"
-                  onClick={() => setShowAddDeliveryDialog(true)}
-                  data-testid="button-add-delivery"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Adicionar Pedidos
-                </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button 
@@ -572,81 +507,6 @@ export default function RoutesSummary() {
           </CardContent>
         </Card>
       )}
-
-      {/* Dialog para adicionar pedidos à rota */}
-      <Dialog open={showAddDeliveryDialog} onOpenChange={setShowAddDeliveryDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="dialog-add-delivery">
-          <DialogHeader>
-            <DialogTitle>Adicionar Pedidos à Rota</DialogTitle>
-            <DialogDescription>
-              Selecione os pedidos que deseja adicionar a esta rota
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            {pendingBillings.length > 0 ? (
-              <div className="space-y-3 max-h-96 overflow-y-auto border rounded-lg p-4">
-                {pendingBillings.map((billing) => (
-                  <div key={billing.id} className="flex items-start space-x-3 p-3 border rounded hover:bg-gray-50">
-                    <Checkbox
-                      id={`billing-${billing.id}`}
-                      checked={selectedBillings.has(billing.id)}
-                      onCheckedChange={(checked) => {
-                        const newSet = new Set(selectedBillings);
-                        if (checked) {
-                          newSet.add(billing.id);
-                        } else {
-                          newSet.delete(billing.id);
-                        }
-                        setSelectedBillings(newSet);
-                      }}
-                      data-testid={`checkbox-billing-${billing.id}`}
-                    />
-                    <div className="flex-1">
-                      <label htmlFor={`billing-${billing.id}`} className="cursor-pointer">
-                        <div className="font-medium">{billing.customerName}</div>
-                        <div className="text-sm text-muted-foreground">NF: {billing.invoiceNumber}</div>
-                        <div className="text-sm text-muted-foreground">{billing.customerAddress}</div>
-                        <div className="text-sm font-semibold text-blue-600">R$ {billing.saleValue.toFixed(2)}</div>
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                Nenhum pedido aguardando rota
-              </div>
-            )}
-
-            <div className="flex justify-between pt-4 border-t">
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setShowAddDeliveryDialog(false);
-                  setSelectedBillings(new Set());
-                }}
-              >
-                Cancelar
-              </Button>
-              <Button 
-                onClick={() => {
-                  if (selectedRoute && selectedBillings.size > 0) {
-                    addDeliveryMutation.mutate({
-                      routeId: selectedRoute,
-                      billingIds: Array.from(selectedBillings)
-                    });
-                  }
-                }}
-                disabled={selectedBillings.size === 0 || addDeliveryMutation.isPending}
-                data-testid="button-confirm-add-delivery"
-              >
-                Adicionar {selectedBillings.size > 0 ? `(${selectedBillings.size})` : ''} Pedidos
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-console.log('🚀 DailyRouteView CARREGADO - Versão: 2025-11-24 20:50 - SQL FIX DEPLOYED ✅');
+console.log('🚀 DailyRouteView CARREGADO - Versão: 2025-11-12 12:34');
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";

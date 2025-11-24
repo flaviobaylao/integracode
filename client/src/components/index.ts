@@ -1,1 +1,0 @@
-export { WhatsAppMessageModal } from './WhatsAppMessageModal';

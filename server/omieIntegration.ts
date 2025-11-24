@@ -1500,12 +1500,6 @@ export class OmieService {
         } else if (order.informacoes_adicionais?.data_faturamento) {
           invoiceDate = this.parseOmieDate(order.informacoes_adicionais.data_faturamento);
         }
-        
-        // ✅ VALIDAÇÃO: Se data é futura, usar data de hoje como fallback
-        if (invoiceDate && invoiceDate > new Date()) {
-          console.warn(`⚠️ DATA FUTURA DETECTADA: NF ${invoiceNumber} com data ${invoiceDate.toLocaleDateString('pt-BR')}, usando data de hoje como fallback`);
-          invoiceDate = new Date();
-        }
       }
       
       // Nome fantasia do cliente - buscar na API de clientes

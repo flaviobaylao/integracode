@@ -18,7 +18,6 @@ import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
-import { WhatsAppMessageModal } from "@/components/WhatsAppMessageModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -77,8 +76,6 @@ export default function RotaDoDia() {
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [addVisitTab, setAddVisitTab] = useState<'customer' | 'lead'>('customer');
   const [leadSearchQuery, setLeadSearchQuery] = useState('');
-  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
-  const [whatsappCard, setWhatsappCard] = useState<any>(null);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -1303,16 +1300,6 @@ export default function RotaDoDia() {
           </Tabs>
         </DialogContent>
       </Dialog>
-
-      {whatsappCard && (
-        <WhatsAppMessageModal
-          open={whatsappModalOpen}
-          onOpenChange={setWhatsappModalOpen}
-          customerPhone={whatsappCard.customer?.phone || whatsappCard.phone}
-          customerName={whatsappCard.customer?.fantasyName || whatsappCard.customer?.name || whatsappCard.fantasyName}
-          customerId={whatsappCard.customerId || whatsappCard.id}
-        />
-      )}
     </div>
   );
 }
