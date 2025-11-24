@@ -101,17 +101,15 @@ export default function RoutesSummary() {
   });
 
   // Buscar rotas com filtros - apenas rotas salvas
-  const { data: routes = [], isLoading } = useQuery<DeliveryRoute[]>({
+  const { data: routes = [], isLoading, error: routesError } = useQuery<DeliveryRoute[]>({
     queryKey: ['/api/delivery-routes', { 
       routeDate: selectedDate, 
-      driverId: selectedDriver !== 'all' ? selectedDriver : undefined,
-      savedOnly: 'true' // Mostrar apenas rotas que foram salvas na Gestão de Entregas
+      driverId: selectedDriver !== 'all' ? selectedDriver : undefined
     }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedDate) params.append('routeDate', selectedDate);
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
-      params.append('savedOnly', 'true');
       
       const url = `/api/delivery-routes?${params.toString()}`;
       const res = await fetch(url, { credentials: 'include' });
@@ -119,6 +117,8 @@ export default function RoutesSummary() {
       return res.json();
     },
     enabled: !!selectedDate,
+    staleTime: 0,
+    refetchInterval: 30000,
   });
 
   // Buscar billings pendentes (não alocadas em rotas)
@@ -287,6 +287,23 @@ export default function RoutesSummary() {
         </CardContent>
       </Card>
 
+      {/* Erro ao carregar rotas */}
+      {routesError && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6">
+            <p className="text-red-700 font-semibold">Erro ao carregar rotas:</p>
+            <p className="text-red-600 text-sm mt-1">{(routesError as any)?.message || 'Erro desconhecido'}</p>
+            <Button 
+              size="sm" 
+              onClick={() => window.location.reload()}
+              className="mt-3"
+            >
+              Recarregar Página
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Lista de Rotas */}
       {isLoading ? (
         <Card>
@@ -297,7 +314,7 @@ export default function RoutesSummary() {
       ) : routes.length === 0 ? (
         <Card>
           <CardContent className="pt-6 text-center text-muted-foreground">
-            Nenhuma rota encontrada para os filtros selecionados.
+            Nenhuma rota encontrada para os filtros selecionados. Acesse "Gestão de Entregas" para criar novas rotas.
           </CardContent>
         </Card>
       ) : (

@@ -224,6 +224,7 @@ export default function DeliveryManagement() {
     queryKey: ['/api/deliveries'],
     queryFn: () => apiRequest('GET', '/api/deliveries'),
     refetchInterval: 30000,
+    staleTime: 0,
   });
 
   // Query para buscar motoristas ativos
