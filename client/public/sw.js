@@ -1,5 +1,6 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v14-2025-11-15-force-clear';
+// 🔥 VERSÃO ATUALIZADA: SQL FIX DEPLOYED
+const CACHE_NAME = 'integra-v15-2025-11-24-sql-fix-deployed';
 const urlsToCache = [
   '/manifest.json'
 ];
