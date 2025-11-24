@@ -210,6 +210,8 @@ export default function DeliveryManagement() {
     receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
+    latitude: '' as string | number,
+    longitude: '' as string | number,
   });
 
   // Query para buscar usuário atual
@@ -374,6 +376,8 @@ export default function DeliveryManagement() {
       receivingWeekdays: order.receivingWeekdays || [],
       deliveryTimeSlots: order.deliveryTimeSlots || [],
       deliverySaturdayTimeSlots: order.deliverySaturdayTimeSlots || [],
+      latitude: order.latitude || '',
+      longitude: order.longitude || '',
     });
     setShowDeliveryConfig(true);
   };
@@ -1475,6 +1479,49 @@ export default function DeliveryManagement() {
           </DialogHeader>
           
           <div className="space-y-6 py-4">
+            {/* Coordenadas GPS */}
+            <div className="space-y-3 border border-gray-200 bg-gray-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-gray-600" />
+                <Label className="text-sm font-medium text-gray-900">Coordenadas GPS</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="latitude-config" className="text-sm font-medium">Latitude</Label>
+                  <Input
+                    id="latitude-config"
+                    type="number"
+                    step="0.00001"
+                    placeholder="-16.7194..."
+                    value={deliveryConfigForm.latitude}
+                    onChange={(e) => setDeliveryConfigForm(prev => ({
+                      ...prev,
+                      latitude: e.target.value
+                    }))}
+                    data-testid="input-latitude-config"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="longitude-config" className="text-sm font-medium">Longitude</Label>
+                  <Input
+                    id="longitude-config"
+                    type="number"
+                    step="0.00001"
+                    placeholder="-49.2993..."
+                    value={deliveryConfigForm.longitude}
+                    onChange={(e) => setDeliveryConfigForm(prev => ({
+                      ...prev,
+                      longitude: e.target.value
+                    }))}
+                    data-testid="input-longitude-config"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Veículo Exclusivo */}
             <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
               <div className="flex items-center gap-2">
