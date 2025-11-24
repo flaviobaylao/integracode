@@ -183,6 +183,7 @@ export default function DeliveryManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
+  const [activeTab, setActiveTab] = useState<'list' | 'map'>('list');
   
   // Estados para configuração de veículos
   const [showVehicleConfig, setShowVehicleConfig] = useState(false);
@@ -537,16 +538,34 @@ export default function DeliveryManagement() {
             Planeje rotas de entrega para múltiplos veículos
           </p>
         </div>
-        <Button 
-          onClick={() => setShowVehicleConfig(true)}
-          data-testid="button-configure-routes"
-          size="lg"
-        >
-          <Settings className="h-4 w-4 mr-2" />
-          {selectedOrders.size > 0 
-            ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
-            : 'Configurar Veículos'}
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant={activeTab === 'list' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('list')}
+            data-testid="button-tab-list"
+          >
+            <Package className="h-4 w-4 mr-2" />
+            Lista
+          </Button>
+          <Button 
+            variant={activeTab === 'map' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('map')}
+            data-testid="button-tab-map"
+          >
+            <Map className="h-4 w-4 mr-2" />
+            Mapa
+          </Button>
+          <Button 
+            onClick={() => setShowVehicleConfig(true)}
+            data-testid="button-configure-routes"
+            size="lg"
+          >
+            <Settings className="h-4 w-4 mr-2" />
+            {selectedOrders.size > 0 
+              ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
+              : 'Configurar Veículos'}
+          </Button>
+        </div>
       </div>
 
       {/* Error Alert - Renderização inline para permitir recuperação */}
@@ -590,95 +609,215 @@ export default function DeliveryManagement() {
         </Card>
       )}
 
-      {/* Filters */}
-      <Card data-testid="filters-card">
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Filter className="h-5 w-5" />
-            <span>Filtros e Seleção</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="search">Buscar</Label>
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="search"
-                  placeholder="Cliente, endereço, ID..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-8"
-                  data-testid="input-search"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="route-date">Data da Rota</Label>
-              <Input
-                id="route-date"
-                type="date"
-                min={new Date().toISOString().split('T')[0]}
-                value={routeDate}
-                onChange={(e) => setRouteDate(e.target.value)}
-                data-testid="input-route-date"
-              />
-              <p className="text-xs text-muted-foreground">
-                <Calendar className="h-3 w-3 inline mr-1" />
-                Selecione a data de execução da rota
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>&nbsp;</Label>
-              <div className="flex space-x-2">
-                <Button 
-                  variant="outline" 
-                  onClick={() => {
-                    setSearchTerm("");
-                  }}
-                  className="flex-1"
-                  data-testid="button-clear-filters"
+      {/* Mapa das Entregas */}
+      {activeTab === 'map' && (
+        <Card data-testid="map-card">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Map className="h-5 w-5" />
+              <span>Mapa das Entregas</span>
+              <Badge variant="secondary" className="ml-auto">{filteredOrders.length} entregas</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {filteredOrders.length > 0 ? (
+              <div className="rounded-lg overflow-hidden border" style={{ height: '600px' }}>
+                <MapContainer 
+                  center={[-23.5505, -46.6333]} 
+                  zoom={11} 
+                  style={{ height: '100%', width: '100%' }}
+                  data-testid="delivery-map-container"
                 >
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Limpar
-                </Button>
-                <Button 
-                  variant="default" 
-                  onClick={() => {
-                    queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
-                    toast({
-                      title: "Pedidos atualizados",
-                      description: "A lista de pedidos foi recarregada",
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; OpenStreetMap contributors'
+                  />
+                  {filteredOrders.map((order) => {
+                    if (!order.customerLatitude || !order.customerLongitude) return null;
+                    
+                    const dateInfo = getInvoiceDateInfo(order.scheduledDate);
+                    
+                    // Cores para os pins
+                    let pinColor = '#22c55e'; // Verde padrão
+                    if (dateInfo.daysAgo === 1) {
+                      pinColor = '#f97316'; // Laranja
+                    } else if (dateInfo.daysAgo >= 2) {
+                      pinColor = '#ef4444'; // Vermelho
+                    }
+                    
+                    // Criar ícone customizado
+                    const customIcon = L.divIcon({
+                      html: `<div style="background-color: ${pinColor}; border: 3px solid white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                        <span style="color: white; font-size: 16px; font-weight: bold;">📦</span>
+                      </div>`,
+                      className: 'custom-marker',
+                      iconSize: [30, 30],
+                      iconAnchor: [15, 15],
+                      popupAnchor: [0, -15]
                     });
-                  }}
-                  className="flex-1"
-                  data-testid="button-refresh-orders"
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Recarregar Pedidos
-                </Button>
+                    
+                    return (
+                      <Marker 
+                        key={order.id}
+                        position={[
+                          parseFloat(order.customerLatitude), 
+                          parseFloat(order.customerLongitude)
+                        ]}
+                        icon={customIcon}
+                        data-testid={`marker-delivery-${order.id}`}
+                      >
+                        <Popup>
+                          <div className="space-y-2 text-sm min-w-[250px]">
+                            <div className="font-bold text-base">{order.customerName}</div>
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-4 w-4" />
+                              <span>{order.customerAddress}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4" />
+                              <span>NF: {order.invoiceNumber}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-4 w-4" />
+                              <span className={dateInfo.color}>{dateInfo.formattedDate}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-4 w-4" />
+                              <span>R$ {order.saleValue.toFixed(2)}</span>
+                            </div>
+                            {order.isUrgent && (
+                              <Badge variant="destructive" className="w-full justify-center mt-2">
+                                <Zap className="h-3 w-3 mr-1" />
+                                URGENTE
+                              </Badge>
+                            )}
+                          </div>
+                        </Popup>
+                      </Marker>
+                    );
+                  })}
+                </MapContainer>
               </div>
-              <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
-                <Checkbox
-                  id="select-all"
-                  checked={selectAll}
-                  onCheckedChange={handleSelectAll}
-                  data-testid="checkbox-select-all"
-                />
-                <Label htmlFor="select-all" className="cursor-pointer text-sm">
-                  Selecionar Todos
-                </Label>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <MapPin className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>Nenhuma entrega encontrada para o filtro selecionado</p>
+              </div>
+            )}
+            
+            {/* Legenda */}
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg border">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full" style={{ backgroundColor: '#22c55e' }}></div>
+                  <span className="text-sm">Hoje (0 dias)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full" style={{ backgroundColor: '#f97316' }}></div>
+                  <span className="text-sm">1 dia útil atrás</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full" style={{ backgroundColor: '#ef4444' }}></div>
+                  <span className="text-sm">2+ dias úteis</span>
+                </div>
               </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Filters */}
+      {activeTab === 'list' && (
+        <Card data-testid="filters-card">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Filter className="h-5 w-5" />
+              <span>Filtros e Seleção</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="search">Buscar</Label>
+                <div className="relative">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="search"
+                    placeholder="Cliente, endereço, ID..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8"
+                    data-testid="input-search"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="route-date">Data da Rota</Label>
+                <Input
+                  id="route-date"
+                  type="date"
+                  min={new Date().toISOString().split('T')[0]}
+                  value={routeDate}
+                  onChange={(e) => setRouteDate(e.target.value)}
+                  data-testid="input-route-date"
+                />
+                <p className="text-xs text-muted-foreground">
+                  <Calendar className="h-3 w-3 inline mr-1" />
+                  Selecione a data de execução da rota
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>&nbsp;</Label>
+                <div className="flex space-x-2">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setSearchTerm("");
+                    }}
+                    className="flex-1"
+                    data-testid="button-clear-filters"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Limpar
+                  </Button>
+                  <Button 
+                    variant="default" 
+                    onClick={() => {
+                      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                      toast({
+                        title: "Pedidos atualizados",
+                        description: "A lista de pedidos foi recarregada",
+                      });
+                    }}
+                    className="flex-1"
+                    data-testid="button-refresh-orders"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Recarregar Pedidos
+                  </Button>
+                </div>
+                <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={selectAll}
+                    onCheckedChange={handleSelectAll}
+                    data-testid="checkbox-select-all"
+                  />
+                  <Label htmlFor="select-all" className="cursor-pointer text-sm">
+                    Selecionar Todos
+                  </Label>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Orders List */}
-      <Card data-testid="orders-list-card">
+      {activeTab === 'list' && (
+        <Card data-testid="orders-list-card">
         <CardHeader>
           <CardTitle>
             Pedidos Aguardando Rota ({filteredOrders.length})
