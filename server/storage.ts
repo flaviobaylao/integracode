@@ -2592,7 +2592,7 @@ export class DatabaseStorage implements IStorage {
         b.invoice_number as "invoiceNumber",
         b.omie_order_id as "omieOrderId",
         b.order_number as "orderNumber",
-        COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
+        COALESCE(sc.customer_id, c.id) as "customerId",
         COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
         COALESCE(c.address, '') as "customerAddress",
         c.latitude as "customerLatitude",
@@ -2614,10 +2614,12 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sc.delivery_saturday_time_slots::text, c.delivery_saturday_time_slots::text, b.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
       FROM billings b
       LEFT JOIN customers c ON (
-        (c.id = CONCAT('omie-client-', b.omie_customer_code)
-        OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-        OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-        AND c.virtual_service = false
+        c.virtual_service = false
+        AND (
+          (b.omie_customer_code IS NOT NULL AND c.id = CONCAT('omie-client-', b.omie_customer_code))
+          OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+          OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+        )
       )
       LEFT JOIN sales_cards sc ON (
         (sc.invoice_number IS NOT NULL AND sc.invoice_number = b.invoice_number)
@@ -2627,6 +2629,7 @@ export class DatabaseStorage implements IStorage {
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
+        AND c.id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
           JOIN sales_cards sc2 ON sc2.id = drs.sales_card_id
