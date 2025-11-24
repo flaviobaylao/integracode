@@ -2615,34 +2615,40 @@ export class DatabaseStorage implements IStorage {
     `);
     
     // Mapear billings para deliveries com customerId genérico
-    return result.rows.map((row: any) => ({
-      id: row.id,
-      invoiceNumber: row.invoiceNumber,
-      omieOrderId: row.omieOrderId,
-      orderNumber: row.orderNumber,
-      customerId: 'billing-' + row.id,
-      customerName: row.customerName,
-      customerCpf: null,
-      customerCnpj: null,
-      customerAddress: '',
-      customerLatitude: null,
-      customerLongitude: null,
-      customerWeekdays: [],
-      averageDeliveryTime: 30,
-      exclusiveVehicle: row.exclusiveVehicle || false,
-      vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
-      isUrgent: row.isUrgent || false,
-      saleValue: row.saleValue,
-      products: this.parseJsonField(row.products, []),
-      scheduledDate: row.scheduledDate,
-      completedDate: row.scheduledDate,
-      paymentMethod: row.paymentMethod || '',
-      operationType: row.operationType || '',
-      receivingWeekdays: [],
-      deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
-      deliveryTimeSlots: [],
-      deliverySaturdayTimeSlots: []
-    }));
+    return result.rows.map((row: any) => {
+      // Extrair CPF/CNPJ do customer_document (removendo caracteres especiais)
+      const docNumeros = row.customerDocument ? row.customerDocument.replace(/\D/g, '') : '';
+      const isCnpj = docNumeros.length === 14;
+      
+      return {
+        id: row.id,
+        invoiceNumber: row.invoiceNumber,
+        omieOrderId: row.omieOrderId,
+        orderNumber: row.orderNumber,
+        customerId: 'billing-' + row.id,
+        customerName: row.customerName,
+        customerCpf: !isCnpj ? row.customerDocument : null,
+        customerCnpj: isCnpj ? row.customerDocument : null,
+        customerAddress: '',
+        customerLatitude: null,
+        customerLongitude: null,
+        customerWeekdays: [],
+        averageDeliveryTime: 30,
+        exclusiveVehicle: row.exclusiveVehicle || false,
+        vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
+        isUrgent: row.isUrgent || false,
+        saleValue: row.saleValue,
+        products: this.parseJsonField(row.products, []),
+        scheduledDate: row.scheduledDate,
+        completedDate: row.scheduledDate,
+        paymentMethod: row.paymentMethod || '',
+        operationType: row.operationType || '',
+        receivingWeekdays: [],
+        deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
+        deliveryTimeSlots: [],
+        deliverySaturdayTimeSlots: []
+      };
+    });
   }
 
   // Helper method to safely parse JSON fields
