@@ -112,9 +112,7 @@ export default function RoutesSummary() {
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
       
       const url = `/api/delivery-routes?${params.toString()}`;
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch routes');
-      return res.json();
+      return apiRequest('GET', url);
     },
     enabled: !!selectedDate,
     staleTime: 0,
