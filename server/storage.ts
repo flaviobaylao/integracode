@@ -2641,8 +2641,7 @@ export class DatabaseStorage implements IStorage {
       ORDER BY 
         b.id,
         CASE WHEN sc.id IS NOT NULL THEN 0 ELSE 1 END,
-        sc.updated_at DESC NULLS LAST,
-        CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END
+        sc.updated_at DESC NULLS LAST
     `);
     
     // Parse JSON fields to arrays
