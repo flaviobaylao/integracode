@@ -1850,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admins podem excluir metas
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied. Only admins can delete sales goals" });
       }
       
@@ -13653,7 +13653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
@@ -13737,7 +13737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
@@ -15061,7 +15061,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar correções de dados
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
       
@@ -15203,7 +15203,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar sincronizações manuais
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
       
@@ -15272,7 +15272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
 
@@ -15380,7 +15380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Access denied. Admin only." });
       }
 
@@ -15490,7 +15490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar migrações de dados
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Acesso negado. Apenas admin." });
       }
 
@@ -15606,7 +15606,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Apenas admin pode executar migrações de dados
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ message: "Acesso negado. Apenas admin." });
       }
 
@@ -15844,7 +15844,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       
       // Apenas admin pode deletar
-      if (user.role !== 'admin') {
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ 
           message: 'Acesso negado. Apenas administradores podem deletar leads.' 
         });
