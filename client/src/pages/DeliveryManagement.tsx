@@ -933,6 +933,16 @@ export default function DeliveryManagement() {
                           )}
                         </div>
 
+                        {/* Aviso para pedidos sem cliente cadastrado */}
+                        {(!order.customerId || order.customerId.startsWith('billing-')) && (
+                          <div className="bg-red-50 border border-red-200 rounded p-2 space-y-1">
+                            <div className="text-xs font-semibold text-red-900">⚠️ Cliente não cadastrado</div>
+                            <p className="text-xs text-red-700">
+                              Este pedido não está vinculado a um cliente cadastrado. Atualize o cadastro do cliente primeiro antes de configurar as propriedades de entrega.
+                            </p>
+                          </div>
+                        )}
+
                         {/* Informações de recebimento do card */}
                         {((order as any).receivingWeekdays?.length > 0 || (order as any).deliveryWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
                           <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
