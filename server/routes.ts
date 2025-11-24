@@ -9064,6 +9064,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Adicionar paradas a uma rota existente
+  app.post("/api/delivery-routes/:routeId/add-stops", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const { billingIds } = req.body;
+
+      if (!Array.isArray(billingIds) || billingIds.length === 0) {
+        return res.status(400).json({ message: "billingIds array is required" });
+      }
+
+      console.log(`➕ [ADD-STOPS] Adicionando ${billingIds.length} paradas à rota ${routeId}`);
+
+      const newStops = await storage.addStopsToRoute(routeId, billingIds);
+
+      console.log(`✅ [ADD-STOPS] ${newStops.length} paradas adicionadas com sucesso`);
+      res.json({
+        success: true,
+        message: `${newStops.length} paradas adicionadas com sucesso`,
+        stops: newStops
+      });
+    } catch (error: any) {
+      console.error("Error adding stops to route:", error);
+      res.status(500).json({ message: "Failed to add stops", error: error.message });
+    }
+  });
+
   // ========== FIM DOS ENDPOINTS PARA MOTORISTAS ==========
 
   // Buscar entregas pendentes
@@ -15830,6 +15856,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Erro ao deletar lead:', error);
       res.status(500).json({ message: 'Erro ao deletar lead' });
+    }
+  });
+
+  // ========== EVOLUTION API - WHATSAPP MESSAGING ==========
+  app.post('/api/whatsapp/send-message', authenticateUser, async (req: any, res) => {
+    try {
+      const { number, text } = req.body;
+
+      if (!number || !text) {
+        return res.status(400).json({ message: 'Número e mensagem são obrigatórios' });
+      }
+
+      const baseURL = process.env.EVOLUTION_API_BASE_URL;
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
+
+      if (!baseURL || !apiKey || !instanceName) {
+        console.error('❌ Evolution API não está configurada');
+        return res.status(503).json({ message: 'Evolution API não está configurada' });
+      }
+
+      try {
+        const response = await fetch(`${baseURL}/message/sendText`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            number: number.replace(/\D/g, ''),
+            text: text,
+            instance: instanceName
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('❌ Erro ao enviar via Evolution API:', errorData);
+          return res.status(response.status).json({ 
+            message: 'Erro ao enviar mensagem WhatsApp',
+            details: errorData
+          });
+        }
+
+        const result = await response.json();
+        console.log(`✅ Mensagem enviada para ${number} via Evolution API`);
+        
+        res.json({
+          success: true,
+          message: 'Mensagem enviada com sucesso',
+          data: result
+        });
+      } catch (evolutionError: any) {
+        console.error('❌ Erro na requisição Evolution API:', evolutionError);
+        res.status(500).json({ 
+          message: 'Erro ao conectar com Evolution API',
+          error: evolutionError.message 
+        });
+      }
+    } catch (error: any) {
+      console.error('Error sending WhatsApp message:', error);
+      res.status(500).json({ message: 'Erro ao processar mensagem', error: error.message });
     }
   });
 
