@@ -2584,11 +2584,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
-    // REFATORADO: Lógica de matching CORRIGIDA para garantir vinculação com clientes
-    // 3 critérios de matching aplicados em ordem de prioridade
+    // REFATORADO v2: LEFT JOINs múltiplos com ROW_NUMBER para priorização
+    // 3 critérios de matching em cascata: OMIE Code > CNPJ > CPF
     const result = await db.execute(sql`
-      WITH customer_matches AS (
-        -- Buscar todos os billings aguardando rota
+      WITH billing_with_matches AS (
+        -- Buscar billings aguardando rota
         SELECT 
           b.id,
           b.invoice_number,
@@ -2606,29 +2606,71 @@ export class DatabaseStorage implements IStorage {
           b.vehicle_types,
           b.is_urgent,
           b.delivery_weekdays,
-          -- Encontrar o melhor match de cliente
-          COALESCE(
-            -- Critério 1: Match por OMIE Customer Code (MAIS PRECISO)
-            (SELECT c.id FROM customers c 
-             WHERE c.virtual_service = false 
-             AND c.id = ('omie-client-' || b.omie_customer_code::text)
-             LIMIT 1),
-            -- Critério 2: Match por CNPJ (SE NÃO TIVER OMIE CODE)
-            (SELECT c.id FROM customers c 
-             WHERE c.virtual_service = false 
-             AND b.customer_document IS NOT NULL
-             AND c.cnpj IS NOT NULL
-             AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-             LIMIT 1),
-            -- Critério 3: Match por CPF (FALLBACK)
-            (SELECT c.id FROM customers c 
-             WHERE c.virtual_service = false 
-             AND b.customer_document IS NOT NULL
-             AND c.cpf IS NOT NULL
-             AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-             LIMIT 1)
-          ) AS matched_customer_id
+          -- Critério 1: Match por OMIE Code
+          c_omie.id as customer_id_omie,
+          c_omie.fantasy_name as customer_fantasy_omie,
+          c_omie.cpf as customer_cpf_omie,
+          c_omie.cnpj as customer_cnpj_omie,
+          c_omie.address as customer_address_omie,
+          c_omie.latitude as customer_latitude_omie,
+          c_omie.longitude as customer_longitude_omie,
+          c_omie.weekdays as customer_weekdays_omie,
+          c_omie.average_delivery_time as avg_delivery_time_omie,
+          c_omie.exclusive_vehicle as exclusive_vehicle_omie,
+          c_omie.vehicle_types as vehicle_types_omie,
+          c_omie.receiving_weekdays as receiving_weekdays_omie,
+          c_omie.delivery_weekdays as delivery_weekdays_omie,
+          c_omie.delivery_time_slots as delivery_time_slots_omie,
+          c_omie.delivery_saturday_time_slots as delivery_saturday_time_slots_omie,
+          -- Critério 2: Match por CNPJ (fallback)
+          c_cnpj.id as customer_id_cnpj,
+          c_cnpj.fantasy_name as customer_fantasy_cnpj,
+          c_cnpj.cpf as customer_cpf_cnpj,
+          c_cnpj.cnpj as customer_cnpj_cnpj,
+          c_cnpj.address as customer_address_cnpj,
+          c_cnpj.latitude as customer_latitude_cnpj,
+          c_cnpj.longitude as customer_longitude_cnpj,
+          c_cnpj.weekdays as customer_weekdays_cnpj,
+          c_cnpj.average_delivery_time as avg_delivery_time_cnpj,
+          c_cnpj.exclusive_vehicle as exclusive_vehicle_cnpj,
+          c_cnpj.vehicle_types as vehicle_types_cnpj,
+          c_cnpj.receiving_weekdays as receiving_weekdays_cnpj,
+          c_cnpj.delivery_weekdays as delivery_weekdays_cnpj,
+          c_cnpj.delivery_time_slots as delivery_time_slots_cnpj,
+          c_cnpj.delivery_saturday_time_slots as delivery_saturday_time_slots_cnpj,
+          -- Critério 3: Match por CPF (last resort)
+          c_cpf.id as customer_id_cpf,
+          c_cpf.fantasy_name as customer_fantasy_cpf,
+          c_cpf.cpf as customer_cpf_cpf,
+          c_cpf.cnpj as customer_cnpj_cpf,
+          c_cpf.address as customer_address_cpf,
+          c_cpf.latitude as customer_latitude_cpf,
+          c_cpf.longitude as customer_longitude_cpf,
+          c_cpf.weekdays as customer_weekdays_cpf,
+          c_cpf.average_delivery_time as avg_delivery_time_cpf,
+          c_cpf.exclusive_vehicle as exclusive_vehicle_cpf,
+          c_cpf.vehicle_types as vehicle_types_cpf,
+          c_cpf.receiving_weekdays as receiving_weekdays_cpf,
+          c_cpf.delivery_weekdays as delivery_weekdays_cpf,
+          c_cpf.delivery_time_slots as delivery_time_slots_cpf,
+          c_cpf.delivery_saturday_time_slots as delivery_saturday_time_slots_cpf
         FROM billings b
+        LEFT JOIN customers c_omie ON (
+          c_omie.id = ('omie-client-' || b.omie_customer_code::text)
+          AND c_omie.virtual_service = false
+        )
+        LEFT JOIN customers c_cnpj ON (
+          c_cnpj.virtual_service = false
+          AND b.customer_document IS NOT NULL
+          AND c_cnpj.cnpj IS NOT NULL
+          AND REGEXP_REPLACE(c_cnpj.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        )
+        LEFT JOIN customers c_cpf ON (
+          c_cpf.virtual_service = false
+          AND b.customer_document IS NOT NULL
+          AND c_cpf.cpf IS NOT NULL
+          AND REGEXP_REPLACE(c_cpf.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        )
         WHERE b.invoice_stage = 'Aguardando Rota'
           AND b.invoice_number IS NOT NULL
           AND b.invoice_date IS NOT NULL
@@ -2638,35 +2680,40 @@ export class DatabaseStorage implements IStorage {
           )
       )
       SELECT 
-        cm.id,
-        cm.invoice_number as "invoiceNumber",
-        cm.omie_order_id as "omieOrderId",
-        cm.order_number as "orderNumber",
-        COALESCE(cm.matched_customer_id, 'billing-' || cm.id) as "customerId",
-        COALESCE(c.fantasy_name, c.name, cm.customer_fantasy_name) as "customerName",
-        c.cpf as "customerCpf",
-        c.cnpj as "customerCnpj",
-        COALESCE(c.address, '') as "customerAddress",
-        c.latitude as "customerLatitude",
-        c.longitude as "customerLongitude",
-        c.weekdays as "customerWeekdays",
-        COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-        COALESCE(c.exclusive_vehicle, cm.exclusive_vehicle, false) as "exclusiveVehicle",
-        COALESCE(c.vehicle_types::text, cm.vehicle_types::text, '[]')::json as "vehicleTypes",
-        COALESCE(cm.is_urgent, false) as "isUrgent",
-        cm.total_value as "saleValue",
-        cm.products::json as "products",
-        cm.invoice_date as "scheduledDate",
-        cm.invoice_date as "completedDate",
-        cm.payment_method as "paymentMethod",
-        cm.billing_type as "operationType",
-        COALESCE(c.receiving_weekdays::text, '[]')::json as "receivingWeekdays",
-        COALESCE(c.delivery_weekdays::text, cm.delivery_weekdays::text, '[]')::json as "deliveryWeekdays",
-        COALESCE(c.delivery_time_slots::text, '[]')::json as "deliveryTimeSlots",
-        COALESCE(c.delivery_saturday_time_slots::text, '[]')::json as "deliverySaturdayTimeSlots"
-      FROM customer_matches cm
-      LEFT JOIN customers c ON c.id = cm.matched_customer_id AND c.virtual_service = false
-      ORDER BY cm.invoice_date DESC, cm.customer_fantasy_name
+        id,
+        invoice_number as "invoiceNumber",
+        omie_order_id as "omieOrderId",
+        order_number as "orderNumber",
+        -- Selecionar customer_id em cascata: OMIE > CNPJ > CPF > billing-{id}
+        COALESCE(customer_id_omie, customer_id_cnpj, customer_id_cpf, 'billing-' || id) as "customerId",
+        COALESCE(
+          customer_fantasy_omie,
+          customer_fantasy_cnpj,
+          customer_fantasy_cpf,
+          customer_fantasy_name
+        ) as "customerName",
+        COALESCE(customer_cpf_omie, customer_cpf_cnpj, customer_cpf_cpf) as "customerCpf",
+        COALESCE(customer_cnpj_omie, customer_cnpj_cnpj, customer_cnpj_cpf) as "customerCnpj",
+        COALESCE(customer_address_omie, customer_address_cnpj, customer_address_cpf, '') as "customerAddress",
+        COALESCE(customer_latitude_omie, customer_latitude_cnpj, customer_latitude_cpf) as "customerLatitude",
+        COALESCE(customer_longitude_omie, customer_longitude_cnpj, customer_longitude_cpf) as "customerLongitude",
+        COALESCE(customer_weekdays_omie, customer_weekdays_cnpj, customer_weekdays_cpf) as "customerWeekdays",
+        COALESCE(avg_delivery_time_omie, avg_delivery_time_cnpj, avg_delivery_time_cpf, 30) as "averageDeliveryTime",
+        COALESCE(exclusive_vehicle_omie, exclusive_vehicle_cnpj, exclusive_vehicle_cpf, exclusive_vehicle, false) as "exclusiveVehicle",
+        COALESCE(vehicle_types_omie::text, vehicle_types_cnpj::text, vehicle_types_cpf::text, vehicle_types::text, '[]')::json as "vehicleTypes",
+        COALESCE(is_urgent, false) as "isUrgent",
+        total_value as "saleValue",
+        products::json as "products",
+        invoice_date as "scheduledDate",
+        invoice_date as "completedDate",
+        payment_method as "paymentMethod",
+        billing_type as "operationType",
+        COALESCE(receiving_weekdays_omie::text, receiving_weekdays_cnpj::text, receiving_weekdays_cpf::text, '[]')::json as "receivingWeekdays",
+        COALESCE(delivery_weekdays_omie::text, delivery_weekdays_cnpj::text, delivery_weekdays_cpf::text, delivery_weekdays::text, '[]')::json as "deliveryWeekdays",
+        COALESCE(delivery_time_slots_omie::text, delivery_time_slots_cnpj::text, delivery_time_slots_cpf::text, '[]')::json as "deliveryTimeSlots",
+        COALESCE(delivery_saturday_time_slots_omie::text, delivery_saturday_time_slots_cnpj::text, delivery_saturday_time_slots_cpf::text, '[]')::json as "deliverySaturdayTimeSlots"
+      FROM billing_with_matches
+      ORDER BY invoice_date DESC, customer_fantasy_name
     `);
     
     // Parse JSON fields to arrays
