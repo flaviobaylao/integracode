@@ -52,7 +52,6 @@
 - **Order Synchronization**: Correct synchronization of pending deliveries by querying Omie ERP data (`invoice_stage = 'Aguardando Rota'`) from the `billings` table.
 - **Delivery Management SQL Type Fix**: Resolved PostgreSQL type conversion errors by explicitly casting JSON fields to `::json` and using consistent empty array fallbacks.
 - **Virtual Customer Filter Fix** (November 19, 2025): Fixed critical bug where virtual customers (virtual_service = true) were appearing in driver's daily routes. Added `AND c.virtual_service = false` filter to the LEFT JOIN customers clause in `getPendingDeliveries()` method in server/storage.ts. This ensures only physical delivery customers are included in route planning.
-- **Delivery Configuration Edit Validation** (November 22, 2025): Fixed error when trying to edit delivery configurations for orders without registered customers. System now validates customerId before allowing configuration edits - when customerId starts with 'billing-' (indicating no customer registration), displays clear error message asking user to register customer first. Added visual "⚠️ Sem Cliente" badge on order cards to help identify orders requiring customer registration. This prevents 404 "Customer not found" errors when attempting to save delivery preferences.
 
 # External Dependencies
 

@@ -297,16 +297,6 @@ export default function DeliveryManagement() {
   
   // Funções para edição de configurações de recebimento
   const handleOpenDeliveryConfig = (order: DeliveryOrder) => {
-    // Validar se o customerId é válido (não começa com 'billing-')
-    if (!order.customerId || order.customerId.startsWith('billing-')) {
-      toast({
-        title: "Cliente não cadastrado",
-        description: "Este pedido não está vinculado a um cliente cadastrado no sistema. Por favor, cadastre o cliente primeiro antes de configurar as preferências de entrega.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
     setEditingCustomer(order);
     setDeliveryConfigForm({
       exclusiveVehicle: order.exclusiveVehicle || false,
@@ -320,17 +310,6 @@ export default function DeliveryManagement() {
   
   const handleSaveDeliveryConfig = () => {
     if (!editingCustomer) return;
-    
-    // Validação adicional de segurança
-    if (!editingCustomer.customerId || editingCustomer.customerId.startsWith('billing-')) {
-      toast({
-        title: "Cliente não cadastrado",
-        description: "Não é possível salvar configurações para um pedido sem cliente cadastrado.",
-        variant: "destructive",
-      });
-      setShowDeliveryConfig(false);
-      return;
-    }
     
     updateDeliveryConfigMutation.mutate({
       customerId: editingCustomer.customerId,
@@ -662,11 +641,6 @@ export default function DeliveryManagement() {
                               <Badge variant="destructive" className="bg-red-600">
                                 <Zap className="h-3 w-3 mr-1" />
                                 URGENTE
-                              </Badge>
-                            )}
-                            {(!order.customerId || order.customerId.startsWith('billing-')) && (
-                              <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50">
-                                ⚠️ Sem Cliente
                               </Badge>
                             )}
                           </div>
