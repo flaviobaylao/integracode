@@ -1221,6 +1221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Processar campos de configuração de entrega (JSONB arrays)
       const deliveryConfigFields = [
         'deliveryWeekdays',
+        'receivingWeekdays',  // DIAS QUE O CLIENTE ACEITA RECEBER
         'deliveryTimeSlots', 
         'deliverySaturdayTimeSlots',
         'vehicleTypes'
