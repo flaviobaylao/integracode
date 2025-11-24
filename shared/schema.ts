@@ -1692,6 +1692,28 @@ export const whatsappConversationAnalysis = pgTable("whatsapp_conversation_analy
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// WhatsApp Messages History table (Evolution API)
+export const whatsappMessages = pgTable("whatsapp_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  senderId: varchar("sender_id").notNull(),
+  senderName: varchar("sender_name"),
+  recipientPhone: varchar("recipient_phone").notNull(),
+  recipientName: varchar("recipient_name"),
+  customerId: varchar("customer_id"),
+  messageText: text("message_text").notNull(),
+  messageType: varchar("message_type").notNull().default("text"),
+  status: varchar("status").notNull().default("sent"),
+  evolutionMessageId: varchar("evolution_message_id"),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  readAt: timestamp("read_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_whatsapp_sender").on(table.senderId),
+  index("idx_whatsapp_recipient").on(table.recipientPhone),
+  index("idx_whatsapp_customer").on(table.customerId),
+]);
+
 // Knowledge Base table
 export const knowledgeBase = pgTable("knowledge_base", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1787,6 +1809,13 @@ export const insertWhatsappConversationAnalysisSchema = createInsertSchema(whats
   analysisDate: true,
   createdAt: true,
   updatedAt: true,
+});
+
+export const insertWhatsappMessageSchema = createInsertSchema(whatsappMessages).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  sentAt: true,
 });
 
 export const insertKnowledgeBaseSchema = createInsertSchema(knowledgeBase).omit({
