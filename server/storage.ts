@@ -2592,7 +2592,7 @@ export class DatabaseStorage implements IStorage {
         b.invoice_number as "invoiceNumber",
         b.omie_order_id as "omieOrderId",
         b.order_number as "orderNumber",
-        COALESCE(sc.customer_id, c.id) as "customerId",
+        COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
         COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
         COALESCE(c.address, '') as "customerAddress",
         c.latitude as "customerLatitude",
@@ -2629,7 +2629,6 @@ export class DatabaseStorage implements IStorage {
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
-        AND c.id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
           JOIN sales_cards sc2 ON sc2.id = drs.sales_card_id
