@@ -4381,9 +4381,22 @@ export class DatabaseStorage implements IStorage {
           .where(eq(deliveryRouteStops.routeId, route.id))
           .orderBy(deliveryRouteStops.stopOrder);
         
+        // Converter tipos numéricos para strings para compatibilidade com frontend
+        const formattedStops = stops.map(stop => ({
+          ...stop,
+          customerLatitude: String(stop.customerLatitude || ''),
+          customerLongitude: String(stop.customerLongitude || ''),
+          distanceFromPrevious: String(stop.distanceFromPrevious || '0'),
+          photos: stop.photos || []
+        }));
+        
         return {
           ...route,
-          stops
+          totalDistance: String(route.totalDistance || '0'),
+          totalDuration: Number(route.totalDuration || 0),
+          startLatitude: String(route.startLatitude || ''),
+          startLongitude: String(route.startLongitude || ''),
+          stops: formattedStops
         };
       })
     );
