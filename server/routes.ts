@@ -8347,14 +8347,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.billing_type as "operationType"
         FROM billings b
         LEFT JOIN customers c ON (
-          c.id = CONCAT('omie-client-', b.omie_customer_code)
-          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          c.virtual_service = false
+          AND (
+            (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
+            OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+            OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+          )
         )
         WHERE b.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
         ORDER BY 
           b.id, 
-          CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END,
+          CASE WHEN c.id = ('omie-client-' || b.omie_customer_code::text) THEN 0 ELSE 1 END,
           c.id NULLS LAST,
           b.invoice_date
       `);
@@ -10910,7 +10913,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.omie_client_code,
           -- Teste de match
           CASE 
-            WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 'MATCH_OMIE_CODE'
+            WHEN c.id = ('omie-client-' || b.omie_customer_code::text) THEN 'MATCH_OMIE_CODE'
             WHEN REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g') THEN 'MATCH_CPF'
             WHEN REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g') THEN 'MATCH_CNPJ'
             ELSE 'NO_MATCH'
@@ -10919,10 +10922,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           COALESCE(c.id, 'billing-' || b.id) as generated_customer_id
         FROM billings b
         LEFT JOIN customers c ON (
-          (c.id = CONCAT('omie-client-', b.omie_customer_code)
-          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
-          AND c.virtual_service = false
+          c.virtual_service = false
+          AND (
+            (b.omie_customer_code IS NOT NULL AND c.id = ('omie-client-' || b.omie_customer_code::text))
+            OR (b.customer_document IS NOT NULL AND c.cpf IS NOT NULL AND REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+            OR (b.customer_document IS NOT NULL AND c.cnpj IS NOT NULL AND REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g'))
+          )
         )
         WHERE b.invoice_stage = 'Aguardando Rota'
           AND b.invoice_number IS NOT NULL
