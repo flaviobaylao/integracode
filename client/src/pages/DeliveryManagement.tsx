@@ -49,6 +49,8 @@ interface DeliveryOrder {
   invoiceNumber: string;
   customerId: string;
   customerName: string;
+  customerCpf: string | null;
+  customerCnpj: string | null;
   customerAddress: string;
   customerLatitude: string;
   customerLongitude: string;
@@ -658,6 +660,11 @@ export default function DeliveryManagement() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             <span className="font-medium">{order.customerName}</span>
+                            {(order.customerCpf || order.customerCnpj) && (
+                              <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">
+                                {order.customerCpf || order.customerCnpj}
+                              </span>
+                            )}
                             {order.isUrgent && (
                               <Badge variant="destructive" className="bg-red-600">
                                 <Zap className="h-3 w-3 mr-1" />

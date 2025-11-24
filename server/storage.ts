@@ -2594,6 +2594,8 @@ export class DatabaseStorage implements IStorage {
         b.order_number as "orderNumber",
         COALESCE(sc.customer_id, c.id, 'billing-' || b.id) as "customerId",
         COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+        c.cpf as "customerCpf",
+        c.cnpj as "customerCnpj",
         COALESCE(c.address, '') as "customerAddress",
         c.latitude as "customerLatitude",
         c.longitude as "customerLongitude",

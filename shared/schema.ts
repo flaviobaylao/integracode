@@ -1875,6 +1875,8 @@ export interface PendingDelivery {
   orderNumber: string | null;
   customerId: string;
   customerName: string;
+  customerCpf: string | null;
+  customerCnpj: string | null;
   customerAddress: string;
   customerLatitude: string | null;
   customerLongitude: string | null;
