@@ -122,6 +122,34 @@ interface RoutePlan {
   };
 }
 
+// Função helper para obter cor e dias baseado na data de faturamento
+function getInvoiceDateInfo(dateString: string): { color: string; bgColor: string; daysAgo: number; formattedDate: string } {
+  if (!dateString) return { color: 'text-gray-600', bgColor: 'bg-gray-100', daysAgo: -1, formattedDate: 'Data desconhecida' };
+  
+  const invoiceDate = new Date(dateString);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  invoiceDate.setHours(0, 0, 0, 0);
+  
+  const diffTime = today.getTime() - invoiceDate.getTime();
+  const daysAgo = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  const formattedDate = invoiceDate.toLocaleDateString('pt-BR', { 
+    day: '2-digit', 
+    month: '2-digit', 
+    year: 'numeric' 
+  });
+  
+  // Verde: hoje, Laranja: 1 dia atrás, Vermelho: 2+ dias atrás
+  if (daysAgo === 0) {
+    return { color: 'text-green-700', bgColor: 'bg-green-100 border border-green-300', daysAgo, formattedDate };
+  } else if (daysAgo === 1) {
+    return { color: 'text-orange-700', bgColor: 'bg-orange-100 border border-orange-300', daysAgo, formattedDate };
+  } else {
+    return { color: 'text-red-700', bgColor: 'bg-red-100 border border-red-300', daysAgo, formattedDate };
+  }
+}
+
 export default function DeliveryManagement() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -670,7 +698,7 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF e Dias de Entrega (calculados - 2 dias úteis após visita) */}
+                        {/* Informações destacadas: NF, Data de Faturamento e Dias de Entrega (calculados - 2 dias úteis após visita) */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
@@ -680,6 +708,16 @@ export default function DeliveryManagement() {
                               </span>
                             </div>
                           )}
+                          {order.scheduledDate && (() => {
+                            const { color, bgColor, formattedDate } = getInvoiceDateInfo(order.scheduledDate);
+                            return (
+                              <div className={`px-3 py-1 rounded ${bgColor}`}>
+                                <span className={`text-lg font-bold ${color}`}>
+                                  📅 {formattedDate}
+                                </span>
+                              </div>
+                            );
+                          })()}
                           {order.deliveryWeekdays && order.deliveryWeekdays.length > 0 && (
                             <div className="flex items-center gap-1">
                               <Truck className="h-4 w-4 text-purple-600" />
