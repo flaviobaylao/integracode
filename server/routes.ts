@@ -15921,6 +15921,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Histórico de mensagens WhatsApp
+  app.get("/api/whatsapp/history", authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId, limit } = req.query;
+      const userId = req.user?.id;
+      const messages = await storage.getWhatsappMessageHistory(customerId, userId, parseInt(limit) || 100);
+      res.json(messages);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp history:", error);
+      res.status(500).json({ message: "Failed to fetch message history", error: error.message });
+    }
+  });
+
+  // Enviar mensagem WhatsApp com salvamento em histórico
+  app.post('/api/whatsapp/send-with-history', authenticateUser, async (req: any, res) => {
+    try {
+      const { number, text, customerId, recipientName } = req.body;
+      const userId = req.user?.id;
+      const userName = req.user?.firstName || req.user?.email || 'Sistema';
+      
+      if (!number || !text) {
+        return res.status(400).json({ message: 'Número e mensagem são obrigatórios' });
+      }
+
+      const baseURL = process.env.EVOLUTION_API_BASE_URL;
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
+
+      if (!baseURL || !apiKey || !instanceName) {
+        return res.status(503).json({ message: 'Evolution API não configurada' });
+      }
+
+      const response = await fetch(`${baseURL}/message/sendText`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          number: number.replace(/\D/g, ''),
+          text: text,
+          instance: instanceName
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return res.status(response.status).json({ message: 'Erro ao enviar', details: errorData });
+      }
+
+      const result = await response.json();
+      
+      // Salvar no histórico
+      await storage.saveWhatsappMessage({
+        senderId: userId,
+        senderName: userName,
+        recipientPhone: number.replace(/\D/g, ''),
+        recipientName: recipientName || 'Cliente',
+        customerId: customerId || null,
+        messageText: text,
+        messageType: 'text',
+        status: 'sent',
+        evolutionMessageId: result.messageId
+      });
+
+      res.json({ success: true, message: 'Mensagem enviada', data: result });
+    } catch (error: any) {
+      console.error('Erro ao enviar WhatsApp:', error);
+      res.status(500).json({ message: 'Erro ao processar', error: error.message });
+    }
+  });
+
   const httpServer = createServer(app);
 
   // Importar e registrar rotas do Chat Honest
