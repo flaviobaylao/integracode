@@ -2584,25 +2584,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
-    // SIMPLIFICADO: Abordagem mais robusta sem JOIN complexos
+    // Retornar apenas dados dos billings, sem lógica de matching de clientes
     const result = await db.execute(sql`
       SELECT 
         b.id,
         b.invoice_number as "invoiceNumber",
         b.omie_order_id as "omieOrderId",
         b.order_number as "orderNumber",
-        b.customer_fantasy_name,
-        b.customer_document,
+        b.customer_fantasy_name as "customerName",
+        b.customer_document as "customerDocument",
         b.omie_customer_code,
-        b.invoice_date,
-        b.total_value,
+        b.invoice_date as "scheduledDate",
+        b.total_value as "saleValue",
         b.products,
-        b.payment_method,
-        b.billing_type,
-        b.exclusive_vehicle,
-        b.vehicle_types,
-        b.is_urgent,
-        b.delivery_weekdays
+        b.payment_method as "paymentMethod",
+        b.billing_type as "operationType",
+        b.exclusive_vehicle as "exclusiveVehicle",
+        b.vehicle_types as "vehicleTypes",
+        b.is_urgent as "isUrgent",
+        b.delivery_weekdays as "deliveryWeekdays"
       FROM billings b
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
@@ -2614,87 +2614,35 @@ export class DatabaseStorage implements IStorage {
       ORDER BY b.invoice_date DESC, b.customer_fantasy_name
     `);
     
-    // Processar cada billing para buscar cliente dinamicamente
-    const deliveries: PendingDelivery[] = [];
-    
-    for (const billing of result.rows) {
-      // Tentar match por OMIE Code
-      let customer = null;
-      
-      if (billing.omie_customer_code) {
-        const omieResult = await db.execute(sql`
-          SELECT * FROM customers 
-          WHERE id = ${'omie-client-' + billing.omie_customer_code}
-            AND virtual_service = false
-          LIMIT 1
-        `);
-        if (omieResult.rows.length > 0) {
-          customer = omieResult.rows[0];
-        }
-      }
-      
-      // Fallback para CNPJ
-      if (!customer && billing.customer_document) {
-        const cnpjResult = await db.execute(sql`
-          SELECT * FROM customers 
-          WHERE virtual_service = false
-            AND cnpj IS NOT NULL
-            AND regexp_replace(cnpj, '[^0-9]', '', 'g') = ${billing.customer_document.replace(/\D/g, '')}
-          LIMIT 1
-        `);
-        if (cnpjResult.rows.length > 0) {
-          customer = cnpjResult.rows[0];
-        }
-      }
-      
-      // Fallback para CPF
-      if (!customer && billing.customer_document) {
-        const cpfResult = await db.execute(sql`
-          SELECT * FROM customers 
-          WHERE virtual_service = false
-            AND cpf IS NOT NULL
-            AND regexp_replace(cpf, '[^0-9]', '', 'g') = ${billing.customer_document.replace(/\D/g, '')}
-          LIMIT 1
-        `);
-        if (cpfResult.rows.length > 0) {
-          customer = cpfResult.rows[0];
-        }
-      }
-      
-      // Construir delivery com ou sem cliente
-      const customerId = customer?.id || 'billing-' + billing.id;
-      
-      deliveries.push({
-        id: billing.id,
-        invoiceNumber: billing.invoice_number,
-        omieOrderId: billing.omie_order_id,
-        orderNumber: billing.order_number,
-        customerId,
-        customerName: customer?.fantasy_name || customer?.name || billing.customer_fantasy_name,
-        customerCpf: customer?.cpf || null,
-        customerCnpj: customer?.cnpj || null,
-        customerAddress: customer?.address || '',
-        customerLatitude: customer?.latitude || null,
-        customerLongitude: customer?.longitude || null,
-        customerWeekdays: customer?.weekdays || [],
-        averageDeliveryTime: customer?.average_delivery_time || 30,
-        exclusiveVehicle: customer?.exclusive_vehicle || billing.exclusive_vehicle || false,
-        vehicleTypes: customer?.vehicle_types || billing.vehicle_types || [],
-        isUrgent: billing.is_urgent || false,
-        saleValue: billing.total_value,
-        products: billing.products || [],
-        scheduledDate: billing.invoice_date,
-        completedDate: billing.invoice_date,
-        paymentMethod: billing.payment_method || '',
-        operationType: billing.billing_type || '',
-        receivingWeekdays: customer?.receiving_weekdays || [],
-        deliveryWeekdays: customer?.delivery_weekdays || billing.delivery_weekdays || [],
-        deliveryTimeSlots: customer?.delivery_time_slots || [],
-        deliverySaturdayTimeSlots: customer?.delivery_saturday_time_slots || []
-      });
-    }
-    
-    return deliveries;
+    // Mapear billings para deliveries com customerId genérico
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      invoiceNumber: row.invoiceNumber,
+      omieOrderId: row.omieOrderId,
+      orderNumber: row.orderNumber,
+      customerId: 'billing-' + row.id,
+      customerName: row.customerName,
+      customerCpf: null,
+      customerCnpj: null,
+      customerAddress: '',
+      customerLatitude: null,
+      customerLongitude: null,
+      customerWeekdays: [],
+      averageDeliveryTime: 30,
+      exclusiveVehicle: row.exclusiveVehicle || false,
+      vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
+      isUrgent: row.isUrgent || false,
+      saleValue: row.saleValue,
+      products: this.parseJsonField(row.products, []),
+      scheduledDate: row.scheduledDate,
+      completedDate: row.scheduledDate,
+      paymentMethod: row.paymentMethod || '',
+      operationType: row.operationType || '',
+      receivingWeekdays: [],
+      deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
+      deliveryTimeSlots: [],
+      deliverySaturdayTimeSlots: []
+    }));
   }
 
   // Helper method to safely parse JSON fields
