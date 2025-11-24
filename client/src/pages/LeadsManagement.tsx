@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { WhatsAppMessageModal } from "@/components/WhatsAppMessageModal";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -25,6 +26,8 @@ import { type Lead, type InsertLead, insertLeadSchema } from "@shared/schema";
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  const [whatsappLead, setWhatsappLead] = useState<Lead | null>(null);
   const [formData, setFormData] = useState<{
     fantasyName: string;
     latitude: string;
