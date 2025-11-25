@@ -65,7 +65,6 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
   const [initialWeekdays, setInitialWeekdays] = useState<string[]>([]);
   
-  const { toast } = useToast();
   const queryClient = useQueryClient();
 
   // Carregar produtos
@@ -227,7 +226,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   };
 
   // Função para enviar PDF por WhatsApp
-  const sendPDFToWhatsApp = () => {
+  const sendPDFToWhatsApp = async () => {
     const customer = (salesCard as any)?.customer;
     if (!customer?.phone) {
       toast({
