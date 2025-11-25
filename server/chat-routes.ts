@@ -3,6 +3,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
+import { evolutionAPIService } from "./evolution-api-service";
 import {
   insertChatAgentSchema,
   insertChatConversationSchema,
@@ -468,6 +469,72 @@ export function registerChatRoutes(app: Express): void {
     } catch (error) {
       console.error("[CHAT] WhatsApp disconnect error:", error);
       res.status(500).json({ error: "Erro ao desconectar WhatsApp" });
+    }
+  });
+
+  // Send WhatsApp message via Evolution API
+  app.post("/api/chat/send-message", authenticateUser, async (req, res) => {
+    try {
+      const { phoneNumber, message, messageType = 'text', mediaUrl, caption } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ error: "Número de telefone é obrigatório" });
+      }
+
+      if (!message && messageType === 'text') {
+        return res.status(400).json({ error: "Mensagem é obrigatória" });
+      }
+
+      // Get Evolution API config
+      const config = evolutionAPIService.getConfig();
+      if (!config || !config.instanceName) {
+        return res.status(400).json({ error: "WhatsApp não está configurado. Configure a Evolution API primeiro." });
+      }
+
+      console.log(`📨 [WHATSAPP-SEND] Enviando mensagem para ${phoneNumber} via ${messageType}`);
+
+      let result;
+      if (messageType === 'media' && mediaUrl) {
+        result = await evolutionAPIService.sendMediaMessage(config.instanceName, phoneNumber, mediaUrl, caption, 'image');
+      } else if (messageType === 'location' && req.body.latitude && req.body.longitude) {
+        result = await evolutionAPIService.sendLocationMessage(config.instanceName, phoneNumber, req.body.latitude, req.body.longitude, caption);
+      } else {
+        result = await evolutionAPIService.sendTextMessage(config.instanceName, phoneNumber, message);
+      }
+
+      if (!result.success) {
+        console.error(`❌ [WHATSAPP-SEND] Erro ao enviar:`, result.error);
+        return res.status(500).json({ error: result.error || "Erro ao enviar mensagem" });
+      }
+
+      // Save message to conversation history if exists
+      try {
+        const conv = await storage.getChatConversations();
+        const matchingConv = conv.find((c: any) => c.phoneNumber === phoneNumber || c.phoneNumber === phoneNumber.replace(/\D/g, ''));
+        
+        if (matchingConv) {
+          await storage.createChatMessage({
+            conversationId: matchingConv.id,
+            senderId: (req as any).user?.id || "system",
+            message: message,
+            timestamp: new Date(),
+            direction: 'outgoing',
+            status: 'sent'
+          });
+        }
+      } catch (err) {
+        console.warn("[CHAT] Warning saving message history:", err);
+      }
+
+      console.log(`✅ [WHATSAPP-SEND] Mensagem enviada com sucesso para ${phoneNumber}`);
+      res.json({ 
+        success: true, 
+        messageId: result.messageId,
+        message: "Mensagem enviada com sucesso"
+      });
+    } catch (error) {
+      console.error("[CHAT] Send message error:", error);
+      res.status(500).json({ error: "Erro ao enviar mensagem" });
     }
   });
 
