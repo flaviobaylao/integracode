@@ -1410,6 +1410,102 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // DEBUG: Testar busca de histórico de um contato
+  app.get("/api/chat/debug-history/:phone", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const { phone } = req.params;
+      console.log(`🔍 [DEBUG] Testando histórico para: ${phone}`);
+      
+      const historyResult = await evolutionAPIService.fetchChatHistory('CHAT_HONEST', phone, 50);
+      
+      console.log(`📊 [DEBUG] Resultado:`, historyResult);
+      
+      res.json({
+        phone,
+        success: historyResult.success,
+        messageCount: historyResult.messages?.length || 0,
+        error: historyResult.error,
+        firstMessages: historyResult.messages?.slice(0, 3).map(m => ({
+          id: m.key?.id,
+          text: evolutionAPIService.extractMessageText(m.message),
+          timestamp: m.messageTimestamp,
+          fromMe: m.key?.fromMe
+        }))
+      });
+    } catch (error: any) {
+      console.error("[CHAT-DEBUG] Erro:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Alternativamente: sincronizar SEM histórico (apenas criar conversas)
+  app.post("/api/chat/sync-conversations-only", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log("🔄 Sincronizando apenas CONVERSAS (sem histórico)...");
+      
+      const allChatsResult = await evolutionAPIService.fetchAllChats('CHAT_HONEST');
+      
+      if (!allChatsResult.success || !allChatsResult.chats) {
+        return res.status(400).json({ 
+          error: allChatsResult.error || 'Erro ao buscar conversas',
+          success: false 
+        });
+      }
+
+      const chats = allChatsResult.chats;
+      console.log(`📊 Total de conversas: ${chats.length}`);
+      
+      let successCount = 0;
+      const results: any[] = [];
+
+      // Criar conversas sem tentar buscar histórico
+      for (let i = 0; i < Math.min(chats.length, 100); i++) {
+        try {
+          const chat = chats[i];
+          const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
+          const normalizedPhone = normalizePhoneNumber(contactPhone);
+          const contactName = chat.name || contactPhone;
+          
+          console.log(`📱 [${i + 1}] Criando conversa: ${contactName}`);
+          
+          // Apenas criar a conversa, sem buscar histórico
+          const syncResult = await storage.syncChatHistory(
+            normalizedPhone,
+            contactName,
+            [] // Sem mensagens
+          );
+          
+          console.log(`✅ Conversa criada: ${contactName}`);
+          results.push({
+            phone: normalizedPhone,
+            name: contactName,
+            status: 'created'
+          });
+          successCount++;
+        } catch (error: any) {
+          console.error(`❌ Erro ao criar conversa:`, error.message);
+        }
+      }
+
+      console.log(`🎉 Conversas criadas: ${successCount}`);
+      
+      res.json({
+        success: true,
+        summary: {
+          totalChats: chats.length,
+          conversationsCreated: successCount
+        },
+        details: results.slice(0, 20)
+      });
+    } catch (error: any) {
+      console.error("[SYNC-CONVERSATIONS] Erro:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro ao sincronizar conversas",
+        success: false 
+      });
+    }
+  });
+
   // POST /api/chat/sync-history - Sincronizar histórico de chats do WhatsApp
   app.post("/api/chat/sync-history", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
