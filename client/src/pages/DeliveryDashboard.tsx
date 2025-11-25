@@ -198,9 +198,9 @@ export default function DeliveryDashboard() {
           <CardContent>
             {isLoadingPending ? (
               <div className="text-center py-4">Carregando...</div>
-            ) : pendingDeliveries?.length > 0 ? (
+            ) : (pendingDeliveries?.length ?? 0) > 0 ? (
               <div className="space-y-3 max-h-80 overflow-y-auto">
-                {pendingDeliveries.slice(0, 10).map((delivery: any) => (
+                {(pendingDeliveries || []).slice(0, 10).map((delivery: any) => (
                   <div key={delivery.id} className="flex items-center justify-between p-3 border rounded-lg" data-testid={`pending-delivery-${delivery.id}`}>
                     <div className="flex-1">
                       <div className="font-medium">{delivery.customerName}</div>
@@ -220,10 +220,10 @@ export default function DeliveryDashboard() {
                     </div>
                   </div>
                 ))}
-                {pendingDeliveries.length > 10 && (
+                {(pendingDeliveries?.length ?? 0) > 10 && (
                   <div className="text-center pt-2">
                     <Button variant="outline" size="sm" data-testid="view-all-pending">
-                      Ver todas ({pendingDeliveries.length - 10} restantes)
+                      Ver todas ({(pendingDeliveries?.length ?? 0) - 10} restantes)
                     </Button>
                   </div>
                 )}
@@ -250,9 +250,9 @@ export default function DeliveryDashboard() {
           <CardContent>
             {isLoadingDrivers ? (
               <div className="text-center py-4">Carregando...</div>
-            ) : activeDrivers?.length > 0 ? (
+            ) : (activeDrivers?.length ?? 0) > 0 ? (
               <div className="space-y-3 max-h-80 overflow-y-auto">
-                {activeDrivers.map((driver: any) => (
+                {(activeDrivers || []).map((driver: any) => (
                   <div key={driver.id} className="flex items-center justify-between p-3 border rounded-lg" data-testid={`active-driver-${driver.id}`}>
                     <div className="flex-1">
                       <div className="font-medium">{driver.name}</div>

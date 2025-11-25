@@ -30,12 +30,12 @@ export default function CheckInPhotos() {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Buscar vendedores (para filtro)
-  const { data: sellersData } = useQuery({
+  const { data: sellersData } = useQuery<any[]>({
     queryKey: ['/api/users'],
     enabled: isAdmin
   });
 
-  const sellers: any[] = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
+  const sellers: any[] = (sellersData || []).filter((u: any) => u.role === 'vendedor');
 
   // Buscar fotos de check-in
   const { data: photosData, isLoading } = useQuery({
