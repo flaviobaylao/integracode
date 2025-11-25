@@ -671,6 +671,7 @@ export default function DeliveryManagement() {
                         id={`select-${order.id}`}
                         checked={isSelected}
                         onCheckedChange={() => handleSelectOrder(order.id)}
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
                         data-testid={`checkbox-select-${order.id}`}
                         className="mt-1"
                       />
