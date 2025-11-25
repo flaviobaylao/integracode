@@ -24,7 +24,8 @@ import {
   Circle,
   XCircle,
   Trash2,
-  Plus
+  Plus,
+  FileText
 } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
@@ -241,6 +242,116 @@ export default function RoutesSummary() {
 
   const selectedRouteData = routes.find(r => r.id === selectedRoute);
 
+  const generateRoutePDF = async () => {
+    if (!selectedRouteData) return;
+    
+    try {
+      // Importar jsPDF dinamicamente
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF();
+      
+      // Cores
+      const primaryColor = [34, 197, 94]; // green-600
+      const textColor = [0, 0, 0];
+      const lightGray = [242, 242, 242];
+      
+      // Título
+      doc.setFontSize(20);
+      doc.setTextColor(...primaryColor);
+      doc.text('RESUMO DA ROTA DE ENTREGA', 14, 20);
+      
+      // Data de geração
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 28);
+      
+      // Seção 1: Informações Gerais
+      doc.setFontSize(12);
+      doc.setTextColor(...primaryColor);
+      doc.text('INFORMAÇÕES GERAIS', 14, 38);
+      
+      doc.setFontSize(10);
+      doc.setTextColor(...textColor);
+      const infoY = 45;
+      doc.text(`Rota: ${selectedRouteData.routeName}`, 14, infoY);
+      doc.text(`Motorista: ${selectedRouteData.driverName}`, 14, infoY + 7);
+      doc.text(`Data: ${format(new Date(selectedRouteData.routeDate), 'dd/MM/yyyy')}`, 14, infoY + 14);
+      doc.text(`Veículo: ${selectedRouteData.vehicleType === 'caminhao' ? 'Caminhão' : selectedRouteData.vehicleType === 'carro' ? 'Carro' : 'Moto'}`, 14, infoY + 21);
+      
+      // Seção 2: Métricas
+      doc.setFontSize(12);
+      doc.setTextColor(...primaryColor);
+      doc.text('MÉTRICAS', 14, 80);
+      
+      doc.setFontSize(10);
+      doc.setTextColor(...textColor);
+      const metricsY = 87;
+      doc.text(`Total de Paradas: ${selectedRouteData.totalDeliveries}`, 14, metricsY);
+      doc.text(`Distância Total: ${parseFloat(selectedRouteData.totalDistance).toFixed(1)} km`, 14, metricsY + 7);
+      doc.text(`Duração Estimada: ${Math.round(selectedRouteData.totalDuration)} minutos`, 14, metricsY + 14);
+      doc.text(`Status: ${selectedRouteData.status.toUpperCase()}`, 14, metricsY + 21);
+      
+      // Seção 3: Paradas
+      doc.setFontSize(12);
+      doc.setTextColor(...primaryColor);
+      doc.text('PARADAS DA ROTA', 14, 125);
+      
+      let yPosition = 132;
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      if (selectedRouteData.stops && selectedRouteData.stops.length > 0) {
+        doc.setFontSize(9);
+        
+        selectedRouteData.stops.forEach((stop, index) => {
+          // Verificar se precisa de nova página
+          if (yPosition > pageHeight - 20) {
+            doc.addPage();
+            yPosition = 14;
+          }
+          
+          doc.setTextColor(34, 197, 94);
+          doc.text(`${index + 1}. ${stop.customerName}`, 14, yPosition);
+          
+          doc.setTextColor(...textColor);
+          doc.setFontSize(8);
+          doc.text(`Endereço: ${stop.customerAddress}`, 18, yPosition + 5);
+          doc.text(`Ordem: ${stop.stopOrder} | Status: ${stop.status.toUpperCase()}`, 18, yPosition + 9);
+          
+          yPosition += 15;
+        });
+      }
+      
+      // Rodapé
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(
+          `Página ${i} de ${totalPages}`,
+          doc.internal.pageSize.getWidth() / 2,
+          doc.internal.pageSize.getHeight() - 10,
+          { align: 'center' }
+        );
+      }
+      
+      // Salvar PDF
+      doc.save(`Rota_${selectedRouteData.routeName}_${format(new Date(selectedRouteData.routeDate), 'dd-MM-yyyy')}.pdf`);
+      
+      toast({
+        title: "PDF Gerado com Sucesso",
+        description: `O resumo da rota foi salvo como: Rota_${selectedRouteData.routeName}.pdf`,
+      });
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast({
+        title: "Erro ao Gerar PDF",
+        description: "Não foi possível gerar o PDF da rota",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -363,6 +474,16 @@ export default function RoutesSummary() {
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   ➕ Adicionar Pedidos
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={generateRoutePDF}
+                  data-testid="button-generate-pdf-route"
+                  className="bg-green-50 hover:bg-green-100"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  📄 Gerar PDF
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
