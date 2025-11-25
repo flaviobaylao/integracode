@@ -716,9 +716,12 @@ export function registerChatRoutes(app: Express): void {
 
   // Webhook para receber mensagens recebidas via Evolution API
   app.post("/api/chat/webhook/messages", async (req, res) => {
-    console.log(`🔔 [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
-    console.log(`📋 [WEBHOOK-HEADERS]`, req.headers);
-    console.log(`📋 [WEBHOOK-BODY] Corpo completo:`, JSON.stringify(req.body, null, 2));
+    console.log(`\n\n⭐ [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
+    console.log(`📋 [WEBHOOK-HEADERS]`, JSON.stringify(req.headers, null, 2));
+    console.log(`📋 [WEBHOOK-BODY]`, JSON.stringify(req.body, null, 2));
+    
+    // RESPONDER IMEDIATAMENTE com 200 OK
+    res.status(200).json({ success: true, message: 'Webhook recebido' });
     
     try {
       // Suportar múltiplos formatos de webhook
@@ -733,10 +736,7 @@ export function registerChatRoutes(app: Express): void {
         data = req.body.webhook.data;
       }
 
-      console.log(`📱 [WEBHOOK] Evento recebido:`, JSON.stringify({ event, instance, dataKeys: Object.keys(data || {}) }));
-
-      // RESPONDER IMEDIATAMENTE com 200 OK
-      res.status(200).json({ success: true, message: 'Webhook recebido' });
+      console.log(`📱 [WEBHOOK] Evento:`, event, `| Instance:`, instance, `| Has data:`, !!data);
 
       if ((event === 'MESSAGES_UPSERT' || event === 'messages.upsert') && data) {
         const message = data;
