@@ -1285,7 +1285,8 @@ export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteSto
   createdAt: true,
   updatedAt: true,
 }).extend({
-  estimatedArrival: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  estimatedArrival: z.string().optional().nullable(),
+  estimatedDeparture: z.string().optional().nullable(),
   completedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
   customerLatitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
   customerLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
