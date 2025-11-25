@@ -301,11 +301,11 @@ function preprocessOrders(
       return false;
     }
     
-    // Validar dia da semana permitido para entrega
-    if (order.customerWeekdays) {
-      if (!isValidDeliveryWeekday(order.customerWeekdays, routeDate)) {
+    // Validar dia da semana permitido para recebimento (receivingWeekdays)
+    if (order.receivingWeekdays && order.receivingWeekdays.length > 0) {
+      if (!isValidDeliveryWeekday(order.receivingWeekdays, routeDate)) {
         const routeWeekday = getWeekdayName(routeDate);
-        const reason = `Dia da semana não permitido para entrega (rota: ${routeWeekday}, permitido: ${order.customerWeekdays})`;
+        const reason = `Dia de recebimento não permitido (rota: ${routeWeekday}, dias permitidos: ${Array.isArray(order.receivingWeekdays) ? order.receivingWeekdays.join(', ') : order.receivingWeekdays})`;
         console.warn(`Pedido ${order.id} ignorado: ${reason}`);
         invalidOrders.push({ order, reason });
         return false;
