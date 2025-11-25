@@ -745,7 +745,7 @@ export default function DeliveryManagement() {
                           )}
                         </div>
 
-                        {/* Informações de recebimento do card - Configurações de Recebimento */}
+                        {/* Configurações de Recebimento - sempre visível */}
                         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 space-y-2">
                           <div className="text-xs font-bold text-blue-900 flex items-center gap-1">
                             <Calendar className="h-4 w-4" />
@@ -753,43 +753,62 @@ export default function DeliveryManagement() {
                           </div>
                           
                           <div className="grid grid-cols-2 gap-2">
-                            {(order as any).receivingWeekdays?.length > 0 && (
-                              <div className="bg-white rounded p-2 border border-blue-100">
-                                <div className="text-xs font-semibold text-blue-900 mb-1">📅 Dias Recepção:</div>
-                                <div className="text-sm font-bold text-blue-700">
-                                  {formatDeliveryDays((order as any).receivingWeekdays as any)}
-                                </div>
+                            {/* Dias de Recepção */}
+                            <div className="bg-white rounded p-2 border border-blue-100">
+                              <div className="text-xs font-semibold text-blue-900 mb-1">📅 Dias Recepção:</div>
+                              <div className="text-sm font-bold text-blue-700">
+                                {(order as any).receivingWeekdays?.length > 0 
+                                  ? formatDeliveryDays((order as any).receivingWeekdays as any)
+                                  : <span className="text-gray-400">Não configurado</span>
+                                }
                               </div>
-                            )}
-                            {(order as any).deliveryWeekdays?.length > 0 && (
-                              <div className="bg-white rounded p-2 border border-green-100">
-                                <div className="text-xs font-semibold text-green-900 mb-1">🚚 Dias Entrega:</div>
-                                <div className="text-sm font-bold text-green-700">
-                                  {formatDeliveryDays((order as any).deliveryWeekdays as any)}
-                                </div>
+                            </div>
+
+                            {/* Dias de Entrega */}
+                            <div className="bg-white rounded p-2 border border-green-100">
+                              <div className="text-xs font-semibold text-green-900 mb-1">🚚 Dias Entrega:</div>
+                              <div className="text-sm font-bold text-green-700">
+                                {(order as any).deliveryWeekdays?.length > 0
+                                  ? formatDeliveryDays((order as any).deliveryWeekdays as any)
+                                  : <span className="text-gray-400">Não configurado</span>
+                                }
                               </div>
-                            )}
-                            {order.deliveryTimeSlots?.length > 0 && (
-                              <div className="bg-white rounded p-2 border border-amber-100">
-                                <div className="text-xs font-semibold text-amber-900 mb-1">⏰ Horários (Seg-Sex):</div>
-                                <div className="text-sm font-bold text-amber-700">
-                                  {order.deliveryTimeSlots.join(', ')}
-                                </div>
+                            </div>
+
+                            {/* Horários Seg-Sex */}
+                            <div className="bg-white rounded p-2 border border-amber-100">
+                              <div className="text-xs font-semibold text-amber-900 mb-1">⏰ Horários (Seg-Sex):</div>
+                              <div className="text-sm font-bold text-amber-700">
+                                {order.deliveryTimeSlots?.length > 0
+                                  ? order.deliveryTimeSlots.join(', ')
+                                  : <span className="text-gray-400">Não configurado</span>
+                                }
                               </div>
-                            )}
-                            {order.deliverySaturdayTimeSlots?.length > 0 && (
-                              <div className="bg-white rounded p-2 border border-purple-100">
-                                <div className="text-xs font-semibold text-purple-900 mb-1">⏰ Horários (Sábado):</div>
-                                <div className="text-sm font-bold text-purple-700">
-                                  {order.deliverySaturdayTimeSlots.join(', ')}
-                                </div>
+                            </div>
+
+                            {/* Horários Sábado */}
+                            <div className="bg-white rounded p-2 border border-purple-100">
+                              <div className="text-xs font-semibold text-purple-900 mb-1">⏰ Horários (Sábado):</div>
+                              <div className="text-sm font-bold text-purple-700">
+                                {order.deliverySaturdayTimeSlots?.length > 0
+                                  ? order.deliverySaturdayTimeSlots.join(', ')
+                                  : <span className="text-gray-400">Não configurado</span>
+                                }
                               </div>
-                            )}
+                            </div>
                           </div>
-                          
-                          {!(order as any).receivingWeekdays?.length && !order.deliveryTimeSlots?.length && !order.deliverySaturdayTimeSlots?.length && (
-                            <div className="text-xs text-gray-500 italic">
-                              Sem configurações específicas de recebimento
+
+                          {/* Veículo Exclusivo */}
+                          {order.exclusiveVehicle && (
+                            <div className="bg-orange-50 border border-orange-200 rounded p-2">
+                              <div className="flex items-center gap-2">
+                                <div className="text-orange-900 font-bold text-xs">🚛 ENTREGA EM VEÍCULO EXCLUSIVO</div>
+                                {order.vehicleTypes?.length > 0 && (
+                                  <span className="text-xs bg-orange-200 text-orange-900 px-2 py-0.5 rounded">
+                                    {order.vehicleTypes.map(v => v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : '🏍️').join(' ')}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
