@@ -28,12 +28,21 @@ function normalizePhoneNumber(phone: string): string {
   }
   
   // Remove tudo que não é dígito
-  const digitsOnly = phone.replace(/\D/g, '');
+  let digitsOnly = phone.replace(/\D/g, '');
   console.log(`📞 [NORMALIZE] Input: ${phone} -> Digits: ${digitsOnly}`);
   
-  // Se já tem mais de 11 dígitos, pega só os últimos 11
-  const withoutCountry = digitsOnly.slice(-11);
-  const normalized = `55${withoutCountry}`;
+  // Se começar com 55, remove para recalcular
+  if (digitsOnly.startsWith('55')) {
+    digitsOnly = digitsOnly.slice(2);
+  }
+  
+  // Remove números duplicados à esquerda (555 -> 5)
+  while (digitsOnly.length > 11) {
+    digitsOnly = digitsOnly.slice(-11);
+  }
+  
+  // Garante exatamente 11 dígitos
+  const normalized = `55${digitsOnly.slice(-11)}`;
   
   console.log(`📞 [NORMALIZE] Output: ${normalized}`);
   return normalized;
@@ -776,9 +785,10 @@ export function registerChatRoutes(app: Express): void {
               console.warn(`⚠️  [WEBHOOK] Erro ao buscar cliente:`, err);
             }
 
-            // 2. Buscar ou criar chat customer
+            // 2. Buscar ou criar chat customer (phoneFormatted já é normalizado)
             let chatCustomer: any;
             try {
+              console.log(`🔎 [WEBHOOK] Buscando chatCustomer com telefone normalizado: ${phoneFormatted}`);
               chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
               
               if (!chatCustomer) {

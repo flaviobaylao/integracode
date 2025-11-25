@@ -5191,7 +5191,12 @@ export class DatabaseStorage implements IStorage {
   }
   
   async createChatCustomer(customerData: InsertChatCustomer): Promise<ChatCustomer> {
-    const [customer] = await db.insert(chatCustomers).values(customerData).returning();
+    // 🔧 Normalizar telefone ao criar
+    const normalizedData = {
+      ...customerData,
+      phone: this.normalizePhoneForStorage(customerData.phone)
+    };
+    const [customer] = await db.insert(chatCustomers).values(normalizedData).returning();
     return customer;
   }
   
@@ -5205,8 +5210,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getChatCustomerByPhone(phone: string): Promise<ChatCustomer | undefined> {
-    const [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, phone));
+    // 🔧 Normalizar telefone na busca
+    const normalizedPhone = this.normalizePhoneForStorage(phone);
+    const [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, normalizedPhone));
     return customer;
+  }
+  
+  private normalizePhoneForStorage(phone: string): string {
+    if (!phone) return '';
+    let digitsOnly = phone.replace(/\D/g, '');
+    if (digitsOnly.startsWith('55')) {
+      digitsOnly = digitsOnly.slice(2);
+    }
+    while (digitsOnly.length > 11) {
+      digitsOnly = digitsOnly.slice(-11);
+    }
+    return `55${digitsOnly.slice(-11)}`;
   }
 
   async getCustomerByPhone(phone: string): Promise<Customer | undefined> {
