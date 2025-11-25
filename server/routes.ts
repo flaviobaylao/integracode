@@ -8,6 +8,7 @@ import { getOmieService, isOmieConfigured, createOmieOrder } from "./omieIntegra
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
+import { evolutionAPIService } from "./evolution-api-service";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import {
   insertCustomerSchema,
@@ -222,6 +223,26 @@ async function resolveRouteStops(
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+
+  // Configure Evolution API for WhatsApp
+  const evolutionBaseUrl = process.env.EVOLUTION_API_BASE_URL;
+  const evolutionApiKey = process.env.EVOLUTION_API_KEY;
+  const evolutionInstanceName = process.env.EVOLUTION_INSTANCE_NAME;
+
+  if (evolutionBaseUrl && evolutionApiKey && evolutionInstanceName) {
+    evolutionAPIService.configure({
+      apiUrl: evolutionBaseUrl,
+      apiKey: evolutionApiKey,
+      instanceName: evolutionInstanceName
+    });
+    console.log('✅ Evolution API configurada com sucesso para WhatsApp');
+  } else {
+    console.warn('⚠️  Evolution API não completamente configurada. Verifique as secrets:', {
+      hasBaseUrl: !!evolutionBaseUrl,
+      hasApiKey: !!evolutionApiKey,
+      hasInstanceName: !!evolutionInstanceName
+    });
+  }
 
   // Middleware global para impedir cache HTTP em todas as rotas /api/*
   app.use('/api', (req, res, next) => {
