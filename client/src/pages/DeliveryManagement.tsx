@@ -481,10 +481,9 @@ export default function DeliveryManagement() {
 
   const handleAddPedido = (billingId: string) => {
     if (!selectedRoute) return;
-    // Buscar o ID da rota a partir da chave de um stop
-    const routeId = selectedRoute.stops[0]?.salesCardId?.split('-')[0] || '';
+    // Use vehicleType como routeId (é único por rota)
     addStopMutation.mutate({
-      routeId,
+      routeId: selectedRoute.vehicleType,
       billingId,
     });
   };
@@ -1477,6 +1476,44 @@ export default function DeliveryManagement() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para adicionar pedidos à rota */}
+      <Dialog open={showAddPedidos} onOpenChange={setShowAddPedidos}>
+        <DialogContent className="max-w-md" data-testid="dialog-add-pedidos">
+          <DialogHeader>
+            <DialogTitle>Adicionar Pedidos à Rota</DialogTitle>
+            <DialogDescription>
+              Selecione um pedido disponível para adicionar à rota
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {availableOrders.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                Não há pedidos disponíveis para adicionar
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {availableOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition"
+                    onClick={() => {
+                      handleAddPedido(order.id);
+                    }}
+                  >
+                    <div className="font-medium text-sm">{order.customerName}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
+                    <div className="text-xs text-blue-600 mt-2">
+                      R$ {order.saleValue?.toFixed(2) || '0.00'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
