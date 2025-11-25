@@ -689,6 +689,12 @@ export function registerChatRoutes(app: Express): void {
   // WEBHOOK PARA RECEBER MENSAGENS DO WHATSAPP
   // ============================================================
   
+  // GET endpoint para validação do webhook (Evolution API pode solicitar)
+  app.get("/api/chat/webhook/messages", (req, res) => {
+    console.log(`✅ [WEBHOOK-GET] Validação do webhook recebida`);
+    res.status(200).json({ status: 'ok', message: 'Webhook is active' });
+  });
+
   // Webhook para receber mensagens recebidas via Evolution API
   app.post("/api/chat/webhook/messages", async (req, res) => {
     console.log(`🔔 [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
