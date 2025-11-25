@@ -110,7 +110,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: true,
       badge: null
     },
-    { id: 'telemarketing', label: 'Telemarketing', icon: 'fas fa-phone', available: canAccessReports, badge: null },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
     { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports, badge: null },
     { 
@@ -332,7 +331,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   </li>
                 )}
 
-                {/* Menu Chat Honest (Telemarketing) */}
+                {/* Menu Central de Telemarketing */}
                 {canAccessReports && !isMotorista && !isTelemarketing && (
                   <li>
                     <Collapsible open={telemarketingMenuOpen} onOpenChange={setTelemarketingMenuOpen}>
@@ -340,9 +339,10 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                         <Button
                           variant="ghost"
                           className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                          data-testid="menu-telemarketing-hub"
                         >
-                          <i className="fas fa-comments"></i>
-                          <span className="font-medium">Chat Honest</span>
+                          <i className="fas fa-phone"></i>
+                          <span className="font-medium">Central de Telemarketing</span>
                           {telemarketingMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
                         </Button>
                       </CollapsibleTrigger>
@@ -510,6 +510,43 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                       {deliveryMenuItems
                         .filter(item => canAccessReports || (isVendedor && ['delivery-dashboard', 'delivery-management'].includes(item.id)))
                         .map(item => (
+                        <Button
+                          key={item.id}
+                          variant="ghost"
+                          className={`w-full justify-start space-x-3 text-sm ${
+                            activeView === item.id
+                              ? 'text-honest-blue bg-blue-50'
+                              : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleMenuItemClick(item.id)}
+                          data-testid={`menu-${item.id}`}
+                        >
+                          <i className={item.icon}></i>
+                          <span>{item.label}</span>
+                        </Button>
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                </li>
+              )}
+
+              {/* Menu Central de Telemarketing - Desktop */}
+              {canAccessReports && !isMotorista && !isTelemarketing && (
+                <li>
+                  <Collapsible open={telemarketingMenuOpen} onOpenChange={setTelemarketingMenuOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-start space-x-3 text-gray-700 hover:bg-gray-100"
+                        data-testid="menu-telemarketing-desktop"
+                      >
+                        <i className="fas fa-phone"></i>
+                        <span className="font-medium">Central de Telemarketing</span>
+                        {telemarketingMenuOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="ml-4 mt-2 space-y-1">
+                      {telemarketingMenuItems.map(item => (
                         <Button
                           key={item.id}
                           variant="ghost"
