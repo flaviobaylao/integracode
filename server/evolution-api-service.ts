@@ -246,8 +246,8 @@ class EvolutionAPIService {
     }
   }
 
-  // Send text message
-  public async sendTextMessage(instanceName: string, to: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  // Send text message with retry logic
+  public async sendTextMessage(instanceName: string, to: string, text: string, retries = 3): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.isConfigured()) {
       return { success: false, error: 'Evolution API não está configurada' };
     }
@@ -255,41 +255,57 @@ class EvolutionAPIService {
     // Format phone number for WhatsApp (add @s.whatsapp.net if not present)
     const formattedNumber = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
 
-    try {
-      const response = await fetch(`${this.config!.apiUrl}/message/sendText/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': this.config!.apiKey
-        },
-        body: JSON.stringify({
-          number: formattedNumber,
-          text: text
-        })
-      });
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`📤 Tentativa ${attempt}/${retries} de enviar mensagem para ${formattedNumber}`);
+        
+        const response = await fetch(`${this.config!.apiUrl}/message/sendText/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': this.config!.apiKey
+          },
+          body: JSON.stringify({
+            number: formattedNumber,
+            text: text
+          }),
+          signal: AbortSignal.timeout(30000) // 30 segundos ao invés de 10
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!response.ok) {
-        console.error('❌ Erro ao enviar mensagem:', data);
-        return { success: false, error: data.message || 'Erro ao enviar mensagem' };
+        if (!response.ok) {
+          console.error(`❌ Erro (tentativa ${attempt}):`, data);
+          if (attempt === retries) {
+            return { success: false, error: data.message || 'Erro ao enviar mensagem' };
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Aguardar 2s antes de retry
+          continue;
+        }
+
+        console.log('✅ Mensagem enviada via Evolution API');
+        return { success: true, messageId: data.key?.id };
+      } catch (error: any) {
+        console.error(`❌ Erro na tentativa ${attempt}:`, error.message);
+        if (attempt === retries) {
+          console.error('❌ Todas as tentativas falharam:', error);
+          return { success: false, error: error.message };
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Aguardar 2s antes de retry
       }
-
-      console.log('✅ Mensagem enviada via Evolution API');
-      return { success: true, messageId: data.key?.id };
-    } catch (error: any) {
-      console.error('❌ Erro ao enviar mensagem:', error);
-      return { success: false, error: error.message };
     }
+
+    return { success: false, error: 'Falha ao enviar mensagem após múltiplas tentativas' };
   }
 
-  // Send media message (image, audio, video, document)
+  // Send media message (image, audio, video, document) with retry logic
   public async sendMediaMessage(
     instanceName: string, 
     to: string, 
     mediaUrl: string, 
     caption?: string,
-    mediaType?: 'image' | 'audio' | 'video' | 'document'
+    mediaType?: 'image' | 'audio' | 'video' | 'document',
+    retries = 3
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.isConfigured()) {
       return { success: false, error: 'Evolution API não está configurada' };
@@ -302,33 +318,48 @@ class EvolutionAPIService {
                     mediaType === 'video' ? 'sendVideo' :
                     mediaType === 'document' ? 'sendDocument' : 'sendMedia';
 
-    try {
-      const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': this.config!.apiKey
-        },
-        body: JSON.stringify({
-          number: formattedNumber,
-          mediaUrl: mediaUrl,
-          caption: caption || ''
-        })
-      });
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`📤 Tentativa ${attempt}/${retries} de enviar mídia (${mediaType}) para ${formattedNumber}`);
+        
+        const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': this.config!.apiKey
+          },
+          body: JSON.stringify({
+            number: formattedNumber,
+            mediaUrl: mediaUrl,
+            caption: caption || ''
+          }),
+          signal: AbortSignal.timeout(30000) // 30 segundos
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!response.ok) {
-        console.error('❌ Erro ao enviar mídia:', data);
-        return { success: false, error: data.message || 'Erro ao enviar mídia' };
+        if (!response.ok) {
+          console.error(`❌ Erro (tentativa ${attempt}):`, data);
+          if (attempt === retries) {
+            return { success: false, error: data.message || 'Erro ao enviar mídia' };
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        console.log(`✅ Mídia enviada via Evolution API (${mediaType})`);
+        return { success: true, messageId: data.key?.id };
+      } catch (error: any) {
+        console.error(`❌ Erro na tentativa ${attempt}:`, error.message);
+        if (attempt === retries) {
+          console.error('❌ Todas as tentativas falharam:', error);
+          return { success: false, error: error.message };
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-
-      console.log(`✅ Mídia enviada via Evolution API (${mediaType})`);
-      return { success: true, messageId: data.key?.id };
-    } catch (error: any) {
-      console.error('❌ Erro ao enviar mídia:', error);
-      return { success: false, error: error.message };
     }
+
+    return { success: false, error: 'Falha ao enviar mídia após múltiplas tentativas' };
   }
 
   // Send location message
