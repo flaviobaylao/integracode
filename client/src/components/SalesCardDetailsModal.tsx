@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
+import { useLocation } from "wouter";
 import { 
   Calendar, 
   Clock, 
@@ -49,6 +49,7 @@ interface SalesCardDetailsModalProps {
 export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale }: SalesCardDetailsModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [localVirtualService, setLocalVirtualService] = useState(false);
@@ -268,12 +269,36 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     }
   };
 
+  // 💬 Criar conversa no chat do Integra em vez de abrir WhatsApp
+  const createChatConversationMutation = useMutation({
+    mutationFn: async (data: { phone: string; customerName: string }) => {
+      return apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: data.phone,
+        customerName: data.customerName
+      });
+    },
+    onSuccess: (response: any) => {
+      toast({
+        title: "Sucesso",
+        description: "Conversa criada! Redirecionando...",
+      });
+      // Redirecionar para página de chat
+      setTimeout(() => {
+        navigate('/telemarketing/atendimento');
+      }, 500);
+      onClose();
+    },
+    onError: () => {
+      toast({
+        title: "Erro",
+        description: "Não foi possível criar a conversa",
+        variant: "destructive",
+      });
+    }
+  });
+
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
-    const message = encodeURIComponent(
-      `Olá ${customerName}! Somos da Honest Sucos. Gostaria de agendar uma visita para apresentar nossos produtos frescos e naturais. Qual o melhor horário para você?`
-    );
-    const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    openWhatsApp(whatsappUrl);
+    createChatConversationMutation.mutate({ phone, customerName });
   };
 
   const openWaze = (latitude: string, longitude: string) => {
