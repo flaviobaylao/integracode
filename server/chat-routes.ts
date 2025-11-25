@@ -472,6 +472,45 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Send WhatsApp message via Evolution API (Test endpoint - without auth)
+  app.post("/api/chat/send-message-test", async (req, res) => {
+    try {
+      const { phoneNumber, message, messageType = 'text' } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ error: "Número de telefone é obrigatório" });
+      }
+
+      if (!message && messageType === 'text') {
+        return res.status(400).json({ error: "Mensagem é obrigatória" });
+      }
+
+      const config = evolutionAPIService.getConfig();
+      if (!config || !config.instanceName) {
+        return res.status(400).json({ error: "WhatsApp não está configurado. Config: " + JSON.stringify(config) });
+      }
+
+      console.log(`📨 [WHATSAPP-SEND-TEST] Enviando mensagem para ${phoneNumber} via ${messageType}`);
+
+      const result = await evolutionAPIService.sendTextMessage(config.instanceName, phoneNumber, message);
+
+      if (!result.success) {
+        console.error(`❌ [WHATSAPP-SEND-TEST] Erro ao enviar:`, result.error);
+        return res.status(500).json({ error: result.error || "Erro ao enviar mensagem" });
+      }
+
+      console.log(`✅ [WHATSAPP-SEND-TEST] Mensagem enviada com sucesso para ${phoneNumber}`);
+      res.json({ 
+        success: true, 
+        messageId: result.messageId,
+        message: "Mensagem enviada com sucesso"
+      });
+    } catch (error: any) {
+      console.error("[CHAT] Send message test error:", error);
+      res.status(500).json({ error: "Erro ao enviar mensagem: " + error.message });
+    }
+  });
+
   // Send WhatsApp message via Evolution API
   app.post("/api/chat/send-message", authenticateUser, async (req, res) => {
     try {
