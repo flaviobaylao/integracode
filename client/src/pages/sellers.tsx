@@ -10,6 +10,7 @@ import { Users, Mail, MapPin, Plus, UserCheck, Edit, Home, RefreshCw } from "luc
 import { formatDate } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface Seller {
   id: string;
@@ -146,6 +147,7 @@ export default function Sellers() {
             <Users className="h-4 w-4 mr-1" />
             {activeSellers.length} vendedores
           </Badge>
+          <BackToDashboardButton />
         </div>
       </div>
 

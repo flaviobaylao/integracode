@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Phone, Clock, User, MapPin, CheckCircle, XCircle, Calendar, ArrowRight, AlertTriangle } from 'lucide-react';
+import BackToDashboardButton from '@/components/BackToDashboardButton';
 
 interface TelemarketingCard {
   id: string;
@@ -149,15 +150,18 @@ export default function TelemarketingPage() {
           <p className="text-gray-600">Gerencie cards de resgate e transferências de clientes</p>
         </div>
         
-        <Button 
-          onClick={() => processOverdueMutation.mutate()}
-          disabled={processOverdueMutation.isPending}
-          variant="outline"
-          className="flex items-center gap-2"
-        >
-          <AlertTriangle className="h-4 w-4" />
-          Processar Cards em Atraso
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            onClick={() => processOverdueMutation.mutate()}
+            disabled={processOverdueMutation.isPending}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            Processar Cards em Atraso
+          </Button>
+          <BackToDashboardButton />
+        </div>
       </div>
 
       {/* Cards de Telemarketing */}

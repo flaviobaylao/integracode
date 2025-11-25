@@ -71,14 +71,17 @@ export default function CheckInPhotos() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-          <Camera className="h-8 w-8 text-honest-blue" />
-          Fotos de Check-in
-        </h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-1">
-          Visualize todas as fotos capturadas durante os check-ins dos vendedores
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <Camera className="h-8 w-8 text-honest-blue" />
+            Fotos de Check-in
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">
+            Visualize todas as fotos capturadas durante os check-ins dos vendedores
+          </p>
+        </div>
+        <BackToDashboardButton />
       </div>
 
       {/* Filtros */}

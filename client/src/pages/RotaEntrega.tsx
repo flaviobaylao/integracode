@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -325,6 +326,14 @@ export default function RotaEntrega() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
       <div className="max-w-4xl mx-auto space-y-4">
         {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Truck className="h-6 w-6" />
+            <h1 className="text-2xl font-bold">Minhas Entregas</h1>
+          </div>
+          <BackToDashboardButton />
+        </div>
+        
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
