@@ -804,32 +804,51 @@ export function registerChatRoutes(app: Express): void {
               throw err;
             }
 
-            // 3. Buscar ou criar conversa
+            // 3. Buscar ou criar conversa - GARANTIR PERSISTÊNCIA NO HISTÓRICO
             let conversation: any;
             try {
+              // ✅ VALIDAÇÃO: Telefone SEMPRE deve estar presente
+              if (!phoneFormatted) {
+                throw new Error('Telefone não pode ser vazio ao criar conversa');
+              }
+
               conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
 
               if (!conversation) {
-                console.log(`📝 Criando nova conversa...`);
-                conversation = await storage.createChatConversation({
+                console.log(`📝 Criando nova conversa para telefone: ${phoneFormatted}...`);
+                
+                // ✅ Garantir que customerPhone sempre é salvo
+                const conversationData = {
                   customerId: chatCustomer.id,
                   customerName: clientName,
-                  customerPhone: phoneFormatted,
-                  status: "new",
-                  priority: "normal"
-                });
-                console.log(`✅ Conversa criada: ${conversation.id}`);
+                  customerPhone: phoneFormatted, // 🔒 CRÍTICO: Sempre salvar telefone
+                  status: "new" as const,
+                  priority: "normal" as const
+                };
+                
+                conversation = await storage.createChatConversation(conversationData);
+                
+                // ✅ AUDITORIA: Confirmar que conversa foi salva com telefone
+                console.log(`✅ [PERSISTÊNCIA] Conversa criada e gravada permanentemente:`);
+                console.log(`   - ID: ${conversation.id}`);
+                console.log(`   - Telefone: ${conversation.customerPhone}`);
+                console.log(`   - Cliente: ${conversation.customerId}`);
+                console.log(`   - Status: ${conversation.status}`);
+                console.log(`   - Criada em: ${conversation.createdAt}`);
               } else {
-                console.log(`✅ Conversa encontrada: ${conversation.id}`);
+                console.log(`✅ Conversa encontrada no histórico:`);
+                console.log(`   - ID: ${conversation.id}`);
+                console.log(`   - Telefone: ${conversation.customerPhone}`);
+                console.log(`   - Status: ${conversation.status}`);
               }
             } catch (err) {
               console.error(`❌ [WEBHOOK] Erro ao criar/buscar conversa:`, err);
               throw err;
             }
 
-            // 4. Salvar mensagem
+            // 4. Salvar mensagem - GARANTIR PERSISTÊNCIA
             try {
-              await storage.createChatMessage({
+              const message = await storage.createChatMessage({
                 conversationId: conversation.id,
                 senderId: remoteJid || "unknown",
                 senderType: "customer",
@@ -837,7 +856,13 @@ export function registerChatRoutes(app: Express): void {
                 messageType: "text"
               });
 
-              console.log(`✅ Mensagem salva na conversa ${conversation.id}`);
+              // ✅ AUDITORIA: Confirmar que mensagem foi salva no histórico atrelada ao telefone
+              console.log(`✅ [PERSISTÊNCIA] Mensagem gravada permanentemente no histórico:`);
+              console.log(`   - Mensagem ID: ${message.id}`);
+              console.log(`   - Conversa ID: ${message.conversationId}`);
+              console.log(`   - Telefone: ${conversation.customerPhone}`);
+              console.log(`   - Conteúdo: ${(text || "[Mídia]").substring(0, 50)}...`);
+              console.log(`   - Timestamp: ${message.timestamp}`);
             } catch (err) {
               console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
               throw err;
@@ -1065,7 +1090,7 @@ export function registerChatRoutes(app: Express): void {
           id: conv.id,
           customerId: conv.customerId,
           customerName: customer?.name || "Desconhecido",
-          customerPhone: customer?.phone || "-",
+          customerPhone: conv.customerPhone || customer?.phone || "-", // 🔒 Sempre usar customerPhone da conversa
           agentId: conv.agentId,
           agentName: agent?.name,
           status: conv.status,
@@ -1085,6 +1110,60 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CHAT-CONVERSATIONS] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar conversas" });
+    }
+  });
+
+  // GET /api/chat/history/phone/:phone - Buscar COMPLETO histórico por número telefônico
+  app.get("/api/chat/history/phone/:phone", async (req, res) => {
+    try {
+      const { phone } = req.params;
+      
+      if (!phone) {
+        return res.status(400).json({ error: "Telefone é obrigatório" });
+      }
+
+      // 🔍 Buscar cliente pelo telefone
+      const chatCustomer = await storage.getChatCustomerByPhone(phone).catch(() => null);
+      
+      if (!chatCustomer) {
+        return res.status(404).json({ 
+          error: "Nenhum histórico encontrado para este número",
+          phone 
+        });
+      }
+
+      // 📋 Buscar TODAS as conversas do cliente
+      const conversations = await storage.getChatConversations();
+      const customerConversations = conversations.filter(c => c.customerId === chatCustomer.id);
+
+      // 💬 Buscar TODAS as mensagens
+      const allMessages: any[] = [];
+      for (const conv of customerConversations) {
+        const messages = await storage.getChatMessages(conv.id) || [];
+        allMessages.push(...messages);
+      }
+
+      // ✅ Retornar histórico COMPLETO atrelado ao telefone
+      res.json({
+        phone: chatCustomer.phone,
+        customerName: chatCustomer.name,
+        customerId: chatCustomer.id,
+        totalConversations: customerConversations.length,
+        totalMessages: allMessages.length,
+        conversations: customerConversations.map(c => ({
+          id: c.id,
+          customerPhone: c.customerPhone,
+          status: c.status,
+          createdAt: c.createdAt,
+          messageCount: allMessages.filter(m => m.conversationId === c.id).length
+        })),
+        recentMessages: allMessages.sort((a: any, b: any) => 
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        ).slice(0, 50) // Últimas 50 mensagens
+      });
+    } catch (error: any) {
+      console.error("[CHAT-HISTORY] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar histórico" });
     }
   });
 
