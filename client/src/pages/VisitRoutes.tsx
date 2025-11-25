@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Calendar, MapPin, Clock, User, Filter, Route, RefreshCw, CheckCircle, XCircle, MapPinIcon, Monitor, Phone, Video } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { optimizeRouteAdvanced, calculateTravelTime, type RouteLocation, type OptimizedRoute } from "@shared/routeOptimization";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -372,7 +373,7 @@ export default function VisitRoutes() {
             Gerencie e visualize a agenda de visitas {user?.role === 'vendedor' ? 'suas' : 'dos vendedores'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           {user?.role && ['admin', 'coordinator'].includes(user.role) && (
             <Button
               onClick={generateAgenda}
@@ -397,6 +398,7 @@ export default function VisitRoutes() {
             )}
             {isOptimizing ? 'Otimizando...' : 'Otimizar Rota'}
           </Button>
+          <BackToDashboardButton />
         </div>
       </div>
 
