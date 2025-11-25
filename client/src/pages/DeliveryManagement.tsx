@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import {
   Dialog,
   DialogContent,
@@ -587,7 +588,9 @@ export default function DeliveryManagement() {
             Planeje rotas de entrega para múltiplos veículos
           </p>
         </div>
-        <Button 
+        <div className="flex gap-2 items-center">
+          <BackToDashboardButton />
+          <Button 
           onClick={() => setShowVehicleConfig(true)}
           data-testid="button-configure-routes"
           size="lg"

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Activity, TrendingUp, MessageCircle } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function ChatAnalysis() {
   const { data: analyses = [], isLoading: loadingAnalyses } = useQuery<any[]>({
@@ -36,9 +37,12 @@ export default function ChatAnalysis() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-indigo-50">
       <div className="max-w-7xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Análise de Conversas</h1>
-          <p className="text-slate-600 mt-1">Insights e métricas sobre o atendimento via WhatsApp</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Análise de Conversas</h1>
+            <p className="text-slate-600 mt-1">Insights e métricas sobre o atendimento via WhatsApp</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

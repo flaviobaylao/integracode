@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Users, Route, Clock, TrendingUp, Calendar, Home } from 'lucide-react';
+import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -77,19 +78,6 @@ export default function HRManagement() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="mb-4">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => window.location.href = '/'}
-          className="flex items-center gap-2"
-          data-testid="button-back-dashboard"
-        >
-          <Home className="h-4 w-4" />
-          Voltar ao Dashboard
-        </Button>
-      </div>
-      
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2" data-testid="title-rh">
@@ -102,8 +90,10 @@ export default function HRManagement() {
               : 'Controle de quilometragem e carga horária dos vendedores'}
           </p>
         </div>
+        <BackToDashboardButton />
+      </div>
 
-        <div className="flex gap-4">
+      <div className="flex gap-4">
           <div className="flex items-center gap-2">
             <Calendar className="h-5 w-5 text-gray-500" />
             <Select value={selectedMonth} onValueChange={setSelectedMonth}>

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import {
   Dialog,
   DialogContent,
@@ -232,7 +233,7 @@ export default function DriverManagement() {
             Gerencie a equipe de entrega
           </p>
         </div>
-        
+        <BackToDashboardButton />
         <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
           <DialogTrigger asChild>
             <Button data-testid="button-new-driver">
