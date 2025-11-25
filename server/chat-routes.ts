@@ -166,7 +166,8 @@ export function registerChatRoutes(app: Express): void {
   // CHAT CONVERSATIONS CRUD
   // ============================================================
 
-  // Get all conversations
+  // Get all conversations - REMOVIDO: use o endpoint sem autenticação na linha 860
+  /*
   app.get("/api/chat/conversations", authenticateUser, async (req, res) => {
     try {
       const { status, agentId } = req.query;
@@ -187,8 +188,10 @@ export function registerChatRoutes(app: Express): void {
       res.status(500).json({ error: "Erro ao buscar conversas" });
     }
   });
+  */
 
-  // Create conversation
+  // Create conversation - comentado em favor do endpoint sem autenticação
+  /*
   app.post("/api/chat/conversations", authenticateUser, async (req, res) => {
     try {
       const validatedData = insertChatConversationSchema.parse(req.body);
@@ -202,6 +205,7 @@ export function registerChatRoutes(app: Express): void {
       res.status(500).json({ error: "Erro ao criar conversa" });
     }
   });
+  */
 
   // Start new conversation (initiate message to customer)
   app.post("/api/chat/conversations/start", authenticateUser, async (req, res) => {
