@@ -450,6 +450,10 @@ export default function DeliveryManagement() {
         });
         return prev;
       }
+      
+      return { ...prev, vehicleTypes: newTypes };
+    });
+  };
 
   // Funções para gerenciar adicionar/remover pedidos em rotas
   const handleSelectRoute = (route: VehicleRoute, routeIdx: number) => {
@@ -477,18 +481,16 @@ export default function DeliveryManagement() {
 
   const handleAddPedido = (billingId: string) => {
     if (!selectedRoute) return;
+    // Buscar o ID da rota a partir da chave de um stop
+    const routeId = selectedRoute.stops[0]?.salesCardId?.split('-')[0] || '';
     addStopMutation.mutate({
-      routeId: selectedRoute?.vehicleType || '',
+      routeId,
       billingId,
     });
   };
 
   // Pedidos disponíveis (aguardando rota)
   const availableOrders = orders?.filter(o => !routePlan?.routes.some(r => r.stops.some((s: any) => s.salesCardId === o.id))) || [];
-      
-      return { ...prev, vehicleTypes: newTypes };
-    });
-  };
 
   // Filtrar pedidos
   const filteredOrders = useMemo(() => {
@@ -1350,7 +1352,7 @@ export default function DeliveryManagement() {
                   })()}
                       
                       <div className="space-y-2">
-                        {route.stops.map((stop, stopIdx) => (
+                        {route.stops.map((stop: any, stopIdx) => (
                           <div key={stopIdx} className="flex items-start space-x-3 py-2 border-l-2 border-blue-200 pl-4">
                             <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center">
                               {stop.stopOrder}
@@ -1364,9 +1366,27 @@ export default function DeliveryManagement() {
                                 {stopIdx > 0 && ` • +${stop.distanceFromPrevious.toFixed(1)} km`}
                               </div>
                             </div>
+                            <Checkbox
+                              checked={removePedidoIds.has(stop.id)}
+                              onCheckedChange={() => handleToggleRemovePedido(stop.id)}
+                              data-testid={`checkbox-remove-stop-${stop.id}`}
+                            />
                           </div>
                         ))}
                       </div>
+                      
+                      {removePedidoIds.size > 0 && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleRemoveSelectedPedidos}
+                          disabled={removeStopMutation.isPending}
+                          className="mt-4"
+                          data-testid="button-remove-selected-stops"
+                        >
+                          🗑️ Remover {removePedidoIds.size} Selecionado{removePedidoIds.size !== 1 ? 's' : ''}
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
