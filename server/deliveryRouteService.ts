@@ -156,12 +156,13 @@ function isValidDeliveryWeekday(customerWeekdays: string | string[] | null | und
     
     const routeWeekday = getWeekdayName(routeDate);
     
-    // Normalizar ambos os lados para comparação (remover acentos e lowercas)
+    // Normalizar ambos os lados para comparação (remover acentos e converter para lowercase)
     const normalizedRouteDay = routeWeekday.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     
     return allowedDays.some(day => {
       const normalizedDay = day.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      return normalizedDay === normalizedRouteDay || normalizedDay.startsWith(normalizedRouteDay.substring(0, 3));
+      // Comparar os 3 primeiros caracteres (seg, ter, qua, qui, sex, sab, dom)
+      return normalizedDay.substring(0, 3) === normalizedRouteDay.substring(0, 3);
     });
   } catch (error) {
     console.error('Erro ao validar dia da semana:', error, 'customerWeekdays:', customerWeekdays);
