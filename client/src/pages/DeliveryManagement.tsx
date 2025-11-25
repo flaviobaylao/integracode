@@ -1351,6 +1351,17 @@ export default function DeliveryManagement() {
                     );
                   })()}
                       
+                      <div className="flex gap-2 mb-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSelectRoute(route, routeIdx)}
+                          data-testid={`button-add-orders-route-${routeIdx}`}
+                        >
+                          ➕ Adicionar Pedidos
+                        </Button>
+                      </div>
+                      
                       <div className="space-y-2">
                         {route.stops.map((stop: any, stopIdx) => (
                           <div key={stopIdx} className="flex items-start space-x-3 py-2 border-l-2 border-blue-200 pl-4">
