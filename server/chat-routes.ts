@@ -221,7 +221,6 @@ export function registerChatRoutes(app: Express): void {
       // Create or get customer
       const customerId = `customer_${Date.now()}`;
       const customer = await storage.createChatCustomer({
-        id: customerId,
         name: customerName || `Cliente ${customerPhone}`,
         phone: customerPhone,
         email: null,
@@ -256,9 +255,9 @@ export function registerChatRoutes(app: Express): void {
           messageType: "text"
         }).catch(() => null);
 
-        // Update last message time
+        // Update conversation status (lastMessageTime is auto-updated)
         await storage.updateChatConversation(conversation.id, {
-          lastMessageTime: new Date()
+          status: 'new'
         });
       }
 
@@ -814,7 +813,7 @@ export function registerChatRoutes(app: Express): void {
     try {
       const conversations = await storage.getChatConversations();
       const agents = await storage.getChatAgents?.() || [];
-      const messages = await storage.getChatMessages?.() || [];
+      const messages: any[] = [];
 
       const activeConversations = conversations.filter(c => c.status !== 'resolved').length;
       const totalConversations = conversations.length;
@@ -865,7 +864,7 @@ export function registerChatRoutes(app: Express): void {
       const conversations = await storage.getChatConversations();
       const agents = await storage.getChatAgents?.() || [];
       const customers = await storage.getChatCustomers?.() || [];
-      const messages = await storage.getChatMessages?.() || [];
+      const messages: any[] = [];
 
       // Enriquecer conversas com dados relacionados
       const enrichedConversations = conversations.map((conv: any) => {
@@ -932,7 +931,7 @@ export function registerChatRoutes(app: Express): void {
     try {
       const { conversationId } = req.params;
       const { content, messageType = "text" } = req.body;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
 
       if (!content) {
         return res.status(400).json({ error: "Conteúdo da mensagem é obrigatório" });
@@ -950,29 +949,33 @@ export function registerChatRoutes(app: Express): void {
       const conversations = await storage.getChatConversations();
       const conv = conversations.find((c: any) => c.id === conversationId);
       
-      if (conv && !conv.lastAgentResponseTime) {
+      if (conv && !conv.lastAgentResponseTime && conv.createdAt) {
         const now = new Date();
         const waitingTime = Math.floor(
-          (now.getTime() - new Date(conv.createdAt).getTime()) / 1000
+          (now.getTime() - new Date(conv.createdAt as any).getTime()) / 1000
         );
         
         // Atualizar conversa com tempo de resposta
         await storage.updateChatConversation?.(conversationId, {
-          lastAgentResponseTime: now,
-          responseTime: waitingTime,
           status: 'in-progress'
         });
       }
 
       // Enviar para WhatsApp via Evolution API
       try {
-        const customers = await storage.getChatCustomers?.() || [];
-        const customer = customers.find((c: any) => c.id === conv.customerId);
-        if (customer?.phone) {
-          await evolutionAPIService.sendMessage(
-            customer.phone,
-            content
-          );
+        if (conv?.customerId) {
+          const customers = await storage.getChatCustomers?.() || [];
+          const customer = customers.find((c: any) => c.id === conv.customerId);
+          if (customer?.phone) {
+            const config = evolutionAPIService.getConfig();
+            if (config?.instanceName) {
+              await evolutionAPIService.sendTextMessage(
+                config.instanceName,
+                customer.phone,
+                content
+              );
+            }
+          }
         }
       } catch (err) {
         console.warn("[WHATSAPP] Erro ao enviar para WhatsApp:", err);
@@ -997,8 +1000,7 @@ export function registerChatRoutes(app: Express): void {
 
       const updatedConv = await storage.updateChatConversation?.(conversationId, {
         agentId,
-        status: 'assigned',
-        assignedAt: new Date()
+        status: 'assigned'
       });
 
       res.json(updatedConv);
@@ -1051,7 +1053,7 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/quick-templates", authenticateUser, async (req, res) => {
     try {
       const { title, content, category } = req.body;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
 
       if (!title || !content) {
         return res.status(400).json({ error: "Título e conteúdo são obrigatórios" });
