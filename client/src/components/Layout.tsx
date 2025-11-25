@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ChevronDown, ChevronRight, Menu } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQuery } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
@@ -21,6 +22,7 @@ interface LayoutProps {
 
 export default function Layout({ children, activeView, setActiveView, user }: LayoutProps) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const canAccessReports = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canAccessUsers = user?.role === 'admin';
   const isVendedor = user?.role === 'vendedor';
@@ -204,7 +206,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     const telemarketingRoutes: Record<string, string> = {
       'telemarketing': '/telemarketing',
       'telemarketing-dashboard': '/telemarketing/atendimento',
-      'telemarketing-whatsapp': '/telemarketing/atendimento',
+      'telemarketing-whatsapp': '/telemarketing/templates',
       'telemarketing-telegram': '/telemarketing/analysis',
       'telemarketing-deliveries': '/telemarketing/analysis',
       'telemarketing-analysis': '/telemarketing/conversas',
@@ -212,7 +214,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     
     if (telemarketingRoutes[itemId]) {
       console.log('🔗 Navegando para rota de telemarketing:', telemarketingRoutes[itemId]);
-      window.location.href = telemarketingRoutes[itemId];
+      navigate(telemarketingRoutes[itemId]);
       setMobileMenuOpen(false);
       return;
     }
@@ -224,7 +226,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       // Navega para a rota correspondente
       const route = '/' + itemId.replace(/_/g, '-');
       console.log('🔗 Navegando para rota:', route);
-      window.location.href = route;
+      navigate(route);
     } else {
       console.log('📋 Mudando activeView para:', itemId);
       setActiveView(itemId);
