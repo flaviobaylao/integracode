@@ -2601,7 +2601,7 @@ export class DatabaseStorage implements IStorage {
         b.payment_method as "paymentMethod",
         b.billing_type as "operationType",
         COALESCE(c.exclusive_vehicle, b.exclusive_vehicle) as "exclusiveVehicle",
-        COALESCE(c.vehicle_types, b.vehicle_types) as "vehicleTypes",
+        COALESCE(c.vehicle_types::text, b.vehicle_types::text)::jsonb as "vehicleTypes",
         b.is_urgent as "isUrgent",
         b.delivery_weekdays as "deliveryWeekdays",
         COALESCE(c.latitude, NULL)::text as "customerLatitude",
