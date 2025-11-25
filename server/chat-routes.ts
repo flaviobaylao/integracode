@@ -1433,21 +1433,26 @@ export function registerChatRoutes(app: Express): void {
       let errorCount = 0;
       const results: any[] = [];
 
-      // Para cada chat, buscar histórico e sincronizar
-      for (const chat of chats) {
+      // Para cada chat, buscar histórico e sincronizar (limitado a 50 para teste inicial)
+      const maxChatsToSync = Math.min(chats.length, 50);
+      for (let i = 0; i < maxChatsToSync; i++) {
+        const chat = chats[i];
         try {
           const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
+          const normalizedPhone = normalizePhoneNumber(contactPhone);
           const contactName = chat.name || contactPhone;
           
-          console.log(`📱 Sincronizando chat: ${contactName} (${contactPhone})`);
+          console.log(`📱 [${i + 1}/${maxChatsToSync}] Sincronizando chat: ${contactName} (${contactPhone} -> ${normalizedPhone})`);
           
           // Buscar histórico de mensagens
-          const historyResult = await evolutionAPIService.fetchChatHistory('CHAT_HONEST', contactPhone, 500);
+          const historyResult = await evolutionAPIService.fetchChatHistory('CHAT_HONEST', contactPhone, 100);
           
-          if (historyResult.success && historyResult.messages) {
+          if (historyResult.success && historyResult.messages && historyResult.messages.length > 0) {
+            console.log(`   📄 Histórico carregado: ${historyResult.messages.length} mensagens`);
+            
             // Sincronizar no banco de dados
             const syncResult = await storage.syncChatHistory(
-              normalizePhoneNumber(contactPhone),
+              normalizedPhone,
               contactName,
               historyResult.messages
             );
@@ -1455,7 +1460,7 @@ export function registerChatRoutes(app: Express): void {
             console.log(`✅ Chat sincronizado: ${contactName} - ${syncResult.messageCount} mensagens importadas`);
             
             results.push({
-              phone: normalizePhoneNumber(contactPhone),
+              phone: normalizedPhone,
               name: contactName,
               messagesImported: syncResult.messageCount,
               status: 'success'
@@ -1463,33 +1468,47 @@ export function registerChatRoutes(app: Express): void {
             
             totalMessages += syncResult.messageCount;
             successCount++;
-          } else {
-            console.warn(`⚠️  Erro ao buscar histórico de ${contactName}`);
+          } else if (historyResult.success && (!historyResult.messages || historyResult.messages.length === 0)) {
+            console.log(`⚪ Chat sem mensagens: ${contactName}`);
             results.push({
-              phone: normalizePhoneNumber(contactPhone),
+              phone: normalizedPhone,
+              name: contactName,
+              messagesImported: 0,
+              status: 'success'
+            });
+            successCount++;
+          } else {
+            console.warn(`⚠️  Erro ao buscar histórico de ${contactName}: ${historyResult.error}`);
+            results.push({
+              phone: normalizedPhone,
               name: contactName,
               status: 'error',
-              error: historyResult.error
+              error: historyResult.error || 'Erro desconhecido'
             });
             errorCount++;
           }
         } catch (chatError: any) {
-          console.error(`❌ Erro ao processar chat:`, chatError);
+          console.error(`❌ Erro ao processar chat:`, chatError.message);
           errorCount++;
+          results.push({
+            status: 'error',
+            error: chatError.message
+          });
         }
       }
 
-      console.log(`🎉 Sincronização concluída: ${successCount} conversas, ${totalMessages} mensagens importadas`);
+      console.log(`🎉 Sincronização concluída: ${successCount} conversas processadas, ${totalMessages} mensagens importadas`);
       
       res.json({
         success: true,
         summary: {
           totalChats: chats.length,
+          chatsProcessed: maxChatsToSync,
           successCount,
           errorCount,
           totalMessagesImported: totalMessages
         },
-        details: results
+        details: results.slice(0, 20) // Retornar apenas os 20 primeiros para não sobrecarregar a resposta
       });
     } catch (error: any) {
       console.error("[CHAT-SYNC-HISTORY] Erro:", error);
