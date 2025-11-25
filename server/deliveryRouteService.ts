@@ -4,7 +4,6 @@ import { nanoid } from 'nanoid';
 import { db } from './db';
 import { deliveryHistory } from '../shared/schema';
 import { eq, desc, and } from 'drizzle-orm';
-import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 
 // ==================== Data Structures ====================
 
@@ -586,23 +585,22 @@ async function optimizeVehicleRoutes(
       console.log(`⚪ [REGULAR] Otimizados ${regularOrders.length} pedidos regulares após urgentes`);
     }
     
-    // Calcular ETAs no timezone de Brasília
-    const BRASILIA_TZ = 'America/Sao_Paulo';
+    // Calcular ETAs começando do horário inicial da rota
     const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
     
-    // Converter para timezone de Brasília
+    // Criar data base para a rota
     let startTime = new Date(routeDate);
     startTime.setHours(0, 0, 0, 0);
     
-    // Converter minutos totais (ex: 480) em horas e minutos (ex: 8:00)
-    const hours = Math.floor(timeWindowStartMinutes / 60);
-    const minutes = timeWindowStartMinutes % 60;
-    startTime.setHours(hours, minutes, 0, 0);
+    // Adicionar os minutos do horário inicial (ex: 480 minutos = 8 horas)
+    const hoursToAdd = Math.floor(timeWindowStartMinutes / 60);
+    const minutesToAdd = timeWindowStartMinutes % 60;
     
-    // Converter para data no timezone de Brasília
-    const zonedStartTime = toZonedTime(startTime, BRASILIA_TZ);
-    let currentTime = new Date(zonedStartTime);
-    console.log(`⏰ [ETA-CALC] Rota inicia às ${vehicle.timeWindowStart} (Brasília), currentTime: ${currentTime.toLocaleTimeString('pt-BR', { timeZone: BRASILIA_TZ })}`);
+    // Criar currentTime adicionando diretamente os minutos
+    let currentTime = new Date(startTime);
+    currentTime.setHours(hoursToAdd, minutesToAdd, 0, 0);
+    
+    console.log(`⏰ [ETA-CALC] Rota ${vehicle.type} inicia às ${vehicle.timeWindowStart}, currentTime inicial: ${currentTime.toLocaleTimeString('pt-BR')}`);
     let totalDuration = 0;
     let totalDistance = 0;
 
