@@ -5282,6 +5282,16 @@ export class DatabaseStorage implements IStorage {
     const [message] = await db.insert(chatMessages).values(messageData).returning();
     return message;
   }
+
+  // 🟢 Atualizar status de leitura de mensagem
+  async updateChatMessage(id: string, updates: Partial<ChatMessage>): Promise<ChatMessage> {
+    const [message] = await db
+      .update(chatMessages)
+      .set(updates)
+      .where(eq(chatMessages.id, id))
+      .returning();
+    return message;
+  }
   
   // Chat Products operations
   async getChatProducts(): Promise<ChatProduct[]> {

@@ -1086,6 +1086,11 @@ export function registerChatRoutes(app: Express): void {
         const customer = customers.find(c => c.id === conv.customerId);
         const conversationMessages = messages.filter((m: any) => m.conversationId === conv.id);
         
+        // 🟢 Contar mensagens NÃO lidas de clientes
+        const unreadMessages = conversationMessages.filter((m: any) => 
+          m.senderType === "customer" && !m.isRead
+        );
+        
         return {
           id: conv.id,
           customerId: conv.customerId,
@@ -1097,6 +1102,8 @@ export function registerChatRoutes(app: Express): void {
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
           messageCount: conversationMessages.length,
+          unreadCount: unreadMessages.length, // 🟢 Número de mensagens não lidas
+          hasUnread: unreadMessages.length > 0, // 🟢 Flag para mostrar indicador verde
           createdAt: conv.createdAt
         };
       });
@@ -1172,7 +1179,19 @@ export function registerChatRoutes(app: Express): void {
     try {
       const { conversationId } = req.params;
       const messages = await storage.getChatMessages(conversationId) || [];
-      res.json(messages);
+      
+      // 🟢 Marcar TODAS as mensagens de clientes como lidas ao abrir a conversa
+      const unreadMessages = messages.filter(m => m.senderType === "customer" && !m.isRead);
+      if (unreadMessages.length > 0) {
+        console.log(`📖 [UNREAD-MARK] Marcando ${unreadMessages.length} mensagens como lidas...`);
+        for (const msg of unreadMessages) {
+          await storage.updateChatMessage(msg.id, { isRead: true });
+        }
+      }
+      
+      // Buscar mensagens novamente após marcar como lidas
+      const updatedMessages = await storage.getChatMessages(conversationId) || [];
+      res.json(updatedMessages);
     } catch (error: any) {
       console.error("[CHAT-MESSAGES] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar mensagens" });

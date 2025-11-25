@@ -37,6 +37,8 @@ interface Conversation {
   priority: "normal" | "urgent";
   lastMessageTime: string;
   messageCount: number;
+  unreadCount?: number; // 🟢 Número de mensagens não lidas
+  hasUnread?: boolean; // 🟢 Flag para mostrar indicador
   messages?: ChatMessage[];
 }
 
@@ -247,9 +249,17 @@ export default function ChatCenter() {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-sm text-gray-900 truncate">
-                                {conv.customerName}
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="font-semibold text-sm text-gray-900 truncate">
+                                  {conv.customerName}
+                                </p>
+                                {/* 🟢 Indicador verde com número de mensagens não lidas */}
+                                {conv.hasUnread && conv.unreadCount! > 0 && (
+                                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs font-bold flex-shrink-0">
+                                    {conv.unreadCount}
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-xs text-gray-500">{conv.customerPhone}</p>
                               <p className="text-xs text-gray-600 truncate mt-1">{conv.lastMessageTime}</p>
                             </div>
