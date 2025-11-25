@@ -745,44 +745,54 @@ export default function DeliveryManagement() {
                           )}
                         </div>
 
-                        {/* Informações de recebimento do card */}
-                        {((order as any).receivingWeekdays?.length > 0 || (order as any).deliveryWeekdays?.length > 0 || order.deliveryTimeSlots?.length > 0) && (
-                          <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
-                            <div className="text-xs font-semibold text-blue-900">📅 Programação de Recebimento:</div>
+                        {/* Informações de recebimento do card - Configurações de Recebimento */}
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                          <div className="text-xs font-bold text-blue-900 flex items-center gap-1">
+                            <Calendar className="h-4 w-4" />
+                            ⚙️ CONFIGURAÇÕES DE RECEBIMENTO
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-2">
                             {(order as any).receivingWeekdays?.length > 0 && (
-                              <div className="space-y-0.5">
-                                <div className="flex items-center text-xs text-blue-800">
-                                  <Calendar className="h-3 w-3 mr-1" />
-                                  <span className="font-medium">Dias de Recebimento:</span>
-                                  <span className="ml-1 font-semibold">{formatDeliveryDays((order as any).receivingWeekdays as any)}</span>
+                              <div className="bg-white rounded p-2 border border-blue-100">
+                                <div className="text-xs font-semibold text-blue-900 mb-1">📅 Dias Recepção:</div>
+                                <div className="text-sm font-bold text-blue-700">
+                                  {formatDeliveryDays((order as any).receivingWeekdays as any)}
                                 </div>
                               </div>
                             )}
                             {(order as any).deliveryWeekdays?.length > 0 && (
-                              <div className="space-y-0.5">
-                                <div className="flex items-center text-xs text-green-800">
-                                  <Truck className="h-3 w-3 mr-1" />
-                                  <span className="font-medium">Dias de Entrega (calculados):</span>
-                                  <span className="ml-1 font-semibold">{formatDeliveryDays((order as any).deliveryWeekdays as any)}</span>
+                              <div className="bg-white rounded p-2 border border-green-100">
+                                <div className="text-xs font-semibold text-green-900 mb-1">🚚 Dias Entrega:</div>
+                                <div className="text-sm font-bold text-green-700">
+                                  {formatDeliveryDays((order as any).deliveryWeekdays as any)}
                                 </div>
                               </div>
                             )}
                             {order.deliveryTimeSlots?.length > 0 && (
-                              <div className="flex items-center text-xs text-blue-800">
-                                <Clock className="h-3 w-3 mr-1" />
-                                <span className="font-medium">Horários (seg-sex):</span>
-                                <span className="ml-1">{order.deliveryTimeSlots.join(', ')}</span>
+                              <div className="bg-white rounded p-2 border border-amber-100">
+                                <div className="text-xs font-semibold text-amber-900 mb-1">⏰ Horários (Seg-Sex):</div>
+                                <div className="text-sm font-bold text-amber-700">
+                                  {order.deliveryTimeSlots.join(', ')}
+                                </div>
                               </div>
                             )}
                             {order.deliverySaturdayTimeSlots?.length > 0 && (
-                              <div className="flex items-center text-xs text-blue-800">
-                                <Clock className="h-3 w-3 mr-1" />
-                                <span className="font-medium">Horários (sáb):</span>
-                                <span className="ml-1">{order.deliverySaturdayTimeSlots.join(', ')}</span>
+                              <div className="bg-white rounded p-2 border border-purple-100">
+                                <div className="text-xs font-semibold text-purple-900 mb-1">⏰ Horários (Sábado):</div>
+                                <div className="text-sm font-bold text-purple-700">
+                                  {order.deliverySaturdayTimeSlots.join(', ')}
+                                </div>
                               </div>
                             )}
                           </div>
-                        )}
+                          
+                          {!(order as any).receivingWeekdays?.length && !order.deliveryTimeSlots?.length && !order.deliverySaturdayTimeSlots?.length && (
+                            <div className="text-xs text-gray-500 italic">
+                              Sem configurações específicas de recebimento
+                            </div>
+                          )}
+                        </div>
 
                         <div className="flex items-center justify-between pt-1">
                           <div className="flex items-center space-x-2">
