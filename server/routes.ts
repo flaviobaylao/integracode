@@ -246,6 +246,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, ['MESSAGES_UPSERT']);
       if (webhookResult.success) {
         console.log('✅ Webhook configurado com sucesso para receber mensagens');
+        // Verificar status depois de configurar
+        setTimeout(async () => {
+          const webhookStatus = await evolutionAPIService.getWebhook(evolutionInstanceName);
+          console.log('📡 Status do webhook após configuração:', webhookStatus);
+        }, 2000);
       } else {
         console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
       }

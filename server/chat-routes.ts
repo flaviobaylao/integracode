@@ -789,6 +789,22 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Diagnóstico do webhook - verificar status na Evolution API
+  app.get("/api/chat/webhook/debug", async (req, res) => {
+    try {
+      const status = await evolutionAPIService.getWebhook(process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST');
+      res.json({
+        success: true,
+        webhookStatus: status,
+        evolutionConfigured: evolutionAPIService.isConfigured(),
+        timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      console.error('[WEBHOOK-DEBUG] Erro:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Teste de webhook - simular mensagem recebida
   app.post("/api/chat/webhook/test", async (req, res) => {
     try {
