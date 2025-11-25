@@ -1354,8 +1354,8 @@ export default function DeliveryManagement() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleSelectRoute(route, routeIdx)}
-                          data-testid={`button-add-orders-route-${routeIdx}`}
+                          onClick={() => handleSelectRoute(route, idx)}
+                          data-testid={`button-add-orders-route-${idx}`}
                         >
                           ➕ Adicionar Pedidos
                         </Button>
