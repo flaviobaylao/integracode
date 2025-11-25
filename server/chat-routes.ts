@@ -634,5 +634,59 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ============================================================
+  // WEBHOOK PARA RECEBER MENSAGENS DO WHATSAPP
+  // ============================================================
+  
+  // Webhook para receber mensagens recebidas via Evolution API
+  app.post("/api/chat/webhook/messages", async (req, res) => {
+    try {
+      const { event, instance, data } = req.body;
+
+      console.log(`📱 [WEBHOOK] Evento recebido:`, { event, instance });
+
+      if (event === 'messages.upsert' && data) {
+        const message = data;
+        const remoteJid = message.key?.remoteJid;
+        const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
+        const isFromMe = message.key?.fromMe;
+
+        if (!isFromMe) {
+          console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
+
+          // Salvar mensagem recebida no banco de dados
+          try {
+            const conv = await storage.getChatConversations();
+            const phoneClean = remoteJid?.replace(/\D/g, '');
+            const matchingConv = conv.find((c: any) => 
+              c.phoneNumber === remoteJid || 
+              c.phoneNumber?.replace(/\D/g, '') === phoneClean
+            );
+
+            if (matchingConv) {
+              await storage.createChatMessage({
+                conversationId: matchingConv.id,
+                senderId: remoteJid || "unknown",
+                senderType: "customer",
+                content: text || "[Mídia ou mensagem especial]",
+                messageType: "text"
+              });
+              console.log(`✅ Mensagem salva na conversa ${matchingConv.id}`);
+            } else {
+              console.warn(`⚠️  Nenhuma conversa encontrada para ${remoteJid}`);
+            }
+          } catch (err) {
+            console.warn("[WEBHOOK] Erro ao salvar mensagem:", err);
+          }
+        }
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("[WEBHOOK] Erro ao processar webhook:", error);
+      res.status(500).json({ error: "Erro ao processar webhook" });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }

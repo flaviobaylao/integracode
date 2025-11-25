@@ -236,6 +236,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       instanceName: evolutionInstanceName
     });
     console.log('✅ Evolution API configurada com sucesso para WhatsApp');
+
+    // Configure webhook for receiving messages
+    const webhookUrl = process.env.REPLIT_DOMAINS 
+      ? `https://${process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '')}/api/chat/webhook/messages`
+      : 'http://localhost:5000/api/chat/webhook/messages';
+
+    try {
+      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, ['messages.upsert']);
+      if (webhookResult.success) {
+        console.log('✅ Webhook configurado com sucesso para receber mensagens');
+      } else {
+        console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
+      }
+    } catch (err) {
+      console.warn('⚠️  Erro ao tentar configurar webhook:', err);
+    }
   } else {
     console.warn('⚠️  Evolution API não completamente configurada. Verifique as secrets:', {
       hasBaseUrl: !!evolutionBaseUrl,
