@@ -16,7 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import honestLogo from '@/assets/honest-logo.png';
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
+import { useLocation } from "wouter";
 import type { SalesCard, Product, PaymentMethod, OperationType } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
 
@@ -35,6 +35,8 @@ interface SaleModalProps {
 }
 
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
   
   // Estados principais
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
@@ -317,36 +319,28 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       pdf.text('- Este pedido requer aprovação manual.', 20, finalY + 80);
     }
 
-    // Converter PDF para blob e enviar por WhatsApp
-    const pdfBlob = pdf.output('blob');
-    const pdfDataUrl = pdf.output('datauristring');
-    
-    // Limpar número de telefone (remover caracteres especiais)
-    const cleanPhone = customer.phone.replace(/\D/g, '');
-    
-    // Mensagem personalizada
-    const message = `Olá ${customer.fantasyName || customer.name}! 📄
-
-Segue o orçamento da Honest Sucos:
-• Total: R$ ${totalSale.toFixed(2)}
-• Produtos: ${saleItems.length} itens
-• Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}
-${paymentMethod === 'boleto' ? `• Prazo: ${boletoDays} dias` : ''}
-
-🌿 Sucos naturais e saudáveis!
-
-Qualquer dúvida, estou à disposição.`;
-
-    // Criar link do WhatsApp com mensagem
-    const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
-    
-    // Abrir WhatsApp (mobile ou desktop)
-    openWhatsApp(whatsappUrl);
-    
-    toast({
-      title: "WhatsApp Aberto",
-      description: `Mensagem preparada para ${customer.fantasyName || customer.name}. Você pode anexar o PDF manualmente.`,
-    });
+    // 💬 Criar conversa no Integra
+    try {
+      await apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: customer.phone,
+        customerName: customer.fantasyName || customer.name
+      });
+      
+      toast({
+        title: "Sucesso",
+        description: "Conversa criada! Redirecionando...",
+      });
+      
+      setTimeout(() => {
+        navigate('/telemarketing/atendimento');
+      }, 500);
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Não foi possível criar a conversa",
+        variant: "destructive",
+      });
+    }
   };
 
   // Carregar preferências do card

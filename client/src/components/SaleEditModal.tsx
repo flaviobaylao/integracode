@@ -11,8 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { useLocation } from "wouter";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import honestLogo from '@/assets/honest-logo.png';
@@ -55,6 +55,11 @@ interface ProductItem {
 }
 
 export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalProps) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
+  const { user, isLoading: userLoading } = useAuth();
+  
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState('a_vista');
   const [operationType, setOperationType] = useState('venda');
@@ -73,9 +78,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [boletoDays, setBoletoDays] = useState(7);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const { user, isLoading: userLoading } = useAuth();
   
   // Verificar se usuário pode editar recorrência e dia da rota
   // Permitir edição se: está carregando OU é admin/coordinator/administrative
@@ -680,14 +682,28 @@ ${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('p
 
 O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
 
-    // Abrir WhatsApp (mobile ou desktop)
-    const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
-    openWhatsApp(whatsappUrl);
-    
-    toast({
-      title: "WhatsApp Aberto",
-      description: `Mensagem preparada para ${customerName}. Anexe o PDF manualmente.`,
-    });
+    // 💬 Criar conversa no Integra
+    try {
+      await apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: card?.customer?.phone || phone,
+        customerName: customerName
+      });
+      
+      toast({
+        title: "Sucesso",
+        description: "Conversa criada! Redirecionando...",
+      });
+      
+      setTimeout(() => {
+        navigate('/telemarketing/atendimento');
+      }, 500);
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Não foi possível criar a conversa",
+        variant: "destructive",
+      });
+    }
   };
 
   // Função para salvar produtos sem finalizar a venda

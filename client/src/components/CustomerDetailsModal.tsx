@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
+import { useLocation } from "wouter";
 import type { Customer, SalesCardWithRelations } from "@shared/schema";
 import { 
   User, 
@@ -40,6 +40,7 @@ interface CustomerDetailsModalProps {
 
 export default function CustomerDetailsModal({ isOpen, onClose, customer }: CustomerDetailsModalProps) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   
   const { data: salesHistory } = useQuery({
@@ -142,12 +143,24 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     createSalesCardMutation.mutate(customer.id);
   };
 
+  const createChatConversationMutation = useMutation({
+    mutationFn: async (data: { phone: string; customerName: string }) => {
+      return apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: data.phone,
+        customerName: data.customerName
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Sucesso", description: "Conversa criada! Redirecionando..." });
+      setTimeout(() => navigate('/telemarketing/atendimento'), 500);
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Não foi possível criar a conversa", variant: "destructive" });
+    }
+  });
+
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
-    const message = encodeURIComponent(
-      `Olá ${customerName}! Somos da Honest Sucos. Como está tudo? Gostaria de saber se precisa de algum produto hoje.`
-    );
-    const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    openWhatsApp(whatsappUrl);
+    createChatConversationMutation.mutate({ phone, customerName });
   };
 
   const openWaze = (latitude: string, longitude: string) => {

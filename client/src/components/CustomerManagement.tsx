@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
+import { useLocation } from "wouter";
 import CustomerModal from "./CustomerModal";
 import CustomerDetailsModal from "./CustomerDetailsModal";
 import OmieClientImport from "./OmieClientImport";
@@ -144,12 +144,26 @@ export default function CustomerManagement() {
     }
   };
 
+  const [, navigate] = useLocation();
+
+  const createChatConversationMutation = useMutation({
+    mutationFn: async (data: { phone: string; customerName: string }) => {
+      return apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: data.phone,
+        customerName: data.customerName
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Sucesso", description: "Conversa criada! Redirecionando..." });
+      setTimeout(() => navigate('/telemarketing/atendimento'), 500);
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Não foi possível criar a conversa", variant: "destructive" });
+    }
+  });
+
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
-    const message = encodeURIComponent(
-      `Olá ${customerName}! Somos da Honest Sucos. Como está tudo? Gostaria de saber se precisa de algum produto hoje.`
-    );
-    const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    openWhatsApp(whatsappUrl);
+    createChatConversationMutation.mutate({ phone, customerName });
   };
 
   const openWaze = (customer: any) => {

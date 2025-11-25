@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
-import { openWhatsApp } from "@/lib/utils";
+import { useLocation } from "wouter";
 import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2 } from "lucide-react";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
@@ -32,6 +32,7 @@ import NoSaleModal from "./NoSaleModal";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
+  const [, navigate] = useLocation();
   const [statusFilter, setStatusFilter] = useState('all');
   const [routeFilter, setRouteFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -282,12 +283,34 @@ export default function SalesCards() {
     });
   };
 
+  // 💬 Criar conversa no chat do Integra
+  const createChatConversationMutation = useMutation({
+    mutationFn: async (data: { phone: string; customerName: string }) => {
+      return apiRequest('/api/chat/conversations', 'POST', {
+        customerPhone: data.phone,
+        customerName: data.customerName
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Sucesso",
+        description: "Conversa criada! Redirecionando...",
+      });
+      setTimeout(() => {
+        navigate('/telemarketing/atendimento');
+      }, 500);
+    },
+    onError: () => {
+      toast({
+        title: "Erro",
+        description: "Não foi possível criar a conversa",
+        variant: "destructive",
+      });
+    }
+  });
+
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
-    const message = encodeURIComponent(
-      `Olá! Somos da Honest Sucos. Gostaria de agendar uma visita para apresentar nossos produtos frescos e naturais. Qual o melhor horário para você?`
-    );
-    const whatsappUrl = `https://wa.me/55${phone.replace(/\D/g, '')}?text=${message}`;
-    openWhatsApp(whatsappUrl);
+    createChatConversationMutation.mutate({ phone, customerName });
   };
 
   const handleSendToOmie = (card: SalesCardWithRelations) => {
