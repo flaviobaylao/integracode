@@ -2,8 +2,8 @@
 /**
  * Script CLI para gerar rotas setorizadas (regionalizadas) para entregas
  * 
- * Uso: tsx server/scripts/generate-sectorized-routes.ts [DATA]
- * Exemplo: tsx server/scripts/generate-sectorized-routes.ts 2025-11-26
+ * Uso: tsx server/scripts/generateSectorizedRoutes.ts [DATA]
+ * Exemplo: tsx server/scripts/generateSectorizedRoutes.ts 2025-11-26
  */
 
 import { db } from '../db';
@@ -20,7 +20,7 @@ async function main() {
     targetDate = new Date(args[0]);
     if (isNaN(targetDate.getTime())) {
       console.error(`❌ Data inválida: ${args[0]}`);
-      console.error(`Uso: tsx server/scripts/generate-sectorized-routes.ts [YYYY-MM-DD]`);
+      console.error(`Uso: tsx server/scripts/generateSectorizedRoutes.ts [YYYY-MM-DD]`);
       process.exit(1);
     }
   }

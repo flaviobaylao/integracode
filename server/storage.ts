@@ -4167,6 +4167,8 @@ export class DatabaseStorage implements IStorage {
         license_plate as "licensePlate",
         is_active as "isActive",
         current_location as "currentLocation",
+        home_latitude as "homeLatitude",
+        home_longitude as "homeLongitude",
         created_at as "createdAt",
         updated_at as "updatedAt"
       FROM delivery_drivers

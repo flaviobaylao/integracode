@@ -29,6 +29,7 @@
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard.
 - **Delivery & Route Optimization**:
     - **Route Generation**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, supporting both customers and leads.
+    - **Regional Sectorization (NEW)**: Intelligent route distribution system that divides deliveries into geographic sectors using K-means clustering algorithm, assigns sectors to vehicles based on constraints (exclusive vehicles, vehicle types, capacity), and optimizes each sector independently to maximize route compactness and minimize inter-vehicle region overlap.
     - **Features**: Visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, check-in/check-out, checkpoint distance tracking, and automatic check-out.
     - **Driver Interface**: "Rota do Dia" page with auto-refreshing visualization, metrics, interactive map, photo markers, and smart visit lists with inline check-in/check-out and location validation. Simplified mobile-friendly app (`/rota-entrega`) for drivers with restricted access, date filtering, delivery lists, summary statistics, GPS check-in/check-out with mandatory photo capture, and Waze navigation.
     - **Route Management**: Administrative users can manually add, delete, and optimize visits. Supports creation of empty routes for manual population.

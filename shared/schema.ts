@@ -505,6 +505,8 @@ export const deliveryDrivers = pgTable("delivery_drivers", {
   licensePlate: varchar("license_plate"),
   isActive: boolean("is_active").notNull().default(true),
   currentLocation: varchar("current_location"),
+  homeLatitude: decimal("home_latitude", { precision: 10, scale: 8 }), // Latitude da casa/base do motorista
+  homeLongitude: decimal("home_longitude", { precision: 11, scale: 8 }), // Longitude da casa/base do motorista
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

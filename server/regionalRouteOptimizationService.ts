@@ -271,7 +271,96 @@ function assignClustersToVehicles(
     if (bestVehicle) {
       assignment.get(bestVehicle.id)!.push(cluster);
     } else {
-      console.warn(`⚠️  Cluster ${cluster.id} não pôde ser atribuído a nenhum veículo!`);
+      // CRÍTICO: Cluster não pode ser atribuído respeitando restrições
+      console.error(`❌ CRÍTICO: Cluster ${cluster.id} não pôde ser atribuído a nenhum veículo!`);
+      console.error(`   Entregas no cluster: ${cluster.points.length}`);
+      const requiredTypes = [...new Set(cluster.points.flatMap(p => p.vehicleTypes))];
+      console.error(`   Tipos de veículo necessários: ${requiredTypes.join(', ') || 'qualquer'}`);
+      console.error(`   Veículos disponíveis: ${vehicles.map(v => `${v.driverName}(${v.vehicleType})`).join(', ')}`);
+      
+      // Tentar dividir cluster por tipo de veículo necessário
+      if (requiredTypes.length > 1) {
+        console.warn(`⚠️  Cluster ${cluster.id} tem entregas com tipos de veículo incompatíveis. Dividindo cluster...`);
+        
+        // Criar sub-clusters por tipo de veículo
+        const subClustersByType = new Map<string, DeliveryPoint[]>();
+        
+        for (const point of cluster.points) {
+          // Se ponto aceita qualquer veículo, colocar em sub-cluster especial
+          if (!point.vehicleTypes || point.vehicleTypes.length === 0) {
+            if (!subClustersByType.has('any')) {
+              subClustersByType.set('any', []);
+            }
+            subClustersByType.get('any')!.push(point);
+          } else {
+            // Agrupar por primeiro tipo de veículo aceito
+            const vehicleType = point.vehicleTypes[0];
+            if (!subClustersByType.has(vehicleType)) {
+              subClustersByType.set(vehicleType, []);
+            }
+            subClustersByType.get(vehicleType)!.push(point);
+          }
+        }
+        
+        // Tentar atribuir cada sub-cluster
+        let allSubClustersAssigned = true;
+        
+        for (const [vehicleType, points] of Array.from(subClustersByType.entries())) {
+          // Encontrar veículo compatível
+          const compatibleVehicles = vehicleType === 'any' 
+            ? vehicles
+            : vehicles.filter(v => v.vehicleType === vehicleType);
+          
+          if (compatibleVehicles.length === 0) {
+            console.error(`❌ Nenhum veículo ${vehicleType} disponível para ${points.length} entregas do sub-cluster`);
+            allSubClustersAssigned = false;
+            break;
+          }
+          
+          // Atribuir ao veículo compatível com menos carga
+          let bestSubVehicle: Vehicle | null = null;
+          let minLoad = Infinity;
+          
+          for (const vehicle of compatibleVehicles) {
+            const currentLoad = assignment.get(vehicle.id)?.reduce((sum, c) => sum + c.points.length, 0) || 0;
+            if (currentLoad < minLoad) {
+              minLoad = currentLoad;
+              bestSubVehicle = vehicle;
+            }
+          }
+          
+          if (bestSubVehicle) {
+            // Criar sub-cluster
+            const subCluster: Cluster = {
+              id: cluster.id + (subClustersByType.size > 1 ? `-${vehicleType}` : ''),
+              centroid: cluster.centroid,
+              points,
+              avgLatitude: cluster.avgLatitude,
+              avgLongitude: cluster.avgLongitude,
+              radius: cluster.radius
+            };
+            assignment.get(bestSubVehicle.id)!.push(subCluster);
+            console.warn(`   ✅ Sub-cluster ${vehicleType}: ${points.length} entregas → ${bestSubVehicle.driverName}`);
+          } else {
+            allSubClustersAssigned = false;
+            break;
+          }
+        }
+        
+        if (!allSubClustersAssigned) {
+          throw new Error(
+            `Não foi possível atribuir todas as entregas do cluster ${cluster.id} mesmo após divisão. ` +
+            `Verifique a disponibilidade de veículos dos tipos necessários.`
+          );
+        }
+      } else {
+        // Cluster homogêneo mas sem veículo compatível - FALHAR
+        throw new Error(
+          `Não foi possível atribuir cluster ${cluster.id} com ${cluster.points.length} entregas. ` +
+          `Tipo de veículo necessário: ${requiredTypes[0] || 'qualquer'}. ` +
+          `Nenhum veículo compatível disponível.`
+        );
+      }
     }
   }
   
@@ -318,11 +407,27 @@ export async function generateSectorizedRoutes(
   if (exclusive.length > 0) {
     console.log(`🎯 Processando entregas com veículo exclusivo...`);
     
+    // Validar TODAS as entregas exclusivas antes de processar
+    const invalidExclusiveDeliveries: DeliveryPoint[] = [];
+    for (const delivery of exclusive) {
+      if (!delivery.vehicleTypes || delivery.vehicleTypes.length === 0) {
+        console.error(`❌ Entrega exclusiva ${delivery.customerId} sem vehicleTypes definido!`);
+        invalidExclusiveDeliveries.push(delivery);
+      }
+    }
+    
+    if (invalidExclusiveDeliveries.length > 0) {
+      throw new Error(
+        `${invalidExclusiveDeliveries.length} entregas exclusivas sem tipo de veículo definido. ` +
+        `IDs: ${invalidExclusiveDeliveries.map(d => d.customerId).join(', ')}`
+      );
+    }
+    
     // Agrupar entregas exclusivas por tipo de veículo requerido
     const exclusiveByType = new Map<string, DeliveryPoint[]>();
     
     for (const delivery of exclusive) {
-      const vehicleType = delivery.vehicleTypes[0] || 'any';
+      const vehicleType = delivery.vehicleTypes[0]; // Já validamos que existe
       if (!exclusiveByType.has(vehicleType)) {
         exclusiveByType.set(vehicleType, []);
       }
@@ -330,13 +435,18 @@ export async function generateSectorizedRoutes(
     }
     
     // Atribuir a veículos compatíveis
+    const unassignedExclusiveDeliveries: DeliveryPoint[] = [];
+    
     for (const [vehicleType, deliveries] of Array.from(exclusiveByType.entries())) {
       const compatibleVehicles = availableVehicles.filter(v => 
-        vehicleType === 'any' || v.vehicleType === vehicleType
+        v.vehicleType === vehicleType
       );
       
       if (compatibleVehicles.length === 0) {
-        console.warn(`⚠️  Nenhum veículo ${vehicleType} disponível para ${deliveries.length} entregas exclusivas`);
+        console.error(
+          `❌ Nenhum veículo ${vehicleType} disponível para ${deliveries.length} entregas exclusivas!`
+        );
+        unassignedExclusiveDeliveries.push(...deliveries);
         continue;
       }
       
@@ -379,6 +489,16 @@ export async function generateSectorizedRoutes(
       });
       
       console.log(`   ✅ Rota exclusiva ${vehicleType}: ${deliveries.length} entregas, ${optimized.totalDistance.toFixed(2)}km`);
+    }
+    
+    // Se houver entregas exclusivas não atribuídas, falhar
+    if (unassignedExclusiveDeliveries.length > 0) {
+      throw new Error(
+        `Não foi possível atribuir ${unassignedExclusiveDeliveries.length} entregas exclusivas. ` +
+        `Verifique se há veículos dos tipos necessários disponíveis. ` +
+        `IDs não atribuídos: ${unassignedExclusiveDeliveries.map(d => d.customerId).slice(0, 5).join(', ')}` +
+        `${unassignedExclusiveDeliveries.length > 5 ? '...' : ''}`
+      );
     }
   }
   
@@ -448,6 +568,35 @@ export async function generateSectorizedRoutes(
         warnings
       });
       
+      // VALIDAÇÃO: Verificar que todas as entregas são compatíveis com o veículo
+      const incompatibleDeliveries = allPoints.filter(p => {
+        // Se entrega não especifica tipo, é compatível com qualquer veículo
+        if (!p.vehicleTypes || p.vehicleTypes.length === 0) return false;
+        // Verificar se tipo do veículo está nos tipos aceitos
+        return !p.vehicleTypes.includes(vehicle.vehicleType);
+      });
+      
+      if (incompatibleDeliveries.length > 0) {
+        throw new Error(
+          `ERRO: ${incompatibleDeliveries.length} entregas incompatíveis com veículo ${vehicle.driverName} (${vehicle.vehicleType}). ` +
+          `IDs: ${incompatibleDeliveries.map(d => d.customerId).slice(0, 5).join(', ')}. ` +
+          `Isto indica um erro na atribuição de clusters.`
+        );
+      }
+      
+      routes.push({
+        vehicleId: vehicle.id,
+        driverId: vehicle.driverId,
+        driverName: vehicle.driverName,
+        vehicleType: vehicle.vehicleType,
+        sector: assignedClusters[0], // Usar primeiro cluster como representativo
+        optimizedOrder: optimized.orderedPoints.map(p => p.id),
+        deliveryPoints: allPoints,
+        totalDistance: optimized.totalDistance,
+        totalDeliveries: allPoints.length,
+        warnings
+      });
+      
       console.log(`   ✅ ${vehicle.driverName} (${vehicle.vehicleType}): ${allPoints.length} entregas, ${optimized.totalDistance.toFixed(2)}km`);
       console.log(`      Setores: ${assignedClusters.map((c: Cluster) => `#${c.id} (${c.points.length})`).join(', ')}`);
     }
@@ -455,8 +604,20 @@ export async function generateSectorizedRoutes(
   
   console.log(`\n✅ === GERAÇÃO CONCLUÍDA ===`);
   console.log(`📊 Total de rotas geradas: ${routes.length}`);
-  console.log(`📦 Total de entregas: ${routes.reduce((sum, r) => sum + r.totalDeliveries, 0)}`);
-  console.log(`🛣️  Distância total estimada: ${routes.reduce((sum, r) => sum + r.totalDistance, 0).toFixed(2)}km\n`);
+  const totalDeliveriesInRoutes = routes.reduce((sum, r) => sum + r.totalDeliveries, 0);
+  console.log(`📦 Total de entregas: ${totalDeliveriesInRoutes}`);
+  console.log(`🛣️  Distância total estimada: ${routes.reduce((sum, r) => sum + r.totalDistance, 0).toFixed(2)}km`);
+  
+  // VALIDAÇÃO FINAL: Garantir que todas as entregas foram atribuídas
+  if (totalDeliveriesInRoutes < points.length) {
+    const missing = points.length - totalDeliveriesInRoutes;
+    throw new Error(
+      `ERRO CRÍTICO: ${missing} entregas não foram atribuídas a nenhuma rota! ` +
+      `Total esperado: ${points.length}, Total nas rotas: ${totalDeliveriesInRoutes}`
+    );
+  }
+  
+  console.log(`✅ Todas as ${points.length} entregas foram atribuídas com sucesso!\n`);
   
   return routes;
 }
@@ -479,18 +640,12 @@ export async function generateDailySectorizedRoutes(
     throw new Error('Nenhum motorista ativo encontrado');
   }
   
-  // Buscar usuários vendedores para obter coordenadas de casa
-  const sellers = await storage.getUsers();
-  const sellerMap = new Map(sellers.map((s: any) => [s.id, s]));
-  
-  // Montar veículos disponíveis
+  // Montar veículos disponíveis usando coordenadas direto da tabela deliveryDrivers
   const vehicles: Vehicle[] = drivers
     .filter(d => d.isActive)
     .map(d => {
-      // Buscar vendedor correspondente para pegar coordenadas
-      const seller: any = sellerMap.get(d.id);
-      
-      if (!seller || !seller.homeLatitude || !seller.homeLongitude) {
+      // Verificar se motorista tem coordenadas cadastradas
+      if (!d.homeLatitude || !d.homeLongitude) {
         console.warn(`⚠️  Motorista ${d.name} sem coordenadas de casa cadastradas`);
         return null;
       }
@@ -500,8 +655,8 @@ export async function generateDailySectorizedRoutes(
         driverId: d.id,
         driverName: d.name,
         vehicleType: (d.vehicleType || 'moto') as 'caminhao' | 'carro' | 'moto',
-        homeLatitude: parseFloat(seller.homeLatitude as any),
-        homeLongitude: parseFloat(seller.homeLongitude as any)
+        homeLatitude: parseFloat(d.homeLatitude as any),
+        homeLongitude: parseFloat(d.homeLongitude as any)
       };
     })
     .filter((v): v is Vehicle => v !== null);
