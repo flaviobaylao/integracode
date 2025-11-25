@@ -44,6 +44,17 @@ import {
 } from "@/components/ui/select";
 import { formatDeliveryDays } from "@shared/deliveryDaysCalculator";
 
+// Função para ordenar horários em ordem crescente (HH:MM)
+function sortTimeSlots(slots: string[]): string[] {
+  return [...slots].sort((a, b) => {
+    const [aHour, aMin] = a.split(':').map(Number);
+    const [bHour, bMin] = b.split(':').map(Number);
+    const aTotal = aHour * 60 + aMin;
+    const bTotal = bHour * 60 + bMin;
+    return aTotal - bTotal;
+  });
+}
+
 interface DeliveryOrder {
   id: string;
   invoiceNumber: string;
@@ -790,7 +801,7 @@ export default function DeliveryManagement() {
                               <div className="text-xs font-semibold text-amber-900 mb-1">⏰ Horários (Seg-Sex):</div>
                               <div className="text-sm font-bold text-amber-700">
                                 {order.deliveryTimeSlots?.length > 0
-                                  ? order.deliveryTimeSlots.join(', ')
+                                  ? sortTimeSlots(order.deliveryTimeSlots).join(', ')
                                   : <span className="text-gray-400">Não configurado</span>
                                 }
                               </div>
@@ -801,7 +812,7 @@ export default function DeliveryManagement() {
                               <div className="text-xs font-semibold text-purple-900 mb-1">⏰ Horários (Sábado):</div>
                               <div className="text-sm font-bold text-purple-700">
                                 {order.deliverySaturdayTimeSlots?.length > 0
-                                  ? order.deliverySaturdayTimeSlots.join(', ')
+                                  ? sortTimeSlots(order.deliverySaturdayTimeSlots).join(', ')
                                   : <span className="text-gray-400">Não configurado</span>
                                 }
                               </div>
