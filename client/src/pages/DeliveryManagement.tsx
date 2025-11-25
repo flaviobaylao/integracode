@@ -153,6 +153,8 @@ export default function DeliveryManagement() {
     receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
+    latitude: null as number | null,
+    longitude: null as number | null,
   });
 
   // Query para buscar usuário atual
@@ -316,6 +318,8 @@ export default function DeliveryManagement() {
       receivingWeekdays: order.receivingWeekdays || [],
       deliveryTimeSlots: order.deliveryTimeSlots || [],
       deliverySaturdayTimeSlots: order.deliverySaturdayTimeSlots || [],
+      latitude: order.customerLatitude ? parseFloat(String(order.customerLatitude)) : null,
+      longitude: order.customerLongitude ? parseFloat(String(order.customerLongitude)) : null,
     });
     setShowDeliveryConfig(true);
   };
@@ -644,8 +648,9 @@ export default function DeliveryManagement() {
                 return (
                   <div 
                     key={order.id} 
-                    className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`}
+                    className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`}
                     data-testid={`order-item-${order.id}`}
+                    onClick={() => handleOpenDeliveryConfig(order)}
                   >
                     <div className="flex items-start space-x-3">
                       <Checkbox
@@ -1433,6 +1438,47 @@ export default function DeliveryManagement() {
                     </Label>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Coordenadas GPS */}
+            <div className="space-y-3 border border-red-200 bg-red-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-red-600" />
+                <Label className="text-sm font-medium text-red-900">Coordenadas GPS</Label>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="latitude-input" className="text-xs font-medium">Latitude</Label>
+                  <Input
+                    id="latitude-input"
+                    type="number"
+                    step="0.000001"
+                    value={deliveryConfigForm.latitude ?? ''}
+                    onChange={(e) => setDeliveryConfigForm(prev => ({
+                      ...prev,
+                      latitude: e.target.value ? parseFloat(e.target.value) : null
+                    }))}
+                    placeholder="-16.719458"
+                    data-testid="input-latitude"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="longitude-input" className="text-xs font-medium">Longitude</Label>
+                  <Input
+                    id="longitude-input"
+                    type="number"
+                    step="0.000001"
+                    value={deliveryConfigForm.longitude ?? ''}
+                    onChange={(e) => setDeliveryConfigForm(prev => ({
+                      ...prev,
+                      longitude: e.target.value ? parseFloat(e.target.value) : null
+                    }))}
+                    placeholder="-49.299370"
+                    data-testid="input-longitude"
+                  />
+                </div>
               </div>
             </div>
           </div>
