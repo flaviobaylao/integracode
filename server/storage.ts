@@ -1,3 +1,4 @@
+import { calculateDeliveryDays } from '@shared/deliveryDaysCalculator';
 import {
   users,
   routes,
@@ -2631,6 +2632,13 @@ export class DatabaseStorage implements IStorage {
       const docNumeros = row.customerDocument ? row.customerDocument.replace(/\D/g, '') : '';
       const isCnpj = docNumeros.length === 14;
       
+      // Calcular dias de entrega automáticamente baseado no dia de rota (customerWeekdays)
+      // Se o dia de rota é SEX, os dias de entrega são SEG e TER (próximos 2 dias úteis)
+      let calculatedDeliveryDays: string[] = [];
+      if (row.customerWeekdays) {
+        calculatedDeliveryDays = calculateDeliveryDays(row.customerWeekdays) as string[];
+      }
+      
       return {
         id: row.id,
         invoiceNumber: row.invoiceNumber,
@@ -2655,7 +2663,7 @@ export class DatabaseStorage implements IStorage {
         paymentMethod: row.paymentMethod || '',
         operationType: row.operationType || '',
         receivingWeekdays: this.parseJsonField(row.receivingWeekdays, []),
-        deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
+        deliveryWeekdays: calculatedDeliveryDays.length > 0 ? calculatedDeliveryDays : this.parseJsonField(row.deliveryWeekdays, []),
         deliveryTimeSlots: this.parseJsonField(row.deliveryTimeSlots, []),
         deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, [])
       };
