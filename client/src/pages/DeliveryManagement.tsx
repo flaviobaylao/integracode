@@ -1213,8 +1213,8 @@ export default function DeliveryManagement() {
                                   <strong>Parada {stop.stopOrder}</strong><br />
                                   {stop.customerName}<br />
                                   <span className="text-xs text-gray-600">
-                                    ⏰ Check-in: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}<br />
-                                    Saída: {new Date(stop.estimatedDeparture).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                    ⏰ Check-in: {stop.estimatedArrival}<br />
+                                    Saída: {stop.estimatedDeparture}
                                   </span>
                                 </Popup>
                               </Marker>
@@ -1272,7 +1272,7 @@ export default function DeliveryManagement() {
                               <div className="text-sm text-muted-foreground">{stop.customerAddress}</div>
                               <div className="text-xs text-gray-600 mt-1">
                                 <Clock className="h-3 w-3 inline mr-1" />
-                                ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                ETA: {stop.estimatedArrival}
                                 {stopIdx > 0 && ` • +${stop.distanceFromPrevious.toFixed(1)} km`}
                               </div>
                             </div>
