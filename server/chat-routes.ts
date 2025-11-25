@@ -802,18 +802,105 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Diagnóstico do webhook - verificar status na Evolution API
+  // Diagnóstico COMPLETO - verificar status da instância e webhook
   app.get("/api/chat/webhook/debug", async (req, res) => {
     try {
-      const status = await evolutionAPIService.getWebhook(process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST');
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+      
+      // 1. Verificar configuração
+      const isConfigured = evolutionAPIService.isConfigured();
+      
+      // 2. Testar conexão com Evolution API
+      const connectionTest = await evolutionAPIService.testConnection();
+      
+      // 3. Buscar status da instância
+      const instanceStatus = await evolutionAPIService.getInstanceStatus(instanceName);
+      
+      // 4. Buscar status do webhook
+      const webhookStatus = await evolutionAPIService.getWebhook(instanceName);
+      
+      // 5. Determinar diagnóstico
+      let diagnostico = "PROBLEMAS IDENTIFICADOS:\n";
+      let problemas = [];
+      
+      if (!isConfigured) {
+        problemas.push("❌ Evolution API não configurada");
+      } else {
+        diagnostico += "✅ Evolution API configurada\n";
+      }
+      
+      if (!connectionTest.success) {
+        problemas.push(`❌ Conexão com Evolution API falhou: ${connectionTest.error}`);
+      } else {
+        diagnostico += "✅ Conexão com Evolution API OK\n";
+      }
+      
+      if (!instanceStatus.success) {
+        problemas.push(`❌ Status da instância indisponível: ${instanceStatus.error}`);
+      } else if (instanceStatus.status !== 'open') {
+        problemas.push(`❌ Instância não conectada (status: ${instanceStatus.status}). AÇÃO: Conectar ao WhatsApp usando QR Code`);
+      } else {
+        diagnostico += `✅ Instância ${instanceName} CONECTADA ao WhatsApp\n`;
+      }
+      
+      if (!webhookStatus.success) {
+        problemas.push(`❌ Webhook indisponível: ${webhookStatus.error}`);
+      } else if (webhookStatus.webhook?.enabled !== true) {
+        problemas.push("❌ Webhook não está ATIVO (disabled)");
+      } else {
+        diagnostico += "✅ Webhook ATIVO e pronto para receber mensagens\n";
+      }
+      
       res.json({
         success: true,
-        webhookStatus: status,
-        evolutionConfigured: evolutionAPIService.isConfigured(),
+        diagnostico,
+        problemas: problemas.length > 0 ? problemas : null,
+        detalhes: {
+          evolutionConfigured: isConfigured,
+          connectionOk: connectionTest.success,
+          instanceConnected: instanceStatus.status === 'open',
+          instanceStatus: instanceStatus.status,
+          webhookEnabled: webhookStatus.webhook?.enabled,
+          webhookUrl: webhookStatus.webhook?.url
+        },
         timestamp: new Date().toISOString()
       });
     } catch (error: any) {
       console.error('[WEBHOOK-DEBUG] Erro:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Endpoint para conectar instância ao WhatsApp (gerar QR Code)
+  app.get("/api/chat/webhook/connect", async (req, res) => {
+    try {
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+      console.log(`📱 [CONNECT] Gerando QR Code para instância ${instanceName}...`);
+      
+      const qrResult = await evolutionAPIService.getQRCode(instanceName);
+      
+      if (!qrResult.success) {
+        return res.status(400).json({ 
+          error: qrResult.error,
+          message: `Erro ao gerar QR Code: ${qrResult.error}`
+        });
+      }
+      
+      if (qrResult.alreadyConnected) {
+        return res.json({
+          connected: true,
+          message: 'Instância já está conectada ao WhatsApp'
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: 'QR Code gerado com sucesso',
+        qrcode: qrResult.qrcode,
+        instructions: 'Abra WhatsApp no seu celular, vá em Configurações > Aparelhos conectados > Conectar um aparelho e escaneie o QR Code'
+      });
+    } catch (error: any) {
+      console.error('[CONNECT] Erro:', error);
       res.status(500).json({ error: error.message });
     }
   });
