@@ -1564,14 +1564,9 @@ export const chatMessages = pgTable("chat_messages", {
   content: text("content").notNull(),
   messageType: chatMessageTypeEnum("message_type").notNull().default("text"),
   mediaUrl: text("media_url"),
-  mediaType: text("media_type"),
-  mediaSize: integer("media_size"),
-  mediaFilename: text("media_filename"),
-  latitude: decimal("latitude", { precision: 10, scale: 7 }),
-  longitude: decimal("longitude", { precision: 10, scale: 7 }),
-  locationName: text("location_name"),
-  timestamp: timestamp("timestamp").defaultNow(),
+  metadata: jsonb("metadata"),
   isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Chat Reports type enum
