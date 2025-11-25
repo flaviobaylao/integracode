@@ -478,7 +478,9 @@ export default function SalesSchedule() {
           <h1 className="text-3xl font-bold text-gray-900">Agenda de Vendas</h1>
           <p className="text-gray-600">Visualize e gerencie os cards de vendas por dia da semana</p>
         </div>
-        <div className="flex items-center space-x-2">
+        <BackToDashboardButton />
+      </div>
+      <div className="flex items-center space-x-2">
           {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
             <Button
               onClick={() => generateFutureCardsMutation.mutate()}

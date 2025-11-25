@@ -11,6 +11,7 @@ import { MapPin, Users, Pencil, AlertCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import type { Customer } from "@shared/schema";
 
 // Cores dos pins baseadas no dia da semana

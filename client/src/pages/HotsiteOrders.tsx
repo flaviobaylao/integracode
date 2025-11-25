@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail, Trash2, Send } from 'lucide-react';
+import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
