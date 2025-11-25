@@ -952,7 +952,7 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/conversations/stats", async (req, res) => {
     try {
       const conversations = await storage.getChatConversations();
-      const agents = await storage.getChatAgents?.() || [];
+      const agents = await storage.getChatAgents() || [];
       const messages: any[] = [];
 
       const activeConversations = conversations.filter(c => c.status !== 'resolved').length;
@@ -996,8 +996,8 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/conversations", async (req, res) => {
     try {
       const conversations = await storage.getChatConversations();
-      const agents = await storage.getChatAgents?.() || [];
-      const customers = await storage.getChatCustomers?.() || [];
+      const agents = await storage.getChatAgents() || [];
+      const customers = await storage.getChatCustomers() || [];
       const messages: any[] = [];
 
       // Enriquecer conversas com dados relacionados
@@ -1037,7 +1037,7 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/conversations/:conversationId/messages", async (req, res) => {
     try {
       const { conversationId } = req.params;
-      const messages = await storage.getChatMessages?.(conversationId) || [];
+      const messages = await storage.getChatMessages(conversationId) || [];
       res.json(messages);
     } catch (error: any) {
       console.error("[CHAT-MESSAGES] Erro:", error);
@@ -1048,7 +1048,7 @@ export function registerChatRoutes(app: Express): void {
   // GET /api/chat/agents - Lista de agentes
   app.get("/api/chat/agents", async (req, res) => {
     try {
-      const agents = await storage.getChatAgents?.() || [];
+      const agents = await storage.getChatAgents() || [];
       res.json(agents);
     } catch (error: any) {
       console.error("[CHAT-AGENTS] Erro:", error);
@@ -1085,9 +1085,11 @@ export function registerChatRoutes(app: Express): void {
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
 
       // Atualizar status da conversa para em-progresso
-      await storage.updateChatConversation?.(conversation.id, {
-        status: 'in-progress'
-      });
+      if (storage.updateChatConversation) {
+        await storage.updateChatConversation(conversation.id, {
+          status: 'in-progress'
+        });
+      }
 
       // 🔍 CORREÇÃO 2: Enviar para WhatsApp via Evolution API usando customerId
       try {
@@ -1137,7 +1139,7 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "agentId é obrigatório" });
       }
 
-      const updatedConv = await storage.updateChatConversation?.(conversationId, {
+      const updatedConv = await storage.updateChatConversation(conversationId, {
         agentId,
         status: 'assigned'
       });
@@ -1161,7 +1163,7 @@ export function registerChatRoutes(app: Express): void {
 
       const updateData: any = { status };
 
-      const updatedConv = await storage.updateChatConversation?.(conversationId, updateData);
+      const updatedConv = await storage.updateChatConversation(conversationId, updateData);
 
       res.json(updatedConv);
     } catch (error: any) {
@@ -1177,7 +1179,7 @@ export function registerChatRoutes(app: Express): void {
   // GET /api/chat/quick-templates - Lista de templates
   app.get("/api/chat/quick-templates", async (req, res) => {
     try {
-      const templates = await storage.getChatQuickMessages?.() || [];
+      const templates = await storage.getChatQuickMessages() || [];
       res.json(templates);
     } catch (error: any) {
       console.error("[CHAT-TEMPLATES] Erro:", error);
@@ -1195,7 +1197,7 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Título e conteúdo são obrigatórios" });
       }
 
-      const template = await storage.createChatQuickMessage?.({
+      const template = await storage.createChatQuickMessage({
         title,
         content,
         messageType: "text",
