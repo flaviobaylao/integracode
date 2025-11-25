@@ -150,6 +150,57 @@ export default function RotaEntrega() {
     },
   });
 
+  const pauseMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'em_pausa' });
+    },
+    onSuccess: () => {
+      toast({ title: "Entrega pausada" });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao pausar entrega",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const markDeliveredMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'efetuada' });
+    },
+    onSuccess: () => {
+      toast({ title: "Entrega marcada como efetuada" });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao marcar entrega",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const markReturnedMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'devolvida' });
+    },
+    onSuccess: () => {
+      toast({ title: "Entrega marcada como devolvida", variant: "destructive" });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao marcar como devolvida",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handlePhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -440,15 +491,39 @@ export default function RotaEntrega() {
                               </Button>
                             )}
                             {!isPending && !isCompleted && (
-                              <Button
-                                size="sm"
-                                variant="default"
-                                className="bg-green-600 hover:bg-green-700"
-                                onClick={() => handleCheckOut(delivery.id)}
-                                data-testid={`button-checkout-${delivery.id}`}
-                              >
-                                Check-out
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="bg-green-600 hover:bg-green-700"
+                                  onClick={() => handleCheckOut(delivery.id)}
+                                  data-testid={`button-checkout-${delivery.id}`}
+                                >
+                                  Check-out
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-yellow-600 border-yellow-600"
+                                  onClick={() => pauseMutation.mutate(delivery.id)}
+                                  disabled={pauseMutation.isPending}
+                                  data-testid={`button-pause-${delivery.id}`}
+                                >
+                                  ⏸️ Pausar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => markReturnedMutation.mutate(delivery.id)}
+                                  disabled={markReturnedMutation.isPending}
+                                  data-testid={`button-returned-${delivery.id}`}
+                                >
+                                  ❌ DEVOLVIDO
+                                </Button>
+                              </>
+                            )}
+                            {isCompleted && (
+                              <Badge className="bg-green-500">✅ Efetuada</Badge>
                             )}
                           </>
                         )}
