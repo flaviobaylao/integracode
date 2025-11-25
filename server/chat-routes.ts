@@ -20,6 +20,17 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
+// 🔧 FUNÇÃO DE NORMALIZAÇÃO DE TELEFONE - ÚNICA FONTE DE VERDADE
+function normalizePhoneNumber(phone: string): string {
+  if (!phone) return '';
+  // Remove tudo que não é dígito
+  const digitsOnly = phone.replace(/\D/g, '');
+  // Remove leading 55 se houver, pega os últimos 11 dígitos
+  const withoutCountry = digitsOnly.slice(-11);
+  // Retorna no formato 55 + 11 dígitos
+  return `55${withoutCountry}`;
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for file uploads
   const uploadDir = path.join(process.cwd(), "uploads", "chat");
@@ -731,9 +742,8 @@ export function registerChatRoutes(app: Express): void {
           console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
 
           try {
-            // Extrair número de telefone limpo
-            const phoneClean = remoteJid?.replace(/\D/g, '').slice(-11) || '';
-            const phoneFormatted = `55${phoneClean}`;
+            // 🔧 Normalizar telefone usando função centralizada
+            const phoneFormatted = normalizePhoneNumber(remoteJid || '');
 
             console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
 
@@ -1098,10 +1108,11 @@ export function registerChatRoutes(app: Express): void {
           if (chatCustomer?.phone) {
             const config = evolutionAPIService.getConfig();
             if (config?.instanceName) {
-              // Formatar phone número para WhatsApp (adicionar @s.whatsapp.net se necessário)
-              const phoneFormatted = chatCustomer.phone.includes('@') 
-                ? chatCustomer.phone 
-                : `${chatCustomer.phone.replace(/\D/g, '')}@s.whatsapp.net`;
+              // 🔧 Normalizar telefone usando função centralizada
+              const phoneNormalized = normalizePhoneNumber(chatCustomer.phone);
+              const phoneFormatted = phoneNormalized.includes('@') 
+                ? phoneNormalized 
+                : `${phoneNormalized}@s.whatsapp.net`;
               
               console.log(`📤 [SEND-WHATSAPP] Enviando para ${phoneFormatted}: ${content.substring(0, 50)}`);
               const sendResult = await evolutionAPIService.sendTextMessage(
