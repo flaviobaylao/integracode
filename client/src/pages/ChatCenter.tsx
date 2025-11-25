@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +51,9 @@ export default function ChatCenter() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
   const [assignedAgent, setAssignedAgent] = useState<string>("");
+  const [showNewConversation, setShowNewConversation] = useState(false);
+  const [newPhoneNumber, setNewPhoneNumber] = useState("");
+  const [newCustomerName, setNewCustomerName] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Fetch conversations
@@ -132,6 +136,31 @@ export default function ChatCenter() {
     }
   });
 
+  // Mutation para iniciar nova conversa
+  const startConversationMutation = useMutation({
+    mutationFn: async ({ phoneNumber, customerName }: { phoneNumber: string; customerName: string }) => {
+      return fetch(`/api/chat/conversations/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          customerPhone: phoneNumber.replace(/\D/g, ''),
+          customerName: customerName || `Cliente ${phoneNumber}`
+        })
+      }).then(r => r.json());
+    },
+    onSuccess: (data) => {
+      toast({ title: "Sucesso", description: "Conversa iniciada com sucesso" });
+      setShowNewConversation(false);
+      setNewPhoneNumber("");
+      setNewCustomerName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations"] });
+      if (data.id) setSelectedConversation(data.id);
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Erro ao iniciar conversa", variant: "destructive" });
+    }
+  });
+
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
 
   useEffect(() => {
@@ -176,8 +205,20 @@ export default function ChatCenter() {
           <div className="lg:col-span-1">
             <Card className="h-full">
               <CardHeader>
-                <CardTitle className="text-lg">Conversas</CardTitle>
-                <CardDescription>{conversations.length} conversas</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg">Conversas</CardTitle>
+                    <CardDescription>{conversations.length} conversas</CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowNewConversation(true)}
+                    className="bg-green-600 hover:bg-green-700"
+                    data-testid="button-new-conversation"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-96">
@@ -388,6 +429,65 @@ export default function ChatCenter() {
             )}
           </div>
         </div>
+
+        {/* Dialog para iniciar nova conversa */}
+        <Dialog open={showNewConversation} onOpenChange={setShowNewConversation}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Iniciar Nova Conversa</DialogTitle>
+              <DialogDescription>Insira o número telefônico e o nome do cliente para iniciar uma nova conversa</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Número Telefônico</label>
+                <Input
+                  placeholder="+55 62 9 9578-2812"
+                  value={newPhoneNumber}
+                  onChange={(e) => setNewPhoneNumber(e.target.value)}
+                  data-testid="input-phone-number"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Nome do Cliente (opcional)</label>
+                <Input
+                  placeholder="Ex: João Silva"
+                  value={newCustomerName}
+                  onChange={(e) => setNewCustomerName(e.target.value)}
+                  data-testid="input-customer-name"
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowNewConversation(false);
+                    setNewPhoneNumber("");
+                    setNewCustomerName("");
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!newPhoneNumber.trim()) {
+                      toast({ title: "Erro", description: "Insira um número telefônico", variant: "destructive" });
+                      return;
+                    }
+                    startConversationMutation.mutate({ 
+                      phoneNumber: newPhoneNumber, 
+                      customerName: newCustomerName 
+                    });
+                  }}
+                  disabled={startConversationMutation.isPending || !newPhoneNumber.trim()}
+                  className="bg-green-600 hover:bg-green-700"
+                  data-testid="button-start-conversation"
+                >
+                  {startConversationMutation.isPending ? "Iniciando..." : "Iniciar"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
