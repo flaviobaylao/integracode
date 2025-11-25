@@ -1,6 +1,7 @@
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function BankAccountsDebug() {
   const { data: accounts, isLoading } = useQuery({
@@ -16,7 +17,11 @@ export default function BankAccountsDebug() {
   }
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Contas Correntes do Omie</h1>
+        <BackToDashboardButton />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>Contas Correntes do Omie</CardTitle>

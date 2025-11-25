@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw, FileText, AlertCircle } from "lucide-react";
 import { useState } from "react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface InvoiceData {
   [key: string]: any;

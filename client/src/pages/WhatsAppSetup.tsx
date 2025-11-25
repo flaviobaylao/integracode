@@ -10,6 +10,7 @@ import { QrCode, CheckCircle, XCircle, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/hooks/useAuth";
 import Layout from "@/components/Layout";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 function WhatsAppSetupContent() {
   const { toast } = useToast();
@@ -67,9 +68,12 @@ function WhatsAppSetupContent() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-green-50">
       <div className="max-w-4xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Configuração WhatsApp</h1>
-          <p className="text-slate-600 mt-1">Configure sua conexão com WhatsApp Business via Evolution API</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Configuração WhatsApp</h1>
+            <p className="text-slate-600 mt-1">Configure sua conexão com WhatsApp Business via Evolution API</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         <Card>
