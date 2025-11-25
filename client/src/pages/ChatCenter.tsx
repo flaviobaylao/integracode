@@ -440,12 +440,17 @@ export default function ChatCenter() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Número Telefônico</label>
-                <Input
-                  placeholder="+55 62 9 9578-2812"
-                  value={newPhoneNumber}
-                  onChange={(e) => setNewPhoneNumber(e.target.value)}
-                  data-testid="input-phone-number"
-                />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-600 px-3 py-2 bg-gray-100 rounded">+55</span>
+                  <Input
+                    placeholder="62 9 9578-2812"
+                    value={newPhoneNumber}
+                    onChange={(e) => setNewPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                    maxLength="11"
+                    data-testid="input-phone-number"
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">DDD (2 dígitos) + Telefone (8-9 dígitos)</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Nome do Cliente (opcional)</label>
@@ -469,16 +474,16 @@ export default function ChatCenter() {
                 </Button>
                 <Button
                   onClick={() => {
-                    if (!newPhoneNumber.length) {
-                      toast({ title: "Erro", description: "Insira um número telefônico", variant: "destructive" });
+                    if (!newPhoneNumber.length || newPhoneNumber.length < 10) {
+                      toast({ title: "Erro", description: "Insira um DDD válido (2 dígitos) e telefone (8-9 dígitos)", variant: "destructive" });
                       return;
                     }
                     startConversationMutation.mutate({ 
-                      phoneNumber: newPhoneNumber, 
+                      phoneNumber: `+55${newPhoneNumber}`, 
                       customerName: newCustomerName 
                     });
                   }}
-                  disabled={startConversationMutation.isPending}
+                  disabled={startConversationMutation.isPending || newPhoneNumber.length < 10}
                   className="bg-green-600 hover:bg-green-700"
                   data-testid="button-start-conversation"
                 >
