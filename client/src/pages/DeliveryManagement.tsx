@@ -1201,8 +1201,8 @@ export default function DeliveryManagement() {
                 {routePlan.routes.map((route, idx) => (
                   <Card key={idx} data-testid={`route-result-${idx}`}>
                     <CardHeader>
-                      <CardTitle className="flex items-center justify-between">
-                        <span className="flex items-center">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="flex items-center">
                           <Truck className="h-5 w-5 mr-2" />
                           Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
                           {route.driverName && (
@@ -1210,28 +1210,24 @@ export default function DeliveryManagement() {
                               {route.driverName}
                             </Badge>
                           )}
-                        </span>
-                        <div className="text-sm font-normal text-muted-foreground">
-                          {route.stops.length} paradas • {route.totalDistance.toFixed(1)} km • ~{Math.round(route.totalDuration)} min
-                        </div>
-                      </CardTitle>
+                        </CardTitle>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSelectRoute(route, idx)}
+                          data-testid={`button-add-orders-route-${idx}`}
+                        >
+                          ➕ Adicionar Pedidos
+                        </Button>
+                      </div>
+                      <div className="text-sm font-normal text-muted-foreground mt-2">
+                        {route.stops.length} paradas • {route.totalDistance.toFixed(1)} km • ~{Math.round(route.totalDuration)} min
+                      </div>
                     </CardHeader>
                     <CardContent>
-                      <div className="flex items-center justify-between mb-4 pb-4 border-b">
-                        <div className="text-sm text-muted-foreground">
-                          <MapPin className="h-4 w-4 inline mr-1" />
-                          Partida: {route.startAddress}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSelectRoute(route, idx)}
-                            data-testid={`button-add-orders-route-${idx}`}
-                          >
-                            ➕ Adicionar Pedidos
-                          </Button>
-                        </div>
+                      <div className="text-sm text-muted-foreground mb-4">
+                        <MapPin className="h-4 w-4 inline mr-1" />
+                        Partida: {route.startAddress}
                       </div>
                       
                       {/* Mapa da Rota */}
