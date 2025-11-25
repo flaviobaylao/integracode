@@ -243,7 +243,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       : 'http://localhost:5000/api/chat/webhook/messages';
 
     try {
-      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, ['messages.upsert']);
+      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, ['MESSAGES_UPSERT']);
       if (webhookResult.success) {
         console.log('✅ Webhook configurado com sucesso para receber mensagens');
       } else {
