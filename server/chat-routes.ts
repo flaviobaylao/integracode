@@ -719,7 +719,7 @@ export function registerChatRoutes(app: Express): void {
       // RESPONDER IMEDIATAMENTE com 200 OK
       res.status(200).json({ success: true, message: 'Webhook recebido' });
 
-      if (event === 'MESSAGES_UPSERT' && data) {
+      if ((event === 'MESSAGES_UPSERT' || event === 'messages.upsert') && data) {
         const message = data;
         const remoteJid = message.key?.remoteJid;
         const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
@@ -1007,9 +1007,15 @@ export function registerChatRoutes(app: Express): void {
           if (customer?.phone) {
             const config = evolutionAPIService.getConfig();
             if (config?.instanceName) {
+              // Formatar phone número para WhatsApp (adicionar @s.whatsapp.net se necessário)
+              const phoneFormatted = customer.phone.includes('@') 
+                ? customer.phone 
+                : `${customer.phone.replace(/\D/g, '')}@s.whatsapp.net`;
+              
+              console.log(`📤 [SEND-WHATSAPP] Enviando mensagem para ${phoneFormatted}`);
               await evolutionAPIService.sendTextMessage(
                 config.instanceName,
-                customer.phone,
+                phoneFormatted,
                 content
               );
             }
