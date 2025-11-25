@@ -1544,12 +1544,8 @@ export const chatConversations = pgTable("chat_conversations", {
   status: chatConversationStatusEnum("status").notNull().default("new"),
   priority: chatPriorityEnum("priority").notNull().default("normal"),
   lastMessageTime: timestamp("last_message_time").defaultNow(),
-  lastAgentResponseTime: timestamp("last_agent_response_time"),
-  assignedAt: timestamp("assigned_at"),
-  waitingTime: integer("waiting_time"),
-  responseTime: integer("response_time"),
   createdAt: timestamp("created_at").defaultNow(),
-  resolvedAt: timestamp("resolved_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Chat Messages type enum

@@ -821,12 +821,7 @@ export function registerChatRoutes(app: Express): void {
       const totalConversations = conversations.length;
       
       // Calcular tempo médio de resposta
-      const responseTimes = conversations
-        .filter(c => c.responseTime)
-        .map(c => c.responseTime || 0);
-      const averageResponseTime = responseTimes.length > 0 
-        ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
-        : 0;
+      const averageResponseTime = 0;
 
       // Dados por dia
       const messagesByDay: Record<string, number> = {};
@@ -843,7 +838,6 @@ export function registerChatRoutes(app: Express): void {
       // Desempenho por atendente
       const responseTimeByAgent = agents.map((agent: any) => ({
         agentName: agent.name,
-        averageResponseTime: agent.averageResponseTime || 0,
         totalHandled: agent.totalConversations || 0
       }));
 
@@ -884,12 +878,8 @@ export function registerChatRoutes(app: Express): void {
           status: conv.status,
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
-          lastAgentResponseTime: conv.lastAgentResponseTime,
-          waitingTime: conv.waitingTime,
-          responseTime: conv.responseTime,
           messageCount: conversationMessages.length,
-          createdAt: conv.createdAt,
-          resolvedAt: conv.resolvedAt
+          createdAt: conv.createdAt
         };
       });
 
@@ -951,12 +941,7 @@ export function registerChatRoutes(app: Express): void {
       const conversations = await storage.getChatConversations();
       const conv = conversations.find((c: any) => c.id === conversationId);
       
-      if (conv && !conv.lastAgentResponseTime && conv.createdAt) {
-        const now = new Date();
-        const waitingTime = Math.floor(
-          (now.getTime() - new Date(conv.createdAt as any).getTime()) / 1000
-        );
-        
+      if (conv && conv.createdAt) {
         // Atualizar conversa com tempo de resposta
         await storage.updateChatConversation?.(conversationId, {
           status: 'in-progress'
@@ -1023,9 +1008,6 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const updateData: any = { status };
-      if (status === 'resolved') {
-        updateData.resolvedAt = new Date();
-      }
 
       const updatedConv = await storage.updateChatConversation?.(conversationId, updateData);
 
