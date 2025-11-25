@@ -642,7 +642,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   // Função para enviar PDF via WhatsApp
-  const sendPDFToWhatsApp = () => {
+  const sendPDFToWhatsApp = async () => {
     if (!card?.customer?.phone && !customerPhone) {
       toast({
         title: "Erro",

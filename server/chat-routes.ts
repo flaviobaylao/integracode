@@ -1410,5 +1410,95 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/sync-history - Sincronizar histórico de chats do WhatsApp
+  app.post("/api/chat/sync-history", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log("🔄 Iniciando sincronização de histórico de chats do WhatsApp...");
+      
+      // Buscar todas as conversas do WhatsApp
+      const allChatsResult = await evolutionAPIService.fetchAllChats('CHAT_HONEST');
+      
+      if (!allChatsResult.success || !allChatsResult.chats) {
+        return res.status(400).json({ 
+          error: allChatsResult.error || 'Erro ao buscar conversas do WhatsApp',
+          success: false 
+        });
+      }
+
+      const chats = allChatsResult.chats;
+      console.log(`📊 Total de conversas encontradas: ${chats.length}`);
+      
+      let totalMessages = 0;
+      let successCount = 0;
+      let errorCount = 0;
+      const results: any[] = [];
+
+      // Para cada chat, buscar histórico e sincronizar
+      for (const chat of chats) {
+        try {
+          const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
+          const contactName = chat.name || contactPhone;
+          
+          console.log(`📱 Sincronizando chat: ${contactName} (${contactPhone})`);
+          
+          // Buscar histórico de mensagens
+          const historyResult = await evolutionAPIService.fetchChatHistory('CHAT_HONEST', contactPhone, 500);
+          
+          if (historyResult.success && historyResult.messages) {
+            // Sincronizar no banco de dados
+            const syncResult = await storage.syncChatHistory(
+              normalizePhoneNumber(contactPhone),
+              contactName,
+              historyResult.messages
+            );
+            
+            console.log(`✅ Chat sincronizado: ${contactName} - ${syncResult.messageCount} mensagens importadas`);
+            
+            results.push({
+              phone: normalizePhoneNumber(contactPhone),
+              name: contactName,
+              messagesImported: syncResult.messageCount,
+              status: 'success'
+            });
+            
+            totalMessages += syncResult.messageCount;
+            successCount++;
+          } else {
+            console.warn(`⚠️  Erro ao buscar histórico de ${contactName}`);
+            results.push({
+              phone: normalizePhoneNumber(contactPhone),
+              name: contactName,
+              status: 'error',
+              error: historyResult.error
+            });
+            errorCount++;
+          }
+        } catch (chatError: any) {
+          console.error(`❌ Erro ao processar chat:`, chatError);
+          errorCount++;
+        }
+      }
+
+      console.log(`🎉 Sincronização concluída: ${successCount} conversas, ${totalMessages} mensagens importadas`);
+      
+      res.json({
+        success: true,
+        summary: {
+          totalChats: chats.length,
+          successCount,
+          errorCount,
+          totalMessagesImported: totalMessages
+        },
+        details: results
+      });
+    } catch (error: any) {
+      console.error("[CHAT-SYNC-HISTORY] Erro:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro ao sincronizar histórico", 
+        success: false 
+      });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }

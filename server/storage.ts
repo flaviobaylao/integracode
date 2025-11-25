@@ -5395,6 +5395,90 @@ export class DatabaseStorage implements IStorage {
   async getKnowledgeBase(): Promise<KnowledgeBase[]> {
     return await db.select().from(knowledgeBase).where(eq(knowledgeBase.isActive, true)).orderBy(desc(knowledgeBase.createdAt));
   }
+
+  // Sync chat history from Evolution API
+  async syncChatHistory(
+    customerPhone: string,
+    customerName: string,
+    messages: any[]
+  ): Promise<{ conversationId: string; messageCount: number }> {
+    // Get or create chat customer
+    let chatCustomer = await db
+      .select()
+      .from(chatCustomers)
+      .where(eq(chatCustomers.phone, customerPhone))
+      .limit(1)
+      .then(rows => rows[0]);
+
+    if (!chatCustomer) {
+      const [newCustomer] = await db
+        .insert(chatCustomers)
+        .values({
+          phone: customerPhone,
+          name: customerName,
+          isActive: true
+        })
+        .returning();
+      chatCustomer = newCustomer;
+    }
+
+    // Get or create conversation
+    let conversation = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.chatCustomerId, chatCustomer.id))
+      .limit(1)
+      .then(rows => rows[0]);
+
+    if (!conversation) {
+      const [newConversation] = await db
+        .insert(chatConversations)
+        .values({
+          chatCustomerId: chatCustomer.id,
+          status: 'active',
+          lastMessageAt: new Date(),
+          isRead: false
+        })
+        .returning();
+      conversation = newConversation;
+    }
+
+    // Insert messages (avoid duplicates by messageId)
+    let messageCount = 0;
+    for (const msg of messages) {
+      try {
+        const existingMsg = await db
+          .select()
+          .from(chatMessages)
+          .where(eq(chatMessages.messageId, msg.key?.id || `msg-${Date.now()}`))
+          .limit(1)
+          .then(rows => rows[0]);
+
+        if (!existingMsg) {
+          const isFromMe = msg.key?.fromMe || false;
+          const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[Mensagem de mídia]';
+          
+          await db.insert(chatMessages).values({
+            conversationId: conversation.id,
+            content: text,
+            messageId: msg.key?.id || `msg-${Date.now()}`,
+            senderPhone: isFromMe ? 'honest_sucos' : customerPhone,
+            isRead: true, // Mark old messages as read
+            messageType: 'text',
+            createdAt: new Date(msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now())
+          });
+          messageCount++;
+        }
+      } catch (error) {
+        console.error('Erro ao inserir mensagem de sincronização:', error);
+      }
+    }
+
+    return {
+      conversationId: conversation.id,
+      messageCount
+    };
+  }
 }
 
 export const storage = new DatabaseStorage();
