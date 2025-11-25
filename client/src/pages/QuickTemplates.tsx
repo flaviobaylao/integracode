@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { queryClient } from "@/lib/queryClient";
 import { Plus, Trash2, Edit2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface QuickTemplate {
   id: string;
@@ -75,9 +76,12 @@ export default function QuickTemplates() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Templates de Resposta Rápida</h1>
-          <p className="text-gray-600">Crie respostas padrão para agilizar o atendimento</p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Templates de Resposta Rápida</h1>
+            <p className="text-gray-600">Crie respostas padrão para agilizar o atendimento</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

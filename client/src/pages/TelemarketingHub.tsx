@@ -2,6 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { MessageCircle, BarChart3, Settings, FileText } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function TelemarketingHub() {
   const modules = [
@@ -43,9 +44,12 @@ export default function TelemarketingHub() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-3">Central de Telemarketing</h1>
-          <p className="text-xl text-gray-600">Gerencie conversas, acompanhe métricas e otimize seu atendimento</p>
+        <div className="mb-12 flex items-center justify-between">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-3">Central de Telemarketing</h1>
+            <p className="text-xl text-gray-600">Gerencie conversas, acompanhe métricas e otimize seu atendimento</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         {/* Main Modules Grid */}

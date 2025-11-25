@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
 import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home } from 'lucide-react';
+import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Select,
   SelectContent,
