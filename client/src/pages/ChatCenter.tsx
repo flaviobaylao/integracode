@@ -65,8 +65,13 @@ export default function ChatCenter() {
 
   // Fetch messages para a conversa selecionada
   const { data: messagesData, isLoading: messagesLoading } = useQuery({
-    queryKey: ["/api/chat/conversations/messages", selectedConversation],
+    queryKey: ["/api/chat/conversations", selectedConversation, "messages"],
     enabled: !!selectedConversation,
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/conversations/${selectedConversation}/messages`);
+      if (!response.ok) throw new Error("Falha ao buscar mensagens");
+      return response.json();
+    }
   });
   const messages = (messagesData as ChatMessage[]) || [];
 
@@ -98,7 +103,7 @@ export default function ChatCenter() {
     },
     onSuccess: () => {
       setMessageText("");
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations/messages", selectedConversation] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
     },
     onError: () => {
       toast({ title: "Erro", description: "Não foi possível enviar a mensagem", variant: "destructive" });
