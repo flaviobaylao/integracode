@@ -732,5 +732,104 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ============================================================
+  // ENDPOINTS PARA GESTÃO DE CONVERSAS
+  // ============================================================
+
+  // GET /api/chat/conversations/stats - Estatísticas gerais de conversas
+  app.get("/api/chat/conversations/stats", async (req, res) => {
+    try {
+      const conversations = await storage.getChatConversations();
+      const agents = await storage.getChatAgents?.() || [];
+      const messages = await storage.getChatMessages?.() || [];
+
+      const activeConversations = conversations.filter(c => c.status !== 'resolved').length;
+      const totalConversations = conversations.length;
+      
+      // Calcular tempo médio de resposta
+      const responseTimes = conversations
+        .filter(c => c.responseTime)
+        .map(c => c.responseTime || 0);
+      const averageResponseTime = responseTimes.length > 0 
+        ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+        : 0;
+
+      // Dados por dia
+      const messagesByDay: Record<string, number> = {};
+      messages.forEach((msg: any) => {
+        const date = new Date(msg.timestamp || msg.createdAt).toISOString().split('T')[0];
+        messagesByDay[date] = (messagesByDay[date] || 0) + 1;
+      });
+
+      const totalMessagesPerDay = Object.entries(messagesByDay)
+        .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+        .map(([date, count]) => ({ date, count }))
+        .slice(-30); // Últimos 30 dias
+
+      // Desempenho por atendente
+      const responseTimeByAgent = agents.map((agent: any) => ({
+        agentName: agent.name,
+        averageResponseTime: agent.averageResponseTime || 0,
+        totalHandled: agent.totalConversations || 0
+      }));
+
+      res.json({
+        totalConversations,
+        activeConversations,
+        averageResponseTime,
+        totalMessagesPerDay,
+        responseTimeByAgent
+      });
+    } catch (error: any) {
+      console.error("[CHAT-STATS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar estatísticas" });
+    }
+  });
+
+  // GET /api/chat/conversations - Lista de conversas com filtros
+  app.get("/api/chat/conversations", async (req, res) => {
+    try {
+      const conversations = await storage.getChatConversations();
+      const agents = await storage.getChatAgents?.() || [];
+      const customers = await storage.getChatCustomers?.() || [];
+      const messages = await storage.getChatMessages?.() || [];
+
+      // Enriquecer conversas com dados relacionados
+      const enrichedConversations = conversations.map((conv: any) => {
+        const agent = agents.find(a => a.id === conv.agentId);
+        const customer = customers.find(c => c.id === conv.customerId);
+        const conversationMessages = messages.filter((m: any) => m.conversationId === conv.id);
+        
+        return {
+          id: conv.id,
+          customerId: conv.customerId,
+          customerName: customer?.name || "Desconhecido",
+          customerPhone: customer?.phone || "-",
+          agentId: conv.agentId,
+          agentName: agent?.name,
+          status: conv.status,
+          priority: conv.priority,
+          lastMessageTime: conv.lastMessageTime,
+          lastAgentResponseTime: conv.lastAgentResponseTime,
+          waitingTime: conv.waitingTime,
+          responseTime: conv.responseTime,
+          messageCount: conversationMessages.length,
+          createdAt: conv.createdAt,
+          resolvedAt: conv.resolvedAt
+        };
+      });
+
+      // Ordenar por última mensagem (mais recentes primeiro)
+      enrichedConversations.sort((a: any, b: any) => 
+        new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+      );
+
+      res.json(enrichedConversations);
+    } catch (error: any) {
+      console.error("[CHAT-CONVERSATIONS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar conversas" });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
