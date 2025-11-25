@@ -698,23 +698,28 @@ export class DatabaseStorage implements IStorage {
   async bulkUpdateAllCustomersTimeSlots(): Promise<{ updated: number; total: number }> {
     // Horários padrão: segunda-sexta 08:00-18:00
     const weekdaySlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    // Dias de recebimento: segunda a sexta
+    const receivingDays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
     
     // Buscar todos os clientes
     const allCustomers = await db.select().from(customers);
     const total = allCustomers.length;
     
-    // Atualizar todos com os novos horários
+    // Atualizar todos com os novos horários e dias de recebimento
     const result = await db
       .update(customers)
       .set({
-        deliveryTimeSlots: weekdaySlots, // Seg-Sex
+        deliveryTimeSlots: weekdaySlots, // Seg-Sex 08:00-18:00
         deliverySaturdayTimeSlots: [], // Vazio para sábado
+        receivingWeekdays: receivingDays, // Segunda-Sexta
         updatedAt: new Date()
       })
       .returning({ id: customers.id });
     
     const updated = result.length;
-    console.log(`✅ [BULK-UPDATE-TIME-SLOTS] Atualizados ${updated} de ${total} clientes com horários padrão (Seg-Sex 08:00-18:00)`);
+    console.log(`✅ [BULK-UPDATE-TIME-SLOTS] Atualizados ${updated} de ${total} clientes com:`);
+    console.log(`   - Horários (Seg-Sex): 08:00 a 18:00 (${weekdaySlots.length} slots)`);
+    console.log(`   - Dias de recebimento: ${receivingDays.join(', ')}`);
     
     return { updated, total };
   }
