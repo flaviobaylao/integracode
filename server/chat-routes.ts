@@ -241,38 +241,12 @@ export function registerChatRoutes(app: Express): void {
         priority: "normal"
       });
 
-      // Send greeting message via WhatsApp
-      const greetingMessage = `Olá ${customerName || 'Cliente'}! 👋\n\nBem-vindo ao atendimento da Honest Sucos. Como posso ajudá-lo?`;
-      
-      const sendResult = await evolutionAPIService.sendTextMessage(
-        config.instanceName,
-        customerPhone,
-        greetingMessage
-      );
-
-      if (sendResult.success) {
-        // Log the message to conversation
-        await storage.createChatMessage({
-          conversationId: conversation.id,
-          senderId: "system",
-          senderType: "system",
-          content: greetingMessage,
-          messageType: "text"
-        }).catch(() => null);
-
-        // Update conversation status (lastMessageTime is auto-updated)
-        await storage.updateChatConversation(conversation.id, {
-          status: 'new'
-        });
-      }
-
       res.json({
         id: conversation.id,
         customerId: createdCustomer.id,
         phoneNumber: customerPhone,
         customerName: customerName || `Cliente ${customerPhone}`,
-        status: "new",
-        messageSent: sendResult.success
+        status: "new"
       });
     } catch (error: any) {
       console.error("[CHAT] Start conversation error:", error);
