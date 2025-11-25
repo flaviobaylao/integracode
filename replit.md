@@ -29,7 +29,14 @@
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard.
 - **Delivery & Route Optimization**:
     - **Route Generation**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, supporting both customers and leads.
-    - **Regional Sectorization (NEW)**: Intelligent route distribution system that divides deliveries into geographic sectors using K-means clustering algorithm, assigns sectors to vehicles based on constraints (exclusive vehicles, vehicle types, capacity), and optimizes each sector independently to maximize route compactness and minimize inter-vehicle region overlap.
+    - **Regional Sectorization (NEW - 2025-11-25)**: Production-ready intelligent route distribution system featuring:
+      - **Geographic Clustering**: K-means algorithm with Haversine distance for geographic coordinates
+      - **Smart Constraints**: Exclusive vehicle pre-assignment, multi-type vehicle compatibility, automatic cluster splitting for incompatible requirements
+      - **Validation Layers**: Pre-assignment validation, post-assignment compatibility checks, final delivery count verification
+      - **Fail-Fast Design**: Explicit errors with actionable diagnostics when requirements cannot be met, preventing silent delivery loss
+      - **CLI Testing Tool**: `server/scripts/generateSectorizedRoutes.ts` for validation and testing
+      - **Service File**: `server/regionalRouteOptimizationService.ts` - Main algorithm implementation
+      - **Driver Coordinates**: Required `home_latitude` and `home_longitude` in `delivery_drivers` table for route planning
     - **Features**: Visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, check-in/check-out, checkpoint distance tracking, and automatic check-out.
     - **Driver Interface**: "Rota do Dia" page with auto-refreshing visualization, metrics, interactive map, photo markers, and smart visit lists with inline check-in/check-out and location validation. Simplified mobile-friendly app (`/rota-entrega`) for drivers with restricted access, date filtering, delivery lists, summary statistics, GPS check-in/check-out with mandatory photo capture, and Waze navigation.
     - **Route Management**: Administrative users can manually add, delete, and optimize visits. Supports creation of empty routes for manual population.

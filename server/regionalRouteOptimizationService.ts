@@ -293,12 +293,32 @@ function assignClustersToVehicles(
             }
             subClustersByType.get('any')!.push(point);
           } else {
-            // Agrupar por primeiro tipo de veículo aceito
-            const vehicleType = point.vehicleTypes[0];
-            if (!subClustersByType.has(vehicleType)) {
-              subClustersByType.set(vehicleType, []);
+            // Encontrar melhor tipo de veículo para este ponto baseado em veículos disponíveis
+            let assigned = false;
+            
+            // Tentar cada tipo de veículo aceito pela entrega
+            for (const acceptedType of point.vehicleTypes) {
+              // Verificar se existe veículo deste tipo disponível
+              const hasCompatibleVehicle = vehicles.some(v => v.vehicleType === acceptedType);
+              
+              if (hasCompatibleVehicle) {
+                if (!subClustersByType.has(acceptedType)) {
+                  subClustersByType.set(acceptedType, []);
+                }
+                subClustersByType.get(acceptedType)!.push(point);
+                assigned = true;
+                break; // Atribuir ao primeiro tipo compatível disponível
+              }
             }
-            subClustersByType.get(vehicleType)!.push(point);
+            
+            // Se nenhum tipo compatível foi encontrado, usar primeiro tipo da lista
+            if (!assigned) {
+              const fallbackType = point.vehicleTypes[0];
+              if (!subClustersByType.has(fallbackType)) {
+                subClustersByType.set(fallbackType, []);
+              }
+              subClustersByType.get(fallbackType)!.push(point);
+            }
           }
         }
         
@@ -554,19 +574,6 @@ export async function generateSectorizedRoutes(
       if (optimized.totalDistance > 300) {
         warnings.push(`Rota longa (${optimized.totalDistance.toFixed(2)}km)`);
       }
-      
-      routes.push({
-        vehicleId: vehicle.id,
-        driverId: vehicle.driverId,
-        driverName: vehicle.driverName,
-        vehicleType: vehicle.vehicleType,
-        sector: assignedClusters[0], // Usar primeiro cluster como representativo
-        optimizedOrder: optimized.orderedPoints.map(p => p.id),
-        deliveryPoints: allPoints,
-        totalDistance: optimized.totalDistance,
-        totalDeliveries: allPoints.length,
-        warnings
-      });
       
       // VALIDAÇÃO: Verificar que todas as entregas são compatíveis com o veículo
       const incompatibleDeliveries = allPoints.filter(p => {
