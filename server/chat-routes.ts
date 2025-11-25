@@ -22,13 +22,21 @@ import fs from "fs";
 
 // 🔧 FUNÇÃO DE NORMALIZAÇÃO DE TELEFONE - ÚNICA FONTE DE VERDADE
 function normalizePhoneNumber(phone: string): string {
-  if (!phone) return '';
+  if (!phone) {
+    console.warn(`⚠️  [NORMALIZE] Telefone vazio recebido`);
+    return '';
+  }
+  
   // Remove tudo que não é dígito
   const digitsOnly = phone.replace(/\D/g, '');
-  // Remove leading 55 se houver, pega os últimos 11 dígitos
+  console.log(`📞 [NORMALIZE] Input: ${phone} -> Digits: ${digitsOnly}`);
+  
+  // Se já tem mais de 11 dígitos, pega só os últimos 11
   const withoutCountry = digitsOnly.slice(-11);
-  // Retorna no formato 55 + 11 dígitos
-  return `55${withoutCountry}`;
+  const normalized = `55${withoutCountry}`;
+  
+  console.log(`📞 [NORMALIZE] Output: ${normalized}`);
+  return normalized;
 }
 
 export function registerChatRoutes(app: Express): void {
@@ -742,8 +750,15 @@ export function registerChatRoutes(app: Express): void {
           console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
 
           try {
+            console.log(`🔍 [WEBHOOK] remoteJid recebido: ${remoteJid}`);
+            
             // 🔧 Normalizar telefone usando função centralizada
             const phoneFormatted = normalizePhoneNumber(remoteJid || '');
+            
+            if (!phoneFormatted) {
+              console.error(`❌ [WEBHOOK] Falha ao normalizar telefone: ${remoteJid}`);
+              return;
+            }
 
             console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
 
