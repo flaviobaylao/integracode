@@ -1507,7 +1507,7 @@ export default function DeliveryManagement() {
                     <div className="font-medium text-sm">{order.customerName}</div>
                     <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
                     <div className="text-xs text-blue-600 mt-2">
-                      R$ {order.saleValue?.toFixed(2) || '0.00'}
+                      R$ {(Number(order.saleValue) || 0).toFixed(2)}
                     </div>
                   </div>
                 ))}
