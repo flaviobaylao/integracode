@@ -242,15 +242,18 @@ export default function LeadsManagement() {
             Gerenciar leads de clientes em potencial
           </p>
         </div>
-        {isAdmin && (
-          <Button
-            onClick={() => setIsCreating(true)}
-            data-testid="button-create-lead"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Novo Lead
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <BackToDashboardButton />
+          {isAdmin && (
+            <Button
+              onClick={() => setIsCreating(true)}
+              data-testid="button-create-lead"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Novo Lead
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Stats Cards */}

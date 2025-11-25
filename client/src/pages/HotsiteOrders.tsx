@@ -227,17 +227,11 @@ export default function HotsiteOrders() {
       <div className="container mx-auto px-4 py-6 max-w-7xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Link href="/">
-              <Button variant="outline" size="icon" data-testid="button-back-home">
-                <Home className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Pedidos do Site</h1>
-              <p className="text-gray-600">Pedidos realizados através do hotsite</p>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Pedidos do Site</h1>
+            <p className="text-gray-600">Pedidos realizados através do hotsite</p>
           </div>
+          <BackToDashboardButton />
         </div>
 
         {/* Debug Info (Temporário) */}

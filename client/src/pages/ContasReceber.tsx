@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { RefreshCw, Search, Download } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
@@ -161,7 +162,8 @@ export default function ContasReceber() {
     <div className="container mx-auto py-6 space-y-6" data-testid="contas-receber-page">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold" data-testid="page-title">Contas a Receber</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <BackToDashboardButton />
           <Button 
             onClick={handleExport} 
             variant="outline"

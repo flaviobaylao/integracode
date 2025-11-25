@@ -196,11 +196,15 @@ export default function ClientsMap() {
   return (
     <div className="space-y-6" data-testid="clients-map-page">
       {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Mapa de Clientes</h2>
+        <BackToDashboardButton />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <MapPin className="h-6 w-6 text-blue-600" />
-            Mapa de Clientes
+            Localização dos Clientes
           </CardTitle>
         </CardHeader>
         <CardContent>
