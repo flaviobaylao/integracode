@@ -591,15 +591,16 @@ export default function DeliveryManagement() {
         <div className="flex gap-2 items-center">
           <BackToDashboardButton />
           <Button 
-          onClick={() => setShowVehicleConfig(true)}
-          data-testid="button-configure-routes"
-          size="lg"
-        >
-          <Settings className="h-4 w-4 mr-2" />
-          {selectedOrders.size > 0 
-            ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
-            : 'Configurar Veículos'}
-        </Button>
+            onClick={() => setShowVehicleConfig(true)}
+            data-testid="button-configure-routes"
+            size="lg"
+          >
+            <Settings className="h-4 w-4 mr-2" />
+            {selectedOrders.size > 0 
+              ? `Configurar e Planejar Rotas (${selectedOrders.size})` 
+              : 'Configurar Veículos'}
+          </Button>
+        </div>
       </div>
 
       {/* Error Alert - Renderização inline para permitir recuperação */}

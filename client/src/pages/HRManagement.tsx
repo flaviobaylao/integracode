@@ -78,7 +78,7 @@ export default function HRManagement() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2" data-testid="title-rh">
             <Users className="h-8 w-8 text-honest-blue" />
@@ -94,35 +94,34 @@ export default function HRManagement() {
       </div>
 
       <div className="flex gap-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-gray-500" />
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="w-[140px]" data-testid="select-month">
-                <SelectValue placeholder="Mês" />
-              </SelectTrigger>
-              <SelectContent>
-                {months.map(month => (
-                  <SelectItem key={month.value} value={month.value}>
-                    {month.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Select value={selectedYear} onValueChange={setSelectedYear}>
-            <SelectTrigger className="w-[100px]" data-testid="select-year">
-              <SelectValue placeholder="Ano" />
+        <div className="flex items-center gap-2">
+          <Calendar className="h-5 w-5 text-gray-500" />
+          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+            <SelectTrigger className="w-[140px]" data-testid="select-month">
+              <SelectValue placeholder="Mês" />
             </SelectTrigger>
             <SelectContent>
-              {years.map(year => (
-                <SelectItem key={year.value} value={year.value}>
-                  {year.label}
+              {months.map(month => (
+                <SelectItem key={month.value} value={month.value}>
+                  {month.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
+
+        <Select value={selectedYear} onValueChange={setSelectedYear}>
+          <SelectTrigger className="w-[100px]" data-testid="select-year">
+            <SelectValue placeholder="Ano" />
+          </SelectTrigger>
+          <SelectContent>
+            {years.map(year => (
+              <SelectItem key={year.value} value={year.value}>
+                {year.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <Tabs defaultValue="mileage" className="space-y-4">
