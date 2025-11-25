@@ -2608,7 +2608,7 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.longitude, NULL)::text as "customerLongitude",
         COALESCE(c.address, '')::text as "customerAddress"
       FROM billings b
-      LEFT JOIN customers c ON REPLACE(REPLACE(REPLACE(REPLACE(c.document, '.', ''), '-', ''), '/', ''), ' ', '') = REPLACE(REPLACE(REPLACE(REPLACE(b.customer_document, '.', ''), '-', ''), '/', ''), ' ', '')
+      LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
