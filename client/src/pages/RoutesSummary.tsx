@@ -23,7 +23,8 @@ import {
   CheckCircle2,
   Circle,
   XCircle,
-  Trash2
+  Trash2,
+  Plus
 } from "lucide-react";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
@@ -38,6 +39,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface RouteStop {
   id: string;
@@ -81,6 +90,8 @@ export default function RoutesSummary() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
+  const [showAddOrders, setShowAddOrders] = useState(false);
+  const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   // Buscar entregadores
@@ -108,6 +119,35 @@ export default function RoutesSummary() {
       return res.json();
     },
     enabled: !!selectedDate,
+  });
+
+  // Query para pedidos aguardando rota
+  const { data: orders = [] } = useQuery<any[]>({
+    queryKey: ['/api/deliveries'],
+    queryFn: () => apiRequest('GET', '/api/deliveries'),
+  });
+
+  // Mutation para adicionar parada à rota
+  const addStopMutation = useMutation({
+    mutationFn: async (data: { routeId: string; billingId: string }) => {
+      return await apiRequest('POST', `/api/delivery-routes/${data.routeId}/add-stop`, { billingId: data.billingId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setShowAddOrders(false);
+      setRemovePedidoIds(new Set());
+      toast({
+        title: "Pedido adicionado com sucesso!",
+        description: "O pedido foi adicionado à rota.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao adicionar pedido",
+        description: error.message || "Erro desconhecido",
+        variant: "destructive",
+      });
+    },
   });
 
   // Mutation para excluir parada individual
@@ -311,6 +351,15 @@ export default function RoutesSummary() {
             <CardTitle className="flex items-center justify-between">
               <span>Detalhes da Rota: {selectedRouteData.routeName}</span>
               <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAddOrders(true)}
+                  data-testid={`button-add-orders-route-${selectedRoute}`}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  ➕ Adicionar Pedidos
+                </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button 
@@ -507,6 +556,49 @@ export default function RoutesSummary() {
           </CardContent>
         </Card>
       )}
+
+      {/* Modal para adicionar pedidos à rota */}
+      <Dialog open={showAddOrders} onOpenChange={setShowAddOrders}>
+        <DialogContent className="max-w-md" data-testid="dialog-add-orders-route">
+          <DialogHeader>
+            <DialogTitle>Adicionar Pedidos à Rota</DialogTitle>
+            <DialogDescription>
+              Selecione um pedido disponível para adicionar à rota
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {orders.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                Não há pedidos disponíveis para adicionar
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {orders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition"
+                    onClick={() => {
+                      if (selectedRoute) {
+                        addStopMutation.mutate({
+                          routeId: selectedRoute,
+                          billingId: order.id,
+                        });
+                      }
+                    }}
+                  >
+                    <div className="font-medium text-sm">{order.customerName}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
+                    <div className="text-xs text-blue-600 mt-2">
+                      R$ {(Number(order.saleValue) || 0).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
