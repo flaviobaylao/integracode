@@ -86,21 +86,20 @@ export default function DeliveryDashboard() {
       </div>
       
       <div className="flex items-center space-x-2">
-          <select
-            value={selectedPeriod}
-            onChange={(e) => setSelectedPeriod(e.target.value)}
-            className="border rounded-md px-3 py-2"
-            data-testid="period-selector"
-          >
-            <option value="today">Hoje</option>
-            <option value="week">Esta Semana</option>
-            <option value="month">Este Mês</option>
-          </select>
-          <Button variant="outline" size="sm" data-testid="button-refresh">
-            <BarChart3 className="h-4 w-4 mr-2" />
-            Relatórios
-          </Button>
-        </div>
+        <select
+          value={selectedPeriod}
+          onChange={(e) => setSelectedPeriod(e.target.value)}
+          className="border rounded-md px-3 py-2"
+          data-testid="period-selector"
+        >
+          <option value="today">Hoje</option>
+          <option value="week">Esta Semana</option>
+          <option value="month">Este Mês</option>
+        </select>
+        <Button variant="outline" size="sm" data-testid="button-refresh">
+          <BarChart3 className="h-4 w-4 mr-2" />
+          Relatórios
+        </Button>
       </div>
 
       {/* Métricas Principais */}

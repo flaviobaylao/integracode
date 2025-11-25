@@ -626,7 +626,7 @@ export default function VisitRoutes() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visits.visits.map((visit) => (
+                  {visits.visits.map((visit: any) => (
                     <TableRow key={visit.id} data-testid={`visit-row-${visit.id}`}>
                       <TableCell className="font-medium">
                         {formatDate(visit.scheduledDate)}
