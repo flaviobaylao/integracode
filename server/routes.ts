@@ -8989,6 +8989,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Atualizar status de uma parada (pausar, devolvida, etc)
+  app.patch("/api/delivery-routes/stops/:stopId/status", authenticateUser, async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { status } = req.body;
+      const userId = req.user?.id;
+      
+      // Validar status
+      if (!['pendente', 'efetuada', 'em_pausa', 'devolvida'].includes(status)) {
+        return res.status(400).json({ message: "Status inválido" });
+      }
+      
+      console.log(`📊 [UPDATE-STOP-STATUS] Motorista ${userId} atualizando status de ${stopId} para ${status}`);
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      // Verificar se o motorista pertence à rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      
+      if (route.length === 0 || route[0].driverId !== userId) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+      
+      const now = new Date();
+      
+      // Atualizar status
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ 
+          status,
+          updatedAt: now
+        })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+      
+      console.log(`✅ [UPDATE-STOP-STATUS] Parada ${stopId} atualizada para ${status}`);
+      res.json({ 
+        message: "Status atualizado com sucesso", 
+        stop: updatedStop[0],
+        status
+      });
+    } catch (error: any) {
+      console.error("Error updating stop status:", error);
+      res.status(500).json({ message: "Failed to update status", error: error.message });
+    }
+  });
+  
   // Excluir parada individual de uma rota
   app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
