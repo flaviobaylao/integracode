@@ -2600,13 +2600,16 @@ export class DatabaseStorage implements IStorage {
         b.products,
         b.payment_method as "paymentMethod",
         b.billing_type as "operationType",
-        b.exclusive_vehicle as "exclusiveVehicle",
-        b.vehicle_types as "vehicleTypes",
+        COALESCE(c.exclusive_vehicle, b.exclusive_vehicle) as "exclusiveVehicle",
+        COALESCE(c.vehicle_types, b.vehicle_types) as "vehicleTypes",
         b.is_urgent as "isUrgent",
         b.delivery_weekdays as "deliveryWeekdays",
         COALESCE(c.latitude, NULL)::text as "customerLatitude",
         COALESCE(c.longitude, NULL)::text as "customerLongitude",
-        COALESCE(c.address, '')::text as "customerAddress"
+        COALESCE(c.address, '')::text as "customerAddress",
+        COALESCE(c.receiving_weekdays, '[]'::jsonb) as "receivingWeekdays",
+        COALESCE(c.delivery_time_slots, '[]'::jsonb) as "deliveryTimeSlots",
+        COALESCE(c.delivery_saturday_time_slots, '[]'::jsonb) as "deliverySaturdayTimeSlots"
       FROM billings b
       LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name
       WHERE b.invoice_stage = 'Aguardando Rota'
@@ -2648,10 +2651,10 @@ export class DatabaseStorage implements IStorage {
         completedDate: row.invoiceDate,
         paymentMethod: row.paymentMethod || '',
         operationType: row.operationType || '',
-        receivingWeekdays: [],
+        receivingWeekdays: this.parseJsonField(row.receivingWeekdays, []),
         deliveryWeekdays: this.parseJsonField(row.deliveryWeekdays, []),
-        deliveryTimeSlots: [],
-        deliverySaturdayTimeSlots: []
+        deliveryTimeSlots: this.parseJsonField(row.deliveryTimeSlots, []),
+        deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, [])
       };
     });
   }
