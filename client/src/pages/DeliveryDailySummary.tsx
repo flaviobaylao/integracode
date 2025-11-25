@@ -174,7 +174,7 @@ export default function DeliveryDailySummary() {
       {/* Entregas por Entregador */}
       {!isLoading && routes.length > 0 && (
         <div className="space-y-6">
-          {Object.entries(groupedByDriver).map(([driverName, { routes: driverRoutes, totalDeliveries }]) => (
+          {Object.entries(groupedByDriver).map(([driverName, { routes: driverRoutes, totalDeliveries }]: [string, any]) => (
             <div key={driverName} className="space-y-3">
               <div className="flex items-center gap-2 px-2">
                 <Truck className="h-5 w-5 text-blue-600" />
@@ -182,7 +182,7 @@ export default function DeliveryDailySummary() {
                 <Badge variant="secondary">{totalDeliveries} entregas</Badge>
               </div>
 
-              {driverRoutes.map((route) => (
+              {driverRoutes.map((route: any) => (
                 <Card key={route.id}>
                   <CardHeader>
                     <CardTitle className="text-lg flex items-center justify-between">
@@ -192,7 +192,7 @@ export default function DeliveryDailySummary() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {route.stops.map((stop) => {
+                      {route.stops.map((stop: any) => {
                         const duration = calculateDuration(stop.checkInTime, stop.checkOutTime);
                         return (
                           <div

@@ -89,7 +89,7 @@ export function normalizeWeekdayInput(input: any): WeekdayCode[] {
     
     // Handle legacy data: split tokens that contain separators (/, ;, " e ", etc.)
     // Example: "Seg/Qui" → ["Seg", "Qui"], "segunda e quarta" → ["segunda", "quarta"]
-    const subDays = dayStr.split(/[\/;,]|\s+e\s+/).map(d => d.trim()).filter(d => d);
+    const subDays = dayStr.split(/[\/;,]|\s+e\s+/).map((d: string) => d.trim()).filter((d: string) => d);
     
     for (const subDay of subDays) {
       const dayLower = subDay.toLowerCase().trim();
