@@ -643,15 +643,17 @@ export function registerChatRoutes(app: Express): void {
     try {
       const { event, instance, data } = req.body;
 
-      console.log(`📱 [WEBHOOK] Evento recebido:`, { event, instance });
+      console.log(`📱 [WEBHOOK] Evento recebido:`, JSON.stringify({ event, instance, dataKeys: Object.keys(data || {}) }));
 
-      if (event === 'messages.upsert' && data) {
+      if (event === 'MESSAGES_UPSERT' && data) {
         const message = data;
         const remoteJid = message.key?.remoteJid;
         const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
         const isFromMe = message.key?.fromMe;
 
-        if (!isFromMe) {
+        console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
+
+        if (!isFromMe && text) {
           console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
 
           // Salvar mensagem recebida no banco de dados
@@ -673,18 +675,60 @@ export function registerChatRoutes(app: Express): void {
               });
               console.log(`✅ Mensagem salva na conversa ${matchingConv.id}`);
             } else {
-              console.warn(`⚠️  Nenhuma conversa encontrada para ${remoteJid}`);
+              console.warn(`⚠️  Nenhuma conversa encontrada para ${remoteJid}. Conversas disponíveis:`, 
+                conv.map((c: any) => c.phoneNumber).join(", "));
             }
           } catch (err) {
-            console.warn("[WEBHOOK] Erro ao salvar mensagem:", err);
+            console.error("[WEBHOOK] Erro ao salvar mensagem:", err);
           }
         }
+      } else {
+        console.warn(`⚠️  [WEBHOOK] Evento não reconhecido ou sem dados:`, event);
       }
 
       res.json({ success: true });
     } catch (error: any) {
       console.error("[WEBHOOK] Erro ao processar webhook:", error);
       res.status(500).json({ error: "Erro ao processar webhook" });
+    }
+  });
+
+  // Teste de webhook - simular mensagem recebida
+  app.post("/api/chat/webhook/test", async (req, res) => {
+    try {
+      console.log(`🧪 [WEBHOOK-TEST] Simulando mensagem recebida...`);
+      
+      const testMessage = {
+        event: "MESSAGES_UPSERT",
+        instance: "CHAT_HONEST",
+        data: {
+          key: {
+            remoteJid: "5562995782812@s.whatsapp.net",
+            fromMe: false,
+            id: "test_" + Date.now()
+          },
+          message: {
+            conversation: "Teste de resposta do webhook - " + new Date().toLocaleTimeString('pt-BR')
+          },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+          pushName: "Teste WhatsApp"
+        }
+      };
+
+      // Fazer requisição interna para testar o webhook
+      const response = await fetch("http://localhost:5000/api/chat/webhook/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testMessage)
+      });
+
+      const result = await response.json();
+      console.log(`✅ [WEBHOOK-TEST] Resposta:`, result);
+
+      res.json({ success: true, message: "Teste enviado", result });
+    } catch (error: any) {
+      console.error("[WEBHOOK-TEST] Erro:", error);
+      res.status(500).json({ error: "Erro no teste de webhook" });
     }
   });
 
