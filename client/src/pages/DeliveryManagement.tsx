@@ -645,12 +645,15 @@ export default function DeliveryManagement() {
               {filteredOrders.map((order) => {
                 const isSelected = selectedOrders.has(order.id);
                 
+                const hasValidCustomer = order.customerId && !order.customerId.startsWith('billing-');
+                
                 return (
                   <div 
                     key={order.id} 
-                    className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`}
+                    className={`border rounded-lg p-4 transition-colors ${hasValidCustomer ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-not-allowed opacity-75'} ${isSelected ? 'bg-blue-50 border-blue-300' : ''}`}
                     data-testid={`order-item-${order.id}`}
-                    onClick={() => handleOpenDeliveryConfig(order)}
+                    onClick={() => hasValidCustomer && handleOpenDeliveryConfig(order)}
+                    title={!hasValidCustomer ? "Cliente não cadastrado - registre o cliente primeiro" : "Clique para editar configurações de recebimento"}
                   >
                     <div className="flex items-start space-x-3">
                       <Checkbox
