@@ -285,6 +285,54 @@ export default function DeliveryManagement() {
     },
   });
 
+  // Mutation para adicionar parada à rota
+  const addStopMutation = useMutation({
+    mutationFn: async (data: { routeId: string; billingId: string }) => {
+      return await apiRequest('POST', `/api/delivery-routes/${data.routeId}/add-stop`, { billingId: data.billingId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setShowAddPedidos(false);
+      setSelectedRoute(null);
+      setRemovePedidoIds(new Set());
+      toast({
+        title: "Pedido adicionado com sucesso!",
+        description: "O pedido foi adicionado à rota.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao adicionar pedido",
+        description: error.message || "Erro desconhecido",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para remover parada da rota
+  const removeStopMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('DELETE', `/api/delivery-routes/stops/${stopId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setRemovePedidoIds(new Set());
+      toast({
+        title: "Pedido removido com sucesso!",
+        description: "O pedido foi removido da rota.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao remover pedido",
+        description: error.message || "Erro desconhecido",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Funções de seleção
   const handleSelectAll = () => {
     if (selectAll) {
@@ -402,6 +450,41 @@ export default function DeliveryManagement() {
         });
         return prev;
       }
+
+  // Funções para gerenciar adicionar/remover pedidos em rotas
+  const handleSelectRoute = (route: VehicleRoute, routeIdx: number) => {
+    setSelectedRoute(route);
+    setShowAddPedidos(true);
+    setRemovePedidoIds(new Set());
+  };
+
+  const handleToggleRemovePedido = (stopId: string) => {
+    const newSet = new Set(removePedidoIds);
+    if (newSet.has(stopId)) {
+      newSet.delete(stopId);
+    } else {
+      newSet.add(stopId);
+    }
+    setRemovePedidoIds(newSet);
+  };
+
+  const handleRemoveSelectedPedidos = () => {
+    if (removePedidoIds.size === 0) return;
+    removePedidoIds.forEach(stopId => {
+      removeStopMutation.mutate(stopId);
+    });
+  };
+
+  const handleAddPedido = (billingId: string) => {
+    if (!selectedRoute) return;
+    addStopMutation.mutate({
+      routeId: selectedRoute?.vehicleType || '',
+      billingId,
+    });
+  };
+
+  // Pedidos disponíveis (aguardando rota)
+  const availableOrders = orders?.filter(o => !routePlan?.routes.some(r => r.stops.some((s: any) => s.salesCardId === o.id))) || [];
       
       return { ...prev, vehicleTypes: newTypes };
     });
