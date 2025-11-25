@@ -222,9 +222,7 @@ export function registerChatRoutes(app: Express): void {
       const customerId = `customer_${Date.now()}`;
       const customer = await storage.createChatCustomer({
         name: customerName || `Cliente ${customerPhone}`,
-        phone: customerPhone,
-        email: null,
-        customFields: {}
+        phone: customerPhone
       }).catch(() => null);
 
       // Create conversation
