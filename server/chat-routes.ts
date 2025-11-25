@@ -231,6 +231,8 @@ export function registerChatRoutes(app: Express): void {
       // Create conversation
       const conversation = await storage.createChatConversation({
         customerId: customerId,
+        customerName: customerName || `Cliente ${customerPhone}`,
+        customerPhone: customerPhone,
         status: "new",
         priority: "normal"
       });

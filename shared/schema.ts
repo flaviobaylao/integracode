@@ -1538,6 +1538,8 @@ export const chatPriorityEnum = pgEnum('chat_priority', ['normal', 'urgent']);
 export const chatConversations = pgTable("chat_conversations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull(),
+  customerName: varchar("customer_name"),
+  customerPhone: varchar("customer_phone"),
   agentId: varchar("agent_id"),
   status: chatConversationStatusEnum("status").notNull().default("new"),
   priority: chatPriorityEnum("priority").notNull().default("normal"),
