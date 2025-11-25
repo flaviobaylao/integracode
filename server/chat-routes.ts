@@ -764,56 +764,76 @@ export function registerChatRoutes(app: Express): void {
 
             // 1. Tentar buscar cliente regular (tabela customers) para pegar nome fantasia
             let clientName = "Número Desconhecido";
-            let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
-
-            if (existingClient) {
-              clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
-              console.log(`✅ Cliente encontrado: ${clientName}`);
-            } else {
-              console.log(`⚠️  Cliente não encontrado no sistema`);
+            try {
+              let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
+              if (existingClient) {
+                clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
+                console.log(`✅ Cliente encontrado: ${clientName}`);
+              } else {
+                console.log(`⚠️  Cliente não encontrado no sistema`);
+              }
+            } catch (err) {
+              console.warn(`⚠️  [WEBHOOK] Erro ao buscar cliente:`, err);
             }
 
             // 2. Buscar ou criar chat customer
-            let chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
-            
-            if (!chatCustomer) {
-              console.log(`📝 Criando novo chat customer...`);
-              chatCustomer = await storage.createChatCustomer({
-                name: clientName,
-                phone: phoneFormatted
-              });
-              console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
+            let chatCustomer: any;
+            try {
+              chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
+              
+              if (!chatCustomer) {
+                console.log(`📝 Criando novo chat customer...`);
+                chatCustomer = await storage.createChatCustomer({
+                  name: clientName,
+                  phone: phoneFormatted
+                });
+                console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
+              }
+            } catch (err) {
+              console.error(`❌ [WEBHOOK] Erro ao criar/buscar chat customer:`, err);
+              throw err;
             }
 
             // 3. Buscar ou criar conversa
-            let conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
+            let conversation: any;
+            try {
+              conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
 
-            if (!conversation) {
-              console.log(`📝 Criando nova conversa...`);
-              conversation = await storage.createChatConversation({
-                customerId: chatCustomer.id,
-                customerName: clientName,
-                customerPhone: phoneFormatted,
-                status: "new",
-                priority: "normal"
-              });
-              console.log(`✅ Conversa criada: ${conversation.id}`);
-            } else {
-              console.log(`✅ Conversa encontrada: ${conversation.id}`);
+              if (!conversation) {
+                console.log(`📝 Criando nova conversa...`);
+                conversation = await storage.createChatConversation({
+                  customerId: chatCustomer.id,
+                  customerName: clientName,
+                  customerPhone: phoneFormatted,
+                  status: "new",
+                  priority: "normal"
+                });
+                console.log(`✅ Conversa criada: ${conversation.id}`);
+              } else {
+                console.log(`✅ Conversa encontrada: ${conversation.id}`);
+              }
+            } catch (err) {
+              console.error(`❌ [WEBHOOK] Erro ao criar/buscar conversa:`, err);
+              throw err;
             }
 
             // 4. Salvar mensagem
-            await storage.createChatMessage({
-              conversationId: conversation.id,
-              senderId: remoteJid || "unknown",
-              senderType: "customer",
-              content: text || "[Mídia ou mensagem especial]",
-              messageType: "text"
-            });
+            try {
+              await storage.createChatMessage({
+                conversationId: conversation.id,
+                senderId: remoteJid || "unknown",
+                senderType: "customer",
+                content: text || "[Mídia ou mensagem especial]",
+                messageType: "text"
+              });
 
-            console.log(`✅ Mensagem salva na conversa ${conversation.id}`);
+              console.log(`✅ Mensagem salva na conversa ${conversation.id}`);
+            } catch (err) {
+              console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
+              throw err;
+            }
           } catch (err) {
-            console.error("[WEBHOOK] Erro ao processar mensagem:", err);
+            console.error(`🚨 [WEBHOOK] ERRO CRÍTICO ao processar mensagem:`, err);
           }
         }
       } else {
