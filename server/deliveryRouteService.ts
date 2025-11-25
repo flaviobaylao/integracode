@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { db } from './db';
 import { deliveryHistory } from '../shared/schema';
 import { eq, desc, and } from 'drizzle-orm';
+import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 
 // ==================== Data Structures ====================
 
@@ -585,18 +586,23 @@ async function optimizeVehicleRoutes(
       console.log(`⚪ [REGULAR] Otimizados ${regularOrders.length} pedidos regulares após urgentes`);
     }
     
-    // Calcular ETAs
+    // Calcular ETAs no timezone de Brasília
+    const BRASILIA_TZ = 'America/Sao_Paulo';
     const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
-    const startTime = new Date(routeDate);
+    
+    // Converter para timezone de Brasília
+    let startTime = new Date(routeDate);
     startTime.setHours(0, 0, 0, 0);
     
     // Converter minutos totais (ex: 480) em horas e minutos (ex: 8:00)
     const hours = Math.floor(timeWindowStartMinutes / 60);
     const minutes = timeWindowStartMinutes % 60;
     startTime.setHours(hours, minutes, 0, 0);
-
-    let currentTime = new Date(startTime);
-    console.log(`⏰ [ETA-CALC] Rota inicia às ${vehicle.timeWindowStart}, currentTime: ${currentTime.toLocaleTimeString('pt-BR')}`);
+    
+    // Converter para data no timezone de Brasília
+    const zonedStartTime = toZonedTime(startTime, BRASILIA_TZ);
+    let currentTime = new Date(zonedStartTime);
+    console.log(`⏰ [ETA-CALC] Rota inicia às ${vehicle.timeWindowStart} (Brasília), currentTime: ${currentTime.toLocaleTimeString('pt-BR', { timeZone: BRASILIA_TZ })}`);
     let totalDuration = 0;
     let totalDistance = 0;
 
