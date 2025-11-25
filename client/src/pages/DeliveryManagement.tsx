@@ -168,6 +168,11 @@ export default function DeliveryManagement() {
     longitude: null as number | null,
   });
 
+  // Estados para adicionar/remover pedidos em rotas
+  const [selectedRoute, setSelectedRoute] = useState<VehicleRoute | null>(null);
+  const [showAddPedidos, setShowAddPedidos] = useState(false);
+  const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
+
   // Query para buscar usuário atual
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],

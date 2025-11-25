@@ -9077,6 +9077,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete route", error: error.message });
     }
   });
+
+  // Adicionar uma parada a uma rota existente
+  app.post("/api/delivery-routes/:routeId/add-stop", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const { billingId } = req.body;
+      
+      if (!billingId) {
+        return res.status(400).json({ message: "billingId is required" });
+      }
+
+      console.log(`➕ [ADD-STOP] Adicionando parada com billingId ${billingId} à rota ${routeId}`);
+
+      // Buscar a rota
+      const routeResult = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, routeId));
+      if (routeResult.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      const route = routeResult[0];
+
+      // Buscar dados do billing
+      const billingsResult = await db.execute<{
+        id: string;
+        invoiceNumber: string;
+        customerName: string;
+        customerAddress: string;
+        customerLatitude: string;
+        customerLongitude: string;
+        deliveryWeekdays: any;
+        receivingWeekdays: any;
+        averageDeliveryTime: number;
+      }>(sql`
+        SELECT DISTINCT ON (b.id)
+          b.id,
+          b.invoice_number as "invoiceNumber",
+          COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+          COALESCE(c.address, '') as "customerAddress",
+          c.latitude as "customerLatitude",
+          c.longitude as "customerLongitude",
+          c.delivery_weekdays as "deliveryWeekdays",
+          c.receiving_weekdays as "receivingWeekdays",
+          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime"
+        FROM billings b
+        LEFT JOIN customers c ON (
+          c.id = CONCAT('omie-client-', b.omie_customer_code)
+          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
+        )
+        WHERE b.id = ${billingId}
+      `);
+
+      if (billingsResult.rows.length === 0) {
+        return res.status(404).json({ message: "Billing não encontrado" });
+      }
+
+      const billing = billingsResult.rows[0];
+      const lat = parseFloat(billing.customerLatitude);
+      const lng = parseFloat(billing.customerLongitude);
+
+      if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+        return res.status(422).json({ message: "Coordenadas GPS ausentes para este cliente" });
+      }
+
+      // Usar deliveryRouteService para calcular ETA
+      const { calculateEstimatedTimes } = await import('./deliveryRouteService.js');
+      const times = calculateEstimatedTimes(route.timeWindowStart, billing.averageDeliveryTime);
+
+      // Buscar a ordem máxima de parada
+      const maxOrderResult = await db.select({ maxOrder: sql`MAX(${deliveryRouteStops.stopOrder})` })
+        .from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, routeId));
+
+      const nextOrder = (maxOrderResult[0].maxOrder || 0) + 1;
+
+      // Adicionar a nova parada
+      await db.insert(deliveryRouteStops).values({
+        id: nanoid(),
+        routeId,
+        billingId,
+        stopOrder: nextOrder,
+        estimatedArrival: times.arrival,
+        estimatedDeparture: times.departure,
+        latitude: String(lat),
+        longitude: String(lng),
+      });
+
+      // Atualizar status do billing para "Em Rota"
+      await storage.updateBillingsStatus([billingId], 'Em Rota');
+
+      console.log(`✅ [ADD-STOP] Parada adicionada com sucesso à rota ${routeId}`);
+      res.json({ 
+        message: "Parada adicionada com sucesso",
+        stop: {
+          id: billingId,
+          billingId,
+          stopOrder: nextOrder,
+          customerName: billing.customerName,
+          customerAddress: billing.customerAddress,
+          estimatedArrival: times.arrival,
+          estimatedDeparture: times.departure,
+        }
+      });
+    } catch (error: any) {
+      console.error("Error adding stop:", error);
+      res.status(500).json({ message: "Failed to add stop", error: error.message });
+    }
+  });
   
   // ========== FIM DOS ENDPOINTS PARA MOTORISTAS ==========
 
