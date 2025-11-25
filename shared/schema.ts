@@ -544,8 +544,8 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }).notNull(),
   customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }).notNull(),
   stopOrder: integer("stop_order").notNull(), // Ordem da parada na rota
-  estimatedArrival: timestamp("estimated_arrival"), // Horário estimado de chegada
-  estimatedDeparture: timestamp("estimated_departure"), // Horário estimado de saída
+  estimatedArrival: varchar("estimated_arrival"), // Horário estimado de chegada (formato HH:mm)
+  estimatedDeparture: varchar("estimated_departure"), // Horário estimado de saída (formato HH:mm)
   estimatedServiceTime: integer("estimated_service_time").notNull().default(10), // Tempo estimado de permanência em minutos
   distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // Distância da parada anterior em km
   isPriority: boolean("is_priority").notNull().default(false),

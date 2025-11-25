@@ -645,6 +645,10 @@ async function optimizeVehicleRoutes(
       const serviceTime = order.averageDeliveryTime;
       const departureTime = addMinutes(arrivalTime, serviceTime);
 
+      // Converter Times para string HH:mm
+      const arrivalStr = arrivalTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const departureStr = departureTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
@@ -652,8 +656,8 @@ async function optimizeVehicleRoutes(
         customerAddress: order.customerAddress,
         latitude: Number(order.customerLatitude),
         longitude: Number(order.customerLongitude),
-        estimatedArrival: arrivalTime,
-        estimatedDeparture: departureTime,
+        estimatedArrival: arrivalStr,
+        estimatedDeparture: departureStr,
         estimatedServiceTime: serviceTime,
         stopOrder: i + 1,
         distanceFromPrevious: distanceFromPrevious
@@ -735,8 +739,8 @@ async function persistRoutePlan(
         customerAddress: stop.customerAddress,
         customerLatitude: stop.latitude.toString(),
         customerLongitude: stop.longitude.toString(),
-        estimatedArrival: stop.estimatedArrival,
-        estimatedDeparture: stop.estimatedDeparture,
+        estimatedArrival: stop.estimatedArrival, // Já é string HH:mm
+        estimatedDeparture: stop.estimatedDeparture, // Já é string HH:mm
         estimatedServiceTime: Math.round(stop.estimatedServiceTime),
         stopOrder: stop.stopOrder,
         distanceFromPrevious: stop.distanceFromPrevious.toString(),
@@ -746,8 +750,8 @@ async function persistRoutePlan(
       };
 
       console.log(`💾 [PERSIST] Creating stop for ${stop.customerName}:`);
-      console.log(`   - Chegada: ${stop.estimatedArrival.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
-      console.log(`   - Saída: ${stop.estimatedDeparture.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
+      console.log(`   - Chegada: ${stop.estimatedArrival}`);
+      console.log(`   - Saída: ${stop.estimatedDeparture}`);
 
       await storage.createDeliveryRouteStop(stopData);
     }
