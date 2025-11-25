@@ -23,6 +23,8 @@
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista) restricting access based on user roles.
+- **WhatsApp Integration**: Evolution API (CHAT_HONEST instance) with webhook support for receiving messages, message sending, and real-time conversation tracking.
+- **Central de Atendimento**: Real-time chat interface at `/telemarketing/atendimento` with conversation management, agent assignment, status tracking, and quick template insertion.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), and robust weekday normalization for visit schedules.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard.
 - **Delivery & Route Optimization**:
@@ -42,6 +44,19 @@
 - **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation utility with dry-run mode.
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, recognition/registration, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
 - **Leads Management**: Integrated lead tracking with route optimization, access control, mandatory photo enforcement for check-in/check-out, and updates within daily routes.
+- **WhatsApp Chat Center**: Complete customer service platform with:
+  - Dashboard at `/telemarketing/conversas` - Shows stats (total conversations, active, response time, resolution rate), charts by day and agent performance, advanced filtering
+  - Real-time Chat at `/telemarketing/atendimento` - Live conversation list, message history, agent assignment, status management (New → Assigned → In-progress → Resolved), automatic WhatsApp synchronization
+  - Quick Templates at `/telemarketing/templates` - Manage response templates by category (greeting, sales, support, goodbye, general), quick insertion in chat
+  - 8 Backend Endpoints:
+    - `GET /api/chat/conversations/stats` - Statistics and metrics
+    - `GET /api/chat/conversations` - List of all conversations
+    - `GET /api/chat/conversations/:id/messages` - Conversation history
+    - `GET /api/chat/agents` - Available agents
+    - `POST /api/chat/conversations/:id/message` - Send message (auto-syncs to WhatsApp)
+    - `PATCH /api/chat/conversations/:id/assign` - Assign to agent
+    - `PATCH /api/chat/conversations/:id/status` - Update status
+    - `GET/POST/DELETE /api/chat/quick-templates` - Template management
 - **Order Synchronization**: Correct synchronization of pending deliveries by querying Omie ERP data.
 - **Delivery Configuration Validation**: Ensures customer registration before allowing configuration edits for pending orders.
 

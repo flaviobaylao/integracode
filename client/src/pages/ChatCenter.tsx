@@ -71,6 +71,12 @@ export default function ChatCenter() {
   });
   const agents = (agentsData as Agent[]) || [];
 
+  // Fetch quick templates
+  const { data: templatesData } = useQuery({
+    queryKey: ["/api/chat/quick-templates"],
+  });
+  const templates = (templatesData as any[]) || [];
+
   // Mutation para enviar mensagem
   const sendMessageMutation = useMutation({
     mutationFn: async (content: string) => {
@@ -320,12 +326,31 @@ export default function ChatCenter() {
                   </CardContent>
                 </Card>
 
-                {/* Input de Mensagem */}
+                {/* Input de Mensagem com Templates */}
                 <Card>
-                  <CardContent className="pt-6">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Escrever Mensagem</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {templates.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {templates.slice(0, 4).map((template: any) => (
+                          <Button
+                            key={template.id}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setMessageText(template.content)}
+                            data-testid={`button-template-${template.id}`}
+                            className="text-xs"
+                          >
+                            {template.title}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <Textarea
-                        placeholder="Digite sua mensagem..."
+                        placeholder="Digite sua mensagem (Ctrl+Enter para enviar)..."
                         value={messageText}
                         onChange={(e) => setMessageText(e.target.value)}
                         onKeyDown={(e) => {

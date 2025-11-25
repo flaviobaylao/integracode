@@ -41,15 +41,17 @@ export default function ChatManagement() {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ["/api/chat/conversations/stats"],
   });
+  const stats = (statsData as ConversationStats) || {};
 
-  const { data: conversations, isLoading: conversationsLoading } = useQuery({
+  const { data: conversationsData, isLoading: conversationsLoading } = useQuery({
     queryKey: ["/api/chat/conversations", statusFilter, priorityFilter, searchQuery],
   });
+  const conversations = (conversationsData as Conversation[]) || [];
 
-  const filteredConversations = conversations?.filter((conv: Conversation) => {
+  const filteredConversations = conversations.filter((conv: Conversation) => {
     const matchesSearch = !searchQuery || 
       conv.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       conv.customerPhone.includes(searchQuery);
@@ -58,7 +60,7 @@ export default function ChatManagement() {
     const matchesPriority = priorityFilter === "all" || conv.priority === priorityFilter;
     
     return matchesSearch && matchesStatus && matchesPriority;
-  }) || [];
+  });
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { bg: string; text: string; label: string }> = {

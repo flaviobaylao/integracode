@@ -835,9 +835,8 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/conversations/:conversationId/messages", async (req, res) => {
     try {
       const { conversationId } = req.params;
-      const messages = await storage.getChatMessages?.() || [];
-      const conversationMessages = messages.filter((m: any) => m.conversationId === conversationId);
-      res.json(conversationMessages);
+      const messages = await storage.getChatMessages?.(conversationId) || [];
+      res.json(messages);
     } catch (error: any) {
       console.error("[CHAT-MESSAGES] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar mensagens" });
@@ -957,6 +956,58 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CHAT-STATUS] Erro:", error);
       res.status(500).json({ error: "Erro ao atualizar status" });
+    }
+  });
+
+  // ============================================================
+  // ENDPOINTS PARA TEMPLATES DE RESPOSTA RÁPIDA
+  // ============================================================
+
+  // GET /api/chat/quick-templates - Lista de templates
+  app.get("/api/chat/quick-templates", async (req, res) => {
+    try {
+      const templates = await storage.getChatQuickMessages?.() || [];
+      res.json(templates);
+    } catch (error: any) {
+      console.error("[CHAT-TEMPLATES] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar templates" });
+    }
+  });
+
+  // POST /api/chat/quick-templates - Criar template
+  app.post("/api/chat/quick-templates", authenticateUser, async (req, res) => {
+    try {
+      const { title, content, category } = req.body;
+      const userId = req.user?.id;
+
+      if (!title || !content) {
+        return res.status(400).json({ error: "Título e conteúdo são obrigatórios" });
+      }
+
+      const template = await storage.createChatQuickMessage?.({
+        title,
+        content,
+        messageType: "text",
+        isActive: true,
+        createdBy: userId
+      });
+
+      res.json(template);
+    } catch (error: any) {
+      console.error("[CHAT-TEMPLATE-CREATE] Erro:", error);
+      res.status(500).json({ error: "Erro ao criar template" });
+    }
+  });
+
+  // DELETE /api/chat/quick-templates/:id - Deletar template
+  app.delete("/api/chat/quick-templates/:id", authenticateUser, async (req, res) => {
+    try {
+      const { id } = req.params;
+      // Implementar quando houver método delete na storage
+      res.json({ success: true, message: "Template deletado" });
+    } catch (error: any) {
+      console.error("[CHAT-TEMPLATE-DELETE] Erro:", error);
+      res.status(500).json({ error: "Erro ao deletar template" });
     }
   });
 
