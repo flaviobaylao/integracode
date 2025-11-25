@@ -463,64 +463,64 @@ export default function RoutesSummary() {
       {selectedRouteData && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Detalhes da Rota: {selectedRouteData.routeName}</span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowAddOrders(true)}
-                  data-testid={`button-add-orders-route-${selectedRoute}`}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  ➕ Adicionar Pedidos
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={generateRoutePDF}
-                  data-testid="button-generate-pdf-route"
-                  className="bg-green-50 hover:bg-green-100"
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  📄 Gerar PDF
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button 
-                      variant="destructive" 
-                      size="sm"
-                      data-testid="button-delete-route"
+            <div className="flex items-center justify-between mb-4">
+              <CardTitle>Detalhes da Rota: {selectedRouteData.routeName}</CardTitle>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddOrders(true)}
+                data-testid={`button-add-orders-route-${selectedRoute}`}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                ➕ Adicionar Pedidos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={generateRoutePDF}
+                data-testid="button-generate-pdf-route"
+                className="bg-green-50 hover:bg-green-100"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                📄 Gerar PDF
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    data-testid="button-delete-route"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Excluir Rota
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Excluir Rota Completa?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Tem certeza que deseja excluir esta rota? Todas as {selectedRouteData.totalDeliveries} entregas 
+                      serão removidas e retornarão para a aba "Gestão de Rotas" para que possam ser incluídas em novas rotas.
+                      Esta ação não pode ser desfeita.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteRouteMutation.mutate(selectedRouteData.id)}
+                      className="bg-red-600 hover:bg-red-700"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Excluir Rota
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Excluir Rota Completa?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Tem certeza que deseja excluir esta rota? Todas as {selectedRouteData.totalDeliveries} entregas 
-                        serão removidas e retornarão para a aba "Gestão de Rotas" para que possam ser incluídas em novas rotas.
-                        Esta ação não pode ser desfeita.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => deleteRouteMutation.mutate(selectedRouteData.id)}
-                        className="bg-red-600 hover:bg-red-700"
-                      >
-                        Confirmar Exclusão
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                <Button variant="outline" size="sm" onClick={() => setSelectedRoute(null)}>
-                  Fechar
-                </Button>
-              </div>
-            </CardTitle>
+                      Confirmar Exclusão
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <Button variant="outline" size="sm" onClick={() => setSelectedRoute(null)}>
+                Fechar
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
