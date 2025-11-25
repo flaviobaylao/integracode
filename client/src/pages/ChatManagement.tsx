@@ -9,6 +9,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { MessageCircle, Clock, Users, TrendingUp } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface ConversationStats {
   totalConversations: number;
