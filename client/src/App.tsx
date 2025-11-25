@@ -43,6 +43,7 @@ import TelegramSetup from "@/pages/TelegramSetup";
 import ChatDeliveries from "@/pages/ChatDeliveries";
 import ChatAnalysis from "@/pages/ChatAnalysis";
 import ChatManagement from "@/pages/ChatManagement";
+import ChatCenter from "@/pages/ChatCenter";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
 
@@ -174,6 +175,7 @@ function Router() {
           <Route path="/telemarketing/deliveries" component={ChatDeliveries} />
           <Route path="/telemarketing/analysis" component={ChatAnalysis} />
           <Route path="/telemarketing/conversas" component={ChatManagement} />
+          <Route path="/telemarketing/atendimento" component={ChatCenter} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />

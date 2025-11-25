@@ -831,5 +831,134 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/conversations/messages/:conversationId - Mensagens de uma conversa
+  app.get("/api/chat/conversations/:conversationId/messages", async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const messages = await storage.getChatMessages?.() || [];
+      const conversationMessages = messages.filter((m: any) => m.conversationId === conversationId);
+      res.json(conversationMessages);
+    } catch (error: any) {
+      console.error("[CHAT-MESSAGES] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar mensagens" });
+    }
+  });
+
+  // GET /api/chat/agents - Lista de agentes
+  app.get("/api/chat/agents", async (req, res) => {
+    try {
+      const agents = await storage.getChatAgents?.() || [];
+      res.json(agents);
+    } catch (error: any) {
+      console.error("[CHAT-AGENTS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar agentes" });
+    }
+  });
+
+  // POST /api/chat/conversations/:conversationId/message - Enviar mensagem
+  app.post("/api/chat/conversations/:conversationId/message", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { content, messageType = "text" } = req.body;
+      const userId = req.user?.id;
+
+      if (!content) {
+        return res.status(400).json({ error: "Conteúdo da mensagem é obrigatório" });
+      }
+
+      const message = await storage.createChatMessage({
+        conversationId,
+        senderId: userId,
+        senderType: "agent",
+        content,
+        messageType
+      });
+
+      // Atualizar tempo de resposta do agente se for a primeira mensagem
+      const conversations = await storage.getChatConversations();
+      const conv = conversations.find((c: any) => c.id === conversationId);
+      
+      if (conv && !conv.lastAgentResponseTime) {
+        const now = new Date();
+        const waitingTime = Math.floor(
+          (now.getTime() - new Date(conv.createdAt).getTime()) / 1000
+        );
+        
+        // Atualizar conversa com tempo de resposta
+        await storage.updateChatConversation?.(conversationId, {
+          lastAgentResponseTime: now,
+          responseTime: waitingTime,
+          status: 'in-progress'
+        });
+      }
+
+      // Enviar para WhatsApp via Evolution API
+      try {
+        const customers = await storage.getChatCustomers?.() || [];
+        const customer = customers.find((c: any) => c.id === conv.customerId);
+        if (customer?.phone) {
+          await evolutionAPIService.sendMessage(
+            customer.phone,
+            content
+          );
+        }
+      } catch (err) {
+        console.warn("[WHATSAPP] Erro ao enviar para WhatsApp:", err);
+      }
+
+      res.json(message);
+    } catch (error: any) {
+      console.error("[CHAT-MESSAGE-SEND] Erro:", error);
+      res.status(500).json({ error: "Erro ao enviar mensagem" });
+    }
+  });
+
+  // PATCH /api/chat/conversations/:conversationId/assign - Atribuir conversa a agente
+  app.patch("/api/chat/conversations/:conversationId/assign", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { agentId } = req.body;
+
+      if (!agentId) {
+        return res.status(400).json({ error: "agentId é obrigatório" });
+      }
+
+      const updatedConv = await storage.updateChatConversation?.(conversationId, {
+        agentId,
+        status: 'assigned',
+        assignedAt: new Date()
+      });
+
+      res.json(updatedConv);
+    } catch (error: any) {
+      console.error("[CHAT-ASSIGN] Erro:", error);
+      res.status(500).json({ error: "Erro ao atribuir conversa" });
+    }
+  });
+
+  // PATCH /api/chat/conversations/:conversationId/status - Atualizar status
+  app.patch("/api/chat/conversations/:conversationId/status", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).json({ error: "status é obrigatório" });
+      }
+
+      const updateData: any = { status };
+      if (status === 'resolved') {
+        updateData.resolvedAt = new Date();
+      }
+
+      const updatedConv = await storage.updateChatConversation?.(conversationId, updateData);
+
+      res.json(updatedConv);
+    } catch (error: any) {
+      console.error("[CHAT-STATUS] Erro:", error);
+      res.status(500).json({ error: "Erro ao atualizar status" });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
