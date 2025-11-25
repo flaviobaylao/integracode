@@ -22,7 +22,7 @@ interface ChatMessage {
   senderType: "customer" | "agent" | "system";
   content: string;
   messageType: string;
-  timestamp: string;
+  createdAt: Date | string;
   isRead: boolean;
 }
 
@@ -315,7 +315,7 @@ export default function ChatCenter() {
                               >
                                 <p className="text-sm">{msg.content}</p>
                                 <p className="text-xs opacity-70 mt-1">
-                                  {format(new Date(msg.timestamp), "HH:mm", { locale: ptBR })}
+                                  {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                 </p>
                               </div>
                             </div>
