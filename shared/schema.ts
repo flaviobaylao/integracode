@@ -1522,9 +1522,15 @@ export const chatAgents = pgTable("chat_agents", {
 export const chatCustomers = pgTable("chat_customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  phone: text("phone").notNull().unique(),
-  totalConversations: integer("total_conversations").notNull().default(0),
-  lastContact: timestamp("last_contact").defaultNow(),
+  phone: text("phone").notNull(),
+  email: text("email"),
+  avatar: text("avatar"),
+  tags: text("tags"),
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  lastInteractionAt: timestamp("last_interaction_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Chat Conversations status enum
