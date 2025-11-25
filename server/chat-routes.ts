@@ -516,10 +516,9 @@ export function registerChatRoutes(app: Express): void {
           await storage.createChatMessage({
             conversationId: matchingConv.id,
             senderId: (req as any).user?.id || "system",
-            message: message,
-            timestamp: new Date(),
-            direction: 'outgoing',
-            status: 'sent'
+            senderType: "system",
+            content: message,
+            messageType: "text"
           });
         }
       } catch (err) {
