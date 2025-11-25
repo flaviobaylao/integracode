@@ -698,19 +698,32 @@ export function registerChatRoutes(app: Express): void {
   // Webhook para receber mensagens recebidas via Evolution API
   app.post("/api/chat/webhook/messages", async (req, res) => {
     console.log(`🔔 [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
+    console.log(`📋 [WEBHOOK-HEADERS]`, req.headers);
     console.log(`📋 [WEBHOOK-BODY] Corpo completo:`, JSON.stringify(req.body, null, 2));
     
     try {
-      const { event, instance, data } = req.body;
+      // Suportar múltiplos formatos de webhook
+      let event = req.body.event;
+      let instance = req.body.instance;
+      let data = req.body.data;
+
+      // Se vier com "webhook" aninhado
+      if (!event && req.body.webhook && req.body.webhook.event) {
+        event = req.body.webhook.event;
+        instance = req.body.webhook.instance;
+        data = req.body.webhook.data;
+      }
 
       console.log(`📱 [WEBHOOK] Evento recebido:`, JSON.stringify({ event, instance, dataKeys: Object.keys(data || {}) }));
+
+      // RESPONDER IMEDIATAMENTE com 200 OK
+      res.status(200).json({ success: true, message: 'Webhook recebido' });
 
       if (event === 'MESSAGES_UPSERT' && data) {
         const message = data;
         const remoteJid = message.key?.remoteJid;
         const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
         const isFromMe = message.key?.fromMe;
-        const pushName = message.pushName || "Número Desconhecido";
 
         console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
 
