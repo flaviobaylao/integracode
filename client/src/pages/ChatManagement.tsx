@@ -92,12 +92,15 @@ export default function ChatManagement() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-            <MessageCircle className="w-8 h-8 text-green-600" />
-            Gestão de Conversas WhatsApp
-          </h1>
-          <p className="text-gray-600">Visualize e gerencie todas as conversas de clientes</p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+              <MessageCircle className="w-8 h-8 text-green-600" />
+              Gestão de Conversas WhatsApp
+            </h1>
+            <p className="text-gray-600">Visualize e gerencie todas as conversas de clientes</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         {/* Stats Cards */}
