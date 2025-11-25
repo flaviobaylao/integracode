@@ -691,6 +691,9 @@ export function registerChatRoutes(app: Express): void {
   
   // Webhook para receber mensagens recebidas via Evolution API
   app.post("/api/chat/webhook/messages", async (req, res) => {
+    console.log(`🔔 [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
+    console.log(`📋 [WEBHOOK-BODY] Corpo completo:`, JSON.stringify(req.body, null, 2));
+    
     try {
       const { event, instance, data } = req.body;
 
