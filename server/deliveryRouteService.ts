@@ -589,9 +589,14 @@ async function optimizeVehicleRoutes(
     const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
     const startTime = new Date(routeDate);
     startTime.setHours(0, 0, 0, 0);
-    startTime.setMinutes(timeWindowStartMinutes);
+    
+    // Converter minutos totais (ex: 480) em horas e minutos (ex: 8:00)
+    const hours = Math.floor(timeWindowStartMinutes / 60);
+    const minutes = timeWindowStartMinutes % 60;
+    startTime.setHours(hours, minutes, 0, 0);
 
     let currentTime = new Date(startTime);
+    console.log(`⏰ [ETA-CALC] Rota inicia às ${vehicle.timeWindowStart}, currentTime: ${currentTime.toLocaleTimeString('pt-BR')}`);
     let totalDuration = 0;
     let totalDistance = 0;
 
