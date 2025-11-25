@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Save, ShoppingBag, DollarSign, Package, MapPin, FileText } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import type { Product } from "@shared/schema";
 
 export default function HotsitePricing() {
@@ -88,11 +89,12 @@ export default function HotsitePricing() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
           <ShoppingBag className="h-8 w-8 text-honest-orange" />
           Tabela de Preços do Hotsite
         </h1>
+        <BackToDashboardButton />
         <p className="text-gray-600 mt-2">
           Gerencie os 5 tipos de preço para cada produto do hotsite Instagram
         </p>

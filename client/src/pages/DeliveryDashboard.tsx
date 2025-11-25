@@ -3,6 +3,7 @@ import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { 
   Truck, 
   Package, 
@@ -81,8 +82,10 @@ export default function DeliveryDashboard() {
             Acompanhe todas as entregas em tempo real
           </p>
         </div>
-        
-        <div className="flex items-center space-x-2">
+        <BackToDashboardButton />
+      </div>
+      
+      <div className="flex items-center space-x-2">
           <select
             value={selectedPeriod}
             onChange={(e) => setSelectedPeriod(e.target.value)}

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { 
   Select,
   SelectContent,
@@ -118,6 +119,7 @@ export default function DeliveryReports() {
             Análise detalhada da performance das entregas
           </p>
         </div>
+        <BackToDashboardButton />
         
         <Button onClick={handleExportReport} data-testid="button-export">
           <Download className="h-4 w-4 mr-2" />
