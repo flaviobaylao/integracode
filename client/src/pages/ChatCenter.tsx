@@ -163,9 +163,12 @@ export default function ChatCenter() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Central de Atendimento WhatsApp</h1>
-          <p className="text-gray-600">Gerencie conversas e atenda clientes em tempo real</p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Central de Atendimento WhatsApp</h1>
+            <p className="text-gray-600">Gerencie conversas e atenda clientes em tempo real</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
