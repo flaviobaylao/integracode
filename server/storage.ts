@@ -5203,6 +5203,28 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return customer;
   }
+
+  async getChatCustomerByPhone(phone: string): Promise<ChatCustomer | undefined> {
+    const [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, phone));
+    return customer;
+  }
+
+  async getCustomerByPhone(phone: string): Promise<Customer | undefined> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(sql`REGEXP_REPLACE(${customers.phone}, '\\D', '') = ${cleanPhone}`);
+    return customer;
+  }
+
+  async getChatConversationByCustomerId(customerId: string): Promise<ChatConversation | undefined> {
+    const [conversation] = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.customerId, customerId));
+    return conversation;
+  }
   
   // Chat Conversations operations
   async getChatConversations(): Promise<ChatConversation[]> {

@@ -701,36 +701,72 @@ export function registerChatRoutes(app: Express): void {
         const remoteJid = message.key?.remoteJid;
         const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
         const isFromMe = message.key?.fromMe;
+        const pushName = message.pushName || "Número Desconhecido";
 
         console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
 
         if (!isFromMe && text) {
           console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
 
-          // Salvar mensagem recebida no banco de dados
           try {
-            const conv = await storage.getChatConversations();
-            const phoneClean = remoteJid?.replace(/\D/g, '');
-            const matchingConv = conv.find((c: any) => 
-              c.phoneNumber === remoteJid || 
-              c.phoneNumber?.replace(/\D/g, '') === phoneClean
-            );
+            // Extrair número de telefone limpo
+            const phoneClean = remoteJid?.replace(/\D/g, '').slice(-11) || '';
+            const phoneFormatted = `55${phoneClean}`;
 
-            if (matchingConv) {
-              await storage.createChatMessage({
-                conversationId: matchingConv.id,
-                senderId: remoteJid || "unknown",
-                senderType: "customer",
-                content: text || "[Mídia ou mensagem especial]",
-                messageType: "text"
-              });
-              console.log(`✅ Mensagem salva na conversa ${matchingConv.id}`);
+            console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
+
+            // 1. Tentar buscar cliente regular (tabela customers) para pegar nome fantasia
+            let clientName = "Número Desconhecido";
+            let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
+
+            if (existingClient) {
+              clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
+              console.log(`✅ Cliente encontrado: ${clientName}`);
             } else {
-              console.warn(`⚠️  Nenhuma conversa encontrada para ${remoteJid}. Conversas disponíveis:`, 
-                conv.map((c: any) => c.phoneNumber).join(", "));
+              console.log(`⚠️  Cliente não encontrado no sistema`);
             }
+
+            // 2. Buscar ou criar chat customer
+            let chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
+            
+            if (!chatCustomer) {
+              console.log(`📝 Criando novo chat customer...`);
+              chatCustomer = await storage.createChatCustomer({
+                name: clientName,
+                phone: phoneFormatted
+              });
+              console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
+            }
+
+            // 3. Buscar ou criar conversa
+            let conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
+
+            if (!conversation) {
+              console.log(`📝 Criando nova conversa...`);
+              conversation = await storage.createChatConversation({
+                customerId: chatCustomer.id,
+                customerName: clientName,
+                customerPhone: phoneFormatted,
+                status: "new",
+                priority: "normal"
+              });
+              console.log(`✅ Conversa criada: ${conversation.id}`);
+            } else {
+              console.log(`✅ Conversa encontrada: ${conversation.id}`);
+            }
+
+            // 4. Salvar mensagem
+            await storage.createChatMessage({
+              conversationId: conversation.id,
+              senderId: remoteJid || "unknown",
+              senderType: "customer",
+              content: text || "[Mídia ou mensagem especial]",
+              messageType: "text"
+            });
+
+            console.log(`✅ Mensagem salva na conversa ${conversation.id}`);
           } catch (err) {
-            console.error("[WEBHOOK] Erro ao salvar mensagem:", err);
+            console.error("[WEBHOOK] Erro ao processar mensagem:", err);
           }
         }
       } else {
