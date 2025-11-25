@@ -469,7 +469,7 @@ export default function ChatCenter() {
                 </Button>
                 <Button
                   onClick={() => {
-                    if (!newPhoneNumber.trim()) {
+                    if (!newPhoneNumber.length) {
                       toast({ title: "Erro", description: "Insira um número telefônico", variant: "destructive" });
                       return;
                     }
@@ -478,7 +478,7 @@ export default function ChatCenter() {
                       customerName: newCustomerName 
                     });
                   }}
-                  disabled={startConversationMutation.isPending || !newPhoneNumber.trim()}
+                  disabled={startConversationMutation.isPending}
                   className="bg-green-600 hover:bg-green-700"
                   data-testid="button-start-conversation"
                 >
