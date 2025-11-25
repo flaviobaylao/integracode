@@ -1376,6 +1376,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Bulk update time slots for all customers - ADMIN ONLY
+  app.post('/api/customers/bulk-update-time-slots', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const result = await storage.bulkUpdateAllCustomersTimeSlots();
+      res.json({
+        message: `Horários configurados com sucesso para ${result.updated} cliente(s)`,
+        ...result
+      });
+    } catch (error) {
+      console.error("Error bulk updating time slots:", error);
+      res.status(500).json({ message: "Falha ao configurar horários em massa" });
+    }
+  });
+
   // Import customer data from Excel file
   app.post('/api/customers/import', authenticateUser, upload.single('file'), async (req: any, res) => {
     try {

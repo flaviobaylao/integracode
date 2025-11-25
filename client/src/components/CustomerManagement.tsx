@@ -80,6 +80,11 @@ export default function CustomerManagement() {
   const [positivationFilter, setPositivationFilter] = useState('all');
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const { data: user } = useQuery<User>({
+    queryKey: ['/api/auth/user'],
+    retry: false,
+  });
 
   const { data: customers = [], isLoading } = useQuery<CustomerWithSeller[]>({
     queryKey: ['/api/customers'],
@@ -90,6 +95,8 @@ export default function CustomerManagement() {
     queryKey: ['/api/users'],
     retry: false,
   });
+
+  const isAdmin = user?.role === 'admin';
 
   const deleteCustomerMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -110,6 +117,32 @@ export default function CustomerManagement() {
       });
     },
   });
+
+  const bulkUpdateTimeSlotsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest('POST', '/api/customers/bulk-update-time-slots');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      toast({
+        title: "Sucesso",
+        description: "Horários de recebimento configurados para todos os clientes (Segunda-Sexta: 08:00-18:00)",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleBulkUpdateTimeSlots = () => {
+    if (confirm('Tem certeza que deseja configurar os horários de recebimento para TODOS os clientes cadastrados?\n\nHorários: Segunda-Sexta 08:00-18:00\n\nEsta ação não pode ser desfeita diretamente, mas os horários podem ser editados individualmente depois.')) {
+      bulkUpdateTimeSlotsMutation.mutate();
+    }
+  };
 
   const handleOpenWhatsApp = (phone: string, customerName: string) => {
     const message = encodeURIComponent(
@@ -301,6 +334,18 @@ export default function CustomerManagement() {
             <Upload className="h-4 w-4 mr-2" />
             Importar Excel
           </Button>
+          {isAdmin && (
+            <Button
+              variant="outline"
+              className="border-purple-500 text-purple-600 hover:bg-purple-500 hover:text-white"
+              onClick={handleBulkUpdateTimeSlots}
+              disabled={bulkUpdateTimeSlotsMutation.isPending}
+              data-testid="button-bulk-update-time-slots"
+            >
+              <Clock className="h-4 w-4 mr-2" />
+              {bulkUpdateTimeSlotsMutation.isPending ? 'Configurando...' : 'Configurar Horários em Massa'}
+            </Button>
+          )}
           <Button
             className="bg-honest-blue hover:bg-blue-700"
             onClick={() => setShowModal(true)}

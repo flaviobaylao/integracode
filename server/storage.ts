@@ -695,6 +695,30 @@ export class DatabaseStorage implements IStorage {
     return updatedCustomer;
   }
 
+  async bulkUpdateAllCustomersTimeSlots(): Promise<{ updated: number; total: number }> {
+    // Horários padrão: segunda-sexta 08:00-18:00
+    const weekdaySlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    
+    // Buscar todos os clientes
+    const allCustomers = await db.select().from(customers);
+    const total = allCustomers.length;
+    
+    // Atualizar todos com os novos horários
+    const result = await db
+      .update(customers)
+      .set({
+        deliveryTimeSlots: weekdaySlots, // Seg-Sex
+        deliverySaturdayTimeSlots: [], // Vazio para sábado
+        updatedAt: new Date()
+      })
+      .returning({ id: customers.id });
+    
+    const updated = result.length;
+    console.log(`✅ [BULK-UPDATE-TIME-SLOTS] Atualizados ${updated} de ${total} clientes com horários padrão (Seg-Sex 08:00-18:00)`);
+    
+    return { updated, total };
+  }
+
   async inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }> {
     // Get customer data first
     const [customerData] = await db
