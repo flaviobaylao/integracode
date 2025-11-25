@@ -446,7 +446,7 @@ export default function ChatCenter() {
                     placeholder="62 9 9578-2812"
                     value={newPhoneNumber}
                     onChange={(e) => setNewPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                    maxLength="11"
+                    maxLength={11}
                     data-testid="input-phone-number"
                   />
                 </div>
