@@ -24,6 +24,7 @@ import RotaDoDia from "@/pages/RotaDoDia";
 import RoutesManagement from "@/pages/RoutesManagement";
 import DeliveryRoutesList from "@/pages/DeliveryRoutesList";
 import RotaEntrega from "@/pages/RotaEntrega";
+import DeliveryDailySummary from "@/pages/DeliveryDailySummary";
 import UserManagementPage from "@/pages/UserManagementPage";
 import BankAccountsDebug from "@/pages/BankAccountsDebug";
 import ContasReceber from "@/pages/ContasReceber";
@@ -152,6 +153,7 @@ function Router() {
           <Route path="/delivery-routes" component={RoutesSummary} />
           <Route path="/mapa-clientes" component={ClientsMap} />
           <Route path="/rota-entrega" component={RotaEntrega} />
+          <Route path="/entregas-do-dia" component={DeliveryDailySummary} />
           <Route path="/driver-management" component={DriverManagement} />
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
