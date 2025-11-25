@@ -1508,17 +1508,14 @@ export type SellerAttendancePerformance = {
 // Chat Agents table - agentes de atendimento do chat (humanos e bots)
 export const chatAgents = pgTable("chat_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id"), // Referência opcional ao users.id (null para bots)
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  type: text("type").notNull().default("human"), // human, bot
+  phone: text("phone"),
   status: text("status").notNull().default("offline"), // online, offline, busy
-  activeConversations: integer("active_conversations").notNull().default(0),
-  totalConversations: integer("total_conversations").notNull().default(0),
-  lastActivity: timestamp("last_activity").defaultNow(),
-  lastHeartbeat: timestamp("last_heartbeat").defaultNow(),
-  averageResponseTime: integer("average_response_time").default(0), // em segundos
-  totalHandledTime: integer("total_handled_time").default(0), // tempo total em segundos
+  avatar: text("avatar"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Chat Customers table - clientes do WhatsApp/Telegram (separados dos customers de venda)
@@ -1588,7 +1585,6 @@ export const chatReports = pgTable("chat_reports", {
 // Chat Audit Log table
 export const chatAuditLog = pgTable("chat_audit_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id"),
   action: text("action").notNull(),
   entityType: text("entity_type"),
   entityId: varchar("entity_id"),

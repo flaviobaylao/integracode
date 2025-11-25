@@ -223,15 +223,18 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // Create or get customer
-      const customerId = `customer_${Date.now()}`;
-      const customer = await storage.createChatCustomer({
+      let createdCustomer = await storage.createChatCustomer({
         name: customerName || `Cliente ${customerPhone}`,
         phone: customerPhone
       }).catch(() => null);
 
+      if (!createdCustomer) {
+        return res.status(400).json({ error: "Erro ao criar cliente para a conversa" });
+      }
+
       // Create conversation
       const conversation = await storage.createChatConversation({
-        customerId: customerId,
+        customerId: createdCustomer.id,
         customerName: customerName || `Cliente ${customerPhone}`,
         customerPhone: customerPhone,
         status: "new",
@@ -265,7 +268,7 @@ export function registerChatRoutes(app: Express): void {
 
       res.json({
         id: conversation.id,
-        customerId: customerId,
+        customerId: createdCustomer.id,
         phoneNumber: customerPhone,
         customerName: customerName || `Cliente ${customerPhone}`,
         status: "new",
