@@ -391,10 +391,12 @@ class EvolutionAPIService {
           'apikey': this.config!.apiKey
         },
         body: JSON.stringify({
-          url: webhookUrl,
-          enabled: true,
-          webhookByEvents: true,
-          events: events
+          webhook: {
+            url: webhookUrl,
+            enabled: true,
+            webhookByEvents: true,
+            events: events
+          }
         })
       });
 
