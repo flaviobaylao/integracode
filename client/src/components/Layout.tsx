@@ -171,11 +171,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   ];
 
   const telemarketingMenuItems = [
-    { id: 'telemarketing-dashboard', label: 'Chat Honest', icon: 'fas fa-comments' },
-    { id: 'telemarketing-whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp' },
-    { id: 'telemarketing-telegram', label: 'Telegram', icon: 'fab fa-telegram' },
+    { id: 'telemarketing-dashboard', label: 'Central de Atendimento', icon: 'fas fa-comments' },
+    { id: 'telemarketing-analysis', label: 'Dashboard de Conversas', icon: 'fas fa-chart-bar' },
+    { id: 'telemarketing-whatsapp', label: 'Templates Rápidos', icon: 'fab fa-whatsapp' },
+    { id: 'telemarketing-telegram', label: 'Análises', icon: 'fab fa-telegram' },
     { id: 'telemarketing-deliveries', label: 'Entregas Chat', icon: 'fas fa-truck' },
-    { id: 'telemarketing-analysis', label: 'Análises', icon: 'fas fa-chart-bar' },
   ];
 
   const orderStepsItems = [
@@ -203,11 +203,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     
     // Mapeamento específico para itens de telemarketing
     const telemarketingRoutes: Record<string, string> = {
-      'telemarketing-dashboard': '/telemarketing/dashboard',
-      'telemarketing-whatsapp': '/telemarketing/whatsapp',
-      'telemarketing-telegram': '/telemarketing/telegram',
-      'telemarketing-deliveries': '/telemarketing/deliveries',
-      'telemarketing-analysis': '/telemarketing/analysis',
+      'telemarketing': '/telemarketing',
+      'telemarketing-dashboard': '/telemarketing/atendimento',
+      'telemarketing-whatsapp': '/telemarketing/atendimento',
+      'telemarketing-telegram': '/telemarketing/analysis',
+      'telemarketing-deliveries': '/telemarketing/analysis',
+      'telemarketing-analysis': '/telemarketing/conversas',
     };
     
     if (telemarketingRoutes[itemId]) {
@@ -218,7 +219,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
