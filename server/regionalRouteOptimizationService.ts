@@ -631,15 +631,37 @@ export async function generateSectorizedRoutes(
 
 /**
  * Gera rotas setorizadas para uma data específica consultando banco de dados
+ * Todos os motoristas partem de um ponto central comum (warehouse/depo)
  * 
  * @param storage - Storage do banco de dados
  * @param routeDate - Data para gerar as rotas
+ * @param startLatitude - Latitude do ponto de partida central (opcional - usa ponto padrão se não fornecido)
+ * @param startLongitude - Longitude do ponto de partida central (opcional - usa ponto padrão se não fornecido)
  * @returns Rotas setorizadas por veículo
  */
 export async function generateDailySectorizedRoutes(
   storage: DatabaseStorage,
-  routeDate: Date
+  routeDate: Date,
+  startLatitude?: number,
+  startLongitude?: number
 ): Promise<SectorizedRoute[]> {
+  // Coordenadas padrão do ponto de partida (Honest Sucos - pode ser configurado)
+  // Se não fornecido, usar ponto de partida padrão (-19.8732, -43.9389 - Belo Horizonte)
+  let depotLatitude = startLatitude ?? -19.8732;
+  let depotLongitude = startLongitude ?? -43.9389;
+  
+  // Buscar coordenadas de um ponto de partida cadastrado no sistema (se existir)
+  try {
+    const settings = await storage.getSystemSettings();
+    if (settings?.warehouseLatitude && settings?.warehouseLongitude) {
+      depotLatitude = parseFloat(settings.warehouseLatitude as any);
+      depotLongitude = parseFloat(settings.warehouseLongitude as any);
+      console.log(`📍 Ponto de partida central: (${depotLatitude}, ${depotLongitude})`);
+    }
+  } catch (e) {
+    console.log(`ℹ️  Usando ponto de partida padrão: (${depotLatitude}, ${depotLongitude})`);
+  }
+  
   // Buscar motoristas ativos
   const drivers = await storage.getActiveDeliveryDrivers();
   
@@ -647,29 +669,23 @@ export async function generateDailySectorizedRoutes(
     throw new Error('Nenhum motorista ativo encontrado');
   }
   
-  // Montar veículos disponíveis usando coordenadas direto da tabela deliveryDrivers
+  // Montar veículos disponíveis - todos usam o mesmo ponto de partida central
   const vehicles: Vehicle[] = drivers
     .filter(d => d.isActive)
     .map(d => {
-      // Verificar se motorista tem coordenadas cadastradas
-      if (!d.homeLatitude || !d.homeLongitude) {
-        console.warn(`⚠️  Motorista ${d.name} sem coordenadas de casa cadastradas`);
-        return null;
-      }
-      
       return {
         id: d.id,
         driverId: d.id,
         driverName: d.name,
         vehicleType: (d.vehicleType || 'moto') as 'caminhao' | 'carro' | 'moto',
-        homeLatitude: parseFloat(d.homeLatitude as any),
-        homeLongitude: parseFloat(d.homeLongitude as any)
+        homeLatitude: depotLatitude, // Usar ponto central para todos
+        homeLongitude: depotLongitude
       };
     })
     .filter((v): v is Vehicle => v !== null);
   
   if (vehicles.length === 0) {
-    throw new Error('Nenhum veículo com coordenadas válidas encontrado');
+    throw new Error('Nenhum veículo ativo encontrado');
   }
   
   console.log(`🚚 Veículos disponíveis: ${vehicles.map(v => `${v.driverName} (${v.vehicleType})`).join(', ')}`);
