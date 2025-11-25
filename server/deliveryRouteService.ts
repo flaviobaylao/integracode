@@ -726,10 +726,6 @@ async function persistRoutePlan(
         throw new Error(`Parada "${stop.customerName}" com coordenadas inválidas: lat=${stop.latitude}, lng=${stop.longitude}`);
       }
 
-      // Converter horários para formato HH:mm (string)
-      const arrivalTimeStr = stop.estimatedArrival.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      const departureTimeStr = stop.estimatedDeparture.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
       const stopData = {
         id: nanoid(),
         routeId: deliveryRoute.id,
@@ -739,9 +735,9 @@ async function persistRoutePlan(
         customerAddress: stop.customerAddress,
         customerLatitude: stop.latitude.toString(),
         customerLongitude: stop.longitude.toString(),
-        estimatedArrival: arrivalTimeStr,
-        estimatedDeparture: departureTimeStr,
-        estimatedServiceTime: Math.round(stop.estimatedServiceTime), // Arredondar para inteiro
+        estimatedArrival: stop.estimatedArrival,
+        estimatedDeparture: stop.estimatedDeparture,
+        estimatedServiceTime: Math.round(stop.estimatedServiceTime),
         stopOrder: stop.stopOrder,
         distanceFromPrevious: stop.distanceFromPrevious.toString(),
         status: 'pending',
@@ -750,8 +746,8 @@ async function persistRoutePlan(
       };
 
       console.log(`💾 [PERSIST] Creating stop for ${stop.customerName}:`);
-      console.log(`   - estimatedArrival: ${stop.estimatedArrival.toLocaleTimeString('pt-BR')} → "${arrivalTimeStr}"`);
-      console.log(`   - estimatedDeparture: ${stop.estimatedDeparture.toLocaleTimeString('pt-BR')} → "${departureTimeStr}"`);
+      console.log(`   - Chegada: ${stop.estimatedArrival.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
+      console.log(`   - Saída: ${stop.estimatedDeparture.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
 
       await storage.createDeliveryRouteStop(stopData);
     }
