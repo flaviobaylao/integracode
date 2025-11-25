@@ -1155,6 +1155,11 @@ export default function DeliveryManagement() {
                         const centerLat = parseFloat(firstStop.latitude || firstStop.customerLatitude);
                         const centerLng = parseFloat(firstStop.longitude || firstStop.customerLongitude);
                         
+                        // Ponto inicial (depot)
+                        const startLat = parseFloat(route.startLatitude);
+                        const startLng = parseFloat(route.startLongitude);
+                        const hasValidStart = startLat && startLng && !isNaN(startLat) && !isNaN(startLng);
+                        
                         return (
                           <div className="mb-4 border rounded-lg overflow-hidden" style={{ height: '300px' }}>
                             <MapContainer
@@ -1167,6 +1172,24 @@ export default function DeliveryManagement() {
                                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                               />
+                          
+                          {/* Marcador do ponto inicial (SAÍDA) */}
+                          {hasValidStart && (
+                            <Marker
+                              position={[startLat, startLng]}
+                              icon={L.divIcon({
+                                html: `<div style="background-color: #8b5cf6; width: 35px; height: 35px; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; box-shadow: 0 2px 6px rgba(0,0,0,0.4); font-size: 14px;">S</div>`,
+                                className: '',
+                                iconSize: [35, 35],
+                                iconAnchor: [17.5, 17.5]
+                              })}
+                            >
+                              <Popup>
+                                <strong>🚀 SAÍDA/DEPOT</strong><br />
+                                {route.startAddress}
+                              </Popup>
+                            </Marker>
+                          )}
                           
                           {/* Marcadores das paradas */}
                           {route.stops.map((stop: any, stopIdx: number) => {
@@ -1190,23 +1213,45 @@ export default function DeliveryManagement() {
                                   <strong>Parada {stop.stopOrder}</strong><br />
                                   {stop.customerName}<br />
                                   <span className="text-xs text-gray-600">
-                                    ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                    ⏰ Check-in: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}<br />
+                                    Saída: {new Date(stop.estimatedDeparture).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 </Popup>
                               </Marker>
                             );
                           })}
                           
-                          {/* Linha conectando todos os pontos */}
+                          {/* Marcador do ponto final (RETORNO) */}
+                          {hasValidStart && (
+                            <Marker
+                              position={[startLat, startLng]}
+                              icon={L.divIcon({
+                                html: `<div style="background-color: #ef4444; width: 35px; height: 35px; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; box-shadow: 0 2px 6px rgba(0,0,0,0.4); font-size: 14px;">F</div>`,
+                                className: '',
+                                iconSize: [35, 35],
+                                iconAnchor: [17.5, 17.5]
+                              })}
+                            >
+                              <Popup>
+                                <strong>🏁 RETORNO/DEPOT</strong><br />
+                                {route.startAddress}
+                              </Popup>
+                            </Marker>
+                          )}
+                          
+                          {/* Linha conectando todos os pontos (saída -> paradas -> retorno) */}
                           <Polyline
-                            positions={route.stops
-                              .map((stop: any) => {
-                                const lat = parseFloat(stop.latitude || stop.customerLatitude);
-                                const lng = parseFloat(stop.longitude || stop.customerLongitude);
-                                return lat && lng && !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
-                              })
-                              .filter((pos: any) => pos !== null)
-                            }
+                            positions={[
+                              ...(hasValidStart ? [[startLat, startLng]] : []),
+                              ...route.stops
+                                .map((stop: any) => {
+                                  const lat = parseFloat(stop.latitude || stop.customerLatitude);
+                                  const lng = parseFloat(stop.longitude || stop.customerLongitude);
+                                  return lat && lng && !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
+                                })
+                                .filter((pos: any) => pos !== null),
+                              ...(hasValidStart ? [[startLat, startLng]] : [])
+                            ]}
                             color="#3b82f6"
                             weight={3}
                             opacity={0.7}
