@@ -682,13 +682,21 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF e Dias de Entrega (calculados - 2 dias úteis após visita) */}
+                        {/* Informações destacadas: NF, Data e Dias de Entrega (calculados - 2 dias úteis após visita) */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
                               <Package className="h-4 w-4 text-blue-600" />
                               <span className="text-base font-bold text-gray-900">
                                 NF: {order.invoiceNumber}
+                              </span>
+                            </div>
+                          )}
+                          {order.scheduledDate && (
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4 text-green-600" />
+                              <span className="text-base font-bold text-gray-900">
+                                Data: {new Date(order.scheduledDate).toLocaleDateString('pt-BR')}
                               </span>
                             </div>
                           )}
