@@ -54,7 +54,7 @@ interface DeliveryOrder {
   customerAddress: string;
   customerLatitude: string;
   customerLongitude: string;
-  customerWeekdays: string[] | null;
+  customerWeekdays: string | null;  // Dia da rota/visita do vendedor (ex: "Terça")
   averageDeliveryTime: number;
   exclusiveVehicle: boolean;
   vehicleTypes: string[];
@@ -690,7 +690,7 @@ export default function DeliveryManagement() {
                           </span>
                         </div>
 
-                        {/* Informações destacadas: NF, Data e Dias de Entrega (calculados - 2 dias úteis após visita) */}
+                        {/* Informações destacadas: NF, Data, Dia de Rota e Dias de Entrega */}
                         <div className="flex items-center gap-4 flex-wrap">
                           {order.invoiceNumber && (
                             <div className="flex items-center gap-1">
@@ -705,6 +705,14 @@ export default function DeliveryManagement() {
                               <Calendar className="h-4 w-4 text-green-600" />
                               <span className="text-base font-bold text-gray-900">
                                 Data: {new Date(order.scheduledDate).toLocaleDateString('pt-BR')}
+                              </span>
+                            </div>
+                          )}
+                          {order.customerWeekdays && (
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4 text-indigo-600" />
+                              <span className="text-base font-bold text-indigo-900 bg-indigo-100 px-2 py-1 rounded">
+                                Rota: {order.customerWeekdays}
                               </span>
                             </div>
                           )}
@@ -728,12 +736,6 @@ export default function DeliveryManagement() {
                             <span className="flex items-center">
                               <MapPin className="h-3 w-3 mr-1" />
                               📍 Lat: {Number(order.customerLatitude).toFixed(6)}, Lng: {Number(order.customerLongitude).toFixed(6)}
-                            </span>
-                          )}
-                          {order.customerWeekdays && Array.isArray(order.customerWeekdays) && order.customerWeekdays.length > 0 && (
-                            <span className="flex items-center">
-                              <Calendar className="h-3 w-3 mr-1" />
-                              Dias: {order.customerWeekdays.join(', ')}
                             </span>
                           )}
                         </div>

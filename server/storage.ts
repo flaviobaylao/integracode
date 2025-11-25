@@ -2611,7 +2611,8 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.delivery_time_slots, '[]'::jsonb) as "deliveryTimeSlots",
         COALESCE(c.delivery_saturday_time_slots, '[]'::jsonb) as "deliverySaturdayTimeSlots",
         COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
-        c.id as "customerId"
+        c.id as "customerId",
+        c.weekdays as "customerWeekdays"
       FROM billings b
       LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name
       WHERE b.invoice_stage = 'Aguardando Rota'
@@ -2642,7 +2643,7 @@ export class DatabaseStorage implements IStorage {
         customerAddress: row.customerAddress || '',
         customerLatitude: row.customerLatitude ? parseFloat(row.customerLatitude) : null,
         customerLongitude: row.customerLongitude ? parseFloat(row.customerLongitude) : null,
-        customerWeekdays: [],
+        customerWeekdays: row.customerWeekdays || null,
         averageDeliveryTime: row.averageDeliveryTime || 10,
         exclusiveVehicle: row.exclusiveVehicle || false,
         vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
