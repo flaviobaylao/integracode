@@ -2584,7 +2584,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
-    // Retornar apenas dados dos billings, sem lógica de matching de clientes
+    // Retornar dados dos billings com latitude/longitude dos clientes cadastrados
     const result = await db.execute(sql`
       SELECT 
         b.id,
@@ -2603,8 +2603,12 @@ export class DatabaseStorage implements IStorage {
         b.exclusive_vehicle as "exclusiveVehicle",
         b.vehicle_types as "vehicleTypes",
         b.is_urgent as "isUrgent",
-        b.delivery_weekdays as "deliveryWeekdays"
+        b.delivery_weekdays as "deliveryWeekdays",
+        COALESCE(c.latitude, NULL)::text as "customerLatitude",
+        COALESCE(c.longitude, NULL)::text as "customerLongitude",
+        COALESCE(c.address, '')::text as "customerAddress"
       FROM billings b
+      LEFT JOIN customers c ON REPLACE(REPLACE(REPLACE(REPLACE(c.document, '.', ''), '-', ''), '/', ''), ' ', '') = REPLACE(REPLACE(REPLACE(REPLACE(b.customer_document, '.', ''), '-', ''), '/', ''), ' ', '')
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
@@ -2630,9 +2634,9 @@ export class DatabaseStorage implements IStorage {
         customerName: row.customerName,
         customerCpf: !isCnpj ? row.customerDocument : null,
         customerCnpj: isCnpj ? row.customerDocument : null,
-        customerAddress: '',
-        customerLatitude: null,
-        customerLongitude: null,
+        customerAddress: row.customerAddress || '',
+        customerLatitude: row.customerLatitude ? parseFloat(row.customerLatitude) : null,
+        customerLongitude: row.customerLongitude ? parseFloat(row.customerLongitude) : null,
         customerWeekdays: [],
         averageDeliveryTime: 30,
         exclusiveVehicle: row.exclusiveVehicle || false,
