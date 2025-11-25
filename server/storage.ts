@@ -5234,7 +5234,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conversationId))
-      .orderBy(chatMessages.timestamp);
+      .orderBy(chatMessages.createdAt);
   }
   
   async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
