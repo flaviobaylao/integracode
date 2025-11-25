@@ -2610,7 +2610,8 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.receiving_weekdays, '[]'::jsonb) as "receivingWeekdays",
         COALESCE(c.delivery_time_slots, '[]'::jsonb) as "deliveryTimeSlots",
         COALESCE(c.delivery_saturday_time_slots, '[]'::jsonb) as "deliverySaturdayTimeSlots",
-        COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime"
+        COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
+        c.id as "customerId"
       FROM billings b
       LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name
       WHERE b.invoice_stage = 'Aguardando Rota'
@@ -2634,7 +2635,7 @@ export class DatabaseStorage implements IStorage {
         invoiceNumber: row.invoiceNumber,
         omieOrderId: row.omieOrderId,
         orderNumber: row.orderNumber,
-        customerId: 'billing-' + row.id,
+        customerId: row.customerId || ('billing-' + row.id),
         customerName: row.customerName,
         customerCpf: !isCnpj ? row.customerDocument : null,
         customerCnpj: isCnpj ? row.customerDocument : null,
