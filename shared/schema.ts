@@ -1508,6 +1508,7 @@ export type SellerAttendancePerformance = {
 // Chat Agents table - agentes de atendimento do chat (humanos e bots)
 export const chatAgents = pgTable("chat_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"), // 🔗 Link para usuário do sistema
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   phone: text("phone"),

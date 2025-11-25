@@ -1073,15 +1073,36 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // GET /api/chat/conversations - Lista de conversas com filtros
-  app.get("/api/chat/conversations", async (req, res) => {
+  app.get("/api/chat/conversations", authenticateUser, async (req, res) => {
     try {
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      
       const conversations = await storage.getChatConversations();
       const agents = await storage.getChatAgents() || [];
       const customers = await storage.getChatCustomers() || [];
       const messages: any[] = [];
 
+      // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas
+      let filteredConversations = conversations;
+      if (!isAdmin && currentUser?.id) {
+        // Buscar agente ligado ao usuário
+        const userAgent = agents.find(a => a.userId === currentUser.id);
+        if (userAgent) {
+          // Filtrar conversas atribuídas a este agente
+          filteredConversations = conversations.filter(c => c.agentId === userAgent.id);
+          console.log(`🔐 [FILTER] Usuário ${currentUser.email} vê ${filteredConversations.length}/${conversations.length} conversas (agente: ${userAgent.id})`);
+        } else {
+          // Usuário sem agente - vê conversas não atribuídas
+          filteredConversations = conversations.filter(c => !c.agentId);
+          console.log(`🔐 [FILTER] Usuário ${currentUser.email} vê ${filteredConversations.length} conversas não atribuídas`);
+        }
+      } else if (isAdmin) {
+        console.log(`🔓 [FILTER] Admin ${currentUser.email} vê TODAS as ${filteredConversations.length} conversas`);
+      }
+
       // Enriquecer conversas com dados relacionados
-      const enrichedConversations = conversations.map((conv: any) => {
+      const enrichedConversations = filteredConversations.map((conv: any) => {
         const agent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
         const conversationMessages = messages.filter((m: any) => m.conversationId === conv.id);
@@ -1095,15 +1116,15 @@ export function registerChatRoutes(app: Express): void {
           id: conv.id,
           customerId: conv.customerId,
           customerName: customer?.name || "Desconhecido",
-          customerPhone: conv.customerPhone || customer?.phone || "-", // 🔒 Sempre usar customerPhone da conversa
+          customerPhone: conv.customerPhone || customer?.phone || "-",
           agentId: conv.agentId,
           agentName: agent?.name,
           status: conv.status,
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
           messageCount: conversationMessages.length,
-          unreadCount: unreadMessages.length, // 🟢 Número de mensagens não lidas
-          hasUnread: unreadMessages.length > 0, // 🟢 Flag para mostrar indicador verde
+          unreadCount: unreadMessages.length,
+          hasUnread: unreadMessages.length > 0,
           createdAt: conv.createdAt
         };
       });
@@ -1215,18 +1236,29 @@ export function registerChatRoutes(app: Express): void {
       const { conversationId } = req.params;
       const { content, messageType = "text" } = req.body;
       const userId = (req as any).currentUser?.id;
+      const currentUser = (req as any).currentUser;
 
       if (!content) {
         return res.status(400).json({ error: "Conteúdo da mensagem é obrigatório" });
       }
 
-      // 🔍 CORREÇÃO 1: Buscar conversa para garantir que existe e pegar customerId
+      // 🔍 Buscar conversa
       const conversation = await storage.getChatConversation(conversationId);
       if (!conversation) {
         return res.status(400).json({ error: "Conversa não encontrada" });
       }
 
-      // Salvar mensagem na conversa correta
+      // 🔐 Verificar permissão: admin vê todas, agentes veem só suas
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      if (!isAdmin && conversation.agentId) {
+        const agents = await storage.getChatAgents();
+        const userAgent = agents.find(a => a.userId === userId);
+        if (userAgent?.id !== conversation.agentId) {
+          return res.status(403).json({ error: "Você não tem permissão para enviar mensagens nesta conversa" });
+        }
+      }
+
+      // 💬 Salvar mensagem no banco
       const message = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: userId,
@@ -1237,21 +1269,21 @@ export function registerChatRoutes(app: Express): void {
 
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
 
-      // Atualizar status da conversa para em-progresso
+      // 🟢 Atualizar status para em-progresso
       if (storage.updateChatConversation) {
         await storage.updateChatConversation(conversation.id, {
-          status: 'in-progress'
+          status: 'in-progress',
+          agentId: (currentUser?.id ? (await storage.getChatAgents()).find(a => a.userId === userId)?.id : undefined) || conversation.agentId
         });
       }
 
-      // 🔍 CORREÇÃO 2: Enviar para WhatsApp via Evolution API usando customerId
+      // 📱 Enviar para WhatsApp via Evolution API
       try {
         if (conversation.customerId) {
           const chatCustomer = await storage.getChatCustomer(conversation.customerId);
           if (chatCustomer?.phone) {
             const config = evolutionAPIService.getConfig();
             if (config?.instanceName) {
-              // 🔧 Normalizar telefone usando função centralizada
               const phoneNormalized = normalizePhoneNumber(chatCustomer.phone);
               const phoneFormatted = phoneNormalized.includes('@') 
                 ? phoneNormalized 
@@ -1265,7 +1297,7 @@ export function registerChatRoutes(app: Express): void {
               );
               
               if (sendResult.success) {
-                console.log(`✅ [SEND-WHATSAPP] Mensagem enviada com sucesso`);
+                console.log(`✅ [SEND-WHATSAPP] Mensagem enviada com sucesso via WhatsApp`);
               } else {
                 console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar: ${sendResult.error}`);
               }
