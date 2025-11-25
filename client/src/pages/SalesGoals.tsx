@@ -1,11 +1,10 @@
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { Home } from "lucide-react";
 import SalesGoalsDashboard from "@/components/SalesGoalsDashboard";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
 import type { User as SchemaUser } from "@shared/schema";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function SalesGoalsPage() {
   const { user } = useAuth();
@@ -27,26 +26,16 @@ export default function SalesGoalsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.location.href = '/'}
-            className="flex items-center gap-2"
-            data-testid="button-back-dashboard"
-          >
-            <Home className="h-4 w-4" />
-            Voltar ao Dashboard
-          </Button>
-        </div>
-        
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900" data-testid="text-page-title">
-            Metas de Vendas
-          </h1>
-          <p className="text-gray-600 mt-2">
-            Acompanhe e gerencie as metas de vendas dos vendedores
-          </p>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900" data-testid="text-page-title">
+              Metas de Vendas
+            </h1>
+            <p className="text-gray-600 mt-2">
+              Acompanhe e gerencie as metas de vendas dos vendedores
+            </p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         {canManageGoals ? (

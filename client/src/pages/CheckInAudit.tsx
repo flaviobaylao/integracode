@@ -11,6 +11,7 @@ import {
   MapPin, CheckCircle, XCircle, Camera, Clock, AlertTriangle, 
   Route, FileText, RefreshCw, Download, Home
 } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/hooks/useAuth";

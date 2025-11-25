@@ -17,6 +17,7 @@ import {
   Route, MapPin, Clock, Navigation, Home, CheckCircle, 
   AlertTriangle, RefreshCw, ChevronRight, TrendingUp, Users, Calendar, Camera, X, Download, Trash2
 } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { format } from "date-fns";

@@ -6,6 +6,7 @@ import { ConversationList } from "@/components/chat/conversation-list";
 import { AgentPanel } from "@/components/chat/agent-panel";
 import { useState } from "react";
 import type { ChatConversationWithCustomer, ChatAgent } from "@shared/schema";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function TelemarketingDashboard() {
   const [selectedConversation, setSelectedConversation] = useState<ChatConversationWithCustomer | null>(null);
@@ -34,6 +35,7 @@ export default function TelemarketingDashboard() {
             <h1 className="text-3xl font-bold text-slate-900">Chat Honest</h1>
             <p className="text-slate-600 mt-1">Sistema de atendimento integrado WhatsApp & Telegram</p>
           </div>
+          <BackToDashboardButton />
         </div>
 
         {/* Stats Cards */}

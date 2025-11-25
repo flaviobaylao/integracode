@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface RecalculateResult {
   mode: string;

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Truck, Calendar, MapPin, X, Trash2, Eye, Package, Clock } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {

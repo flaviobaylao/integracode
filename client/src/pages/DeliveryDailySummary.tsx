@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Calendar, Truck, CheckCircle2, AlertCircle, Clock, XCircle } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 

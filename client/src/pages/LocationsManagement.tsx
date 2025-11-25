@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Location, InsertLocation } from "@shared/schema";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function LocationsManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);

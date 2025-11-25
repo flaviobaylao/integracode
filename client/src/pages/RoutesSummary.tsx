@@ -26,6 +26,7 @@ import {
   Trash2,
   Plus
 } from "lucide-react";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import {
