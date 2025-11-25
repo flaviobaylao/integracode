@@ -1217,9 +1217,21 @@ export default function DeliveryManagement() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-sm text-muted-foreground mb-3">
-                        <MapPin className="h-4 w-4 inline mr-1" />
-                        Partida: {route.startAddress}
+                      <div className="flex items-center justify-between mb-4 pb-4 border-b">
+                        <div className="text-sm text-muted-foreground">
+                          <MapPin className="h-4 w-4 inline mr-1" />
+                          Partida: {route.startAddress}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSelectRoute(route, idx)}
+                            data-testid={`button-add-orders-route-${idx}`}
+                          >
+                            ➕ Adicionar Pedidos
+                          </Button>
+                        </div>
                       </div>
                       
                       {/* Mapa da Rota */}
@@ -1350,15 +1362,8 @@ export default function DeliveryManagement() {
                     );
                   })()}
                       
-                      <div className="flex gap-2 mb-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleSelectRoute(route, idx)}
-                          data-testid={`button-add-orders-route-${idx}`}
-                        >
-                          ➕ Adicionar Pedidos
-                        </Button>
+                      <div className="mt-4 pt-4 border-t">
+                        <h4 className="font-semibold mb-3">Paradas da Rota</h4>
                       </div>
                       
                       <div className="space-y-2">
