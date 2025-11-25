@@ -545,6 +545,10 @@ export default function DailyRouteView() {
   if (!hasHomeCoordinates && selectedSellerId) {
     return (
       <div className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold">Rota do Dia</h2>
+          <BackToDashboardButton />
+        </div>
         {isAdmin && sellers.length > 0 && (
           <div className="mb-6">
             <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">

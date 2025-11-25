@@ -243,9 +243,12 @@ export default function RoutesSummary() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Resumo das Rotas</h1>
-        <p className="text-muted-foreground">Visualize e acompanhe as rotas de entrega</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Resumo das Rotas</h1>
+          <p className="text-muted-foreground">Visualize e acompanhe as rotas de entrega</p>
+        </div>
+        <BackToDashboardButton />
       </div>
 
       {/* Filtros */}

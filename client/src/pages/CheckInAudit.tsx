@@ -107,19 +107,6 @@ export default function CheckInAudit() {
 
   return (
     <div className="p-6">
-      <div className="mb-4">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => window.location.href = '/'}
-          className="flex items-center gap-2"
-          data-testid="button-back-dashboard"
-        >
-          <Home className="h-4 w-4" />
-          Voltar ao Dashboard
-        </Button>
-      </div>
-      
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
@@ -130,6 +117,7 @@ export default function CheckInAudit() {
             Registro completo de todos os check-ins realizados
           </p>
         </div>
+        <BackToDashboardButton />
         <div className="flex gap-2">
           <Button
             onClick={() => refetch()}

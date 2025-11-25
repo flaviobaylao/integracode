@@ -83,11 +83,14 @@ export default function SystemAdmin() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold mb-2">Administração do Sistema</h1>
-        <p className="text-muted-foreground">
-          Ferramentas de manutenção e correção de dados
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Administração do Sistema</h1>
+          <p className="text-muted-foreground">
+            Ferramentas de manutenção e correção de dados
+          </p>
+        </div>
+        <BackToDashboardButton />
       </div>
 
       <Card>

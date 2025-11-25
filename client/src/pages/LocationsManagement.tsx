@@ -199,27 +199,28 @@ export default function LocationsManagement() {
             Cadastre e importe localizações de clientes com coordenadas GPS
           </p>
         </div>
+        <BackToDashboardButton />
+      </div>
         
-        <div className="flex space-x-2">
-          <Button
-            onClick={() => updateCoordinatesMutation.mutate()}
-            disabled={updateCoordinatesMutation.isPending}
-            variant="outline"
-            data-testid="button-update-coordinates"
-          >
-            <i className="fas fa-sync mr-2"></i>
-            {updateCoordinatesMutation.isPending ? 'Atualizando...' : 'Atualizar Coordenadas'}
-          </Button>
-          
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-add-location">
-                <i className="fas fa-plus mr-2"></i>
-                Nova Localização
-              </Button>
-            </DialogTrigger>
-          </Dialog>
-        </div>
+      <div className="flex space-x-2">
+        <Button
+          onClick={() => updateCoordinatesMutation.mutate()}
+          disabled={updateCoordinatesMutation.isPending}
+          variant="outline"
+          data-testid="button-update-coordinates"
+        >
+          <i className="fas fa-sync mr-2"></i>
+          {updateCoordinatesMutation.isPending ? 'Atualizando...' : 'Atualizar Coordenadas'}
+        </Button>
+        
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogTrigger asChild>
+            <Button data-testid="button-add-location">
+              <i className="fas fa-plus mr-2"></i>
+              Nova Localização
+            </Button>
+          </DialogTrigger>
+        </Dialog>
       </div>
 
       <Tabs defaultValue="list" className="w-full">

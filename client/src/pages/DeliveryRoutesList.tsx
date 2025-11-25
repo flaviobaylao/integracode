@@ -143,9 +143,12 @@ export default function DeliveryRoutesList() {
 
   return (
     <div className="container mx-auto py-6 px-4">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2" data-testid="page-title">Rotas de Entrega</h1>
-        <p className="text-muted-foreground">Visualize e gerencie todas as rotas de entrega planejadas</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold mb-2" data-testid="page-title">Rotas de Entrega</h1>
+          <p className="text-muted-foreground">Visualize e gerencie todas as rotas de entrega planejadas</p>
+        </div>
+        <BackToDashboardButton />
       </div>
 
       {/* Filtros */}
