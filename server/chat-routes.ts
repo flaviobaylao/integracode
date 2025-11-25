@@ -203,6 +203,77 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Start new conversation (initiate message to customer)
+  app.post("/api/chat/conversations/start", authenticateUser, async (req, res) => {
+    try {
+      const { customerPhone, customerName } = req.body;
+
+      if (!customerPhone) {
+        return res.status(400).json({ error: "Número de telefone é obrigatório" });
+      }
+
+      // Get Evolution API config
+      const config = evolutionAPIService.getConfig();
+      if (!config || !config.instanceName) {
+        return res.status(400).json({ error: "WhatsApp não está configurado" });
+      }
+
+      // Create or get customer
+      const customerId = `customer_${Date.now()}`;
+      const customer = await storage.createChatCustomer({
+        id: customerId,
+        name: customerName || `Cliente ${customerPhone}`,
+        phone: customerPhone,
+        email: null,
+        customFields: {}
+      }).catch(() => null);
+
+      // Create conversation
+      const conversation = await storage.createChatConversation({
+        customerId: customerId,
+        status: "new",
+        priority: "normal"
+      });
+
+      // Send greeting message via WhatsApp
+      const greetingMessage = `Olá ${customerName || 'Cliente'}! 👋\n\nBem-vindo ao atendimento da Honest Sucos. Como posso ajudá-lo?`;
+      
+      const sendResult = await evolutionAPIService.sendTextMessage(
+        config.instanceName,
+        customerPhone,
+        greetingMessage
+      );
+
+      if (sendResult.success) {
+        // Log the message to conversation
+        await storage.createChatMessage({
+          conversationId: conversation.id,
+          senderId: "system",
+          senderType: "system",
+          content: greetingMessage,
+          messageType: "text"
+        }).catch(() => null);
+
+        // Update last message time
+        await storage.updateChatConversation(conversation.id, {
+          lastMessageTime: new Date()
+        });
+      }
+
+      res.json({
+        id: conversation.id,
+        customerId: customerId,
+        phoneNumber: customerPhone,
+        customerName: customerName || `Cliente ${customerPhone}`,
+        status: "new",
+        messageSent: sendResult.success
+      });
+    } catch (error: any) {
+      console.error("[CHAT] Start conversation error:", error);
+      res.status(500).json({ error: "Erro ao iniciar conversa: " + error.message });
+    }
+  });
+
   // Update conversation
   app.patch("/api/chat/conversations/:id", authenticateUser, async (req, res) => {
     try {
