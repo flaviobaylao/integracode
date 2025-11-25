@@ -56,17 +56,18 @@ export default function ChatCenter() {
   const [newCustomerName, setNewCustomerName] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Fetch conversations
-  const { data: conversationsData, isLoading: convLoading } = useQuery({
+  // Fetch conversations - CORREÇÃO: polling cada 500ms para real-time melhor
+  const { data: conversationsData, isLoading: convLoading, refetch: refetchConversations } = useQuery({
     queryKey: ["/api/chat/conversations"],
-    refetchInterval: 2000
+    refetchInterval: 500  // 🚀 Reduzido de 2000ms para 500ms para updates mais rápidos
   });
   const conversations = (conversationsData as Conversation[]) || [];
 
-  // Fetch messages para a conversa selecionada
-  const { data: messagesData, isLoading: messagesLoading } = useQuery({
+  // Fetch messages para a conversa selecionada - CORREÇÃO: polling cada 300ms
+  const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["/api/chat/conversations", selectedConversation, "messages"],
     enabled: !!selectedConversation,
+    refetchInterval: 300,  // 🚀 Polling rápido para atualizar mensagens em tempo real
     queryFn: async () => {
       const response = await fetch(`/api/chat/conversations/${selectedConversation}/messages`);
       if (!response.ok) throw new Error("Falha ao buscar mensagens");

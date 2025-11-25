@@ -1067,44 +1067,52 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Conteúdo da mensagem é obrigatório" });
       }
 
+      // 🔍 CORREÇÃO 1: Buscar conversa para garantir que existe e pegar customerId
+      const conversation = await storage.getChatConversation(conversationId);
+      if (!conversation) {
+        return res.status(400).json({ error: "Conversa não encontrada" });
+      }
+
+      // Salvar mensagem na conversa correta
       const message = await storage.createChatMessage({
-        conversationId,
+        conversationId: conversation.id,
         senderId: userId,
         senderType: "agent",
         content,
         messageType
       });
 
-      // Atualizar tempo de resposta do agente se for a primeira mensagem
-      const conversations = await storage.getChatConversations();
-      const conv = conversations.find((c: any) => c.id === conversationId);
-      
-      if (conv && conv.createdAt) {
-        // Atualizar conversa com tempo de resposta
-        await storage.updateChatConversation?.(conversationId, {
-          status: 'in-progress'
-        });
-      }
+      console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
 
-      // Enviar para WhatsApp via Evolution API
+      // Atualizar status da conversa para em-progresso
+      await storage.updateChatConversation?.(conversation.id, {
+        status: 'in-progress'
+      });
+
+      // 🔍 CORREÇÃO 2: Enviar para WhatsApp via Evolution API usando customerId
       try {
-        if (conv?.customerId) {
-          const customers = await storage.getChatCustomers?.() || [];
-          const customer = customers.find((c: any) => c.id === conv.customerId);
-          if (customer?.phone) {
+        if (conversation.customerId) {
+          const chatCustomer = await storage.getChatCustomer(conversation.customerId);
+          if (chatCustomer?.phone) {
             const config = evolutionAPIService.getConfig();
             if (config?.instanceName) {
               // Formatar phone número para WhatsApp (adicionar @s.whatsapp.net se necessário)
-              const phoneFormatted = customer.phone.includes('@') 
-                ? customer.phone 
-                : `${customer.phone.replace(/\D/g, '')}@s.whatsapp.net`;
+              const phoneFormatted = chatCustomer.phone.includes('@') 
+                ? chatCustomer.phone 
+                : `${chatCustomer.phone.replace(/\D/g, '')}@s.whatsapp.net`;
               
-              console.log(`📤 [SEND-WHATSAPP] Enviando mensagem para ${phoneFormatted}`);
-              await evolutionAPIService.sendTextMessage(
+              console.log(`📤 [SEND-WHATSAPP] Enviando para ${phoneFormatted}: ${content.substring(0, 50)}`);
+              const sendResult = await evolutionAPIService.sendTextMessage(
                 config.instanceName,
                 phoneFormatted,
                 content
               );
+              
+              if (sendResult.success) {
+                console.log(`✅ [SEND-WHATSAPP] Mensagem enviada com sucesso`);
+              } else {
+                console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar: ${sendResult.error}`);
+              }
             }
           }
         }
