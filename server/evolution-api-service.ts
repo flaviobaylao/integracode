@@ -560,7 +560,8 @@ class EvolutionAPIService {
     }
 
     // Format phone number with @s.whatsapp.net suffix if not present
-    const remoteJid = contactPhone.includes('@') ? contactPhone : `${contactPhone.replace(/\D/g, '')}@s.whatsapp.net`;
+    const cleanPhone = contactPhone.replace(/\D/g, '').slice(-11); // Pega últimos 11 dígitos
+    const remoteJid = `55${cleanPhone}@s.whatsapp.net`;
     
     console.log(`🔍 Buscando mensagens para: ${contactPhone} -> ${remoteJid}`);
 
@@ -586,14 +587,14 @@ class EvolutionAPIService {
         body: JSON.stringify(requestBody)
       });
 
+      const firstPageData = await response.json();
+      console.log(`📡 Status: ${response.status}, Response:`, JSON.stringify(firstPageData).substring(0, 200));
+
       if (!response.ok) {
-        const data = await response.json();
-        console.error('❌ Erro ao buscar histórico de chat:', data);
-        return { success: false, error: data.message || 'Erro ao buscar histórico' };
+        console.error('❌ Erro ao buscar histórico de chat (HTTP):', response.status, firstPageData);
+        return { success: false, error: firstPageData.message || `HTTP ${response.status}` };
       }
 
-      const firstPageData = await response.json();
-      
       // Parse the pagination info
       let allMessages: any[] = [];
       
@@ -643,13 +644,20 @@ class EvolutionAPIService {
       } else if (Array.isArray(firstPageData)) {
         // Old format - direct array
         allMessages = firstPageData;
+      } else if (firstPageData.data) {
+        // Another format - data field
+        allMessages = Array.isArray(firstPageData.data) ? firstPageData.data : [];
+      } else {
+        // Empty or unexpected format
+        console.log(`⚪ Nenhuma mensagem encontrada para ${remoteJid}`);
+        allMessages = [];
       }
       
       console.log(`✅ Total de mensagens obtidas: ${allMessages.length}`);
       
       return { success: true, messages: allMessages };
     } catch (error: any) {
-      console.error('❌ Erro ao buscar histórico de chat:', error);
+      console.error('❌ Erro ao buscar histórico de chat:', error.message);
       return { success: false, error: error.message };
     }
   }
