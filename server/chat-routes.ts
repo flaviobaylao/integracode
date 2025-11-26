@@ -1078,10 +1078,27 @@ export function registerChatRoutes(app: Express): void {
       const currentUser = (req as any).currentUser;
       const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
       
-      const conversations = await storage.getChatConversations();
-      const agents = await storage.getChatAgents() || [];
-      const customers = await storage.getChatCustomers() || [];
-      const messages: any[] = [];
+      let conversations: any[] = [];
+      let agents: any[] = [];
+      let customers: any[] = [];
+
+      try {
+        conversations = await storage.getChatConversations() || [];
+      } catch (e) {
+        console.error("[CHAT] Error getting conversations:", e);
+      }
+
+      try {
+        agents = await storage.getChatAgents() || [];
+      } catch (e) {
+        console.error("[CHAT] Error getting agents:", e);
+      }
+
+      try {
+        customers = await storage.getChatCustomers() || [];
+      } catch (e) {
+        console.error("[CHAT] Error getting customers:", e);
+      }
 
       // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas
       let filteredConversations = conversations;
@@ -1091,53 +1108,40 @@ export function registerChatRoutes(app: Express): void {
         if (userAgent) {
           // Filtrar conversas atribuídas a este agente
           filteredConversations = conversations.filter(c => c.agentId === userAgent.id);
-          console.log(`🔐 [FILTER] Usuário ${currentUser.email} vê ${filteredConversations.length}/${conversations.length} conversas (agente: ${userAgent.id})`);
         } else {
           // Usuário sem agente - vê conversas não atribuídas
           filteredConversations = conversations.filter(c => !c.agentId);
-          console.log(`🔐 [FILTER] Usuário ${currentUser.email} vê ${filteredConversations.length} conversas não atribuídas`);
         }
-      } else if (isAdmin) {
-        console.log(`🔓 [FILTER] Admin ${currentUser.email} vê TODAS as ${filteredConversations.length} conversas`);
       }
 
       // Enriquecer conversas com dados relacionados
       const enrichedConversations = filteredConversations.map((conv: any) => {
         const agent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
-        const conversationMessages = messages.filter((m: any) => m.conversationId === conv.id);
-        
-        // 🟢 Contar mensagens NÃO lidas de clientes
-        const unreadMessages = conversationMessages.filter((m: any) => 
-          m.senderType === "customer" && !m.isRead
-        );
         
         return {
           id: conv.id,
           customerId: conv.customerId,
-          customerName: customer?.name || "Desconhecido",
+          customerName: customer?.name || conv.customerName || "Desconhecido",
           customerPhone: conv.customerPhone || customer?.phone || "-",
           agentId: conv.agentId,
           agentName: agent?.name,
           status: conv.status,
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
-          messageCount: conversationMessages.length,
-          unreadCount: unreadMessages.length,
-          hasUnread: unreadMessages.length > 0,
           createdAt: conv.createdAt
         };
       });
 
       // Ordenar por última mensagem (mais recentes primeiro)
       enrichedConversations.sort((a: any, b: any) => 
-        new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+        new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime()
       );
 
       res.json(enrichedConversations);
     } catch (error: any) {
-      console.error("[CHAT-CONVERSATIONS] Erro:", error);
-      res.status(500).json({ error: "Erro ao buscar conversas" });
+      console.error("[CHAT-CONVERSATIONS] Erro fatal:", error.message || error);
+      res.status(500).json({ error: "Erro ao buscar conversas", details: error.message });
     }
   });
 
