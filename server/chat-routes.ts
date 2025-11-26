@@ -732,154 +732,154 @@ export function registerChatRoutes(app: Express): void {
     // RESPONDER IMEDIATAMENTE com 200 OK
     res.status(200).json({ success: true, message: 'Webhook recebido' });
     
-    try {
-      // Suportar múltiplos formatos de webhook
-      let event = req.body.event;
-      let instance = req.body.instance;
-      let data = req.body.data;
+    // PROCESSAR WEBHOOK ASSINCRONAMENTE SEM ENVIAR RESPOSTA NOVAMENTE
+    (async () => {
+      try {
+        // Suportar múltiplos formatos de webhook
+        let event = req.body.event;
+        let instance = req.body.instance;
+        let data = req.body.data;
 
-      // Se vier com "webhook" aninhado
-      if (!event && req.body.webhook && req.body.webhook.event) {
-        event = req.body.webhook.event;
-        instance = req.body.webhook.instance;
-        data = req.body.webhook.data;
-      }
-
-      console.log(`📱 [WEBHOOK] Evento:`, event, `| Instance:`, instance, `| Has data:`, !!data);
-
-      if ((event === 'MESSAGES_UPSERT' || event === 'messages.upsert') && data) {
-        const message = data;
-        const remoteJid = message.key?.remoteJid;
-        const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
-        const isFromMe = message.key?.fromMe;
-
-        console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
-
-        if (!isFromMe && text) {
-          console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
-
-          try {
-            console.log(`🔍 [WEBHOOK] remoteJid recebido: ${remoteJid}`);
-            
-            // 🔧 Normalizar telefone usando função centralizada
-            const phoneFormatted = normalizePhoneNumber(remoteJid || '');
-            
-            if (!phoneFormatted) {
-              console.error(`❌ [WEBHOOK] Falha ao normalizar telefone: ${remoteJid}`);
-              return;
-            }
-
-            console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
-
-            // 1. Tentar buscar cliente regular (tabela customers) para pegar nome fantasia
-            let clientName = "Número Desconhecido";
-            try {
-              let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
-              if (existingClient) {
-                clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
-                console.log(`✅ Cliente encontrado: ${clientName}`);
-              } else {
-                console.log(`⚠️  Cliente não encontrado no sistema`);
-              }
-            } catch (err) {
-              console.warn(`⚠️  [WEBHOOK] Erro ao buscar cliente:`, err);
-            }
-
-            // 2. Buscar ou criar chat customer (phoneFormatted já é normalizado)
-            let chatCustomer: any;
-            try {
-              console.log(`🔎 [WEBHOOK] Buscando chatCustomer com telefone normalizado: ${phoneFormatted}`);
-              chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
-              
-              if (!chatCustomer) {
-                console.log(`📝 Criando novo chat customer...`);
-                chatCustomer = await storage.createChatCustomer({
-                  name: clientName,
-                  phone: phoneFormatted
-                });
-                console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
-              }
-            } catch (err) {
-              console.error(`❌ [WEBHOOK] Erro ao criar/buscar chat customer:`, err);
-              throw err;
-            }
-
-            // 3. Buscar ou criar conversa - GARANTIR PERSISTÊNCIA NO HISTÓRICO
-            let conversation: any;
-            try {
-              // ✅ VALIDAÇÃO: Telefone SEMPRE deve estar presente
-              if (!phoneFormatted) {
-                throw new Error('Telefone não pode ser vazio ao criar conversa');
-              }
-
-              conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
-
-              if (!conversation) {
-                console.log(`📝 Criando nova conversa para telefone: ${phoneFormatted}...`);
-                
-                // ✅ Garantir que customerPhone sempre é salvo
-                const conversationData = {
-                  customerId: chatCustomer.id,
-                  customerName: clientName,
-                  customerPhone: phoneFormatted, // 🔒 CRÍTICO: Sempre salvar telefone
-                  status: "new" as const,
-                  priority: "normal" as const
-                };
-                
-                conversation = await storage.createChatConversation(conversationData);
-                
-                // ✅ AUDITORIA: Confirmar que conversa foi salva com telefone
-                console.log(`✅ [PERSISTÊNCIA] Conversa criada e gravada permanentemente:`);
-                console.log(`   - ID: ${conversation.id}`);
-                console.log(`   - Telefone: ${conversation.customerPhone}`);
-                console.log(`   - Cliente: ${conversation.customerId}`);
-                console.log(`   - Status: ${conversation.status}`);
-                console.log(`   - Criada em: ${conversation.createdAt}`);
-              } else {
-                console.log(`✅ Conversa encontrada no histórico:`);
-                console.log(`   - ID: ${conversation.id}`);
-                console.log(`   - Telefone: ${conversation.customerPhone}`);
-                console.log(`   - Status: ${conversation.status}`);
-              }
-            } catch (err) {
-              console.error(`❌ [WEBHOOK] Erro ao criar/buscar conversa:`, err);
-              throw err;
-            }
-
-            // 4. Salvar mensagem - GARANTIR PERSISTÊNCIA
-            try {
-              const message = await storage.createChatMessage({
-                conversationId: conversation.id,
-                senderId: remoteJid || "unknown",
-                senderType: "customer",
-                content: text || "[Mídia ou mensagem especial]",
-                messageType: "text"
-              });
-
-              // ✅ AUDITORIA: Confirmar que mensagem foi salva no histórico atrelada ao telefone
-              console.log(`✅ [PERSISTÊNCIA] Mensagem gravada permanentemente no histórico:`);
-              console.log(`   - Mensagem ID: ${message.id}`);
-              console.log(`   - Conversa ID: ${message.conversationId}`);
-              console.log(`   - Telefone: ${conversation.customerPhone}`);
-              console.log(`   - Conteúdo: ${(text || "[Mídia]").substring(0, 50)}...`);
-              console.log(`   - Timestamp: ${message.timestamp}`);
-            } catch (err) {
-              console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
-              throw err;
-            }
-          } catch (err) {
-            console.error(`🚨 [WEBHOOK] ERRO CRÍTICO ao processar mensagem:`, err);
-          }
+        // Se vier com "webhook" aninhado
+        if (!event && req.body.webhook && req.body.webhook.event) {
+          event = req.body.webhook.event;
+          instance = req.body.webhook.instance;
+          data = req.body.webhook.data;
         }
-      } else {
-        console.warn(`⚠️  [WEBHOOK] Evento não reconhecido ou sem dados:`, event);
-      }
 
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error("[WEBHOOK] Erro ao processar webhook:", error);
-      res.status(500).json({ error: "Erro ao processar webhook" });
-    }
+        console.log(`📱 [WEBHOOK] Evento:`, event, `| Instance:`, instance, `| Has data:`, !!data);
+
+        if ((event === 'MESSAGES_UPSERT' || event === 'messages.upsert') && data) {
+          const message = data;
+          const remoteJid = message.key?.remoteJid;
+          const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
+          const isFromMe = message.key?.fromMe;
+
+          console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
+
+          if (!isFromMe && text) {
+            console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
+
+            try {
+              console.log(`🔍 [WEBHOOK] remoteJid recebido: ${remoteJid}`);
+              
+              // 🔧 Normalizar telefone usando função centralizada
+              const phoneFormatted = normalizePhoneNumber(remoteJid || '');
+              
+              if (!phoneFormatted) {
+                console.error(`❌ [WEBHOOK] Falha ao normalizar telefone: ${remoteJid}`);
+                return;
+              }
+
+              console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
+
+              // 1. Tentar buscar cliente regular (tabela customers) para pegar nome fantasia
+              let clientName = "Número Desconhecido";
+              try {
+                let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
+                if (existingClient) {
+                  clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
+                  console.log(`✅ Cliente encontrado: ${clientName}`);
+                } else {
+                  console.log(`⚠️  Cliente não encontrado no sistema`);
+                }
+              } catch (err) {
+                console.warn(`⚠️  [WEBHOOK] Erro ao buscar cliente:`, err);
+              }
+
+              // 2. Buscar ou criar chat customer (phoneFormatted já é normalizado)
+              let chatCustomer: any;
+              try {
+                console.log(`🔎 [WEBHOOK] Buscando chatCustomer com telefone normalizado: ${phoneFormatted}`);
+                chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
+                
+                if (!chatCustomer) {
+                  console.log(`📝 Criando novo chat customer...`);
+                  chatCustomer = await storage.createChatCustomer({
+                    name: clientName,
+                    phone: phoneFormatted
+                  });
+                  console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
+                }
+              } catch (err) {
+                console.error(`❌ [WEBHOOK] Erro ao criar/buscar chat customer:`, err);
+                throw err;
+              }
+
+              // 3. Buscar ou criar conversa - GARANTIR PERSISTÊNCIA NO HISTÓRICO
+              let conversation: any;
+              try {
+                // ✅ VALIDAÇÃO: Telefone SEMPRE deve estar presente
+                if (!phoneFormatted) {
+                  throw new Error('Telefone não pode ser vazio ao criar conversa');
+                }
+
+                conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
+
+                if (!conversation) {
+                  console.log(`📝 Criando nova conversa para telefone: ${phoneFormatted}...`);
+                  
+                  // ✅ Garantir que customerPhone sempre é salvo
+                  const conversationData = {
+                    customerId: chatCustomer.id,
+                    customerName: clientName,
+                    customerPhone: phoneFormatted, // 🔒 CRÍTICO: Sempre salvar telefone
+                    status: "new" as const,
+                    priority: "normal" as const
+                  };
+                  
+                  conversation = await storage.createChatConversation(conversationData);
+                  
+                  // ✅ AUDITORIA: Confirmar que conversa foi salva com telefone
+                  console.log(`✅ [PERSISTÊNCIA] Conversa criada e gravada permanentemente:`);
+                  console.log(`   - ID: ${conversation.id}`);
+                  console.log(`   - Telefone: ${conversation.customerPhone}`);
+                  console.log(`   - Cliente: ${conversation.customerId}`);
+                  console.log(`   - Status: ${conversation.status}`);
+                  console.log(`   - Criada em: ${conversation.createdAt}`);
+                } else {
+                  console.log(`✅ Conversa encontrada no histórico:`);
+                  console.log(`   - ID: ${conversation.id}`);
+                  console.log(`   - Telefone: ${conversation.customerPhone}`);
+                  console.log(`   - Status: ${conversation.status}`);
+                }
+              } catch (err) {
+                console.error(`❌ [WEBHOOK] Erro ao criar/buscar conversa:`, err);
+                throw err;
+              }
+
+              // 4. Salvar mensagem - GARANTIR PERSISTÊNCIA
+              try {
+                const msg = await storage.createChatMessage({
+                  conversationId: conversation.id,
+                  senderId: remoteJid || "unknown",
+                  senderType: "customer",
+                  content: text || "[Mídia ou mensagem especial]",
+                  messageType: "text"
+                });
+
+                // ✅ AUDITORIA: Confirmar que mensagem foi salva no histórico atrelada ao telefone
+                console.log(`✅ [PERSISTÊNCIA] Mensagem gravada permanentemente no histórico:`);
+                console.log(`   - Mensagem ID: ${msg.id}`);
+                console.log(`   - Conversa ID: ${msg.conversationId}`);
+                console.log(`   - Telefone: ${conversation.customerPhone}`);
+                console.log(`   - Conteúdo: ${(text || "[Mídia]").substring(0, 50)}...`);
+                console.log(`   - Timestamp: ${msg.timestamp}`);
+              } catch (err) {
+                console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
+                throw err;
+              }
+            } catch (err) {
+              console.error(`🚨 [WEBHOOK] ERRO CRÍTICO ao processar mensagem:`, err);
+            }
+          }
+        } else {
+          console.warn(`⚠️  [WEBHOOK] Evento não reconhecido ou sem dados:`, event);
+        }
+      } catch (error: any) {
+        console.error("[WEBHOOK] Erro ao processar webhook:", error);
+      }
+    })();
   });
 
   // Diagnóstico COMPLETO - verificar status da instância e webhook
