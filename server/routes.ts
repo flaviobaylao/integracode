@@ -9086,6 +9086,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Transferir parada para outro motorista
+  app.patch("/api/delivery-routes/stops/:stopId/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { toDriverId, newPosition, routeDate } = req.body;
+
+      if (!toDriverId || !routeDate) {
+        return res.status(400).json({ message: "Motorista e data são obrigatórios" });
+      }
+
+      console.log(`🔄 [TRANSFER-STOP] Transferindo parada ${stopId} para motorista ${toDriverId} em ${routeDate}`);
+
+      // Buscar a parada atual
+      const stops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId));
+      
+      if (stops.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+
+      const currentStop = stops[0];
+      const fromRouteId = currentStop.routeId;
+      const billingId = currentStop.billingId;
+
+      // Remover parada da rota atual
+      await db.delete(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId));
+
+      // Buscar ou criar rota do novo motorista para essa data
+      const existingRoutes = await db.select().from(deliveryRoutes)
+        .where(and(
+          eq(deliveryRoutes.driverId, toDriverId),
+          eq(deliveryRoutes.routeDate, routeDate)
+        ));
+
+      let toRouteId: string;
+      if (existingRoutes.length > 0) {
+        toRouteId = existingRoutes[0].id;
+      } else {
+        // Criar nova rota
+        toRouteId = nanoid();
+        await db.insert(deliveryRoutes).values({
+          id: toRouteId,
+          routeName: `Rota-${toDriverId}-${new Date(routeDate).getDate()}`,
+          routeDate,
+          driverId: toDriverId,
+          driverName: "", // Será preenchido na query
+          vehicleType: "Padrão",
+          totalDistance: "0",
+          totalDuration: 0,
+          totalDeliveries: 0,
+          status: "planejada"
+        });
+      }
+
+      // Adicionar parada à nova rota com nova posição
+      const maxOrder = await db.select({ max: sql<number>`COALESCE(MAX(${deliveryRouteStops.stopOrder}), 0)` })
+        .from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, toRouteId));
+
+      const nextPosition = newPosition || (maxOrder[0].max + 1);
+      
+      await db.insert(deliveryRouteStops).values({
+        id: nanoid(),
+        routeId: toRouteId,
+        salesCardId: currentStop.salesCardId,
+        customerId: currentStop.customerId,
+        billingId,
+        customerName: currentStop.customerName,
+        customerAddress: currentStop.customerAddress,
+        customerLatitude: currentStop.customerLatitude,
+        customerLongitude: currentStop.customerLongitude,
+        stopOrder: nextPosition,
+        estimatedArrival: currentStop.estimatedArrival,
+        estimatedDeparture: currentStop.estimatedDeparture,
+        estimatedServiceTime: currentStop.estimatedServiceTime,
+        distanceFromPrevious: currentStop.distanceFromPrevious,
+        isPriority: currentStop.isPriority,
+        status: "pendente"
+      });
+
+      console.log(`✅ [TRANSFER-STOP] Parada ${stopId} transferida da rota ${fromRouteId} para ${toRouteId}`);
+      res.json({ 
+        message: "Parada transferida com sucesso",
+        toRouteId
+      });
+    } catch (error: any) {
+      console.error("Error transferring stop:", error);
+      res.status(500).json({ message: "Failed to transfer stop", error: error.message });
+    }
+  });
+  
   // Reordenar parada dentro da mesma rota
   app.patch("/api/delivery-routes/stops/:stopId/reorder", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
