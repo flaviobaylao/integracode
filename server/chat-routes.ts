@@ -1063,6 +1063,128 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Teste avançado de webhook com parâmetros customizados
+  app.post("/api/chat/webhook/test-advanced", async (req, res) => {
+    try {
+      const { phone = "5562995782812", message = "Teste avançado", fromMe = false } = req.body;
+      
+      console.log(`🧪 [WEBHOOK-TEST-ADVANCED] Enviando mensagem de teste com parâmetros:`);
+      console.log(`   - Telefone: ${phone}`);
+      console.log(`   - Mensagem: ${message}`);
+      console.log(`   - De mim: ${fromMe}`);
+      
+      const testMessage = {
+        event: "MESSAGES_UPSERT",
+        instance: "CHAT_HONEST",
+        data: {
+          key: {
+            remoteJid: `${phone}@s.whatsapp.net`,
+            fromMe: fromMe,
+            id: "test_adv_" + Date.now()
+          },
+          message: {
+            conversation: message + ` (${new Date().toLocaleTimeString('pt-BR')})`
+          },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+          pushName: fromMe ? "Sistema" : "Cliente Teste"
+        }
+      };
+
+      console.log(`📤 [WEBHOOK-TEST-ADVANCED] Payload:`, JSON.stringify(testMessage, null, 2));
+
+      // Fazer requisição interna para testar o webhook
+      const response = await fetch("http://localhost:5000/api/chat/webhook/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testMessage)
+      });
+
+      const result = await response.json();
+      console.log(`✅ [WEBHOOK-TEST-ADVANCED] Resposta do webhook:`, result);
+
+      // Aguardar um pouco para garantir processamento
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Tentar buscar a conversa criada
+      let conversation: any;
+      try {
+        const normalizedPhone = normalizePhoneNumber(phone);
+        const customer = await storage.getChatCustomerByPhone(normalizedPhone).catch(() => null);
+        if (customer) {
+          conversation = await storage.getChatConversationByCustomerId(customer.id).catch(() => null);
+        }
+      } catch (err) {
+        console.warn(`⚠️  [WEBHOOK-TEST-ADVANCED] Erro ao buscar conversa:`, err);
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Teste avançado enviado", 
+        webhook_response: result,
+        conversation_found: !!conversation,
+        conversation
+      });
+    } catch (error: any) {
+      console.error("[WEBHOOK-TEST-ADVANCED] Erro:", error);
+      res.status(500).json({ error: error.message || "Erro no teste avançado de webhook" });
+    }
+  });
+
+  // Teste rápido: enviar várias mensagens para teste de volume
+  app.post("/api/chat/webhook/test-batch", async (req, res) => {
+    try {
+      const { count = 3, phone = "5562995782812" } = req.body;
+      
+      console.log(`🧪 [WEBHOOK-TEST-BATCH] Enviando ${count} mensagens de teste...`);
+      
+      const results = [];
+      for (let i = 1; i <= count; i++) {
+        const testMessage = {
+          event: "MESSAGES_UPSERT",
+          instance: "CHAT_HONEST",
+          data: {
+            key: {
+              remoteJid: `${phone}@s.whatsapp.net`,
+              fromMe: false,
+              id: `test_batch_${Date.now()}_${i}`
+            },
+            message: {
+              conversation: `Mensagem de teste #${i} - ${new Date().toLocaleTimeString('pt-BR')}`
+            },
+            messageTimestamp: Math.floor(Date.now() / 1000),
+            pushName: "Teste Batch"
+          }
+        };
+
+        try {
+          const response = await fetch("http://localhost:5000/api/chat/webhook/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(testMessage)
+          });
+          const result = await response.json();
+          results.push({ index: i, success: true, response: result });
+          console.log(`✅ [WEBHOOK-TEST-BATCH] Mensagem ${i}/${count} enviada`);
+        } catch (err) {
+          results.push({ index: i, success: false, error: (err as any).message });
+          console.error(`❌ [WEBHOOK-TEST-BATCH] Erro na mensagem ${i}:`, err);
+        }
+
+        // Pequeno delay entre mensagens
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      res.json({ 
+        success: true, 
+        message: `${count} mensagens de teste enviadas`,
+        results
+      });
+    } catch (error: any) {
+      console.error("[WEBHOOK-TEST-BATCH] Erro:", error);
+      res.status(500).json({ error: "Erro no teste em batch" });
+    }
+  });
+
   // ============================================================
   // ENDPOINTS PARA GESTÃO DE CONVERSAS
   // ============================================================
