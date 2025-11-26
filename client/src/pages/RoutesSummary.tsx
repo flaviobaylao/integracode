@@ -115,6 +115,21 @@ export default function RoutesSummary() {
     return driverColors[driverId];
   };
 
+  // Gerar ícone colorido para cada motorista
+  const createColoredMarkerIcon = (color: string) => {
+    return L.icon({
+      iconUrl: `data:image/svg+xml;base64,${btoa(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 33" width="32" height="42">
+          <path fill="${color}" d="M12 0C5.4 0 0 5.4 0 12c0 8.8 12 21 12 21s12-12.2 12-21c0-6.6-5.4-12-12-12z"/>
+          <circle fill="white" cx="12" cy="12" r="6"/>
+        </svg>`
+      )}`,
+      iconSize: [32, 42],
+      iconAnchor: [16, 42],
+      popupAnchor: [0, -42],
+    });
+  };
+
   // Buscar entregadores
   const { data: drivers = [] } = useQuery<any[]>({
     queryKey: ['/api/delivery-drivers'],
@@ -757,6 +772,109 @@ export default function RoutesSummary() {
           </CardContent>
         </Card>
       )}
+
+      {/* Modal para visualizar todas as rotas no mapa */}
+      <Dialog open={showAllRoutesMap} onOpenChange={setShowAllRoutesMap}>
+        <DialogContent className="max-w-6xl w-full max-h-[90vh] flex flex-col" data-testid="dialog-all-routes-map">
+          <DialogHeader>
+            <DialogTitle>Mapa de Todas as Rotas - {format(new Date(selectedDate), 'dd/MM/yyyy')}</DialogTitle>
+            <DialogDescription>
+              Visualize todas as entregas do dia com pins coloridos por motorista
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 relative rounded-lg overflow-hidden border bg-gray-50 min-h-[500px]">
+            {routes.length > 0 && (
+              <>
+                {/* Legenda */}
+                <div className="absolute top-4 left-4 z-50 bg-white rounded-lg shadow-lg p-4 max-h-96 overflow-y-auto">
+                  <div className="font-semibold mb-3 text-sm">Motoristas:</div>
+                  <div className="space-y-2">
+                    {Array.from(new Set(routes.map(r => r.driverId))).map((driverId) => {
+                      const route = routes.find(r => r.driverId === driverId);
+                      const color = getDriverColor(driverId);
+                      const stopCount = routes
+                        .filter(r => r.driverId === driverId)
+                        .reduce((acc, r) => acc + (r.stops?.length || 0), 0);
+                      
+                      return (
+                        <div key={driverId} className="flex items-center gap-2 text-xs">
+                          <div
+                            className="w-4 h-4 rounded-full border border-gray-300"
+                            style={{ backgroundColor: color }}
+                          />
+                          <span className="font-medium">{route?.driverName}</span>
+                          <span className="text-gray-500">({stopCount})</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Mapa com todos os pontos */}
+                <MapContainer
+                  center={[
+                    parseFloat(routes[0]?.stops?.[0]?.customerLatitude || '-15.8'),
+                    parseFloat(routes[0]?.stops?.[0]?.customerLongitude || '-48.1')
+                  ]}
+                  zoom={12}
+                  scrollWheelZoom={true}
+                  style={{ width: '100%', height: '100%' }}
+                >
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; OpenStreetMap contributors'
+                  />
+                  {routes.map((route) => {
+                    const driverColor = getDriverColor(route.driverId);
+                    const icon = createColoredMarkerIcon(driverColor);
+                    
+                    return route.stops?.map((stop) => (
+                      <Marker
+                        key={stop.id}
+                        position={[
+                          parseFloat(stop.customerLatitude),
+                          parseFloat(stop.customerLongitude)
+                        ]}
+                        icon={icon}
+                      >
+                        <Popup>
+                          <div className="text-xs font-medium max-w-xs">
+                            <div className="font-bold flex items-center gap-2">
+                              <span className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded">
+                                #{stop.stopOrder}
+                              </span>
+                              {stop.customerName}
+                            </div>
+                            <div className="text-gray-600 mt-1 text-xs">{stop.customerAddress}</div>
+                            <div className="text-gray-500 mt-1 text-xs">
+                              🚗 {route.driverName}
+                            </div>
+                            <div className="mt-2 flex items-center">
+                              {getDeliveryStatusBadge(stop.status)}
+                            </div>
+                            {stop.estimatedArrival && (
+                              <div className="text-gray-600 mt-2 text-xs">
+                                ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                            )}
+                          </div>
+                        </Popup>
+                      </Marker>
+                    ));
+                  })}
+                </MapContainer>
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button variant="outline" onClick={() => setShowAllRoutesMap(false)}>
+              Fechar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal para adicionar pedidos à rota */}
       <Dialog open={showAddOrders} onOpenChange={setShowAddOrders}>
