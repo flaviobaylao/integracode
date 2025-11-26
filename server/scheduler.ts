@@ -298,10 +298,76 @@ cron.schedule('*/5 6-23 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
+// Polling fallback: Buscar mensagens da Evolution API a cada 30 segundos (segurança)
+// Isso garante que mesmo se o webhook falhar, as mensagens serão sincronizadas
+cron.schedule('*/30 * * * * *', async () => {
+  try {
+    const { evolutionAPIService } = await import('./evolution-api-service');
+    
+    if (!evolutionAPIService.isConfigured()) {
+      return;
+    }
+
+    const conversations = await storage.getChatConversations();
+    let newMessages = 0;
+    let errors = 0;
+
+    // Buscar mensagens para cada conversa
+    for (const conv of conversations) {
+      if (!conv.customerPhone) continue;
+
+      try {
+        const result = await evolutionAPIService.fetchChatHistory(
+          process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST',
+          conv.customerPhone,
+          50 // Limitar a últimas 50 mensagens por conversa
+        );
+
+        if (result.success && result.messages && result.messages.length > 0) {
+          // Processar cada mensagem
+          for (const msg of result.messages) {
+            try {
+              // Verificar se mensagem já existe
+              const existingMessages = await storage.getChatMessagesByConversationId(conv.id);
+              const messageExists = existingMessages.some(m => m.senderId === msg.key?.id);
+              
+              if (!messageExists && !msg.key?.fromMe && msg.message?.conversation) {
+                // Salvar mensagem recebida
+                await storage.createChatMessage({
+                  conversationId: conv.id,
+                  senderId: msg.key?.remoteJid || "unknown",
+                  senderType: "customer",
+                  content: msg.message.conversation || "[Mídia ou mensagem especial]",
+                  messageType: "text"
+                });
+                newMessages++;
+              }
+            } catch (msgError) {
+              errors++;
+            }
+          }
+        }
+      } catch (convError) {
+        errors++;
+      }
+    }
+
+    if (newMessages > 0) {
+      console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
+    }
+    if (errors > 0) {
+      console.log(`⚠️ [POLLING] ${errors} erro(s) durante sincronização`);
+    }
+  } catch (error: any) {
+    console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
+  }
+});
+
 console.log('✅ Agendador configurado:');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (30+ min sem check-out) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
+console.log('   - Polling fallback WhatsApp a cada 30 segundos (segurança)');
 console.log('');
 console.log('⚠️  Jobs desativados após migração para cards permanentes:');
 console.log('   ✗ Sincronização de agenda futura (não necessário com cards permanentes)');
