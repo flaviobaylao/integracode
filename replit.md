@@ -82,22 +82,26 @@
 - **Omie ERP**
 - **OSRM API**
 
-# Recent Changes (2025-11-25)
+# Recent Changes (2025-11-26)
 
-## WhatsApp Chat Integration - Phase 2: History Sync
+## WhatsApp Chat Integration - Critical Fixes & Webhook Ready
 - **Completed**: 
-  - Fixed duplicate `toast` declaration in SaleModal.tsx
-  - Added `async` keyword to `sendPDFToWhatsApp` function
-  - All WhatsApp action buttons now create conversations in Integra instead of opening external wa.me
-  - Created `syncChatHistory()` method in storage for database persistence
-  - Added 2 new sync endpoints with debug capabilities
+  - ✅ **Fixed database schema**: Added missing `user_id` column to `chat_agents` table (was causing HTTP 500 errors)
+  - ✅ **Fixed webhook double-response error**: Refactored webhook handler to respond immediately (200 OK) then process async in background
+  - ✅ **Added webhook test endpoint**: GET `/api/chat/webhook/test` for browser testing (in addition to existing POST)
+  - ✅ **Webhook verified working**: Test messages successfully created conversations and saved messages to database
+  - ✅ **Simplified `/api/chat/conversations` endpoint**: Added robust error handling to prevent HTTP 500 when fetching agents/customers
+  - ✅ All WhatsApp action buttons now create conversations in Integra instead of opening external wa.me
+  - ✅ Created `syncChatHistory()` method in storage for database persistence
+  - ✅ Added sync endpoints with debug capabilities
   
-- **In Progress**:
-  - Historical message import from Evolution API (`findMessages` endpoint)
-  - Testing different response formats from Evolution API
-  - Debug endpoint at `/api/chat/debug-history/:phone` for troubleshooting
+- **System Status**:
+  - 🟢 **WEBHOOK OPERATIONAL**: Accepting and processing incoming messages from Evolution API
+  - 🟢 **TEST ENDPOINT ACTIVE**: Available at `https://integrahonest.replit.app/api/chat/webhook/test`
+  - 🟢 **DATABASE PERSISTENCE**: All messages permanently saved with phone number association
+  - 🟡 **AWAITING**: Real messages from Evolution API (webhook infrastructure ready)
   
-- **Alternative Solution Available**:
-  - Conversation-only sync (`/api/chat/sync-conversations-only`) creates all 1000+ customer conversations immediately
-  - Historical messages can be imported gradually as they arrive via webhook
-  - Full backward compatibility maintained
+- **Next Steps**:
+  - Verify Evolution API is sending real incoming messages to webhook
+  - Monitor webhook logs for incoming messages from customers
+  - Once incoming messages flow in, system will automatically save and display in chat center
