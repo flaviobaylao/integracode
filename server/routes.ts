@@ -37,6 +37,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
