@@ -1553,29 +1553,46 @@ export function registerChatRoutes(app: Express): void {
       const results: any[] = [];
 
       // Criar conversas sem tentar buscar histórico
-      for (let i = 0; i < Math.min(chats.length, 1047); i++) {
+      for (let i = 0; i < chats.length; i++) {
         try {
           const chat = chats[i];
           const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
           const normalizedPhone = normalizePhoneNumber(contactPhone);
           const contactName = chat.name || contactPhone;
           
+          // Log first 10 + every 200 items
+          const logThis = i < 10 || (i % 200 === 0);
+          if (logThis) console.log(`📱 [${i + 1}/${chats.length}] Phone: ${contactPhone} -> ${normalizedPhone}, Name: ${contactName}`);
+          
           if (!normalizedPhone || normalizedPhone === '55') {
-            console.warn(`⚠️  [${i + 1}] Telefone inválido: ${contactPhone}`);
+            if (logThis) console.warn(`⚠️  [${i + 1}] FILTERED: ${contactPhone}`);
             continue;
           }
           
           try {
-            // 1. Criar chat customer (sem verificar se existe - deixar o banco de dados handle duplicate key)
-            const chatCustomer = await storage.createChatCustomer({
-              phone: normalizedPhone,
-              name: contactName
-            }).catch(async (err: any) => {
-              // Se falhar por duplicate, buscar o existente
-              return await storage.getChatCustomerByPhone(normalizedPhone);
-            });
+            // 1. Criar chat customer
+            if (logThis) console.log(`  ➡️  Creating customer...`);
+            let chatCustomer: any;
+            try {
+              chatCustomer = await storage.createChatCustomer({
+                phone: normalizedPhone,
+                name: contactName
+              });
+              if (logThis) console.log(`  ✅ Customer created: ${chatCustomer.id}`);
+            } catch (dupErr: any) {
+              // Duplicate key - get existing
+              if (logThis) console.log(`  ℹ️  Customer exists, fetching...`);
+              chatCustomer = await storage.getChatCustomerByPhone(normalizedPhone);
+              if (logThis) console.log(`  ✅ Customer found: ${chatCustomer?.id}`);
+            }
             
-            // 2. Criar conversa com campos corretos
+            if (!chatCustomer?.id) {
+              if (logThis) console.error(`  ❌ No customer ID!`);
+              continue;
+            }
+            
+            // 2. Criar conversa
+            if (logThis) console.log(`  ➡️  Creating conversation...`);
             const conversation = await storage.createChatConversation({
               customerId: chatCustomer.id,
               customerName: contactName,
@@ -1583,14 +1600,14 @@ export function registerChatRoutes(app: Express): void {
               status: 'new' as const,
               priority: 'normal' as const
             });
+            if (logThis) console.log(`  ✅ Conversation created: ${conversation.id}`);
             
             successCount++;
-            if (i % 100 === 0) console.log(`✅ Processados: ${i + 1}/${chats.length}`);
           } catch (innerErr: any) {
-            if (i % 100 === 0) console.error(`❌ Erro em [${i + 1}]:`, innerErr.message?.substring(0, 80));
+            if (logThis) console.error(`  ❌ Error:`, innerErr.message?.substring(0, 100));
           }
         } catch (error: any) {
-          // Silently continue
+          console.error(`OUTER ERROR [${i}]:`, error.message?.substring(0, 100));
         }
       }
 
