@@ -1462,11 +1462,18 @@ export function registerChatRoutes(app: Express): void {
       for (let i = 0; i < Math.min(chats.length, 100); i++) {
         try {
           const chat = chats[i];
+          console.log(`📱 [${i + 1}] Chat objeto:`, JSON.stringify(chat).substring(0, 100));
+          
           const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
           const normalizedPhone = normalizePhoneNumber(contactPhone);
           const contactName = chat.name || contactPhone;
           
-          console.log(`📱 [${i + 1}] Criando conversa: ${contactName}`);
+          console.log(`📱 [${i + 1}] Criando conversa: ${contactName} | Telefone original: ${contactPhone} | Normalizado: ${normalizedPhone}`);
+          
+          if (!normalizedPhone || normalizedPhone === '55') {
+            console.warn(`⚠️  Telefone inválido após normalização: ${normalizedPhone}`);
+            continue;
+          }
           
           // Apenas criar a conversa, sem buscar histórico
           const syncResult = await storage.syncChatHistory(
@@ -1475,7 +1482,7 @@ export function registerChatRoutes(app: Express): void {
             [] // Sem mensagens
           );
           
-          console.log(`✅ Conversa criada: ${contactName}`);
+          console.log(`✅ Conversa criada: ${contactName} | ID: ${syncResult.conversationId}`);
           results.push({
             phone: normalizedPhone,
             name: contactName,
@@ -1483,7 +1490,11 @@ export function registerChatRoutes(app: Express): void {
           });
           successCount++;
         } catch (error: any) {
-          console.error(`❌ Erro ao criar conversa:`, error.message);
+          console.error(`❌ Erro ao criar conversa [${i}]:`, error.message);
+          results.push({
+            status: 'error',
+            error: error.message
+          });
         }
       }
 
