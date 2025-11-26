@@ -95,8 +95,24 @@ export default function RoutesSummary() {
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
+  const [showAllRoutesMap, setShowAllRoutesMap] = useState(false);
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
+
+  // Gerar cores únicas por motorista
+  const driverColors: Record<string, string> = {};
+  const colorPalette = [
+    '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#0ea5e9', '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e'
+  ];
+  let colorIndex = 0;
+  
+  const getDriverColor = (driverId: string) => {
+    if (!driverColors[driverId]) {
+      driverColors[driverId] = colorPalette[colorIndex % colorPalette.length];
+      colorIndex++;
+    }
+    return driverColors[driverId];
+  };
 
   // Buscar entregadores
   const { data: drivers = [] } = useQuery<any[]>({
