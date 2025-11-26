@@ -9548,37 +9548,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Continua o fluxo mesmo se houver erro na consulta de débitos
       }
       
-      // VERIFICAR BLOQUEIO POR PRAZO DE BOLETO
-      const paymentMethod = card.paymentMethod || 'a_vista';
-      const boletoDays = card.boletoDays || 7;
-      
-      if (paymentMethod === 'boleto' && boletoDays > 7) {
-        console.log(`⚠️ BLOQUEANDO PEDIDO: Boleto com prazo de ${boletoDays} dias (limite: 7 dias)`);
-        
-        // Criar registro de pedido bloqueado
-        const blockedOrderData = {
-          salesCardId: card.id,
-          customerId: card.customerId,
-          sellerId: card.sellerId,
-          blockReason: 'payment_term',
-          blockDetails: `Boleto com prazo de ${boletoDays} dias excede o limite de 7 dias permitido. Aguardando aprovação administrativa.`,
-          operationType: card.operationType || 'venda',
-          paymentMethod: paymentMethod,
-          boletoDays: boletoDays,
-          totalAmount: parseFloat(card.saleValue),
-          products: card.products || []
-        };
-        
-        await db.insert(blockedOrders).values(blockedOrderData);
-        
-        return res.status(403).json({ 
-          blocked: true,
-          message: `Pedido bloqueado: Boleto com prazo de ${boletoDays} dias excede o limite de 7 dias. O pedido foi enviado para aprovação administrativa.`,
-          blockReason: 'payment_term',
-          boletoDays: boletoDays
-        });
-      }
-      
       // Preparar dados da venda para envio
       const saleData = {
         customer: {
