@@ -5292,6 +5292,28 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return message;
   }
+
+  // 🟢 Incrementar contador de mensagens não lidas
+  async incrementUnreadCount(conversationId: string): Promise<ChatConversation> {
+    const [conversation] = await db
+      .update(chatConversations)
+      .set({
+        unreadCount: sql`${chatConversations.unreadCount} + 1`
+      })
+      .where(eq(chatConversations.id, conversationId))
+      .returning();
+    return conversation;
+  }
+
+  // 🟢 Resetar contador de mensagens não lidas
+  async resetUnreadCount(conversationId: string): Promise<ChatConversation> {
+    const [conversation] = await db
+      .update(chatConversations)
+      .set({ unreadCount: 0 })
+      .where(eq(chatConversations.id, conversationId))
+      .returning();
+    return conversation;
+  }
   
   // Chat Products operations
   async getChatProducts(): Promise<ChatProduct[]> {

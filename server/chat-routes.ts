@@ -865,6 +865,14 @@ export function registerChatRoutes(app: Express): void {
                 console.log(`   - Telefone: ${conversation.customerPhone}`);
                 console.log(`   - Conteúdo: ${(text || "[Mídia]").substring(0, 50)}...`);
                 console.log(`   - Timestamp: ${msg.timestamp}`);
+
+                // 🟢 Incrementar contador de mensagens não lidas
+                try {
+                  await storage.incrementUnreadCount(conversation.id);
+                  console.log(`🟢 [UNREAD] Contador incrementado para conversa ${conversation.id}`);
+                } catch (err) {
+                  console.warn(`⚠️  [UNREAD] Erro ao incrementar contador:`, err);
+                }
               } catch (err) {
                 console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
                 throw err;
