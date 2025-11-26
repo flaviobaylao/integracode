@@ -847,7 +847,7 @@ export default function RoutesSummary() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 relative rounded-lg overflow-hidden border bg-gray-50 min-h-[500px]">
+          <div className="flex-1 relative rounded-lg overflow-hidden border bg-gray-50 h-[600px]" style={{ height: '600px' }}>
             {routes.length > 0 && (
               <>
                 {/* Legenda */}
