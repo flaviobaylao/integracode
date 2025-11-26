@@ -1459,47 +1459,57 @@ export function registerChatRoutes(app: Express): void {
       const results: any[] = [];
 
       // Criar conversas sem tentar buscar histórico
-      for (let i = 0; i < Math.min(chats.length, 100); i++) {
+      for (let i = 0; i < Math.min(chats.length, 1047); i++) {
         try {
           const chat = chats[i];
           const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
           const normalizedPhone = normalizePhoneNumber(contactPhone);
           const contactName = chat.name || contactPhone;
           
-          console.log(`📱 [${i + 1}/${Math.min(chats.length, 100)}] ${contactName}`);
-          
           if (!normalizedPhone || normalizedPhone === '55') {
-            console.warn(`⚠️  Telefone inválido: ${contactPhone}`);
+            console.warn(`⚠️  [${i + 1}] Telefone inválido: ${contactPhone}`);
             continue;
           }
           
-          // 1. Criar ou buscar chat customer
-          let chatCustomer = await storage.getChatCustomerByPhone(normalizedPhone).catch(() => null);
-          if (!chatCustomer) {
-            chatCustomer = await storage.createChatCustomer({
-              phone: normalizedPhone,
-              name: contactName
+          try {
+            // 1. Criar ou buscar chat customer
+            let chatCustomer: any;
+            try {
+              chatCustomer = await storage.getChatCustomerByPhone(normalizedPhone);
+            } catch (err) {
+              console.log(`📝 [${i + 1}] Chat customer não encontrado, criando...`);
+              chatCustomer = null;
+            }
+            
+            if (!chatCustomer) {
+              chatCustomer = await storage.createChatCustomer({
+                phone: normalizedPhone,
+                name: contactName
+              });
+              console.log(`✅ Chat customer criado: ${contactName}`);
+            }
+            
+            // 2. Criar conversa com campos corretos
+            const conversation = await storage.createChatConversation({
+              customerId: chatCustomer.id,
+              customerName: contactName,
+              customerPhone: normalizedPhone,
+              status: 'new' as const,
+              priority: 'normal' as const
             });
+            
+            console.log(`✅ [${i + 1}] ${contactName}`);
+            results.push({
+              phone: normalizedPhone,
+              name: contactName,
+              status: 'created'
+            });
+            successCount++;
+          } catch (innerErr: any) {
+            console.error(`❌ [${i + 1}] ${contactName}:`, innerErr.message?.substring(0, 100));
           }
-          
-          // 2. Criar conversa com campos corretos
-          const conversation = await storage.createChatConversation({
-            customerId: chatCustomer.id,
-            customerName: contactName,
-            customerPhone: normalizedPhone,
-            status: 'new' as const,
-            priority: 'normal' as const
-          });
-          
-          console.log(`✅ Conversa criada: ${contactName}`);
-          results.push({
-            phone: normalizedPhone,
-            name: contactName,
-            status: 'created'
-          });
-          successCount++;
         } catch (error: any) {
-          console.error(`❌ Erro ao criar conversa [${i}]:`, error.message);
+          console.error(`❌ [${i}] Erro geral:`, error.message?.substring(0, 100));
         }
       }
 
