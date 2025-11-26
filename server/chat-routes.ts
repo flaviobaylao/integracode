@@ -1275,47 +1275,32 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
-      // Enriquecer conversas com dados relacionados + contar mensagens não lidas
-      const enrichedConversations = await Promise.all(
-        filteredConversations.map(async (conv: any) => {
-          const agent = agents.find(a => a.id === conv.agentId);
-          const customer = customers.find(c => c.id === conv.customerId);
-          
-          // 🟢 Contar mensagens não lidas (apenas de clientes)
-          let unreadCount = 0;
-          try {
-            const messages = await storage.getChatMessages(conv.id) || [];
-            unreadCount = messages.filter((m: any) => !m.isRead && m.senderType === 'customer').length;
-          } catch (e) {
-            console.warn(`[CHAT] Erro ao contar mensagens não lidas de ${conv.id}:`, e);
-          }
-          
-          return {
-            id: conv.id,
-            customerId: conv.customerId,
-            customerName: customer?.name || conv.customerName || "Desconhecido",
-            customerPhone: conv.customerPhone || customer?.phone || "-",
-            agentId: conv.agentId,
-            agentName: agent?.name,
-            status: conv.status,
-            priority: conv.priority,
-            lastMessageTime: conv.lastMessageTime,
-            createdAt: conv.createdAt,
-            unreadCount: unreadCount,
-            hasUnread: unreadCount > 0
-          };
-        })
-      );
-
-      // Ordenar: PRIMEIRO conversas com mensagens não lidas, DEPOIS por última mensagem
-      enrichedConversations.sort((a: any, b: any) => {
-        // Se uma tem unread e a outra não, a com unread vem primeiro
-        if (a.hasUnread && !b.hasUnread) return -1;
-        if (!a.hasUnread && b.hasUnread) return 1;
+      // Enriquecer conversas com dados relacionados
+      const enrichedConversations = filteredConversations.map((conv: any) => {
+        const agent = agents.find(a => a.id === conv.agentId);
+        const customer = customers.find(c => c.id === conv.customerId);
         
-        // Se ambas têm ou não têm unread, ordena por última mensagem (mais recentes primeiro)
-        return new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime();
+        // 🟢 Para agora, inicializar com 0 unread (será calculado no cliente)
+        return {
+          id: conv.id,
+          customerId: conv.customerId,
+          customerName: customer?.name || conv.customerName || "Desconhecido",
+          customerPhone: conv.customerPhone || customer?.phone || "-",
+          agentId: conv.agentId,
+          agentName: agent?.name,
+          status: conv.status,
+          priority: conv.priority,
+          lastMessageTime: conv.lastMessageTime,
+          createdAt: conv.createdAt,
+          unreadCount: 0,
+          hasUnread: false
+        };
       });
+
+      // Ordenar por última mensagem (mais recentes primeiro)
+      enrichedConversations.sort((a: any, b: any) => 
+        new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime()
+      );
 
       res.json(enrichedConversations);
     } catch (error: any) {
