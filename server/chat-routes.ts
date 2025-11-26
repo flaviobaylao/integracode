@@ -1546,38 +1546,71 @@ export function registerChatRoutes(app: Express): void {
 
       const chats = allChatsResult.chats;
       let successCount = 0;
+      let skipped = 0;
+      let errors: any[] = [];
 
-      for (let i = 0; i < chats.length; i++) {
+      for (let i = 0; i < Math.min(chats.length, 10); i++) {
         try {
           const chat = chats[i];
           const phone = evolutionAPIService.extractPhoneNumber(chat.id);
           const name = chat.name || phone;
           
-          if (!phone || phone.length < 10) continue;
+          console.log(`[${i+1}] Raw phone: ${phone}, name: ${name}`);
+          
+          if (!phone || phone.length < 10) {
+            console.warn(`[${i+1}] SKIPPED: Phone too short: ${phone}`);
+            skipped++;
+            continue;
+          }
           
           // Criar customer
-          let customer = await storage.createChatCustomer({ phone, name }).catch(() => null);
-          if (!customer) customer = await storage.getChatCustomerByPhone(phone);
-          if (!customer?.id) continue;
+          let customer: any = null;
+          try {
+            customer = await storage.createChatCustomer({ phone, name });
+            console.log(`[${i+1}] ✅ Customer created: ${customer.id}`);
+          } catch (createErr: any) {
+            console.log(`[${i+1}] Customer creation failed, trying to find existing...`);
+            try {
+              customer = await storage.getChatCustomerByPhone(phone);
+              if (customer) {
+                console.log(`[${i+1}] ✅ Found existing customer: ${customer.id}`);
+              }
+            } catch (findErr: any) {
+              console.error(`[${i+1}] ❌ Error finding customer:`, findErr.message);
+              errors.push({ i, step: 'find_customer', error: findErr.message });
+              continue;
+            }
+          }
+          
+          if (!customer?.id) {
+            console.error(`[${i+1}] ❌ No customer ID`);
+            errors.push({ i, step: 'no_customer_id' });
+            continue;
+          }
           
           // Criar conversa
-          await storage.createChatConversation({
-            customerId: customer.id,
-            customerName: name,
-            customerPhone: phone,
-            status: 'new' as const,
-            priority: 'normal' as const
-          });
-          
-          successCount++;
-          if (i > 0 && i % 100 === 0) console.log(`✅ [SYNC] ${i} conversas criadas...`);
-        } catch (e) {
-          // Continue silently
+          try {
+            const conv = await storage.createChatConversation({
+              customerId: customer.id,
+              customerName: name,
+              customerPhone: phone,
+              status: 'new' as const,
+              priority: 'normal' as const
+            });
+            console.log(`[${i+1}] ✅ Conversation created: ${conv.id}`);
+            successCount++;
+          } catch (convErr: any) {
+            console.error(`[${i+1}] ❌ Error creating conversation:`, convErr.message);
+            errors.push({ i, step: 'create_conversation', error: convErr.message });
+          }
+        } catch (e: any) {
+          console.error(`[${i}] OUTER ERROR:`, e.message);
+          errors.push({ i, step: 'outer', error: e.message });
         }
       }
 
-      console.log(`🎉 [SYNC] Total criadas: ${successCount}/${chats.length}`);
-      res.json({ success: true, summary: { totalChats: chats.length, conversationsCreated: successCount } });
+      console.log(`🎉 [SYNC] Result: ${successCount} created, ${skipped} skipped, ${errors.length} errors`);
+      res.json({ success: true, summary: { totalChats: chats.length, conversationsCreated: successCount, skipped, errors } });
     } catch (error: any) {
       console.error("[SYNC] Erro fatal:", error.message);
       res.status(500).json({ error: error.message });
