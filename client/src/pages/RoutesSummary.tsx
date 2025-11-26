@@ -25,8 +25,10 @@ import {
   XCircle,
   Trash2,
   Plus,
-  FileText
+  FileText,
+  Map
 } from "lucide-react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
@@ -542,6 +544,51 @@ export default function RoutesSummary() {
                   <div className="pt-1">{getStatusBadge(selectedRouteData.status)}</div>
                 </div>
               </div>
+
+              {/* Mapa da Rota */}
+              {selectedRouteData.stops && selectedRouteData.stops.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold flex items-center">
+                    <Map className="h-4 w-4 mr-2" />
+                    Mapa da Rota
+                  </h3>
+                  <div className="relative rounded-lg overflow-hidden border h-96 bg-gray-50">
+                    <MapContainer
+                      center={[
+                        parseFloat(selectedRouteData.stops[0]?.customerLatitude || '-15.8'),
+                        parseFloat(selectedRouteData.stops[0]?.customerLongitude || '-48.1')
+                      ]}
+                      zoom={13}
+                      scrollWheelZoom={true}
+                      style={{ width: '100%', height: '100%' }}
+                    >
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; OpenStreetMap contributors'
+                      />
+                      {selectedRouteData.stops.map((stop, idx) => (
+                        <Marker
+                          key={stop.id}
+                          position={[
+                            parseFloat(stop.customerLatitude),
+                            parseFloat(stop.customerLongitude)
+                          ]}
+                        >
+                          <Popup>
+                            <div className="text-xs font-medium max-w-xs">
+                              <div className="font-bold">{stop.stopOrder}. {stop.customerName}</div>
+                              <div className="text-gray-600 mt-1">{stop.customerAddress}</div>
+                              <div className="mt-2 flex items-center">
+                                {getDeliveryStatusBadge(stop.status)}
+                              </div>
+                            </div>
+                          </Popup>
+                        </Marker>
+                      ))}
+                    </MapContainer>
+                  </div>
+                </div>
+              )}
 
               {/* Lista de Paradas */}
               <div className="space-y-3">
