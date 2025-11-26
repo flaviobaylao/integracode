@@ -1280,7 +1280,8 @@ export function registerChatRoutes(app: Express): void {
         const agent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
         
-        // 🟢 Para agora, inicializar com 0 unread (será calculado no cliente)
+        // 🟢 Usar unreadCount do banco de dados
+        const unreadCount = conv.unreadCount || 0;
         return {
           id: conv.id,
           customerId: conv.customerId,
@@ -1292,15 +1293,17 @@ export function registerChatRoutes(app: Express): void {
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
           createdAt: conv.createdAt,
-          unreadCount: 0,
-          hasUnread: false
+          unreadCount: unreadCount,
+          hasUnread: unreadCount > 0
         };
       });
 
-      // Ordenar por última mensagem (mais recentes primeiro)
-      enrichedConversations.sort((a: any, b: any) => 
-        new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime()
-      );
+      // 🔴 ORDENAÇÃO: conversas com unread no TOPO, depois por data
+      enrichedConversations.sort((a: any, b: any) => {
+        if (a.hasUnread && !b.hasUnread) return -1;
+        if (!a.hasUnread && b.hasUnread) return 1;
+        return new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime();
+      });
 
       res.json(enrichedConversations);
     } catch (error: any) {
