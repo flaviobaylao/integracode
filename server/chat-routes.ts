@@ -985,6 +985,45 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Teste de webhook GET - simular mensagem recebida (acessível via navegador)
+  app.get("/api/chat/webhook/test", async (req, res) => {
+    try {
+      console.log(`🧪 [WEBHOOK-TEST-GET] Simulando mensagem recebida via GET...`);
+      
+      const testMessage = {
+        event: "MESSAGES_UPSERT",
+        instance: "CHAT_HONEST",
+        data: {
+          key: {
+            remoteJid: "5562995782812@s.whatsapp.net",
+            fromMe: false,
+            id: "test_" + Date.now()
+          },
+          message: {
+            conversation: "Teste de resposta do webhook GET - " + new Date().toLocaleTimeString('pt-BR')
+          },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+          pushName: "Teste WhatsApp"
+        }
+      };
+
+      // Fazer requisição interna para testar o webhook
+      const response = await fetch("http://localhost:5000/api/chat/webhook/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testMessage)
+      });
+
+      const result = await response.json();
+      console.log(`✅ [WEBHOOK-TEST-GET] Resposta:`, result);
+
+      res.json({ success: true, message: "Teste enviado via GET", result, timestamp: new Date().toISOString() });
+    } catch (error: any) {
+      console.error("[WEBHOOK-TEST-GET] Erro:", error);
+      res.status(500).json({ error: "Erro no teste de webhook" });
+    }
+  });
+
   // Teste de webhook - simular mensagem recebida
   app.post("/api/chat/webhook/test", async (req, res) => {
     try {
