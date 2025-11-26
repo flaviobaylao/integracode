@@ -28,7 +28,8 @@ import {
   FileText,
   Map
 } from "lucide-react";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
+import L from 'leaflet';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
@@ -416,6 +417,18 @@ export default function RoutesSummary() {
               </Select>
             </div>
           </div>
+          {routes.length > 0 && (
+            <div className="pt-4 border-t">
+              <Button
+                onClick={() => setShowAllRoutesMap(true)}
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                data-testid="button-show-all-routes-map"
+              >
+                <Map className="h-4 w-4 mr-2" />
+                🗺️ Ver Todas as Rotas no Mapa
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
