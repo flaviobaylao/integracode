@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { format } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
@@ -117,16 +118,12 @@ export default function RoutesSummary() {
 
   // Gerar ícone colorido para cada motorista
   const createColoredMarkerIcon = (color: string) => {
-    return L.icon({
-      iconUrl: `data:image/svg+xml;base64,${btoa(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 33" width="32" height="42">
-          <path fill="${color}" d="M12 0C5.4 0 0 5.4 0 12c0 8.8 12 21 12 21s12-12.2 12-21c0-6.6-5.4-12-12-12z"/>
-          <circle fill="white" cx="12" cy="12" r="6"/>
-        </svg>`
-      )}`,
-      iconSize: [32, 42],
-      iconAnchor: [16, 42],
-      popupAnchor: [0, -42],
+    return L.divIcon({
+      html: `<div style="background-color: ${color}; width: 32px; height: 40px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" />`,
+      iconSize: [32, 40],
+      iconAnchor: [16, 40],
+      popupAnchor: [0, -40],
+      className: 'leaflet-div-icon'
     });
   };
 
