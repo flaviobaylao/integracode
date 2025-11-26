@@ -1387,6 +1387,14 @@ export function registerChatRoutes(app: Express): void {
         for (const msg of unreadMessages) {
           await storage.updateChatMessage(msg.id, { isRead: true });
         }
+        
+        // 🟢 Resetar contador de unread da conversa
+        try {
+          await storage.resetUnreadCount(conversationId);
+          console.log(`🟢 [UNREAD-RESET] Contador resetado para conversa ${conversationId}`);
+        } catch (err) {
+          console.warn(`⚠️  [UNREAD-RESET] Erro ao resetar contador:`, err);
+        }
       }
       
       // Buscar mensagens novamente após marcar como lidas
