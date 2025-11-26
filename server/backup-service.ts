@@ -1,5 +1,6 @@
 import { db } from './db';
-import { ordersBackup, salesCards, blockedOrders, type InsertOrdersBackup, eq, and, gte } from '@shared/schema';
+import { ordersBackup, salesCards, blockedOrders, type InsertOrdersBackup } from '@shared/schema';
+import { eq, and, gte } from 'drizzle-orm';
 
 export async function backupAllOrders(backupDate?: Date) {
   const date = backupDate || new Date();

@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
+import { startBackupScheduler } from "./backup-scheduler";
 import path from "path";
 import "./scheduler";
 
@@ -53,6 +54,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Iniciar agendador de backup automático
+  startBackupScheduler();
+  
   // Configurar hotsite ANTES de todas as rotas para evitar interceptação do Vite
   const isDevelopment = app.get("env") === "development";
   
