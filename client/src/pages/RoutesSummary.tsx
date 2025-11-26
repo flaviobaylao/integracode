@@ -848,7 +848,7 @@ export default function RoutesSummary() {
           </DialogHeader>
 
           <div style={{ display: 'flex', height: '600px', width: '100%', position: 'relative' }}>
-            {routes.length > 0 && (
+            {routes.length > 0 ? (
               <>
                 {/* Legenda */}
                 <div style={{
@@ -891,32 +891,34 @@ export default function RoutesSummary() {
                   </div>
                 </div>
 
-                {/* Mapa com todos os pontos - renderizado com dados válidos */}
-                {routes[0]?.stops?.[0] && (
-                  <MapContainer
-                    center={[
-                      parseFloat(routes[0].stops[0].customerLatitude),
-                      parseFloat(routes[0].stops[0].customerLongitude)
-                    ]}
-                    zoom={12}
-                    scrollWheelZoom={true}
-                    style={{ width: '100%', height: '100%', position: 'relative', zIndex: 1 }}
-                  >
-                    <TileLayer
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      attribution='&copy; OpenStreetMap contributors'
-                    />
-                    {routes.map((route) => {
-                      const driverColor = getDriverColor(route.driverId);
-                      const icon = createColoredMarkerIcon(driverColor);
+                {/* Mapa com todos os pontos */}
+                <MapContainer
+                  center={[
+                    -15.7942,
+                    -48.2720
+                  ]}
+                  zoom={10}
+                  scrollWheelZoom={true}
+                  style={{ width: '100%', height: '100%', position: 'relative', zIndex: 1 }}
+                >
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; OpenStreetMap contributors'
+                  />
+                  {routes.map((route) => {
+                    const driverColor = getDriverColor(route.driverId);
+                    const icon = createColoredMarkerIcon(driverColor);
+                    
+                    return route.stops?.map((stop) => {
+                      const lat = parseFloat(stop.customerLatitude);
+                      const lng = parseFloat(stop.customerLongitude);
                       
-                      return route.stops?.map((stop) => (
+                      if (isNaN(lat) || isNaN(lng)) return null;
+                      
+                      return (
                         <Marker
                           key={stop.id}
-                          position={[
-                            parseFloat(stop.customerLatitude),
-                            parseFloat(stop.customerLongitude)
-                          ]}
+                          position={[lat, lng]}
                           icon={icon}
                           eventHandlers={{
                             click: () => {
@@ -933,11 +935,15 @@ export default function RoutesSummary() {
                             }
                           }}
                         />
-                      ));
-                    })}
-                  </MapContainer>
-                )}
+                      );
+                    });
+                  })}
+                </MapContainer>
               </>
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f5f5f5' }}>
+                <p style={{ color: '#999', fontSize: '14px' }}>Nenhuma rota cadastrada para esta data</p>
+              </div>
             )}
           </div>
 
