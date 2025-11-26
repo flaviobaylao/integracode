@@ -63,9 +63,19 @@
 - **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation utility with dry-run mode.
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, recognition/registration, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
 - **Leads Management**: Integrated lead tracking with route optimization, access control, mandatory photo enforcement for check-in/check-out, and updates within daily routes.
-- **WhatsApp Chat Center**: Complete customer service platform with 8 backend endpoints for conversations, messages, templates, and analytics.
-- **Order Synchronization**: Correct synchronization of pending deliveries by querying Omie ERP data.
-- **Delivery Configuration Validation**: Ensures customer registration before allowing configuration edits for pending orders.
+- **Automatic Data Backup (NEW - 2025-11-26)**: Complete backup system protecting all order data:
+  - **Automatic Backup Scheduler**: Executes daily at 2h UTC + on server startup via node-cron
+  - **Database Table**: `orders_backup` stores historical snapshots of all sales_cards and blocked_orders
+  - **Service File**: `server/backup-service.ts` handles backup operations and data retrieval
+  - **API Endpoints**: 
+    - `GET /api/admin/backups?startDate=&endDate=` - Retrieve backups by date range
+    - `GET /api/admin/backups/blocked-orders` - View backed-up blocked orders
+    - `POST /api/admin/backups/run` - Trigger manual backup on demand
+  - **Purpose**: Prevents data loss from accidental deletion, provides recovery mechanism for historical order data
+- **Order Release Workflow (UPDATED - 2025-11-26)**: 
+  - ✅ **Removed payment term blocking**: Orders with boleto prazo > 7 dias can now be released without restrictions
+  - Admins can approve and release any blocked order regardless of payment terms
+  - Full Omie integration for order creation and synchronization
 
 # External Dependencies
 
@@ -81,27 +91,32 @@
 - **Receita Federal API**
 - **Omie ERP**
 - **OSRM API**
+- **node-cron** - For scheduled backup tasks
 
 # Recent Changes (2025-11-26)
 
-## WhatsApp Chat Integration - Critical Fixes & Webhook Ready
+## Backup System & Order Release - Complete Implementation
 - **Completed**: 
-  - ✅ **Fixed database schema**: Added missing `user_id` column to `chat_agents` table (was causing HTTP 500 errors)
-  - ✅ **Fixed webhook double-response error**: Refactored webhook handler to respond immediately (200 OK) then process async in background
-  - ✅ **Added webhook test endpoint**: GET `/api/chat/webhook/test` for browser testing (in addition to existing POST)
-  - ✅ **Webhook verified working**: Test messages successfully created conversations and saved messages to database
-  - ✅ **Simplified `/api/chat/conversations` endpoint**: Added robust error handling to prevent HTTP 500 when fetching agents/customers
-  - ✅ All WhatsApp action buttons now create conversations in Integra instead of opening external wa.me
-  - ✅ Created `syncChatHistory()` method in storage for database persistence
-  - ✅ Added sync endpoints with debug capabilities
+  - ✅ **Automatic Backup System**: Implemented node-cron scheduler that runs daily at 2h UTC + on server startup
+  - ✅ **Database Table**: Created `orders_backup` table for storing historical snapshots of sales_cards and blocked_orders
+  - ✅ **Backup Service**: Built `server/backup-service.ts` with functions to backup all orders, retrieve backups by date range, and access blocked order history
+  - ✅ **API Endpoints**: 
+    - `GET /api/admin/backups?startDate=2025-11-26&endDate=2025-11-27` - List backups
+    - `GET /api/admin/backups/blocked-orders` - View blocked order backups
+    - `POST /api/admin/backups/run` - Trigger manual backup
+  - ✅ **Fixed Payment Term Blocking**: Removed restriction preventing orders with boleto prazo > 7 dias from being released
+  - ✅ **Order Release Ready**: Admins can now release ANY blocked order, including those with extended payment terms
+  - ✅ **Fixed Import Errors**: Corrected Drizzle operator imports (eq, and, gte) from 'drizzle-orm'
   
 - **System Status**:
-  - 🟢 **WEBHOOK OPERATIONAL**: Accepting and processing incoming messages from Evolution API
-  - 🟢 **TEST ENDPOINT ACTIVE**: Available at `https://integrahonest.replit.app/api/chat/webhook/test`
-  - 🟢 **DATABASE PERSISTENCE**: All messages permanently saved with phone number association
-  - 🟡 **AWAITING**: Real messages from Evolution API (webhook infrastructure ready)
+  - 🟢 **BACKUP SYSTEM ACTIVE**: Daily automatic backups scheduled + manual backup endpoint available
+  - 🟢 **ORDER RELEASE OPERATIONAL**: Payment term blocking removed - full order release workflow active
+  - 🟢 **DATABASE PERSISTENCE**: All backup data stored permanently with timestamps
+  - 🟢 **APP RUNNING**: All systems operational on port 5000
   
-- **Next Steps**:
-  - Verify Evolution API is sending real incoming messages to webhook
-  - Monitor webhook logs for incoming messages from customers
-  - Once incoming messages flow in, system will automatically save and display in chat center
+- **Key Benefits**:
+  - Automatic daily backups prevent data loss
+  - Historical order data preserved for audit and recovery
+  - Admins have full flexibility to release blocked orders
+  - Manual backup trigger available for immediate backups on demand
+
