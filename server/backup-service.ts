@@ -1,8 +1,9 @@
 import { db } from './db';
-import { ordersBackup, salesCards, blockedOrders, type InsertOrdersBackup } from '@shared/schema';
+import { ordersBackup, salesCards, blockedOrders, type InsertOrdersBackup, eq, and, gte } from '@shared/schema';
 
-export async function backupAllOrders() {
-  console.log('🔄 Iniciando backup automático de pedidos...');
+export async function backupAllOrders(backupDate?: Date) {
+  const date = backupDate || new Date();
+  console.log(`🔄 Iniciando backup automático de pedidos para ${date.toISOString()}...`);
   let backedUp = 0;
 
   try {
@@ -17,12 +18,12 @@ export async function backupAllOrders() {
         sellerId: card.sellerId,
         status: card.status,
         totalAmount: card.sale_value ? Number(card.sale_value) : undefined,
-        backupDate: new Date(),
+        backupDate: date,
       } as InsertOrdersBackup);
       backedUp++;
     }
 
-    // Backup dos blocked_orders
+    // Backup dos blocked_orders (IMPORTANTE: Inclui todos os pedidos bloqueados!)
     const allBlockedOrders = await db.select().from(blockedOrders);
     for (const order of allBlockedOrders) {
       await db.insert(ordersBackup).values({
@@ -33,15 +34,50 @@ export async function backupAllOrders() {
         sellerId: order.sellerId,
         status: order.status,
         totalAmount: order.totalAmount ? Number(order.totalAmount) : undefined,
-        backupDate: new Date(),
+        backupDate: date,
       } as InsertOrdersBackup);
       backedUp++;
     }
 
-    console.log(`✅ Backup concluído: ${backedUp} pedidos armazenados`);
-    return { success: true, backedUp };
+    console.log(`✅ Backup concluído: ${backedUp} pedidos (sales_cards + blocked_orders) armazenados`);
+    return { success: true, backedUp, backupDate: date };
   } catch (error) {
     console.error('❌ Erro ao fazer backup:', error);
-    return { success: false, error: String(error) };
+    throw error;
+  }
+}
+
+// Função para recuperar backups de um período específico
+export async function getBackupsByDateRange(startDate: Date, endDate: Date, backupType?: string) {
+  try {
+    const whereConditions = [gte(ordersBackup.backupDate, startDate)];
+    if (backupType) {
+      whereConditions.push(eq(ordersBackup.backupType, backupType));
+    }
+    
+    const backups = await db.select()
+      .from(ordersBackup)
+      .where(and(...whereConditions))
+      .orderBy(ordersBackup.backupDate);
+    
+    return backups;
+  } catch (error) {
+    console.error('❌ Erro ao recuperar backups:', error);
+    throw error;
+  }
+}
+
+// Função para recuperar todos os backups de pedidos bloqueados
+export async function getBlockedOrdersBackups() {
+  try {
+    const backups = await db.select()
+      .from(ordersBackup)
+      .where(eq(ordersBackup.backupType, 'blocked_order'))
+      .orderBy(ordersBackup.backupDate);
+    
+    return backups;
+  } catch (error) {
+    console.error('❌ Erro ao recuperar backups de pedidos bloqueados:', error);
+    throw error;
   }
 }
