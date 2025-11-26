@@ -1462,27 +1462,36 @@ export function registerChatRoutes(app: Express): void {
       for (let i = 0; i < Math.min(chats.length, 100); i++) {
         try {
           const chat = chats[i];
-          console.log(`📱 [${i + 1}] Chat objeto:`, JSON.stringify(chat).substring(0, 100));
-          
           const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
           const normalizedPhone = normalizePhoneNumber(contactPhone);
           const contactName = chat.name || contactPhone;
           
-          console.log(`📱 [${i + 1}] Criando conversa: ${contactName} | Telefone original: ${contactPhone} | Normalizado: ${normalizedPhone}`);
+          console.log(`📱 [${i + 1}/${Math.min(chats.length, 100)}] ${contactName}`);
           
           if (!normalizedPhone || normalizedPhone === '55') {
-            console.warn(`⚠️  Telefone inválido após normalização: ${normalizedPhone}`);
+            console.warn(`⚠️  Telefone inválido: ${contactPhone}`);
             continue;
           }
           
-          // Apenas criar a conversa, sem buscar histórico
-          const syncResult = await storage.syncChatHistory(
-            normalizedPhone,
-            contactName,
-            [] // Sem mensagens
-          );
+          // 1. Criar ou buscar chat customer
+          let chatCustomer = await storage.getChatCustomerByPhone(normalizedPhone).catch(() => null);
+          if (!chatCustomer) {
+            chatCustomer = await storage.createChatCustomer({
+              phone: normalizedPhone,
+              name: contactName
+            });
+          }
           
-          console.log(`✅ Conversa criada: ${contactName} | ID: ${syncResult.conversationId}`);
+          // 2. Criar conversa com campos corretos
+          const conversation = await storage.createChatConversation({
+            customerId: chatCustomer.id,
+            customerName: contactName,
+            customerPhone: normalizedPhone,
+            status: 'new' as const,
+            priority: 'normal' as const
+          });
+          
+          console.log(`✅ Conversa criada: ${contactName}`);
           results.push({
             phone: normalizedPhone,
             name: contactName,
@@ -1491,10 +1500,6 @@ export function registerChatRoutes(app: Express): void {
           successCount++;
         } catch (error: any) {
           console.error(`❌ Erro ao criar conversa [${i}]:`, error.message);
-          results.push({
-            status: 'error',
-            error: error.message
-          });
         }
       }
 
