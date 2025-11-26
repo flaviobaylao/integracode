@@ -4475,6 +4475,47 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async reorderStop(stopId: string, routeId: string, newPosition: number): Promise<any> {
+    return await db.transaction(async (tx) => {
+      // Buscar a parada atual
+      const [currentStop] = await tx.select().from(deliveryRouteStops).where(eq(deliveryRouteStops.id, stopId));
+      if (!currentStop) throw new Error('Parada não encontrada');
+
+      const oldPosition = currentStop.stopOrder;
+
+      // Se está subindo na fila (nova posição < antiga)
+      if (newPosition < oldPosition) {
+        await tx.update(deliveryRouteStops)
+          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} + 1`, updatedAt: new Date() })
+          .where(
+            and(
+              eq(deliveryRouteStops.routeId, routeId),
+              sql`${deliveryRouteStops.stopOrder} >= ${newPosition} AND ${deliveryRouteStops.stopOrder} < ${oldPosition}`
+            )
+          );
+      }
+      // Se está descendo na fila (nova posição > antiga)
+      else if (newPosition > oldPosition) {
+        await tx.update(deliveryRouteStops)
+          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} - 1`, updatedAt: new Date() })
+          .where(
+            and(
+              eq(deliveryRouteStops.routeId, routeId),
+              sql`${deliveryRouteStops.stopOrder} > ${oldPosition} AND ${deliveryRouteStops.stopOrder} <= ${newPosition}`
+            )
+          );
+      }
+
+      // Atualizar a posição da parada
+      const [updated] = await tx.update(deliveryRouteStops)
+        .set({ stopOrder: newPosition, updatedAt: new Date() })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+
+      return updated;
+    });
+  }
+
   async countRoutesForDriverOnDate(driverId: string, date: Date): Promise<number> {
     const result = await db
       .select({ count: sql<number>`count(*)::int` })

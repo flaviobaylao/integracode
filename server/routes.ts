@@ -9086,6 +9086,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Reordenar parada dentro da mesma rota
+  app.patch("/api/delivery-routes/stops/:stopId/reorder", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { newPosition, routeId } = req.body;
+
+      if (!newPosition || !routeId || newPosition < 1) {
+        return res.status(400).json({ message: "Nova posição inválida" });
+      }
+
+      console.log(`↔️ [REORDER-STOP] Reordenando parada ${stopId} na rota ${routeId} para posição ${newPosition}`);
+
+      const updatedStop = await storage.reorderStop(stopId, routeId, newPosition);
+
+      console.log(`✅ [REORDER-STOP] Parada ${stopId} movida para posição ${newPosition}`);
+      res.json({ 
+        message: "Parada reordenada com sucesso",
+        stop: updatedStop
+      });
+    } catch (error: any) {
+      console.error("Error reordering stop:", error);
+      res.status(500).json({ message: "Failed to reorder stop", error: error.message });
+    }
+  });
+
   // Excluir parada individual de uma rota
   app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {

@@ -110,6 +110,7 @@ export default function RoutesSummary() {
   const [showAllRoutesMap, setShowAllRoutesMap] = useState(false);
   const [selectedStopForTransfer, setSelectedStopForTransfer] = useState<StopForTransfer | null>(null);
   const [newDriverIdForTransfer, setNewDriverIdForTransfer] = useState<string>('');
+  const [newPositionForReorder, setNewPositionForReorder] = useState<string>('');
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -240,9 +241,10 @@ export default function RoutesSummary() {
 
   // Mutation para transferir parada para outro motorista
   const transferStopMutation = useMutation({
-    mutationFn: async (data: { stopId: string; fromRouteId: string; toDriverId: string }) => {
+    mutationFn: async (data: { stopId: string; fromRouteId: string; toDriverId: string; newPosition?: number }) => {
       return await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, {
         toDriverId: data.toDriverId,
+        newPosition: data.newPosition,
         routeDate: selectedDate
       });
     },
@@ -250,6 +252,7 @@ export default function RoutesSummary() {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
       setSelectedStopForTransfer(null);
       setNewDriverIdForTransfer('');
+      setNewPositionForReorder('');
       toast({
         title: "Parada transferida com sucesso!",
         description: "A entrega foi movida para o novo motorista.",
@@ -259,6 +262,32 @@ export default function RoutesSummary() {
       toast({
         title: "Erro ao transferir parada",
         description: error.message || "Não foi possível transferir a entrega.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para reordenar parada dentro da mesma rota
+  const reorderStopMutation = useMutation({
+    mutationFn: async (data: { stopId: string; routeId: string; newPosition: number }) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/reorder`, {
+        newPosition: data.newPosition,
+        routeId: data.routeId
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setSelectedStopForTransfer(null);
+      setNewPositionForReorder('');
+      toast({
+        title: "Ordem de entrega alterada com sucesso!",
+        description: "A parada foi movida para a nova posição.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao reordenar parada",
+        description: error.message || "Não foi possível reordenar a entrega.",
         variant: "destructive",
       });
     }
@@ -954,6 +983,28 @@ export default function RoutesSummary() {
                 </Select>
               </div>
 
+              {/* Se mantém o mesmo motorista, mostrar opção de reordenar */}
+              {newDriverIdForTransfer === selectedStopForTransfer.driverId && (
+                <div className="space-y-2">
+                  <Label>Nova Posição na Rota</Label>
+                  <Select value={newPositionForReorder} onValueChange={setNewPositionForReorder}>
+                    <SelectTrigger data-testid="select-new-position">
+                      <SelectValue placeholder="Selecione a nova posição" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: selectedRouteData?.totalDeliveries || 1 }, (_, i) => i + 1).map((pos) => (
+                        <SelectItem key={pos} value={pos.toString()}>
+                          Posição {pos}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Posição atual: #{selectedStopForTransfer.stopOrder}
+                  </p>
+                </div>
+              )}
+
               {/* Botões de Ação */}
               <div className="flex gap-2 pt-4 border-t">
                 <Button
@@ -966,23 +1017,43 @@ export default function RoutesSummary() {
                 <Button
                   className="flex-1 bg-blue-600 hover:bg-blue-700"
                   onClick={() => {
-                    if (newDriverIdForTransfer && newDriverIdForTransfer !== selectedStopForTransfer.driverId) {
+                    const newDriverId = newDriverIdForTransfer;
+                    if (!newDriverId) {
+                      toast({
+                        title: "Selecione um motorista",
+                        description: "É necessário escolher um novo motorista.",
+                      });
+                      return;
+                    }
+
+                    // Se mudando de motorista
+                    if (newDriverId !== selectedStopForTransfer.driverId) {
+                      const newPos = newPositionForReorder ? parseInt(newPositionForReorder) : undefined;
                       transferStopMutation.mutate({
                         stopId: selectedStopForTransfer.id,
                         fromRouteId: selectedStopForTransfer.routeId,
-                        toDriverId: newDriverIdForTransfer
+                        toDriverId: newDriverId,
+                        newPosition: newPos
                       });
-                    } else if (newDriverIdForTransfer === selectedStopForTransfer.driverId) {
-                      toast({
-                        title: "Motorista Igual",
-                        description: "Selecione um motorista diferente do atual.",
+                    }
+                    // Se reordenando na mesma rota
+                    else if (newPositionForReorder && parseInt(newPositionForReorder) !== selectedStopForTransfer.stopOrder) {
+                      reorderStopMutation.mutate({
+                        stopId: selectedStopForTransfer.id,
+                        routeId: selectedStopForTransfer.routeId,
+                        newPosition: parseInt(newPositionForReorder)
                       });
                     }
                   }}
-                  disabled={transferStopMutation.isPending || newDriverIdForTransfer === selectedStopForTransfer.driverId}
+                  disabled={
+                    transferStopMutation.isPending || 
+                    reorderStopMutation.isPending || 
+                    !newDriverIdForTransfer ||
+                    (newDriverIdForTransfer === selectedStopForTransfer.driverId && !newPositionForReorder)
+                  }
                   data-testid="button-confirm-transfer"
                 >
-                  {transferStopMutation.isPending ? 'Transferindo...' : 'Transferir'}
+                  {transferStopMutation.isPending || reorderStopMutation.isPending ? 'Processando...' : 'Confirmar'}
                 </Button>
               </div>
             </div>
