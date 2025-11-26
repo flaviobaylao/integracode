@@ -847,13 +847,24 @@ export default function RoutesSummary() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 relative rounded-lg overflow-hidden border bg-gray-50 h-[600px]" style={{ height: '600px' }}>
+          <div style={{ display: 'flex', height: '600px', width: '100%', position: 'relative' }}>
             {routes.length > 0 && (
               <>
                 {/* Legenda */}
-                <div className="absolute top-4 left-4 z-50 bg-white rounded-lg shadow-lg p-4 max-h-96 overflow-y-auto">
-                  <div className="font-semibold mb-3 text-sm">Motoristas:</div>
-                  <div className="space-y-2">
+                <div style={{
+                  position: 'absolute',
+                  top: '16px',
+                  left: '16px',
+                  zIndex: 50,
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                  padding: '16px',
+                  maxHeight: '384px',
+                  overflowY: 'auto'
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: '12px', fontSize: '14px' }}>Motoristas:</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {Array.from(new Set(routes.map(r => r.driverId))).map((driverId) => {
                       const route = routes.find(r => r.driverId === driverId);
                       const color = getDriverColor(driverId);
@@ -862,63 +873,70 @@ export default function RoutesSummary() {
                         .reduce((acc, r) => acc + (r.stops?.length || 0), 0);
                       
                       return (
-                        <div key={driverId} className="flex items-center gap-2 text-xs">
+                        <div key={driverId} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
                           <div
-                            className="w-4 h-4 rounded-full border border-gray-300"
-                            style={{ backgroundColor: color }}
+                            style={{
+                              width: '16px',
+                              height: '16px',
+                              borderRadius: '50%',
+                              border: '1px solid #d1d5db',
+                              backgroundColor: color
+                            }}
                           />
-                          <span className="font-medium">{route?.driverName}</span>
-                          <span className="text-gray-500">({stopCount})</span>
+                          <span style={{ fontWeight: 500 }}>{route?.driverName}</span>
+                          <span style={{ color: '#6b7280' }}>({stopCount})</span>
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Mapa com todos os pontos */}
-                <MapContainer
-                  center={[
-                    parseFloat(routes[0]?.stops?.[0]?.customerLatitude || '-15.8'),
-                    parseFloat(routes[0]?.stops?.[0]?.customerLongitude || '-48.1')
-                  ]}
-                  zoom={12}
-                  scrollWheelZoom={true}
-                  style={{ width: '100%', height: '100%' }}
-                >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='&copy; OpenStreetMap contributors'
-                  />
-                  {routes.map((route) => {
-                    const driverColor = getDriverColor(route.driverId);
-                    const icon = createColoredMarkerIcon(driverColor);
-                    
-                    return route.stops?.map((stop) => (
-                      <Marker
-                        key={stop.id}
-                        position={[
-                          parseFloat(stop.customerLatitude),
-                          parseFloat(stop.customerLongitude)
-                        ]}
-                        icon={icon}
-                        eventHandlers={{
-                          click: () => {
-                            setSelectedStopForTransfer({
-                              id: stop.id,
-                              customerName: stop.customerName,
-                              customerAddress: stop.customerAddress,
-                              driverId: route.driverId,
-                              driverName: route.driverName,
-                              routeId: route.id,
-                              stopOrder: stop.stopOrder
-                            });
-                            setNewDriverIdForTransfer(route.driverId);
-                          }
-                        }}
-                      />
-                    ));
-                  })}
-                </MapContainer>
+                {/* Mapa com todos os pontos - renderizado com dados válidos */}
+                {routes[0]?.stops?.[0] && (
+                  <MapContainer
+                    center={[
+                      parseFloat(routes[0].stops[0].customerLatitude),
+                      parseFloat(routes[0].stops[0].customerLongitude)
+                    ]}
+                    zoom={12}
+                    scrollWheelZoom={true}
+                    style={{ width: '100%', height: '100%', position: 'relative', zIndex: 1 }}
+                  >
+                    <TileLayer
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; OpenStreetMap contributors'
+                    />
+                    {routes.map((route) => {
+                      const driverColor = getDriverColor(route.driverId);
+                      const icon = createColoredMarkerIcon(driverColor);
+                      
+                      return route.stops?.map((stop) => (
+                        <Marker
+                          key={stop.id}
+                          position={[
+                            parseFloat(stop.customerLatitude),
+                            parseFloat(stop.customerLongitude)
+                          ]}
+                          icon={icon}
+                          eventHandlers={{
+                            click: () => {
+                              setSelectedStopForTransfer({
+                                id: stop.id,
+                                customerName: stop.customerName,
+                                customerAddress: stop.customerAddress,
+                                driverId: route.driverId,
+                                driverName: route.driverName,
+                                routeId: route.id,
+                                stopOrder: stop.stopOrder
+                              });
+                              setNewDriverIdForTransfer(route.driverId);
+                            }
+                          }}
+                        />
+                      ));
+                    })}
+                  </MapContainer>
+                )}
               </>
             )}
           </div>
