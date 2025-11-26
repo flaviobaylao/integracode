@@ -92,12 +92,24 @@ interface DeliveryRoute {
   createdAt: string;
 }
 
+interface StopForTransfer {
+  id: string;
+  customerName: string;
+  customerAddress: string;
+  driverId: string;
+  driverName: string;
+  routeId: string;
+  stopOrder: number;
+}
+
 export default function RoutesSummary() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
   const [showAllRoutesMap, setShowAllRoutesMap] = useState(false);
+  const [selectedStopForTransfer, setSelectedStopForTransfer] = useState<StopForTransfer | null>(null);
+  const [newDriverIdForTransfer, setNewDriverIdForTransfer] = useState<string>('');
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -221,6 +233,32 @@ export default function RoutesSummary() {
       toast({
         title: "Erro ao excluir rota",
         description: error.message || "Não foi possível excluir a rota.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para transferir parada para outro motorista
+  const transferStopMutation = useMutation({
+    mutationFn: async (data: { stopId: string; fromRouteId: string; toDriverId: string }) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, {
+        toDriverId: data.toDriverId,
+        routeDate: selectedDate
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setSelectedStopForTransfer(null);
+      setNewDriverIdForTransfer('');
+      toast({
+        title: "Parada transferida com sucesso!",
+        description: "A entrega foi movida para o novo motorista.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao transferir parada",
+        description: error.message || "Não foi possível transferir a entrega.",
         variant: "destructive",
       });
     }
@@ -834,30 +872,21 @@ export default function RoutesSummary() {
                           parseFloat(stop.customerLongitude)
                         ]}
                         icon={icon}
-                      >
-                        <Popup>
-                          <div className="text-xs font-medium max-w-xs">
-                            <div className="font-bold flex items-center gap-2">
-                              <span className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded">
-                                #{stop.stopOrder}
-                              </span>
-                              {stop.customerName}
-                            </div>
-                            <div className="text-gray-600 mt-1 text-xs">{stop.customerAddress}</div>
-                            <div className="text-gray-500 mt-1 text-xs">
-                              🚗 {route.driverName}
-                            </div>
-                            <div className="mt-2 flex items-center">
-                              {getDeliveryStatusBadge(stop.status)}
-                            </div>
-                            {stop.estimatedArrival && (
-                              <div className="text-gray-600 mt-2 text-xs">
-                                ETA: {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                            )}
-                          </div>
-                        </Popup>
-                      </Marker>
+                        eventHandlers={{
+                          click: () => {
+                            setSelectedStopForTransfer({
+                              id: stop.id,
+                              customerName: stop.customerName,
+                              customerAddress: stop.customerAddress,
+                              driverId: route.driverId,
+                              driverName: route.driverName,
+                              routeId: route.id,
+                              stopOrder: stop.stopOrder
+                            });
+                            setNewDriverIdForTransfer(route.driverId);
+                          }
+                        }}
+                      />
                     ));
                   })}
                 </MapContainer>
@@ -870,6 +899,94 @@ export default function RoutesSummary() {
               Fechar
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para transferir parada para outro motorista */}
+      <Dialog open={!!selectedStopForTransfer} onOpenChange={(open) => !open && setSelectedStopForTransfer(null)}>
+        <DialogContent className="max-w-md" data-testid="dialog-transfer-stop">
+          <DialogHeader>
+            <DialogTitle>Trocar Motorista da Entrega</DialogTitle>
+            <DialogDescription>
+              Selecione o novo motorista responsável por esta entrega
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedStopForTransfer && (
+            <div className="space-y-4 py-4">
+              {/* Informações da Entrega */}
+              <div className="p-4 bg-gray-50 rounded-lg border">
+                <div className="text-sm font-semibold mb-2">Informações da Entrega</div>
+                <div className="space-y-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">Parada:</span>
+                    <span className="font-medium ml-2">#{selectedStopForTransfer.stopOrder}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Cliente:</span>
+                    <span className="font-medium ml-2">{selectedStopForTransfer.customerName}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Endereço:</span>
+                    <span className="font-medium ml-2">{selectedStopForTransfer.customerAddress}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Motorista Atual:</span>
+                    <span className="font-medium ml-2">{selectedStopForTransfer.driverName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Seleção do Novo Motorista */}
+              <div className="space-y-2">
+                <Label>Novo Motorista</Label>
+                <Select value={newDriverIdForTransfer} onValueChange={setNewDriverIdForTransfer}>
+                  <SelectTrigger data-testid="select-new-driver-transfer">
+                    <SelectValue placeholder="Selecione um motorista" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeDrivers.map((driver) => (
+                      <SelectItem key={driver.id} value={driver.id}>
+                        {driver.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Botões de Ação */}
+              <div className="flex gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setSelectedStopForTransfer(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1 bg-blue-600 hover:bg-blue-700"
+                  onClick={() => {
+                    if (newDriverIdForTransfer && newDriverIdForTransfer !== selectedStopForTransfer.driverId) {
+                      transferStopMutation.mutate({
+                        stopId: selectedStopForTransfer.id,
+                        fromRouteId: selectedStopForTransfer.routeId,
+                        toDriverId: newDriverIdForTransfer
+                      });
+                    } else if (newDriverIdForTransfer === selectedStopForTransfer.driverId) {
+                      toast({
+                        title: "Motorista Igual",
+                        description: "Selecione um motorista diferente do atual.",
+                      });
+                    }
+                  }}
+                  disabled={transferStopMutation.isPending || newDriverIdForTransfer === selectedStopForTransfer.driverId}
+                  data-testid="button-confirm-transfer"
+                >
+                  {transferStopMutation.isPending ? 'Transferindo...' : 'Transferir'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
