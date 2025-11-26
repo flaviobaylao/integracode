@@ -1438,6 +1438,100 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // DEBUG: Test apenas 3 primeiros chats com logging detalhado
+  app.post("/api/chat/debug-sync-3", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log("🔍 DEBUG: Processando apenas 3 chats com logging detalhado...");
+      
+      const allChatsResult = await evolutionAPIService.fetchAllChats('CHAT_HONEST');
+      
+      if (!allChatsResult.success || !allChatsResult.chats) {
+        return res.status(400).json({ 
+          error: allChatsResult.error || 'Erro ao buscar conversas',
+          success: false 
+        });
+      }
+
+      const chats = allChatsResult.chats.slice(0, 3);
+      console.log(`🔍 DEBUG: Total available: ${allChatsResult.chats.length}, testando: ${chats.length}`);
+      
+      const debugResults: any[] = [];
+
+      for (let i = 0; i < chats.length; i++) {
+        const chat = chats[i];
+        console.log(`\n🔍 [${i + 1}/3] Chat ID raw: ${chat.id}`);
+        
+        const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
+        console.log(`🔍 [${i + 1}/3] Extracted phone: ${contactPhone}`);
+        
+        const normalizedPhone = normalizePhoneNumber(contactPhone);
+        console.log(`🔍 [${i + 1}/3] Normalized phone: ${normalizedPhone}`);
+        
+        const contactName = chat.name || contactPhone;
+        console.log(`🔍 [${i + 1}/3] Contact name: ${contactName}`);
+        
+        if (!normalizedPhone || normalizedPhone === '55') {
+          console.warn(`⚠️  [${i + 1}/3] SKIPPED: Invalid normalized phone`);
+          debugResults.push({
+            index: i + 1,
+            phone: contactPhone,
+            error: 'Invalid normalized phone'
+          });
+          continue;
+        }
+        
+        try {
+          // Try to create customer
+          console.log(`🔍 [${i + 1}/3] Creating chat customer...`);
+          const chatCustomer = await storage.createChatCustomer({
+            phone: normalizedPhone,
+            name: contactName
+          });
+          console.log(`✅ [${i + 1}/3] Chat customer created: ${chatCustomer.id}`);
+          
+          // Try to create conversation
+          console.log(`🔍 [${i + 1}/3] Creating conversation...`);
+          const conversation = await storage.createChatConversation({
+            customerId: chatCustomer.id,
+            customerName: contactName,
+            customerPhone: normalizedPhone,
+            status: 'new' as const,
+            priority: 'normal' as const
+          });
+          console.log(`✅ [${i + 1}/3] Conversation created: ${conversation.id}`);
+          
+          debugResults.push({
+            index: i + 1,
+            phone: normalizedPhone,
+            name: contactName,
+            success: true,
+            customerId: chatCustomer.id,
+            conversationId: conversation.id
+          });
+        } catch (err: any) {
+          console.error(`❌ [${i + 1}/3] Error:`, err.message);
+          debugResults.push({
+            index: i + 1,
+            phone: normalizedPhone,
+            name: contactName,
+            error: err.message
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        results: debugResults
+      });
+    } catch (error: any) {
+      console.error("[DEBUG-SYNC] Erro:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro no debug sync",
+        success: false 
+      });
+    }
+  });
+
   // Alternativamente: sincronizar SEM histórico (apenas criar conversas)
   app.post("/api/chat/sync-conversations-only", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
@@ -1472,22 +1566,14 @@ export function registerChatRoutes(app: Express): void {
           }
           
           try {
-            // 1. Criar ou buscar chat customer
-            let chatCustomer: any;
-            try {
-              chatCustomer = await storage.getChatCustomerByPhone(normalizedPhone);
-            } catch (err) {
-              console.log(`📝 [${i + 1}] Chat customer não encontrado, criando...`);
-              chatCustomer = null;
-            }
-            
-            if (!chatCustomer) {
-              chatCustomer = await storage.createChatCustomer({
-                phone: normalizedPhone,
-                name: contactName
-              });
-              console.log(`✅ Chat customer criado: ${contactName}`);
-            }
+            // 1. Criar chat customer (sem verificar se existe - deixar o banco de dados handle duplicate key)
+            const chatCustomer = await storage.createChatCustomer({
+              phone: normalizedPhone,
+              name: contactName
+            }).catch(async (err: any) => {
+              // Se falhar por duplicate, buscar o existente
+              return await storage.getChatCustomerByPhone(normalizedPhone);
+            });
             
             // 2. Criar conversa com campos corretos
             const conversation = await storage.createChatConversation({
@@ -1498,18 +1584,13 @@ export function registerChatRoutes(app: Express): void {
               priority: 'normal' as const
             });
             
-            console.log(`✅ [${i + 1}] ${contactName}`);
-            results.push({
-              phone: normalizedPhone,
-              name: contactName,
-              status: 'created'
-            });
             successCount++;
+            if (i % 100 === 0) console.log(`✅ Processados: ${i + 1}/${chats.length}`);
           } catch (innerErr: any) {
-            console.error(`❌ [${i + 1}] ${contactName}:`, innerErr.message?.substring(0, 100));
+            if (i % 100 === 0) console.error(`❌ Erro em [${i + 1}]:`, innerErr.message?.substring(0, 80));
           }
         } catch (error: any) {
-          console.error(`❌ [${i}] Erro geral:`, error.message?.substring(0, 100));
+          // Silently continue
         }
       }
 
@@ -1520,8 +1601,7 @@ export function registerChatRoutes(app: Express): void {
         summary: {
           totalChats: chats.length,
           conversationsCreated: successCount
-        },
-        details: results.slice(0, 20)
+        }
       });
     } catch (error: any) {
       console.error("[SYNC-CONVERSATIONS] Erro:", error);
