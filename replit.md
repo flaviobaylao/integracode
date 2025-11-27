@@ -105,6 +105,20 @@
 
 # Recent Changes (2025-11-27)
 
+## WhatsApp Complete Mirror - COMPLETE
+- **Implemented**:
+  - ✅ **Webhook Events**: 5 eventos configurados (MESSAGES_UPSERT, SEND_MESSAGE, MESSAGES_UPDATE, MESSAGES_SET, MESSAGES_EDITED)
+  - ✅ **Full Message Capture**: Processa TODAS as mensagens - enviadas via celular (fromMe=true) E recebidas (fromMe=false)
+  - ✅ **All Media Types**: Suporte a texto, imagem, áudio, vídeo, documento, sticker e localização
+  - ✅ **Deduplication**: 3 níveis - índice único no DB, unique constraint no schema, ON CONFLICT DO NOTHING no storage
+  - ✅ **Media URL Storage**: Campo `mediaUrl` armazena URLs de mídia para visualização
+
+- **Technical Details**:
+  - Webhook endpoint: `POST /api/chat/webhook/messages`
+  - Storage: `createChatMessage()` usa ON CONFLICT para idempotência
+  - Schema: `chatMessages.externalId` com unique constraint
+  - Polling fallback: A cada 30 segundos como segurança
+
 ## Driver Transfer & Route Map Visualization - COMPLETE
 - **Completed**:
   - ✅ **Transfer Endpoint Fixed**: `PATCH /api/delivery-routes/stops/:stopId/transfer` fully operational
