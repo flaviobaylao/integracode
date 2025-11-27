@@ -239,45 +239,71 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/conversations/start", authenticateUser, async (req, res) => {
     try {
       const { customerPhone, customerName } = req.body;
+      const currentUser = (req as any).currentUser;
+      
+      console.log(`🚀 [START-CONVERSATION] Requisição recebida:`, {
+        phone: customerPhone,
+        name: customerName,
+        user: currentUser?.email
+      });
 
       if (!customerPhone) {
+        console.warn(`⚠️  [START-CONVERSATION] Telefone vazio`);
         return res.status(400).json({ error: "Número de telefone é obrigatório" });
       }
+
+      // Normalize phone
+      const normalizedPhone = normalizePhoneNumber(customerPhone);
+      console.log(`📞 [START-CONVERSATION] Telefone normalizado: ${customerPhone} → ${normalizedPhone}`);
 
       // Get Evolution API config
       const config = evolutionAPIService.getConfig();
       if (!config || !config.instanceName) {
+        console.error(`⚠️  [START-CONVERSATION] WhatsApp não está configurado`, config);
         return res.status(400).json({ error: "WhatsApp não está configurado" });
       }
+      console.log(`✅ [START-CONVERSATION] Evolution API configurada:`, config.instanceName);
 
       // Create or get customer
+      console.log(`👤 [START-CONVERSATION] Criando cliente...`);
       let createdCustomer = await storage.createChatCustomer({
-        name: customerName || `Cliente ${customerPhone}`,
-        phone: customerPhone
-      }).catch(() => null);
+        name: customerName || `Cliente ${normalizedPhone}`,
+        phone: normalizedPhone
+      }).catch((err) => {
+        console.warn(`⚠️  [START-CONVERSATION] Erro ao criar cliente (pode ser duplicado):`, err.message);
+        return null;
+      });
 
       if (!createdCustomer) {
+        console.warn(`⚠️  [START-CONVERSATION] Cliente não foi criado`);
         return res.status(400).json({ error: "Erro ao criar cliente para a conversa" });
       }
+      console.log(`✅ [START-CONVERSATION] Cliente criado/obtido:`, createdCustomer.id);
 
-      // Create conversation
-      const conversation = await storage.createChatConversation({
+      // Create conversation using upsert logic
+      console.log(`💬 [START-CONVERSATION] Criando/atualizando conversa...`);
+      const conversation = await storage.upsertChatConversation({
         customerId: createdCustomer.id,
-        customerName: customerName || `Cliente ${customerPhone}`,
-        customerPhone: customerPhone,
+        customerName: customerName || `Cliente ${normalizedPhone}`,
+        customerPhone: normalizedPhone,
         status: "new",
         priority: "normal"
       });
+      console.log(`✅ [START-CONVERSATION] Conversa criada/atualizada:`, conversation.id);
 
-      res.json({
+      const response = {
         id: conversation.id,
         customerId: createdCustomer.id,
-        phoneNumber: customerPhone,
-        customerName: customerName || `Cliente ${customerPhone}`,
+        phoneNumber: normalizedPhone,
+        customerName: customerName || `Cliente ${normalizedPhone}`,
         status: "new"
-      });
+      };
+      
+      console.log(`🎉 [START-CONVERSATION] Retornando resposta:`, response);
+      res.json(response);
     } catch (error: any) {
       console.error("[CHAT] Start conversation error:", error);
+      console.error("[CHAT] Stack:", error.stack);
       res.status(500).json({ error: "Erro ao iniciar conversa: " + error.message });
     }
   });

@@ -25,12 +25,21 @@ export default function WhatsAppButton({
 
   const createConversationMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest('/api/chat/conversations', 'POST', {
-        customerPhone: phone,
-        customerName: customerName
-      });
+      console.log('📲 [WhatsAppButton] Iniciando conversa para:', phone, customerName);
+      try {
+        const response = await apiRequest('/api/chat/conversations/start', 'POST', {
+          customerPhone: phone,
+          customerName: customerName
+        });
+        console.log('✅ [WhatsAppButton] Conversa criada:', response);
+        return response;
+      } catch (error) {
+        console.error('❌ [WhatsAppButton] Erro ao criar conversa:', error);
+        throw error;
+      }
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('🎉 [WhatsAppButton] Navegando para atendimento...');
       toast({
         title: "Sucesso",
         description: "Conversa iniciada! Redirecionando...",
@@ -39,10 +48,11 @@ export default function WhatsAppButton({
         navigate('/telemarketing/atendimento');
       }, 500);
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('⚠️ [WhatsAppButton] Erro na mutação:', error);
       toast({
         title: "Erro",
-        description: "Não foi possível criar a conversa",
+        description: error instanceof Error ? error.message : "Não foi possível criar a conversa",
         variant: "destructive",
       });
     }
