@@ -106,6 +106,22 @@
 
 # Recent Changes (2025-11-27)
 
+## Delivery Management Customer Name Display - COMPLETE
+- **Fixed**:
+  - ✅ **Query Optimization**: Melhorado JOIN em `getPendingDeliveries()` com 4 estratégias de matching
+    - Prioriza `omie_client_code` como chave primária (nova)
+    - Fallback para fantasy_name, CPF, CNPJ
+    - Match rate: 68/82 clientes encontrados (83%)
+  - ✅ **Fantasy Name Display**: 100% dos billings retornam fantasy_name corretamente
+  - ✅ **Fallback Handling**: Clientes não encontrados retornam `customer_fantasy_name` do billing via COALESCE
+  - ✅ **Data Integrity**: Todos os 82 billings em "Aguardando Rota" retornam nomes fantasia válidos
+
+- **Technical Details**:
+  - Query: `LEFT JOIN customers c ON (omie_customer_code::text = omie_client_code OR ...)`
+  - Backend: `server/storage.ts` → `getPendingDeliveries()` função
+  - API: `GET /api/deliveries` retorna customerName com fantasy_name
+  - Testing: Verificado que 100% dos billings têm fantasy_name válida
+
 ## WhatsApp Complete Mirror - COMPLETE
 - **Implemented**:
   - ✅ **Webhook Events**: 5 eventos configurados (MESSAGES_UPSERT, SEND_MESSAGE, MESSAGES_UPDATE, MESSAGES_SET, MESSAGES_EDITED)

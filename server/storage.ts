@@ -2663,7 +2663,12 @@ export class DatabaseStorage implements IStorage {
         c.id as "customerId",
         c.weekdays as "customerWeekdays"
       FROM billings b
-      LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name OR b.omie_customer_code::text = c.cpf OR b.omie_customer_code::text = c.cnpj
+      LEFT JOIN customers c ON (
+        b.omie_customer_code::text = c.omie_client_code
+        OR b.customer_fantasy_name = c.fantasy_name 
+        OR b.omie_customer_code::text = c.cpf 
+        OR b.omie_customer_code::text = c.cnpj
+      )
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
