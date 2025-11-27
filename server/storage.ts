@@ -2640,7 +2640,7 @@ export class DatabaseStorage implements IStorage {
         b.invoice_number as "invoiceNumber",
         b.omie_order_id as "omieOrderId",
         b.order_number as "orderNumber",
-        b.customer_fantasy_name as "customerName",
+        COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
         b.customer_document as "customerDocument",
         b.omie_customer_code,
         b.invoice_date as "scheduledDate",
@@ -2663,7 +2663,7 @@ export class DatabaseStorage implements IStorage {
         c.id as "customerId",
         c.weekdays as "customerWeekdays"
       FROM billings b
-      LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name
+      LEFT JOIN customers c ON b.customer_fantasy_name = c.fantasy_name OR b.omie_customer_code::text = c.cpf OR b.omie_customer_code::text = c.cnpj
       WHERE b.invoice_stage = 'Aguardando Rota'
         AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
