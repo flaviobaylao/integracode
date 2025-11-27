@@ -407,16 +407,18 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           referenceDate: today // Usar hoje como referência (inclui hoje se for dia válido)
         });
         
-        // DEBUG ROYAL
-        const isRoyal = customer.name.includes('ROYAL');
-        if (isRoyal) {
-          console.log(`\n🔍 [ROYAL DEBUG]`);
+        // DEBUG PANIFICADORA (para entender por que está retornando quinta ao invés de domingo)
+        const isPanicadora = customer.name.includes('PANIFICADORA');
+        if (isPanicadora) {
+          console.log(`\n🔍 [PANICADORA DEBUG]`);
           console.log(`   Nome: ${customer.name}`);
-          console.log(`   Weekdays: ${JSON.stringify(parsedWeekdays)}`);
+          console.log(`   Weekdays (raw): ${customer.weekdays}`);
+          console.log(`   Weekdays (parsed): ${JSON.stringify(parsedWeekdays)}`);
           console.log(`   Periodicidade: ${customer.visitPeriodicity}`);
-          console.log(`   Today: ${today.toISOString()}`);
-          console.log(`   FirstVisit.nextDate: ${firstVisit.nextDate.toISOString()}`);
-          console.log(`   TargetDate: ${targetDate.toISOString()}`);
+          console.log(`   Today: ${today.toISOString()} (dia ${today.getDay()})`);
+          console.log(`   FirstVisit.nextDate: ${firstVisit.nextDate.toISOString()} (dia ${firstVisit.nextDate.getDay()})`);
+          const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+          console.log(`   FirstVisit dia da semana: ${days[firstVisit.nextDate.getDay()]}`);
         }
         
         if (firstVisit.nextDate <= targetDate) {

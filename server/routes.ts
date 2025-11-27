@@ -2214,7 +2214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status
       });
       
-      console.log(`📊 [GET-SALES-CARDS] Retornando ${salesCards.length} cards`);
+      console.log(`📊 [GET-SALES-CARDS] Retornando ${salesCards.length} cards para vendedor ${sellerId}, routeDay=${routeDay}, status=${status}`);
       res.json(salesCards);
     } catch (error) {
       console.error("Error fetching sales cards:", error);
