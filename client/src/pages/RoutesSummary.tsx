@@ -114,19 +114,40 @@ export default function RoutesSummary() {
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
-  // Gerar cores únicas por motorista
-  const driverColors: Record<string, string> = {};
+  // Gerar cores únicas por motorista - paleta expandida e consistente
   const colorPalette = [
-    '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#0ea5e9', '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e'
+    '#ef4444', // Vermelho brilhante
+    '#f97316', // Laranja
+    '#eab308', // Amarelo
+    '#22c55e', // Verde
+    '#06b6d4', // Ciano
+    '#0ea5e9', // Azul claro
+    '#3b82f6', // Azul
+    '#6366f1', // Índigo
+    '#8b5cf6', // Violeta
+    '#d946ef', // Magenta
+    '#ec4899', // Rosa
+    '#f43f5e', // Rosa escuro
+    '#fb923c', // Laranja claro
+    '#fbbf24', // Âmbar
+    '#34d399', // Verde água
+    '#10b981', // Verde esmeralda
+    '#14b8a6', // Teal
+    '#0891b2', // Ciano escuro
+    '#2563eb', // Azul forte
+    '#7c3aed'  // Violeta brilhante
   ];
-  let colorIndex = 0;
   
-  const getDriverColor = (driverId: string) => {
-    if (!driverColors[driverId]) {
-      driverColors[driverId] = colorPalette[colorIndex % colorPalette.length];
-      colorIndex++;
+  const getDriverColor = (driverId: string): string => {
+    // Hash consistente do driverId para sempre retornar a mesma cor
+    let hash = 0;
+    for (let i = 0; i < driverId.length; i++) {
+      const char = driverId.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
     }
-    return driverColors[driverId];
+    const colorIndex = Math.abs(hash) % colorPalette.length;
+    return colorPalette[colorIndex];
   };
 
   // Gerar ícone colorido para cada motorista com número da ordem
