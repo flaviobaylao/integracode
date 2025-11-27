@@ -8229,19 +8229,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar sales_cards com status 'completed' ou 'invoiced' que ainda não têm rota
       const deliveryOrders = await storage.getPendingDeliveries();
       
-      // Log detalhado para debug de configurações de entrega
+      // Log detalhado para verificação de nomes
       if (deliveryOrders.length > 0) {
-        const sample = deliveryOrders[0];
-        console.log('📦 [GET /api/deliveries] Sample delivery order:', {
-          customerId: sample.customerId,
-          customerName: sample.customerName,
-          receivingWeekdays: sample.receivingWeekdays,
-          deliveryWeekdays: sample.deliveryWeekdays,
-          deliveryTimeSlots: sample.deliveryTimeSlots,
-          deliverySaturdayTimeSlots: sample.deliverySaturdayTimeSlots,
-          exclusiveVehicle: sample.exclusiveVehicle,
-          vehicleTypes: sample.vehicleTypes
-        });
+        console.log('📦 [GET /api/deliveries] Returning', deliveryOrders.length, 'delivery orders');
+        console.log('📦 [GET /api/deliveries] Sample names (first 3):', deliveryOrders.slice(0, 3).map(o => ({
+          invoice: o.invoiceNumber,
+          customerName: o.customerName
+        })));
       }
       
       res.json(deliveryOrders);
@@ -8408,7 +8402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.omie_order_id as "omieOrderId",
           b.order_number as "orderNumber",
           COALESCE(c.id, 'billing-' || b.id) as "customerId",
-          COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+          COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
@@ -9412,7 +9406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         SELECT DISTINCT ON (b.id)
           b.id,
           b.invoice_number as "invoiceNumber",
-          COALESCE(c.fantasy_name, c.name, b.customer_fantasy_name) as "customerName",
+          COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
@@ -10422,7 +10416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sc.id,
           sc.seller_id,
           u.first_name || ' ' || COALESCE(u.last_name, '') as vendedor,
-          COALESCE(c.fantasy_name, c.name) as cliente,
+          COALESCE(c.fantasy_name, c.company_name) as cliente,
           c.cpf_cnpj as documento_cliente,
           sc.check_in_time as timestamp,
           sc.check_in_latitude as latitude,
@@ -10457,7 +10451,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           va.id,
           va.seller_id,
           u.first_name || ' ' || COALESCE(u.last_name, '') as vendedor,
-          COALESCE(c.fantasy_name, c.name) as cliente,
+          COALESCE(c.fantasy_name, c.company_name) as cliente,
           c.cpf_cnpj as documento_cliente,
           va.actual_check_in as timestamp,
           va.check_in_latitude as latitude,
@@ -11300,7 +11294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.omie_customer_code,
           b.customer_document,
           c.id as customer_id,
-          COALESCE(c.fantasy_name, c.name) as customer_name,
+          COALESCE(c.fantasy_name, c.company_name) as customer_name,
           c.cpf,
           c.cnpj,
           c.omie_client_code,

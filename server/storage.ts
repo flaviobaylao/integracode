@@ -2634,6 +2634,7 @@ export class DatabaseStorage implements IStorage {
 
   async getPendingDeliveries(): Promise<PendingDelivery[]> {
     // Retornar dados dos billings com latitude/longitude dos clientes cadastrados
+    // PRIORIDADE: fantasy_name é CRÍTICO - sempre deve retornar nome fantasia
     const result = await db.execute(sql`
       SELECT 
         b.id,
@@ -4294,7 +4295,7 @@ export class DatabaseStorage implements IStorage {
     const result = await db.execute(sql`
       SELECT 
         sc.*,
-        c.name as customerName,
+        COALESCE(c.fantasy_name, c.company_name) as customerName,
         c.address as customerAddress,
         c.phone as customerPhone,
         d.name as driverName
