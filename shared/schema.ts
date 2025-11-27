@@ -1572,7 +1572,9 @@ export const chatMessages = pgTable("chat_messages", {
   isRead: boolean("is_read").notNull().default(false),
   externalId: varchar("external_id"), // ID externo do WhatsApp para evitar duplicatas de mensagens
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  unique("unique_external_id").on(table.externalId),
+]);
 
 // Chat Reports type enum
 export const chatReportTypeEnum = pgEnum('chat_report_type', ['daily', 'weekly', 'monthly', 'custom']);
