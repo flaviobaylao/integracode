@@ -98,6 +98,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { 
+      id: 'clientes-ativos', 
+      label: 'Clientes Ativos',
+      icon: 'fas fa-check-circle', 
+      available: canAccessReports,
+      badge: null
+    },
+    { 
       id: 'leads', 
       label: 'LEADs',
       icon: 'fas fa-crosshairs', 
@@ -167,7 +174,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast' },
     { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route' },
     { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt' },
-    { id: 'clientes-ativos', label: 'Clientes Ativos', icon: 'fas fa-users' },
     { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie' },
     { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
   ];
