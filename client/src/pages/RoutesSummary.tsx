@@ -26,7 +26,8 @@ import {
   Trash2,
   Plus,
   FileText,
-  Map
+  Map,
+  MessageCircle
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
 import L from 'leaflet';
