@@ -2190,11 +2190,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sellerId = req.sellerId;
       const routeDay = req.query.route_day; // Filter by route day (segunda, terca, etc)
       const status = req.query.status; // Filter by status
+      const user = req.currentUser;
+      
+      console.log(`📊 [GET-SALES-CARDS] Usuario: ${user?.email}, Rol: ${user?.role}, VendedorId: ${sellerId}, RouteDay: ${routeDay}, Status: ${status}`);
       
       const salesCards = await storage.getSalesCards(sellerId, {
         routeDay,
         status
       });
+      
+      console.log(`📊 [GET-SALES-CARDS] Retornando ${salesCards.length} cards`);
       res.json(salesCards);
     } catch (error) {
       console.error("Error fetching sales cards:", error);

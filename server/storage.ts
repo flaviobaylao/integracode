@@ -1024,13 +1024,10 @@ export class DatabaseStorage implements IStorage {
     
     if (sellerId) {
       // 🎯 CORREÇÃO: Vendedores veem TODOS os cards da sua ÁREA (clientes que pertencem a eles)
-      // Em vez de filtrar por sales_cards.sellerId, filtra por customers.sellerId
-      conditions.push(
-        or(
-          eq(salesCards.sellerId, sellerId),  // Cards que o vendedor criou
-          eq(customers.sellerId, sellerId)    // Cards de clientes que pertencem ao vendedor
-        )!
-      );
+      // Validação em createSalesCard garante: salesCards.sellerId = customers.sellerId sempre
+      // Portanto, filtrar por customers.sellerId retorna TODOS os cards da área do vendedor
+      conditions.push(isNotNull(customers.sellerId));    // Garante que há um cliente associado
+      conditions.push(eq(customers.sellerId, sellerId)); // Cliente pertence ao vendedor
     }
     
     if (filters?.routeDay) {
