@@ -1570,6 +1570,7 @@ export const chatMessages = pgTable("chat_messages", {
   mediaUrl: text("media_url"),
   metadata: jsonb("metadata"),
   isRead: boolean("is_read").notNull().default(false),
+  externalId: varchar("external_id"), // ID externo do WhatsApp para evitar duplicatas de mensagens
   createdAt: timestamp("created_at").defaultNow(),
 });
 

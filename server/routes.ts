@@ -244,9 +244,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       : 'http://localhost:5000/api/chat/webhook/messages';
 
     try {
-      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, ['MESSAGES_UPSERT']);
+      // 🪞 ESPELHO COMPLETO DO WHATSAPP - Configurar webhook para capturar TODAS as mensagens
+      // Incluindo mensagens enviadas via celular (fromMe = true) e recebidas (fromMe = false)
+      // Eventos válidos do Evolution API: MESSAGES_UPSERT, SEND_MESSAGE, MESSAGES_UPDATE, MESSAGES_SET, MESSAGES_EDITED
+      const webhookEvents = [
+        'MESSAGES_UPSERT',      // Mensagens novas (recebidas E enviadas via celular - principal)
+        'SEND_MESSAGE',         // Mensagens enviadas via API
+        'MESSAGES_UPDATE',      // Atualizações de status (lido, entregue, etc)
+        'MESSAGES_SET',         // Sincronização em lote
+        'MESSAGES_EDITED'       // Mensagens editadas
+      ];
+      
+      console.log('🪞 [WEBHOOK-CONFIG] Configurando espelho completo do WhatsApp...');
+      console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
+      
+      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, webhookEvents);
       if (webhookResult.success) {
-        console.log('✅ Webhook configurado com sucesso para receber mensagens');
+        console.log('✅ Webhook configurado com sucesso para ESPELHO COMPLETO do WhatsApp');
+        console.log('✅ Eventos configurados:', webhookEvents.join(', '));
         // Verificar status depois de configurar
         setTimeout(async () => {
           const webhookStatus = await evolutionAPIService.getWebhook(evolutionInstanceName);

@@ -662,49 +662,72 @@ export function registerChatRoutes(app: Express): void {
   // EVOLUTION API WEBHOOK - RECEBER MENSAGENS
   // ============================================================
 
-  // POST /api/chat/webhook/messages - Receber mensagens via webhook da Evolution API
+  // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
+  // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
     try {
       const { event, instance, data } = req.body;
       
-      // Log incoming webhook
-      console.log(`📬 [WEBHOOK] Recebido evento: ${event} da instância: ${instance}`);
+      // Log incoming webhook com dados completos para debug
+      console.log(`📬 [WEBHOOK-MIRROR] Evento: ${event} | Instância: ${instance}`);
+      console.log(`📬 [WEBHOOK-MIRROR] Payload completo:`, JSON.stringify(req.body, null, 2).substring(0, 500));
       
-      // Verificar se é evento de mensagem
-      if (!event || (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT')) {
-        console.log(`⏭️  [WEBHOOK] Evento ignorado: ${event}`);
-        return res.json({ received: false, reason: 'Evento não é de mensagem' });
+      // Aceitar múltiplos tipos de eventos de mensagem
+      const messageEvents = [
+        'messages.upsert', 'MESSAGES_UPSERT',
+        'send.message', 'SEND_MESSAGE', 
+        'message.create', 'MESSAGE_CREATE',
+        'messages.set', 'MESSAGES_SET'
+      ];
+      
+      if (!event || !messageEvents.includes(event)) {
+        console.log(`⏭️  [WEBHOOK-MIRROR] Evento não processado: ${event}`);
+        return res.json({ received: false, reason: `Evento ${event} não é de mensagem` });
       }
 
       if (!data || !data.key) {
-        console.warn(`⚠️  [WEBHOOK] Dados inválidos recebidos`);
+        console.warn(`⚠️  [WEBHOOK-MIRROR] Dados inválidos recebidos`);
         return res.json({ received: false, reason: 'Dados inválidos' });
       }
 
       // Extrair informações da mensagem
       const phoneNumber = evolutionAPIService.extractPhoneNumber(data.key.remoteJid);
       const messageText = evolutionAPIService.extractMessageText(data.message);
-      const isFromCustomer = !data.key.fromMe;
+      const isFromMe = data.key.fromMe === true; // Mensagem enviada PELO número WhatsApp (celular ou sistema)
       const messageId = data.key.id;
-      const timestamp = data.messageTimestamp || Date.now();
+      const timestamp = data.messageTimestamp || Math.floor(Date.now() / 1000);
+      const pushName = data.pushName || '';
 
-      console.log(`📱 [WEBHOOK] Mensagem: ${isFromCustomer ? 'DO CLIENTE' : 'DO SISTEMA'} | Telefone: ${phoneNumber} | Texto: ${messageText?.substring(0, 50)}`);
+      console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`📱 [WEBHOOK-MIRROR] Direção: ${isFromMe ? '📤 ENVIADA (celular/sistema)' : '📥 RECEBIDA (cliente)'}`);
+      console.log(`📱 [WEBHOOK-MIRROR] Telefone: ${phoneNumber}`);
+      console.log(`📱 [WEBHOOK-MIRROR] Texto: ${messageText?.substring(0, 100) || '(sem texto)'}`);
+      console.log(`📱 [WEBHOOK-MIRROR] MessageId: ${messageId}`);
+      console.log(`📱 [WEBHOOK-MIRROR] PushName: ${pushName}`);
+      console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-      // Se for mensagem do cliente (não do sistema), processar
-      if (isFromCustomer && phoneNumber) {
+      // 🪞 ESPELHO COMPLETO: Processar TODAS as mensagens (enviadas E recebidas)
+      // Inclui mensagens de texto, mídia, voz, stickers, etc.
+      if (phoneNumber) {
         try {
           // Normalizar telefone
           const normalizedPhone = normalizePhoneNumber(phoneNumber);
-          console.log(`📞 [WEBHOOK] Telefone normalizado: ${normalizedPhone}`);
+          console.log(`📞 [WEBHOOK-MIRROR] Telefone normalizado: ${normalizedPhone}`);
 
-          // Buscar ou criar cliente
+          // Buscar ou criar cliente (o "outro lado" da conversa)
           let customer = await storage.getChatCustomerByPhone(normalizedPhone);
           if (!customer) {
+            // Usar pushName se disponível para dar nome ao cliente
+            const customerName = !isFromMe && pushName ? pushName : `Cliente ${normalizedPhone}`;
             customer = await storage.createChatCustomer({
               phone: normalizedPhone,
-              name: `Cliente ${normalizedPhone}`
+              name: customerName
             });
-            console.log(`✅ [WEBHOOK] Cliente criado: ${customer.id}`);
+            console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
+          } else if (!isFromMe && pushName && customer.name?.startsWith('Cliente ')) {
+            // Atualizar nome do cliente se recebemos pushName e o nome atual é genérico
+            await storage.updateChatCustomer(customer.id, { name: pushName });
+            console.log(`✅ [WEBHOOK-MIRROR] Nome do cliente atualizado: ${pushName}`);
           }
 
           // Buscar ou criar conversa (com UPSERT para evitar duplicatas)
@@ -715,38 +738,84 @@ export function registerChatRoutes(app: Express): void {
             status: 'new' as const,
             priority: 'normal' as const
           });
-          console.log(`✅ [WEBHOOK] Conversa: ${matchingConv.id}`);
+          console.log(`✅ [WEBHOOK-MIRROR] Conversa: ${matchingConv.id}`);
 
-          // Salvar mensagem
-          if (messageText && messageText.trim()) {
-            const message = await storage.createChatMessage({
-              conversationId: matchingConv.id,
-              senderId: customer.id,
-              senderType: 'customer',
-              content: messageText,
-              messageType: 'text',
-              isRead: false
-            });
-            console.log(`💬 [WEBHOOK] Mensagem salva: ${message.id}`);
+          // Determinar tipo de mensagem e conteúdo
+          let finalContent = messageText || '';
+          let finalMessageType: 'text' | 'image' | 'audio' | 'video' | 'document' | 'location' = 'text';
+          let mediaUrl: string | undefined;
+          
+          // Detectar tipo de mídia a partir do payload
+          const msgData = data.message || {};
+          if (msgData.imageMessage) {
+            finalMessageType = 'image';
+            finalContent = msgData.imageMessage.caption || '[Imagem]';
+            mediaUrl = msgData.imageMessage.url;
+          } else if (msgData.audioMessage || msgData.ptt) {
+            finalMessageType = 'audio';
+            finalContent = '[Áudio]';
+          } else if (msgData.videoMessage) {
+            finalMessageType = 'video';
+            finalContent = msgData.videoMessage.caption || '[Vídeo]';
+            mediaUrl = msgData.videoMessage.url;
+          } else if (msgData.documentMessage) {
+            finalMessageType = 'document';
+            finalContent = msgData.documentMessage.fileName || '[Documento]';
+            mediaUrl = msgData.documentMessage.url;
+          } else if (msgData.stickerMessage) {
+            finalContent = '[Sticker]';
+          } else if (msgData.locationMessage) {
+            finalMessageType = 'location';
+            finalContent = `[Localização: ${msgData.locationMessage.degreesLatitude}, ${msgData.locationMessage.degreesLongitude}]`;
+          } else if (!finalContent) {
+            finalContent = '[Mensagem sem texto]';
           }
 
-          console.log(`✅ [WEBHOOK] Processamento concluído com sucesso`);
+          // Verificar se mensagem já existe (evitar duplicatas por externalId)
+          const existingMessages = await storage.getChatMessages(matchingConv.id);
+          const isDuplicate = existingMessages.some((m: any) => 
+            m.externalId === messageId || 
+            (m.content === finalContent && Math.abs((m.createdAt?.getTime() || 0) - timestamp * 1000) < 3000)
+          );
+
+          if (isDuplicate) {
+            console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem duplicada ignorada: ${messageId}`);
+          } else {
+            // Salvar mensagem com identificação correta do remetente
+            // isFromMe = true: mensagem enviada pelo nosso número (via celular ou sistema)
+            // isFromMe = false: mensagem recebida do cliente
+            const message = await storage.createChatMessage({
+              conversationId: matchingConv.id,
+              senderId: isFromMe ? 'system' : customer.id,
+              senderType: isFromMe ? 'agent' : 'customer',
+              content: finalContent,
+              messageType: finalMessageType,
+              mediaUrl: mediaUrl,
+              isRead: isFromMe, // Mensagens enviadas por nós já são "lidas"
+              externalId: messageId // Guardar ID externo para evitar duplicatas
+            });
+            console.log(`💬 [WEBHOOK-MIRROR] Mensagem salva: ${message.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
+          }
+
+          console.log(`✅ [WEBHOOK-MIRROR] Processamento concluído com sucesso`);
         } catch (processError: any) {
-          console.error(`❌ [WEBHOOK] Erro ao processar mensagem:`, processError.message);
+          console.error(`❌ [WEBHOOK-MIRROR] Erro ao processar mensagem:`, processError.message);
+          console.error(`❌ [WEBHOOK-MIRROR] Stack:`, processError.stack);
           // Não falhar o webhook - sempre retornar 200
         }
       } else {
-        console.log(`⏭️  [WEBHOOK] Mensagem do sistema ignorada`);
+        console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem sem telefone ignorada`);
       }
 
       // Sempre retornar 200 OK para Evolution API não retentar
       res.status(200).json({ 
         success: true, 
         received: true,
-        messageId: messageId 
+        messageId: messageId,
+        processed: !!(phoneNumber && messageText)
       });
     } catch (error: any) {
-      console.error(`❌ [WEBHOOK] Erro no webhook:`, error);
+      console.error(`❌ [WEBHOOK-MIRROR] Erro no webhook:`, error);
       // Sempre retornar 200 para não retentar
       res.status(200).json({ 
         success: false, 
