@@ -22,10 +22,19 @@ import {
   AlertCircle,
   History,
   Calendar,
-  ArrowLeft
+  ArrowLeft,
+  Filter,
+  X
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ActiveCustomerWithVisits {
   id: string;
@@ -47,6 +56,7 @@ interface ActiveCustomerWithVisits {
     city: string | null;
     neighborhood: string | null;
     sellerId: string;
+    sellerName?: string;
     virtualService: boolean;
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
@@ -72,6 +82,7 @@ export default function ActiveCustomers() {
   const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
+  const [selectedSeller, setSelectedSeller] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -134,11 +145,30 @@ export default function ActiveCustomers() {
     window.location.href = "/api/active-customers/template";
   };
 
+  // Obter lista única de vendedores
+  const sellers = Array.from(
+    new Map(
+      activeCustomers
+        .filter(ac => ac.customer?.sellerId)
+        .map(ac => [
+          ac.customer?.sellerId,
+          { id: ac.customer?.sellerId, name: ac.customer?.sellerName || `Vendedor ${ac.customer?.sellerId?.slice(0, 4)}` }
+        ])
+    ).values()
+  ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
   const filteredCustomers = activeCustomers.filter((ac) => {
     const searchLower = searchTerm.toLowerCase();
     const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
     const doc = ac.document || "";
-    return name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
+    
+    // Filtro de busca
+    const matchesSearch = name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
+    
+    // Filtro de vendedor
+    const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
+    
+    return matchesSearch && matchesSeller;
   });
 
   const formatDocument = (doc: string, type: string) => {
@@ -265,7 +295,7 @@ export default function ActiveCustomers() {
         </TabsList>
 
         <TabsContent value="list" className="space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -275,6 +305,34 @@ export default function ActiveCustomers() {
                 className="pl-10"
                 data-testid="input-search"
               />
+            </div>
+            
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                <SelectTrigger className="w-full md:w-[250px]" data-testid="select-seller-filter">
+                  <SelectValue placeholder="Filtrar por vendedor..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos os vendedores</SelectItem>
+                  {sellers.map((seller) => (
+                    <SelectItem key={seller.id} value={seller.id || ""}>
+                      {seller.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedSeller && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedSeller("")}
+                  className="px-2"
+                  data-testid="button-clear-seller-filter"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
 
@@ -294,6 +352,7 @@ export default function ActiveCustomers() {
                         <TableHead>Status</TableHead>
                         <TableHead>CPF/CNPJ</TableHead>
                         <TableHead>Nome</TableHead>
+                        <TableHead>Vendedor</TableHead>
                         <TableHead>Cidade</TableHead>
                         <TableHead>Virtual</TableHead>
                         <TableHead>Últimas 2 Visitas</TableHead>
@@ -303,8 +362,8 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                            {searchTerm ? "Nenhum cliente encontrado com esse termo" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                            {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -333,6 +392,11 @@ export default function ActiveCustomers() {
                                   {ac.customer.neighborhood}
                                 </div>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">
+                                {ac.customer?.sellerName || `Vendedor ${ac.customer?.sellerId?.slice(0, 4)}` || "-"}
+                              </div>
                             </TableCell>
                             <TableCell>{ac.customer?.city || "-"}</TableCell>
                             <TableCell>

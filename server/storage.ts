@@ -5666,12 +5666,23 @@ export class DatabaseStorage implements IStorage {
     
     // Fase 2: Batch load de customers (máximo 1000)
     const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
-    const customerMap = new Map<string, Customer>();
+    const customerMap = new Map<string, any>();
+    const sellerIds = new Set<string>();
     
     if (customerIds.length > 0) {
       const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
       for (const c of customersData) {
         customerMap.set(c.id, c);
+        if (c.sellerId) sellerIds.add(c.sellerId);
+      }
+    }
+
+    // Fase 2b: Batch load de sellers para pegar nomes
+    const sellerMap = new Map<string, { name: string }>();
+    if (sellerIds.size > 0) {
+      const sellersData = await db.select().from(users).where(inArray(users.id, Array.from(sellerIds)));
+      for (const seller of sellersData) {
+        sellerMap.set(seller.id, { name: seller.name || `${seller.firstName || ''} ${seller.lastName || ''}`.trim() });
       }
     }
     
@@ -5721,9 +5732,15 @@ export class DatabaseStorage implements IStorage {
         status: v.status || 'scheduled' 
       })) || [];
       
+      // Adicionar sellerName ao customer se existir
+      const enrichedCustomer = customer ? {
+        ...customer,
+        sellerName: customer.sellerId ? sellerMap.get(customer.sellerId)?.name : undefined
+      } : undefined;
+      
       return {
         ...ac,
-        customer,
+        customer: enrichedCustomer,
         lastTwoVisits,
         nextThreeVisits
       };
