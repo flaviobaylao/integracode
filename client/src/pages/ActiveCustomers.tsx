@@ -314,7 +314,6 @@ export default function ActiveCustomers() {
                   <SelectValue placeholder="Filtrar por vendedor..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos os vendedores</SelectItem>
                   {sellers.map((seller) => (
                     <SelectItem key={seller.id} value={seller.id || ""}>
                       {seller.name}
