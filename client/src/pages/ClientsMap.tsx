@@ -136,14 +136,28 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
-  // Filtrar apenas clientes ativos com coordenadas válidas
+  // Query para buscar lista de clientes ativos
+  const { data: activeCustomersData = [] } = useQuery({
+    queryKey: ['/api/active-customers'],
+    enabled: !!canAccess,
+  });
+
+  // Criar set de IDs de clientes ativos para filtro rápido
+  const activeCustomerIds = new Set(
+    activeCustomersData
+      .filter((ac: any) => ac.customerFound && ac.customerId)
+      .map((ac: any) => ac.customerId)
+  );
+
+  // Filtrar apenas clientes ativos com coordenadas válidas que estão na lista de ativos
   const activeCustomersWithCoords = customers.filter(
     (customer) =>
       customer.isActive &&
       customer.latitude &&
       customer.longitude &&
       Number(customer.latitude) !== 0 &&
-      Number(customer.longitude) !== 0
+      Number(customer.longitude) !== 0 &&
+      (activeCustomerIds.size === 0 || activeCustomerIds.has(customer.id))
   );
 
   // Agrupar clientes por dia da semana
