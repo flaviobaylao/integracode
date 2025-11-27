@@ -255,6 +255,7 @@ export default function RoutesSummary() {
       return response;
     },
     onSuccess: () => {
+      console.log('✅ [TRANSFER-SUCCESS] Parada transferida com sucesso');
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
       setSelectedStopForTransfer(null);
       setNewDriverIdForTransfer('');
@@ -265,6 +266,7 @@ export default function RoutesSummary() {
       });
     },
     onError: (error: any) => {
+      console.error('❌ [TRANSFER-ERROR] Erro na transferência:', error);
       toast({
         title: "Erro ao transferir parada",
         description: error.message || "Não foi possível transferir a entrega.",
