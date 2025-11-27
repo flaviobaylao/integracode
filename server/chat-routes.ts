@@ -291,12 +291,46 @@ export function registerChatRoutes(app: Express): void {
       });
       console.log(`✅ [START-CONVERSATION] Conversa criada/atualizada:`, conversation.id);
 
+      // Send initial message via Evolution API
+      console.log(`📨 [START-CONVERSATION] Enviando mensagem inicial via WhatsApp...`);
+      const initialMessage = `Olá ${customerName || 'cliente'}! 👋 Bem-vindo ao Sistema Integra. Como posso ajudá-lo?`;
+      const sendResult = await evolutionAPIService.sendTextMessage(
+        config.instanceName,
+        normalizedPhone,
+        initialMessage
+      );
+
+      if (sendResult.success) {
+        console.log(`✅ [START-CONVERSATION] Mensagem enviada com sucesso! ID:`, sendResult.messageId);
+        
+        // Store the initial message in the database
+        const messageCreated = await storage.createChatMessage({
+          conversationId: conversation.id,
+          senderId: "system",
+          senderType: "system",
+          content: initialMessage,
+          messageType: "text",
+          isRead: false
+        }).catch((err) => {
+          console.warn(`⚠️  [START-CONVERSATION] Erro ao salvar mensagem no DB:`, err.message);
+          return null;
+        });
+        
+        if (messageCreated) {
+          console.log(`✅ [START-CONVERSATION] Mensagem salva no banco de dados`);
+        }
+      } else {
+        console.warn(`⚠️  [START-CONVERSATION] Erro ao enviar mensagem:`, sendResult.error);
+        // Continue anyway, conversation is created even if message send fails
+      }
+
       const response = {
         id: conversation.id,
         customerId: createdCustomer.id,
         phoneNumber: normalizedPhone,
         customerName: customerName || `Cliente ${normalizedPhone}`,
-        status: "new"
+        status: "new",
+        messageSent: sendResult.success
       };
       
       console.log(`🎉 [START-CONVERSATION] Retornando resposta:`, response);
