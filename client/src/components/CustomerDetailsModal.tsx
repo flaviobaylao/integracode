@@ -31,6 +31,7 @@ import {
   Truck
 } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
+import WhatsAppButton from "./WhatsAppButton";
 
 interface CustomerDetailsModalProps {
   isOpen: boolean;
@@ -319,15 +320,10 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                       <Phone className="h-4 w-4 text-gray-500" />
                       <span>{customer.phone}</span>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleOpenWhatsApp(customer.phone, (customer as any).fantasyName || customer.name)}
-                      className="text-green-600 hover:text-green-700"
-                    >
-                      <MessageSquare className="h-4 w-4 mr-1" />
-                      WhatsApp
-                    </Button>
+                    <WhatsAppButton 
+                      phone={customer.phone} 
+                      customerName={(customer as any).fantasyName || customer.name}
+                    />
                   </div>
                   
                   {customer.email && (

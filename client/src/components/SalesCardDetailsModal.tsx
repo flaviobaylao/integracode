@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
+import WhatsAppButton from "./WhatsAppButton";
 import { 
   Calendar, 
   Clock, 
@@ -427,16 +428,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               <div className="flex items-center space-x-2 text-gray-700">
                 <Phone className="h-4 w-4" />
                 <span>{card.customer.phone}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name)}
-                  className="ml-2 text-green-600 hover:text-green-700"
-                  data-testid="button-whatsapp"
-                >
-                  <MessageSquare className="h-4 w-4 mr-1" />
-                  WhatsApp
-                </Button>
+                <WhatsAppButton 
+                  phone={card.customer.phone} 
+                  customerName={card.customer.fantasyName || card.customer.name}
+                />
               </div>
               
               {/* Botão de Tipo de Atendimento */}

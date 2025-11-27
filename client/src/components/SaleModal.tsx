@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import WhatsAppButton from "./WhatsAppButton";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import honestLogo from '@/assets/honest-logo.png';

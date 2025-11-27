@@ -536,6 +536,11 @@ export default function CustomerManagement() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center space-x-2">
+                          <WhatsAppButton 
+                            phone={customer.phone} 
+                            customerName={(customer as any).fantasyName || customer.name}
+                            size="sm"
+                          />
                           <Button
                             variant="ghost"
                             size="sm"
