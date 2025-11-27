@@ -700,21 +700,25 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Mensagem é obrigatória" });
       }
 
+      // Normalizar telefone com MESMA função do webhook
+      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+      console.log(`📨 [WHATSAPP-SEND] Enviando para: ${phoneNumber} -> ${normalizedPhone}`);
+
       // Get Evolution API config
       const config = evolutionAPIService.getConfig();
       if (!config || !config.instanceName) {
         return res.status(400).json({ error: "WhatsApp não está configurado. Configure a Evolution API primeiro." });
       }
 
-      console.log(`📨 [WHATSAPP-SEND] Enviando mensagem para ${phoneNumber} via ${messageType}`);
+      console.log(`📨 [WHATSAPP-SEND] Enviando mensagem para ${normalizedPhone} via ${messageType}`);
 
       let result;
       if (messageType === 'media' && mediaUrl) {
-        result = await evolutionAPIService.sendMediaMessage(config.instanceName, phoneNumber, mediaUrl, caption, 'image');
+        result = await evolutionAPIService.sendMediaMessage(config.instanceName, normalizedPhone, mediaUrl, caption, 'image');
       } else if (messageType === 'location' && req.body.latitude && req.body.longitude) {
-        result = await evolutionAPIService.sendLocationMessage(config.instanceName, phoneNumber, req.body.latitude, req.body.longitude, caption);
+        result = await evolutionAPIService.sendLocationMessage(config.instanceName, normalizedPhone, req.body.latitude, req.body.longitude, caption);
       } else {
-        result = await evolutionAPIService.sendTextMessage(config.instanceName, phoneNumber, message);
+        result = await evolutionAPIService.sendTextMessage(config.instanceName, normalizedPhone, message);
       }
 
       if (!result.success) {
@@ -722,25 +726,43 @@ export function registerChatRoutes(app: Express): void {
         return res.status(500).json({ error: result.error || "Erro ao enviar mensagem" });
       }
 
-      // Save message to conversation history if exists
+      // Save message to conversation history (SEMPRE SALVAR, nunca ignorar)
       try {
-        const conv = await storage.getChatConversations();
-        const matchingConv = conv.find((c: any) => c.phoneNumber === phoneNumber || c.phoneNumber === phoneNumber.replace(/\D/g, ''));
-        
-        if (matchingConv) {
-          await storage.createChatMessage({
-            conversationId: matchingConv.id,
-            senderId: (req as any).user?.id || "system",
-            senderType: "system",
-            content: message,
-            messageType: "text"
+        // 1. Buscar ou criar cliente
+        let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+        if (!customer) {
+          customer = await storage.createChatCustomer({
+            phone: normalizedPhone,
+            name: `Cliente ${normalizedPhone}`
           });
+          console.log(`✅ [WHATSAPP-SEND] Cliente criado: ${customer.id}`);
         }
+
+        // 2. Usar UPSERT para garantir uma única conversa por telefone
+        const conversation = await storage.upsertChatConversation({
+          customerId: customer.id,
+          customerName: customer.name || `Cliente ${normalizedPhone}`,
+          customerPhone: normalizedPhone,
+          status: 'new' as const,
+          priority: 'normal' as const
+        });
+        console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
+
+        // 3. Salvar mensagem ENVIADA
+        await storage.createChatMessage({
+          conversationId: conversation.id,
+          senderId: (req as any).user?.id || "system",
+          senderType: "system",
+          content: message,
+          messageType: "text"
+        });
+        console.log(`💬 [WHATSAPP-SEND] Mensagem salva`);
       } catch (err) {
-        console.warn("[CHAT] Warning saving message history:", err);
+        console.error("[CHAT] Error saving message history:", err);
+        // Não falhar o envio se falhar ao salvar histórico
       }
 
-      console.log(`✅ [WHATSAPP-SEND] Mensagem enviada com sucesso para ${phoneNumber}`);
+      console.log(`✅ [WHATSAPP-SEND] Mensagem enviada com sucesso para ${normalizedPhone}`);
       res.json({ 
         success: true, 
         messageId: result.messageId,
