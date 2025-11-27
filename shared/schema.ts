@@ -1925,3 +1925,73 @@ export interface PendingDelivery {
   deliverySaturdayTimeSlots: string[];
 }
 
+// ============================================================================
+// ACTIVE CUSTOMERS - Lista de clientes ativos para rotas e visitas
+// ============================================================================
+
+// Tabela de uploads de lista de clientes ativos
+export const activeCustomerUploads = pgTable("active_customer_uploads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fileName: varchar("file_name").notNull(),
+  uploadedBy: varchar("uploaded_by").notNull(), // ID do usuário que fez upload
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  totalRecords: integer("total_records").notNull().default(0),
+  matchedRecords: integer("matched_records").notNull().default(0),
+  unmatchedRecords: integer("unmatched_records").notNull().default(0),
+  addedCustomers: integer("added_customers").notNull().default(0),
+  removedCustomers: integer("removed_customers").notNull().default(0),
+  keptCustomers: integer("kept_customers").notNull().default(0),
+  processingStatus: varchar("processing_status").notNull().default('pending'), // pending, processing, completed, error
+  errorMessage: text("error_message"),
+  fileHash: varchar("file_hash"), // Para evitar reprocessamento do mesmo arquivo
+}, (table) => [
+  index("idx_active_uploads_date").on(table.uploadedAt),
+  index("idx_active_uploads_status").on(table.processingStatus),
+]);
+
+// Tabela de clientes ativos (lista importada)
+export const activeCustomers = pgTable("active_customers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  document: varchar("document").notNull(), // CPF ou CNPJ normalizado (apenas números)
+  documentType: varchar("document_type").notNull(), // 'cpf' ou 'cnpj'
+  fantasyNameImported: varchar("fantasy_name_imported"), // Nome fantasia da planilha
+  customerId: varchar("customer_id"), // Referência ao customer encontrado (pode ser null se não encontrou)
+  uploadId: varchar("upload_id").notNull(), // Referência ao upload que trouxe este registro
+  matchStatus: varchar("match_status").notNull().default('pending'), // pending, matched, unmatched
+  isActive: boolean("is_active").notNull().default(true),
+  activatedAt: timestamp("activated_at").defaultNow(),
+  deactivatedAt: timestamp("deactivated_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_active_customers_document").on(table.document),
+  index("idx_active_customers_customer_id").on(table.customerId),
+  index("idx_active_customers_active").on(table.isActive),
+  unique("unique_active_customer_document").on(table.document),
+]);
+
+// Schemas e types para Active Customers
+export const insertActiveCustomerUploadSchema = createInsertSchema(activeCustomerUploads).omit({
+  id: true,
+  uploadedAt: true,
+});
+
+export const insertActiveCustomerSchema = createInsertSchema(activeCustomers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ActiveCustomerUpload = typeof activeCustomerUploads.$inferSelect;
+export type InsertActiveCustomerUpload = z.infer<typeof insertActiveCustomerUploadSchema>;
+
+export type ActiveCustomer = typeof activeCustomers.$inferSelect;
+export type InsertActiveCustomer = z.infer<typeof insertActiveCustomerSchema>;
+
+// Type para exibição com dados de visita
+export interface ActiveCustomerWithVisits extends ActiveCustomer {
+  customer?: Customer;
+  lastTwoVisits: Array<{ date: string; status: string }>;
+  nextThreeVisits: Array<{ date: string; status: string }>;
+}
+
