@@ -409,13 +409,10 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
         
         if (firstVisit.nextDate <= targetDate) {
           correctDates.push(new Date(firstVisit.nextDate));
-        } else {
-          if (isRoyal) console.log(`   ❌ Primeira visita FORA DA JANELA`);
         }
         
         // VISITAS SEGUINTES: aplicar periodicidade a partir da primeira
         let currentDate = new Date(firstVisit.nextDate);
-        let visitNum = 2;
         while (currentDate <= targetDate) {
           const result = calculateNextVisitDate({
             weekdays: parsedWeekdays as any[],
@@ -428,16 +425,9 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           // Evitar duplicar a primeira visita
           if (result.nextDate.getTime() !== firstVisit.nextDate.getTime()) {
             correctDates.push(new Date(result.nextDate));
-            if (isRoyal) console.log(`   ✅ Visita ${visitNum} ADICIONADA:`, result.nextDate.toISOString().split('T')[0]);
-            visitNum++;
           }
           
           currentDate = new Date(result.nextDate);
-        }
-        
-        if (isRoyal) {
-          console.log(`   📋 Total de datas corretas calculadas: ${correctDates.length}`);
-          console.log(`   📅 Datas: ${correctDates.map(d => d.toISOString().split('T')[0]).join(', ')}\n`);
         }
         
         // Buscar todos os cards futuros pendentes deste cliente
