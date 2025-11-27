@@ -1023,11 +1023,13 @@ export class DatabaseStorage implements IStorage {
     let conditions = [];
     
     if (sellerId) {
-      // 🎯 CORREÇÃO: Vendedores veem TODOS os cards da sua ÁREA (clientes que pertencem a eles)
-      // Validação em createSalesCard garante: salesCards.sellerId = customers.sellerId sempre
-      // Portanto, filtrar por customers.sellerId retorna TODOS os cards da área do vendedor
-      conditions.push(isNotNull(customers.sellerId));    // Garante que há um cliente associado
-      conditions.push(eq(customers.sellerId, sellerId)); // Cliente pertence ao vendedor
+      // 🎯 CORREÇÃO 2025-11-27: Vendedores veem:
+      // 1. Cards que eles criaram (salesCards.sellerId = sellerId) OU
+      // 2. Cards de clientes atribuídos a eles (customers.sellerId = sellerId)
+      // Isso garante visibilidade mesmo se cliente sem sellerId ou card histórico
+      const sellerCardCondition = eq(salesCards.sellerId, sellerId);
+      const customerSellerCondition = eq(customers.sellerId, sellerId);
+      conditions.push(or(sellerCardCondition, customerSellerCondition));
     }
     
     if (filters?.routeDay) {
@@ -1834,7 +1836,10 @@ export class DatabaseStorage implements IStorage {
       .where(
         sellerId
           ? and(
-              eq(salesCards.sellerId, sellerId),
+              or(
+                eq(salesCards.sellerId, sellerId),
+                eq(customers.sellerId, sellerId)
+              ),
               eq(salesCards.routeDay, routeDay),
               gte(salesCards.scheduledDate, startDate),
               lte(salesCards.scheduledDate, endDate)
@@ -1943,7 +1948,10 @@ export class DatabaseStorage implements IStorage {
       .where(
         sellerId
           ? and(
-              eq(salesCards.sellerId, sellerId),
+              or(
+                eq(salesCards.sellerId, sellerId),
+                eq(customers.sellerId, sellerId)
+              ),
               gte(salesCards.scheduledDate, startDate),
               lte(salesCards.scheduledDate, endDate)
             )
@@ -1978,7 +1986,10 @@ export class DatabaseStorage implements IStorage {
     
     if (sellerId) {
       whereConditions = and(
-        eq(salesCards.sellerId, sellerId),
+        or(
+          eq(salesCards.sellerId, sellerId),
+          eq(customers.sellerId, sellerId)
+        ),
         or(
           // Permanent cards: converter nextVisitDate para date em BRT
           and(
@@ -2044,7 +2055,10 @@ export class DatabaseStorage implements IStorage {
       whereConditions = and(
         lte(salesCards.scheduledDate, now),
         inArray(salesCards.status, ['pending', 'in_progress']),
-        eq(salesCards.sellerId, sellerId)
+        or(
+          eq(salesCards.sellerId, sellerId),
+          eq(customers.sellerId, sellerId)
+        )
       );
     }
     
