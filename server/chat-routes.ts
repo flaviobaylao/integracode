@@ -342,6 +342,48 @@ export function registerChatRoutes(app: Express): void {
       const validatedData = insertChatMessageSchema.parse(req.body);
       const message = await storage.createChatMessage(validatedData);
       
+      // If message is from agent/system, send via Evolution API
+      if (message.senderType !== 'customer' && message.conversationId) {
+        try {
+          console.log(`📨 [CHAT-MESSAGE] Enviando mensagem via Evolution API...`);
+          
+          // Get conversation to get customer phone
+          const conversation = await storage.getChatConversation(message.conversationId);
+          if (!conversation || !conversation.customerPhone) {
+            console.warn(`⚠️  [CHAT-MESSAGE] Conversa ou telefone não encontrados`);
+            return res.json(message); // Still return success, message saved to DB
+          }
+          
+          const config = {
+            instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST',
+            apiUrl: process.env.EVOLUTION_API_BASE_URL || 'https://api.bothonest.com.br',
+            apiKey: process.env.EVOLUTION_API_KEY || ''
+          };
+          
+          if (!config.apiKey) {
+            console.warn(`⚠️  [CHAT-MESSAGE] Evolution API não configurada`);
+            return res.json(message);
+          }
+          
+          console.log(`📱 [CHAT-MESSAGE] Enviando para: ${conversation.customerPhone}`);
+          const sendResult = await evolutionAPIService.sendTextMessage(
+            config.instanceName,
+            conversation.customerPhone,
+            message.content
+          );
+          
+          if (sendResult.success) {
+            console.log(`✅ [CHAT-MESSAGE] Mensagem entregue via WhatsApp! ID:`, sendResult.messageId);
+          } else {
+            console.warn(`⚠️  [CHAT-MESSAGE] Erro ao enviar via WhatsApp:`, sendResult.error);
+            // Still return success to user - message is saved
+          }
+        } catch (sendError: any) {
+          console.error(`❌ [CHAT-MESSAGE] Erro ao enviar mensagem:`, sendError.message);
+          // Don't fail the request - message is already saved
+        }
+      }
+      
       res.json(message);
     } catch (error) {
       if (error instanceof z.ZodError) {
