@@ -590,6 +590,120 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ============================================================
+  // EVOLUTION API WEBHOOK - RECEBER MENSAGENS
+  // ============================================================
+
+  // POST /api/chat/webhook/messages - Receber mensagens via webhook da Evolution API
+  app.post("/api/chat/webhook/messages", async (req, res) => {
+    try {
+      const { event, instance, data } = req.body;
+      
+      // Log incoming webhook
+      console.log(`📬 [WEBHOOK] Recebido evento: ${event} da instância: ${instance}`);
+      
+      // Verificar se é evento de mensagem
+      if (!event || (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT')) {
+        console.log(`⏭️  [WEBHOOK] Evento ignorado: ${event}`);
+        return res.json({ received: false, reason: 'Evento não é de mensagem' });
+      }
+
+      if (!data || !data.key) {
+        console.warn(`⚠️  [WEBHOOK] Dados inválidos recebidos`);
+        return res.json({ received: false, reason: 'Dados inválidos' });
+      }
+
+      // Extrair informações da mensagem
+      const phoneNumber = evolutionAPIService.extractPhoneNumber(data.key.remoteJid);
+      const messageText = evolutionAPIService.extractMessageText(data.message);
+      const isFromCustomer = !data.key.fromMe;
+      const messageId = data.key.id;
+      const timestamp = data.messageTimestamp || Date.now();
+
+      console.log(`📱 [WEBHOOK] Mensagem: ${isFromCustomer ? 'DO CLIENTE' : 'DO SISTEMA'} | Telefone: ${phoneNumber} | Texto: ${messageText?.substring(0, 50)}`);
+
+      // Se for mensagem do cliente (não do sistema), processar
+      if (isFromCustomer && phoneNumber) {
+        try {
+          // Normalizar telefone
+          const normalizedPhone = normalizePhoneNumber(phoneNumber);
+          console.log(`📞 [WEBHOOK] Telefone normalizado: ${normalizedPhone}`);
+
+          // Buscar ou criar cliente
+          let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+          if (!customer) {
+            customer = await storage.createChatCustomer({
+              phone: normalizedPhone,
+              name: `Cliente ${normalizedPhone}`
+            });
+            console.log(`✅ [WEBHOOK] Cliente criado: ${customer.id}`);
+          }
+
+          // Buscar ou criar conversa
+          let conversation = await storage.getChatConversations();
+          let matchingConv = conversation.find((c: any) => 
+            c.phoneNumber === normalizedPhone || 
+            c.customerPhone === normalizedPhone ||
+            c.customerId === customer.id
+          );
+
+          if (!matchingConv) {
+            matchingConv = await storage.createChatConversation({
+              customerId: customer.id,
+              customerName: customer.name || `Cliente ${normalizedPhone}`,
+              customerPhone: normalizedPhone,
+              status: 'new' as const,
+              priority: 'normal' as const
+            });
+            console.log(`✅ [WEBHOOK] Conversa criada: ${matchingConv.id}`);
+          } else {
+            // Atualizar conversa para "ativa" se estava resolvida
+            if (matchingConv.status === 'resolved') {
+              await storage.updateChatConversation(matchingConv.id, {
+                status: 'assigned'
+              });
+              console.log(`🔄 [WEBHOOK] Conversa reativada: ${matchingConv.id}`);
+            }
+          }
+
+          // Salvar mensagem
+          if (messageText && messageText.trim()) {
+            const message = await storage.createChatMessage({
+              conversationId: matchingConv.id,
+              senderId: customer.id,
+              senderType: 'customer',
+              content: messageText,
+              messageType: 'text',
+              isRead: false
+            });
+            console.log(`💬 [WEBHOOK] Mensagem salva: ${message.id}`);
+          }
+
+          console.log(`✅ [WEBHOOK] Processamento concluído com sucesso`);
+        } catch (processError: any) {
+          console.error(`❌ [WEBHOOK] Erro ao processar mensagem:`, processError.message);
+          // Não falhar o webhook - sempre retornar 200
+        }
+      } else {
+        console.log(`⏭️  [WEBHOOK] Mensagem do sistema ignorada`);
+      }
+
+      // Sempre retornar 200 OK para Evolution API não retentar
+      res.status(200).json({ 
+        success: true, 
+        received: true,
+        messageId: messageId 
+      });
+    } catch (error: any) {
+      console.error(`❌ [WEBHOOK] Erro no webhook:`, error);
+      // Sempre retornar 200 para não retentar
+      res.status(200).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  });
+
   // Send WhatsApp message via Evolution API
   app.post("/api/chat/send-message", authenticateUser, async (req, res) => {
     try {
