@@ -5656,63 +5656,81 @@ export class DatabaseStorage implements IStorage {
   }
   
   async getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]> {
-    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
-    const result: ActiveCustomerWithVisits[] = [];
+    // Fase 1: Buscar todos os clientes ativos
+    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).limit(1000);
     
+    if (active.length === 0) {
+      console.log('ℹ️ Nenhum cliente ativo encontrado');
+      return [];
+    }
+    
+    // Fase 2: Batch load de customers (máximo 1000)
+    const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
+    const customerMap = new Map<string, Customer>();
+    
+    if (customerIds.length > 0) {
+      const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
+      for (const c of customersData) {
+        customerMap.set(c.id, c);
+      }
+    }
+    
+    // Fase 3: Batch load de visitas
+    const visitsByCustomer = new Map<string, { past: any[]; future: any[] }>();
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
-    for (const ac of active) {
-      let customer: Customer | undefined;
-      if (ac.customerId) {
-        const [c] = await db.select().from(customers).where(eq(customers.id, ac.customerId));
-        customer = c;
-      }
+    if (customerIds.length > 0) {
+      // Get all visits (past and future) for active customers in one query
+      const allVisits = await db
+        .select()
+        .from(visitAgenda)
+        .where(inArray(visitAgenda.customerId, customerIds))
+        .orderBy(desc(visitAgenda.visitDate));
       
-      // Fetch last 2 and next 3 visits from visit_schedule_history
-      const lastTwoVisits: Array<{ date: string; status: string }> = [];
-      const nextThreeVisits: Array<{ date: string; status: string }> = [];
-      
-      if (ac.customerId) {
-        // Get last 2 visits (past)
-        const pastVisits = await db
-          .select()
-          .from(visitAgenda)
-          .where(and(
-            eq(visitAgenda.customerId, ac.customerId),
-            lte(visitAgenda.visitDate, todayStr)
-          ))
-          .orderBy(desc(visitAgenda.visitDate))
-          .limit(2);
-        
-        for (const v of pastVisits) {
-          lastTwoVisits.push({ date: v.visitDate, status: v.status || 'scheduled' });
+      // Group by customer
+      for (const v of allVisits) {
+        if (!visitsByCustomer.has(v.customerId)) {
+          visitsByCustomer.set(v.customerId, { past: [], future: [] });
         }
         
-        // Get next 3 visits (future)
-        const futureVisits = await db
-          .select()
-          .from(visitAgenda)
-          .where(and(
-            eq(visitAgenda.customerId, ac.customerId),
-            gt(visitAgenda.visitDate, todayStr)
-          ))
-          .orderBy(visitAgenda.visitDate)
-          .limit(3);
-        
-        for (const v of futureVisits) {
-          nextThreeVisits.push({ date: v.visitDate, status: v.status || 'scheduled' });
+        const visits = visitsByCustomer.get(v.customerId)!;
+        if (v.visitDate <= todayStr) {
+          if (visits.past.length < 2) {
+            visits.past.unshift(v); // Add at beginning to maintain desc order
+          }
+        } else {
+          if (visits.future.length < 3) {
+            visits.future.push(v);
+          }
         }
       }
+    }
+    
+    // Fase 4: Montar resultado final
+    const result: ActiveCustomerWithVisits[] = active.map((ac) => {
+      const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
+      const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
       
-      result.push({
+      const lastTwoVisits = visits?.past.map(v => ({ 
+        date: v.visitDate, 
+        status: v.status || 'scheduled' 
+      })) || [];
+      
+      const nextThreeVisits = visits?.future.map(v => ({ 
+        date: v.visitDate, 
+        status: v.status || 'scheduled' 
+      })) || [];
+      
+      return {
         ...ac,
         customer,
         lastTwoVisits,
         nextThreeVisits
-      });
-    }
+      };
+    });
     
+    console.log(`✅ Retornando ${result.length} clientes ativos com visitas`);
     return result;
   }
   
