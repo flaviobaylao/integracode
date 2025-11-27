@@ -5821,6 +5821,147 @@ export class DatabaseStorage implements IStorage {
     const [upload] = await db.insert(activeCustomerUploads).values(uploadData).returning();
     return upload;
   }
+
+  async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number }> {
+    const WEEKDAY_MAP: Record<string, number> = {
+      'Seg': 1, 'Segunda': 1, 'segunda': 1,
+      'Ter': 2, 'Terça': 2, 'terça': 2,
+      'Qua': 3, 'Quarta': 3, 'quarta': 3,
+      'Qui': 4, 'Quinta': 4, 'quinta': 4,
+      'Sex': 5, 'Sexta': 5, 'sexta': 5,
+      'Sab': 6, 'Sábado': 6, 'sábado': 6,
+      'Dom': 0, 'Domingo': 0, 'domingo': 0
+    };
+
+    try {
+      // 1. Obter todos os clientes ativos
+      const activeCustomersList = await db
+        .select()
+        .from(activeCustomers)
+        .where(eq(activeCustomers.isActive, true));
+
+      console.log(`📅 [VISIT-SCHEDULER] Processando ${activeCustomersList.length} clientes ativos`);
+
+      let processed = 0;
+      let generated = 0;
+      let errors = 0;
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      for (const activeCustomer of activeCustomersList) {
+        try {
+          if (!activeCustomer.customerId) continue;
+          processed++;
+
+          // 2. Obter dados do cliente
+          const customer = await db
+            .select()
+            .from(customers)
+            .where(eq(customers.id, activeCustomer.customerId))
+            .then(rows => rows[0]);
+
+          if (!customer?.weekdays) continue;
+
+          // 3. Contar visitas futuras
+          const futureCutoff = new Date(today);
+          futureCutoff.setDate(futureCutoff.getDate() + 60); // Próximos 60 dias
+
+          const futureVisits = await db
+            .select()
+            .from(visitAgenda)
+            .where(
+              and(
+                eq(visitAgenda.customerId, activeCustomer.customerId),
+                gte(visitAgenda.visitDate, today.toISOString().split('T')[0]),
+                lte(visitAgenda.visitDate, futureCutoff.toISOString().split('T')[0])
+              )
+            )
+            .then(rows => rows.length);
+
+          // 4. Se tiver menos de 3 visitas, gerar as que faltam
+          if (futureVisits < 3) {
+            const visitsNeeded = 3 - futureVisits;
+            const weekdaysArray = JSON.parse(customer.weekdays);
+            const periodicity = customer.visitPeriodicity || 'semanal';
+
+            let daysToAdd = 1;
+            if (periodicity === 'quinzenal') daysToAdd = 14;
+            else if (periodicity === 'mensal') daysToAdd = 30;
+            else daysToAdd = 7; // semanal
+
+            // Encontrar a última visita agendada
+            const lastVisit = await db
+              .select()
+              .from(visitAgenda)
+              .where(eq(visitAgenda.customerId, activeCustomer.customerId))
+              .orderBy(desc(visitAgenda.visitDate))
+              .limit(1)
+              .then(rows => rows[0]);
+
+            let startDate = lastVisit ? new Date(lastVisit.visitDate) : new Date(today);
+            if (lastVisit) startDate.setDate(startDate.getDate() + daysToAdd);
+
+            // Gerar as 3 próximas visitas
+            for (let i = 0; i < visitsNeeded; i++) {
+              let currentDate = new Date(startDate);
+              let attempts = 0;
+              const maxAttempts = 120; // Máximo de 120 dias de tentativa
+
+              // Encontrar o próximo dia válido
+              while (attempts < maxAttempts) {
+                const dayOfWeek = currentDate.getDay();
+                const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
+
+                if (dayName && weekdaysArray.includes(dayName)) {
+                  const visitDateStr = currentDate.toISOString().split('T')[0];
+
+                  // Verificar se já existe visita nesse dia
+                  const exists = await db
+                    .select()
+                    .from(visitAgenda)
+                    .where(
+                      and(
+                        eq(visitAgenda.customerId, activeCustomer.customerId),
+                        eq(visitAgenda.visitDate, visitDateStr)
+                      )
+                    )
+                    .then(rows => rows.length > 0);
+
+                  if (!exists) {
+                    // Criar visita
+                    await db.insert(visitAgenda).values({
+                      customerId: activeCustomer.customerId,
+                      sellerId: customer.sellerId,
+                      visitDate: visitDateStr,
+                      status: 'scheduled',
+                      createdAt: new Date()
+                    });
+                    generated++;
+                    break;
+                  }
+                }
+
+                currentDate.setDate(currentDate.getDate() + 1);
+                attempts++;
+              }
+
+              startDate = currentDate;
+            }
+          }
+        } catch (error: any) {
+          console.error(`❌ Erro ao processar cliente ${activeCustomer.id}:`, error.message);
+          errors++;
+        }
+      }
+
+      console.log(`✅ [VISIT-SCHEDULER] Processamento concluído: ${processed} clientes, ${generated} visitas geradas, ${errors} erros`);
+      return { processed, generated, errors };
+    } catch (error: any) {
+      console.error(`❌ [VISIT-SCHEDULER] Erro crítico:`, error.message);
+      return { processed: 0, generated: 0, errors: 1 };
+    }
+  }
   
   async updateActiveCustomerUpload(id: string, uploadData: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload> {
     const [upload] = await db

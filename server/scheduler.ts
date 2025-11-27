@@ -363,7 +363,27 @@ cron.schedule('*/30 * * * * *', async () => {
   }
 });
 
+// Geração automática de próximas 3 visitas para clientes ativos
+cron.schedule('0 0 * * *', async () => {
+  console.log('📅 [SCHEDULER] Iniciando geração de próximas 3 visitas para clientes ativos às 00:00h...');
+  
+  try {
+    const result = await storage.generateNextVisitsForActiveCustomers();
+    console.log(`✅ [SCHEDULER] Geração de visitas concluída:`);
+    console.log(`   - ${result.processed} clientes processados`);
+    console.log(`   - ${result.generated} visitas geradas`);
+    if (result.errors > 0) {
+      console.log(`   - ⚠️ ${result.errors} erro(s) encontrado(s)`);
+    }
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Erro na geração de visitas:', error.message);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
+
 console.log('✅ Agendador configurado:');
+console.log('   - Geração de próximas 3 visitas para clientes ativos diariamente às 00:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (30+ min sem check-out) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
