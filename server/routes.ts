@@ -9089,6 +9089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Transferir parada para outro motorista
   app.patch("/api/delivery-routes/stops/:stopId/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    console.log(`🔔 [TRANSFER-ENDPOINT] Endpoint chamado com stopId: ${req.params.stopId}`);
     try {
       const { stopId } = req.params;
       const { toDriverId, newPosition, routeDate } = req.body;
@@ -9114,17 +9115,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📍 [TRANSFER-STOP] Parada atual: ${stopId} na rota ${fromRouteId}`);
 
       // Remover parada da rota atual
-      const deletedStops = await db.delete(deliveryRouteStops)
-        .where(eq(deliveryRouteStops.id, stopId))
-        .returning();
-      console.log(`🗑️ [TRANSFER-STOP] Parada removida da rota anterior: ${deletedStops.length} registros`);
+      let deletedStops: any;
+      try {
+        deletedStops = await db.delete(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.id, stopId))
+          .returning();
+        console.log(`🗑️ [TRANSFER-STOP] Parada removida: ${deletedStops.length} registros`);
+      } catch (deleteErr: any) {
+        console.error(`❌ [TRANSFER-STOP] Erro ao deletar parada:`, deleteErr);
+        return res.status(500).json({ message: "Erro ao remover parada antiga", error: deleteErr.message });
+      }
 
       // Buscar ou criar rota do novo motorista para essa data
-      const existingRoutes = await db.select().from(deliveryRoutes)
-        .where(and(
-          eq(deliveryRoutes.driverId, toDriverId),
-          eq(deliveryRoutes.routeDate, routeDate)
-        ));
+      const routeDateStr = typeof routeDate === 'string' ? routeDate : new Date(routeDate).toISOString().split('T')[0];
+      console.log(`🔍 [TRANSFER-STOP] Procurando rota para motorista ${toDriverId} em ${routeDateStr}`);
+      
+      let existingRoutes: any;
+      try {
+        existingRoutes = await db.select().from(deliveryRoutes)
+          .where(and(
+            eq(deliveryRoutes.driverId, toDriverId),
+            eq(deliveryRoutes.routeDate, routeDateStr)
+          ));
+        console.log(`📌 [TRANSFER-STOP] Encontradas ${existingRoutes.length} rotas existentes`);
+      } catch (routeErr: any) {
+        console.error(`❌ [TRANSFER-STOP] Erro ao buscar rotas:`, routeErr);
+        return res.status(500).json({ message: "Erro ao buscar rotas", error: routeErr.message });
+      }
 
       let toRouteId: string;
       if (existingRoutes.length > 0) {
@@ -9136,66 +9153,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const startLat = currentStop.customerLatitude ? parseFloat(currentStop.customerLatitude.toString()) : -15.7942;
         const startLng = currentStop.customerLongitude ? parseFloat(currentStop.customerLongitude.toString()) : -48.2720;
         
-        const newRoute = await db.insert(deliveryRoutes).values({
-          id: toRouteId,
-          routeName: `Rota-${toDriverId}-${new Date(routeDate).getDate()}`,
-          routeDate,
-          driverId: toDriverId,
-          driverName: "", // Será preenchido na query
-          vehicleType: "Padrão",
-          startLatitude: startLat,
-          startLongitude: startLng,
-          totalDistance: 0,
-          totalDuration: 0,
-          totalDeliveries: 0,
-          status: "planejada"
-        }).returning();
-        console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId} com coordenadas ${startLat},${startLng}`);
+        try {
+          const newRoute = await db.insert(deliveryRoutes).values({
+            id: toRouteId,
+            routeName: `Rota-${toDriverId}-${new Date(routeDateStr).getDate()}`,
+            routeDate: routeDateStr,
+            driverId: toDriverId,
+            driverName: "", 
+            vehicleType: "Padrão",
+            startLatitude: startLat,
+            startLongitude: startLng,
+            totalDistance: 0,
+            totalDuration: 0,
+            totalDeliveries: 0,
+            status: "planejada"
+          }).returning();
+          console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId}`);
+        } catch (createErr: any) {
+          console.error(`❌ [TRANSFER-STOP] Erro ao criar rota:`, createErr);
+          return res.status(500).json({ message: "Erro ao criar rota", error: createErr.message });
+        }
       }
 
       // Calcular próxima posição
-      const maxOrderResult = await db.select({ 
-        maxOrder: sql<number>`COALESCE(MAX(${deliveryRouteStops.stopOrder}), 0)` 
-      })
-        .from(deliveryRouteStops)
-        .where(eq(deliveryRouteStops.routeId, toRouteId));
+      let maxOrderResult: any;
+      try {
+        maxOrderResult = await db.select({ 
+          maxOrder: sql<number>`COALESCE(MAX(${deliveryRouteStops.stopOrder}), 0)` 
+        })
+          .from(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.routeId, toRouteId));
+        console.log(`📊 [TRANSFER-STOP] Max order result:`, maxOrderResult);
+      } catch (maxErr: any) {
+        console.error(`❌ [TRANSFER-STOP] Erro ao calcular posição:`, maxErr);
+        maxOrderResult = [{ maxOrder: 0 }];
+      }
 
       const currentMaxOrder = maxOrderResult[0]?.maxOrder || 0;
       const nextPosition = newPosition || (currentMaxOrder + 1);
-      console.log(`📊 [TRANSFER-STOP] Próxima posição calculada: ${nextPosition} (máximo anterior: ${currentMaxOrder})`);
+      console.log(`📊 [TRANSFER-STOP] Próxima posição: ${nextPosition}`);
       
       // Criar nova parada na rota destino
       const newStopId = nanoid();
-      const insertedStops = await db.insert(deliveryRouteStops).values({
-        id: newStopId,
-        routeId: toRouteId,
-        salesCardId: currentStop.salesCardId,
-        customerId: currentStop.customerId,
-        billingId,
-        customerName: currentStop.customerName,
-        customerAddress: currentStop.customerAddress,
-        customerLatitude: currentStop.customerLatitude,
-        customerLongitude: currentStop.customerLongitude,
-        stopOrder: nextPosition,
-        estimatedArrival: currentStop.estimatedArrival,
-        estimatedDeparture: currentStop.estimatedDeparture,
-        estimatedServiceTime: currentStop.estimatedServiceTime,
-        distanceFromPrevious: currentStop.distanceFromPrevious,
-        isPriority: currentStop.isPriority,
-        status: "pendente"
-      }).returning();
-
-      if (insertedStops.length === 0) {
-        console.error(`❌ [TRANSFER-STOP] Falha ao inserir parada na nova rota`);
-        return res.status(500).json({ message: "Falha ao inserir parada na nova rota" });
+      let insertedStops: any;
+      try {
+        insertedStops = await db.insert(deliveryRouteStops).values({
+          id: newStopId,
+          routeId: toRouteId,
+          salesCardId: currentStop.salesCardId,
+          customerId: currentStop.customerId,
+          billingId,
+          customerName: currentStop.customerName,
+          customerAddress: currentStop.customerAddress,
+          customerLatitude: currentStop.customerLatitude,
+          customerLongitude: currentStop.customerLongitude,
+          stopOrder: nextPosition,
+          estimatedArrival: currentStop.estimatedArrival,
+          estimatedDeparture: currentStop.estimatedDeparture,
+          estimatedServiceTime: currentStop.estimatedServiceTime,
+          distanceFromPrevious: currentStop.distanceFromPrevious,
+          isPriority: currentStop.isPriority,
+          status: "pendente"
+        }).returning();
+        console.log(`✅ [TRANSFER-STOP] Parada inserida com sucesso: ${newStopId}`);
+      } catch (insertErr: any) {
+        console.error(`❌ [TRANSFER-STOP] Erro ao inserir parada:`, insertErr);
+        return res.status(500).json({ message: "Falha ao inserir parada", error: insertErr.message });
       }
 
-      console.log(`✅ [TRANSFER-STOP] Parada ${stopId} transferida com sucesso da rota ${fromRouteId} para ${toRouteId}`);
+      if (insertedStops.length === 0) {
+        console.error(`❌ [TRANSFER-STOP] Insert retornou vazio`);
+        return res.status(500).json({ message: "Insert retornou vazio" });
+      }
+
+      console.log(`✅ [TRANSFER-STOP] ✅ SUCESSO: ${stopId} → ${toRouteId}`);
       res.json({ 
         message: "Parada transferida com sucesso",
         toRouteId,
         newStopId,
-        newPosition
+        newPosition,
+        newStop: insertedStops[0]
       });
     } catch (error: any) {
       console.error(`❌ [TRANSFER-STOP] Erro na transferência:`, error);
