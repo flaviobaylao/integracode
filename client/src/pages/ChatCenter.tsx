@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ interface Agent {
 
 export default function ChatCenter() {
   const { toast } = useToast();
+  const [location] = useLocation();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
   const [assignedAgent, setAssignedAgent] = useState<string>("");
@@ -57,6 +59,22 @@ export default function ChatCenter() {
   const [newPhoneNumber, setNewPhoneNumber] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.split('?')[1]);
+      const conversationId = params.get('conversationId');
+      if (conversationId) {
+        console.log('🎯 [ChatCenter] Abrindo conversa:', conversationId);
+        setSelectedConversation(conversationId);
+        // Remover o parâmetro da URL para limpar
+        window.history.replaceState({}, '', '/telemarketing/atendimento');
+      }
+    } catch (error) {
+      console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
+    }
+  }, [location]);
 
   // Fetch conversations - CORREÇÃO: polling cada 500ms para real-time melhor
   const { data: conversationsData, isLoading: convLoading, refetch: refetchConversations } = useQuery({

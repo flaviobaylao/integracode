@@ -39,13 +39,14 @@ export default function WhatsAppButton({
       }
     },
     onSuccess: (data) => {
-      console.log('🎉 [WhatsAppButton] Navegando para atendimento...');
+      console.log('🎉 [WhatsAppButton] Navegando para atendimento com conversa:', data.id);
       toast({
         title: "Sucesso",
         description: "Conversa iniciada! Redirecionando...",
       });
       setTimeout(() => {
-        navigate('/telemarketing/atendimento');
+        // 🎯 Navegar passando o ID da conversa como query param
+        navigate(`/telemarketing/atendimento?conversationId=${data.id}`);
       }, 500);
     },
     onError: (error) => {
