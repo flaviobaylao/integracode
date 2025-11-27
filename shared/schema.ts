@@ -1085,28 +1085,6 @@ export const messageHistoryRelations = relations(messageHistory, ({ one }) => ({
   }),
 }));
 
-// ============================================================================
-// ACTIVE CUSTOMERS - Lista de clientes ativos para criação de rotas
-// ============================================================================
-
-export const activeCustomers = pgTable("active_customers", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  cpfCnpj: varchar("cpf_cnpj").notNull().unique(),
-  fantasyName: varchar("fantasy_name").notNull(),
-  customerId: varchar("customer_id"),
-  customerFound: boolean("customer_found").notNull().default(false),
-  importedAt: timestamp("imported_at").defaultNow(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const activeCustomersRelations = relations(activeCustomers, ({ one }) => ({
-  customer: one(customers, {
-    fields: [activeCustomers.customerId],
-    references: [customers.id],
-  }),
-}));
-
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -1317,13 +1295,6 @@ export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteSto
   customerLongitude: z.union([z.string(), z.number()]).transform(val => typeof val === 'number' ? val : parseFloat(val)),
 });
 
-export const insertActiveCustomerSchema = createInsertSchema(activeCustomers).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  importedAt: true,
-});
-
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -1376,13 +1347,6 @@ export type InsertLocation = z.infer<typeof insertLocationSchema>;
 
 export type SalesGoal = typeof salesGoals.$inferSelect;
 export type InsertSalesGoal = z.infer<typeof insertSalesGoalSchema>;
-
-export type ActiveCustomer = typeof activeCustomers.$inferSelect;
-export type InsertActiveCustomer = z.infer<typeof insertActiveCustomerSchema>;
-
-export type ActiveCustomerWithDetails = ActiveCustomer & {
-  customer?: Customer;
-};
 
 export type VisitAgenda = typeof visitAgenda.$inferSelect;
 export type InsertVisitAgenda = z.infer<typeof insertVisitAgendaSchema>;
