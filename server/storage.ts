@@ -380,6 +380,21 @@ export interface IStorage {
   // Knowledge Base operations
   createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
   getKnowledgeBase(): Promise<KnowledgeBase[]>;
+  
+  // Active Customers operations
+  getActiveCustomers(): Promise<any[]>;
+  getActiveCustomersStats(): Promise<{ total: number; matched: number; notFound: number }>;
+  importActiveCustomers(data: Array<{ cpfCnpj: string; fantasyName: string }>): Promise<{
+    total: number;
+    added: number;
+    updated: number;
+    removed: number;
+    matched: number;
+    notFound: number;
+  }>;
+  clearActiveCustomers(): Promise<void>;
+  isCustomerActive(customerId: string): Promise<boolean>;
+  getActiveCustomerIds(): Promise<string[]>;
 }
 
 export class DatabaseStorage implements IStorage {

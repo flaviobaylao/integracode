@@ -48,6 +48,7 @@ import QuickTemplates from "@/pages/QuickTemplates";
 import TelemarketingHub from "@/pages/TelemarketingHub";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
+import ActiveCustomers from "@/pages/ActiveCustomers";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -182,6 +183,7 @@ function Router() {
           <Route path="/telemarketing/templates" component={QuickTemplates} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
+          <Route path="/admin/clientes-ativos" component={ActiveCustomers} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
