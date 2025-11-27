@@ -16218,6 +16218,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // ACTIVE CUSTOMERS ENDPOINTS - Gerenciar lista de clientes ativos
+  // ============================================================================
+  
+  app.get('/api/active-customers', authenticateUser, async (req: any, res) => {
+    try {
+      const activeCustomers = await storage.getActiveCustomers();
+      res.json(activeCustomers);
+    } catch (error) {
+      console.error('Erro ao listar clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao listar clientes ativos' });
+    }
+  });
+
+  app.get('/api/active-customers/stats', authenticateUser, async (req: any, res) => {
+    try {
+      const stats = await storage.getActiveCustomersStats();
+      res.json(stats);
+    } catch (error) {
+      console.error('Erro ao obter estatísticas de clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao obter estatísticas' });
+    }
+  });
+
+  app.post('/api/active-customers/import', authenticateUser, requireRole(['admin', 'coordinator']), upload.single('file'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'Nenhum arquivo foi enviado' });
+      }
+
+      const buffer = req.file.buffer;
+      const fileName = req.file.originalname;
+      
+      let data: Array<{ cpfCnpj: string; fantasyName: string }> = [];
+
+      if (fileName.endsWith('.csv')) {
+        const text = buffer.toString('utf-8');
+        const lines = text.split('\n').filter(line => line.trim());
+        
+        for (let i = 1; i < lines.length; i++) {
+          const [cpfCnpj, fantasyName] = lines[i].split(',').map(s => s.trim());
+          if (cpfCnpj && fantasyName) {
+            data.push({ cpfCnpj, fantasyName });
+          }
+        }
+      } else {
+        const workbook = XLSX.read(buffer);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet);
+        
+        for (const row of rows) {
+          const cpfCnpj = (row as any)['CPF_CNPJ'] || (row as any)['cpf_cnpj'] || (row as any)['CPF/CNPJ'];
+          const fantasyName = (row as any)['NOME_FANTASIA'] || (row as any)['nome_fantasia'] || (row as any)['Nome Fantasia'];
+          
+          if (cpfCnpj && fantasyName) {
+            data.push({ cpfCnpj: String(cpfCnpj).trim(), fantasyName: String(fantasyName).trim() });
+          }
+        }
+      }
+
+      if (data.length === 0) {
+        return res.status(400).json({ message: 'Nenhum cliente encontrado no arquivo' });
+      }
+
+      const result = await storage.importActiveCustomers(data);
+      console.log(`✅ Importação de clientes ativos concluída: ${result.added} adicionados, ${result.updated} atualizados, ${result.removed} removidos por ${req.currentUser.email}`);
+      
+      res.json({
+        success: true,
+        message: `Importação concluída: ${result.added} adicionados, ${result.updated} atualizados, ${result.removed} removidos`,
+        stats: result
+      });
+    } catch (error) {
+      console.error('Erro ao importar clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao importar arquivo', error: String(error) });
+    }
+  });
+
+  app.delete('/api/active-customers', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      await storage.clearActiveCustomers();
+      console.log(`✅ Lista de clientes ativos limpa por ${req.currentUser.email}`);
+      res.json({ message: 'Lista de clientes ativos limpa com sucesso' });
+    } catch (error) {
+      console.error('Erro ao limpar lista de clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao limpar lista' });
+    }
+  });
+
+  // ============================================================================
   // BACKUP ENDPOINTS - Backup automático de pedidos e bloqueados
   // ============================================================================
   app.get('/api/admin/backups', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {

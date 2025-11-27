@@ -36,6 +36,7 @@ import {
   chatDeliveryRejectionReasons,
   whatsappConversationAnalysis,
   knowledgeBase,
+  activeCustomers,
   type User,
   type UpsertUser,
   type Route,
@@ -5553,6 +5554,152 @@ export class DatabaseStorage implements IStorage {
   
   async getKnowledgeBase(): Promise<KnowledgeBase[]> {
     return await db.select().from(knowledgeBase).where(eq(knowledgeBase.isActive, true)).orderBy(desc(knowledgeBase.createdAt));
+  }
+
+  // Active Customers operations
+  async getActiveCustomers(): Promise<any[]> {
+    const result = await db
+      .select({
+        id: activeCustomers.id,
+        cpfCnpj: activeCustomers.cpfCnpj,
+        fantasyName: activeCustomers.fantasyName,
+        customerId: activeCustomers.customerId,
+        customerFound: activeCustomers.customerFound,
+        importedAt: activeCustomers.importedAt,
+        createdAt: activeCustomers.createdAt,
+        customer: {
+          id: customers.id,
+          fantasyName: customers.fantasyName,
+          phone: customers.phone,
+          sellerId: customers.sellerId,
+          weekdays: customers.weekdays,
+          isActive: customers.isActive
+        }
+      })
+      .from(activeCustomers)
+      .leftJoin(customers, eq(activeCustomers.customerId, customers.id))
+      .orderBy(activeCustomers.importedAt);
+    
+    return result.map(r => ({
+      id: r.id,
+      cpfCnpj: r.cpfCnpj,
+      fantasyName: r.fantasyName,
+      customerId: r.customerId,
+      customerFound: r.customerFound,
+      importedAt: r.importedAt,
+      createdAt: r.createdAt,
+      customer: r.customer.id ? r.customer : undefined
+    }));
+  }
+
+  async getActiveCustomersStats(): Promise<{ total: number; matched: number; notFound: number }> {
+    const result = await db
+      .select({
+        total: sql`COUNT(*)::int`,
+        matched: sql`COUNT(CASE WHEN ${activeCustomers.customerFound} = true THEN 1 END)::int`,
+        notFound: sql`COUNT(CASE WHEN ${activeCustomers.customerFound} = false THEN 1 END)::int`
+      })
+      .from(activeCustomers);
+    
+    return result[0] || { total: 0, matched: 0, notFound: 0 };
+  }
+
+  async importActiveCustomers(data: Array<{ cpfCnpj: string; fantasyName: string }>): Promise<{
+    total: number;
+    added: number;
+    updated: number;
+    removed: number;
+    matched: number;
+    notFound: number;
+  }> {
+    const cpfCnpjSet = new Set(data.map(d => d.cpfCnpj));
+    const existingRecords = await db.select({ cpfCnpj: activeCustomers.cpfCnpj }).from(activeCustomers);
+    const existingSet = new Set(existingRecords.map(r => r.cpfCnpj));
+
+    let added = 0;
+    let updated = 0;
+    let matched = 0;
+    let notFound = 0;
+
+    for (const item of data) {
+      const cleanCpfCnpj = item.cpfCnpj.replace(/\D/g, '');
+      
+      const existingCustomer = await db
+        .select({ id: customers.id, fantasyName: customers.fantasyName })
+        .from(customers)
+        .where(
+          or(
+            eq(sql`${customers.cpf}`, cleanCpfCnpj),
+            eq(sql`${customers.cnpj}`, cleanCpfCnpj)
+          )
+        )
+        .limit(1)
+        .then(rows => rows[0]);
+
+      if (existingSet.has(item.cpfCnpj)) {
+        await db
+          .update(activeCustomers)
+          .set({
+            fantasyName: item.fantasyName,
+            customerId: existingCustomer?.id || null,
+            customerFound: !!existingCustomer,
+            updatedAt: new Date()
+          })
+          .where(eq(activeCustomers.cpfCnpj, item.cpfCnpj));
+        updated++;
+      } else {
+        await db.insert(activeCustomers).values({
+          cpfCnpj: item.cpfCnpj,
+          fantasyName: item.fantasyName,
+          customerId: existingCustomer?.id || null,
+          customerFound: !!existingCustomer
+        });
+        added++;
+      }
+
+      if (existingCustomer) {
+        matched++;
+      } else {
+        notFound++;
+      }
+    }
+
+    const removed = Array.from(existingSet).filter(cpf => !cpfCnpjSet.has(cpf)).length;
+    for (const cpfCnpj of Array.from(existingSet)) {
+      if (!cpfCnpjSet.has(cpfCnpj)) {
+        await db.delete(activeCustomers).where(eq(activeCustomers.cpfCnpj, cpfCnpj));
+      }
+    }
+
+    return {
+      total: data.length,
+      added,
+      updated,
+      removed,
+      matched,
+      notFound
+    };
+  }
+
+  async clearActiveCustomers(): Promise<void> {
+    await db.delete(activeCustomers);
+  }
+
+  async isCustomerActive(customerId: string): Promise<boolean> {
+    const result = await db
+      .select()
+      .from(activeCustomers)
+      .where(eq(activeCustomers.customerId, customerId))
+      .limit(1);
+    return result.length > 0;
+  }
+
+  async getActiveCustomerIds(): Promise<string[]> {
+    const results = await db
+      .select({ customerId: activeCustomers.customerId })
+      .from(activeCustomers)
+      .where(isNotNull(activeCustomers.customerId));
+    return results.map(r => r.customerId).filter(Boolean) as string[];
   }
 
   // Sync chat history from Evolution API
