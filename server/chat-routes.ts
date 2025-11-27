@@ -639,32 +639,15 @@ export function registerChatRoutes(app: Express): void {
             console.log(`✅ [WEBHOOK] Cliente criado: ${customer.id}`);
           }
 
-          // Buscar ou criar conversa
-          let conversation = await storage.getChatConversations();
-          let matchingConv = conversation.find((c: any) => 
-            c.phoneNumber === normalizedPhone || 
-            c.customerPhone === normalizedPhone ||
-            c.customerId === customer.id
-          );
-
-          if (!matchingConv) {
-            matchingConv = await storage.createChatConversation({
-              customerId: customer.id,
-              customerName: customer.name || `Cliente ${normalizedPhone}`,
-              customerPhone: normalizedPhone,
-              status: 'new' as const,
-              priority: 'normal' as const
-            });
-            console.log(`✅ [WEBHOOK] Conversa criada: ${matchingConv.id}`);
-          } else {
-            // Atualizar conversa para "ativa" se estava resolvida
-            if (matchingConv.status === 'resolved') {
-              await storage.updateChatConversation(matchingConv.id, {
-                status: 'assigned'
-              });
-              console.log(`🔄 [WEBHOOK] Conversa reativada: ${matchingConv.id}`);
-            }
-          }
+          // Buscar ou criar conversa (com UPSERT para evitar duplicatas)
+          let matchingConv = await storage.upsertChatConversation({
+            customerId: customer.id,
+            customerName: customer.name || `Cliente ${normalizedPhone}`,
+            customerPhone: normalizedPhone,
+            status: 'new' as const,
+            priority: 'normal' as const
+          });
+          console.log(`✅ [WEBHOOK] Conversa: ${matchingConv.id}`);
 
           // Salvar mensagem
           if (messageText && messageText.trim()) {

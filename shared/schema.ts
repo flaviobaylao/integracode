@@ -1551,7 +1551,9 @@ export const chatConversations = pgTable("chat_conversations", {
   unreadCount: integer("unread_count").notNull().default(0), // 🟢 Contador de mensagens não lidas
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  unique("unique_customer_phone").on(table.customerPhone),
+]);
 
 // Chat Messages type enum
 export const chatMessageTypeEnum = pgEnum('chat_message_type', ['text', 'image', 'file', 'audio', 'video', 'document', 'location']);

@@ -341,6 +341,7 @@ export interface IStorage {
   getChatConversation(id: string): Promise<ChatConversation | undefined>;
   createChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
   updateChatConversation(id: string, conversation: Partial<InsertChatConversation>): Promise<ChatConversation>;
+  upsertChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
   
   // Chat Messages operations
   getChatMessages(conversationId: string): Promise<ChatMessage[]>;
@@ -5307,6 +5308,33 @@ export class DatabaseStorage implements IStorage {
       .set(conversationData)
       .where(eq(chatConversations.id, id))
       .returning();
+    return conversation;
+  }
+
+  async upsertChatConversation(conversationData: InsertChatConversation): Promise<ChatConversation> {
+    // Se customerPhone está definido, tenta buscar conversa existente
+    if (conversationData.customerPhone) {
+      const existing = await db
+        .select()
+        .from(chatConversations)
+        .where(eq(chatConversations.customerPhone, conversationData.customerPhone));
+      
+      if (existing.length > 0) {
+        // Atualizar conversa existente
+        const [updated] = await db
+          .update(chatConversations)
+          .set({
+            ...conversationData,
+            updatedAt: new Date()
+          })
+          .where(eq(chatConversations.customerPhone, conversationData.customerPhone))
+          .returning();
+        return updated;
+      }
+    }
+    
+    // Criar nova conversa
+    const [conversation] = await db.insert(chatConversations).values(conversationData).returning();
     return conversation;
   }
   
