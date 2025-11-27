@@ -102,7 +102,10 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     throw new Error('Nenhum dia da semana válido encontrado');
   }
 
-  const baseDate = referenceDate || new Date();
+  // Garantir que baseDate tenha horas zeradas
+  const baseDate = referenceDate ? new Date(referenceDate) : new Date();
+  baseDate.setHours(0, 0, 0, 0); // CORRIGIDO: Zerar horas para comparação consistente
+  
   const intervalDays = PERIODICITY_DAYS[periodicity];
 
   // Se não há última visita, encontrar o próximo dia válido da semana
@@ -134,10 +137,20 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
  * Permite incluir o dia atual se for um dia válido
  */
 function findNextWeekday(baseDate: Date, targetWeekdays: number[]): Date {
+  const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+  const baseDateDayOfWeek = baseDate.getDay();
+  
+  // 🔍 DEBUG: Mostrar informações de entrada
+  const isDebug = false; // Set to true para debug
+  if (isDebug) {
+    console.log(`[findNextWeekday] baseDate: ${baseDate.toISOString()}, dayOfWeek: ${baseDateDayOfWeek} (${days[baseDateDayOfWeek]}), targetWeekdays: ${targetWeekdays.map(d => days[d]).join(',')}`);
+  }
+  
   // Verificar se o dia atual já é válido
-  if (targetWeekdays.includes(baseDate.getDay())) {
+  if (targetWeekdays.includes(baseDateDayOfWeek)) {
     const result = new Date(baseDate);
     result.setHours(8, 0, 0, 0);
+    if (isDebug) console.log(`[findNextWeekday] ✅ Dia atual é válido: ${days[result.getDay()]}`);
     return result;
   }
 
@@ -145,14 +158,22 @@ function findNextWeekday(baseDate: Date, targetWeekdays: number[]): Date {
   for (let i = 1; i <= 7; i++) {
     const testDate = new Date(baseDate);
     testDate.setDate(baseDate.getDate() + i);
+    const testDayOfWeek = testDate.getDay();
     
-    if (targetWeekdays.includes(testDate.getDay())) {
+    if (isDebug) {
+      console.log(`  [+${i}] testDate: ${testDate.toISOString()}, dayOfWeek: ${testDayOfWeek} (${days[testDayOfWeek]}), isValid: ${targetWeekdays.includes(testDayOfWeek)}`);
+    }
+    
+    if (targetWeekdays.includes(testDayOfWeek)) {
       testDate.setHours(8, 0, 0, 0);
+      if (isDebug) console.log(`[findNextWeekday] ✅ Encontrado: ${days[testDate.getDay()]} em +${i} dias`);
       return testDate;
     }
   }
 
-  // Fallback: se não encontrar, usar o primeiro dia válido
+  // Fallback: se não encontrar em 7 dias, nunca deveria chegar aqui
+  // mas colocar um console.error para detectar se isso acontecer
+  console.error(`[findNextWeekday] ⚠️ NUNCA DEVERIA CHEGAR AQUI - Não encontrou nenhum dia válido em 7 dias!`);
   const nextDate = new Date(baseDate);
   nextDate.setDate(baseDate.getDate() + 1);
   nextDate.setHours(8, 0, 0, 0);
