@@ -243,11 +243,16 @@ export default function RoutesSummary() {
   // Mutation para transferir parada para outro motorista
   const transferStopMutation = useMutation({
     mutationFn: async (data: { stopId: string; fromRouteId: string; toDriverId: string; newPosition?: number }) => {
-      return await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, {
+      console.log('🚀 [TRANSFER-FRONTEND] Iniciando transferência:', data);
+      const payload = {
         toDriverId: data.toDriverId,
         newPosition: data.newPosition,
         routeDate: selectedDate
-      });
+      };
+      console.log('📤 [TRANSFER-FRONTEND] Payload enviado:', payload);
+      const response = await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, payload);
+      console.log('✅ [TRANSFER-FRONTEND] Resposta recebida:', response);
+      return response;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
@@ -1044,7 +1049,9 @@ export default function RoutesSummary() {
                   className="flex-1 bg-blue-600 hover:bg-blue-700"
                   onClick={() => {
                     const newDriverId = newDriverIdForTransfer;
+                    console.log('🔄 [TRANSFER-CLICK] Botão clicado - newDriverId:', newDriverId, 'currentDriver:', selectedStopForTransfer?.driverId);
                     if (!newDriverId) {
+                      console.warn('⚠️ [TRANSFER-CLICK] Nenhum motorista selecionado');
                       toast({
                         title: "Selecione um motorista",
                         description: "É necessário escolher um novo motorista.",
@@ -1055,6 +1062,7 @@ export default function RoutesSummary() {
                     // Se mudando de motorista
                     if (newDriverId !== selectedStopForTransfer.driverId) {
                       const newPos = newPositionForReorder ? parseInt(newPositionForReorder) : undefined;
+                      console.log('🔄 [TRANSFER-CLICK] Mudando motorista - transferindo de', selectedStopForTransfer.driverId, 'para', newDriverId);
                       transferStopMutation.mutate({
                         stopId: selectedStopForTransfer.id,
                         fromRouteId: selectedStopForTransfer.routeId,
