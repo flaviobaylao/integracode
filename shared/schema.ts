@@ -185,6 +185,7 @@ export const customers = pgTable("customers", {
   email: varchar("email"),
   address: text("address").notNull(),
   city: varchar("city"),
+  neighborhood: varchar("neighborhood"),
   state: varchar("state"),
   zipCode: varchar("zip_code"),
   route: varchar("route"), // DEPRECATED: Use weekdays instead

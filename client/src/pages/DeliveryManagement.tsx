@@ -64,6 +64,8 @@ interface DeliveryOrder {
   customerCpf: string | null;
   customerCnpj: string | null;
   customerAddress: string;
+  customerCity: string;
+  customerNeighborhood: string;
   customerLatitude: string;
   customerLongitude: string;
   customerWeekdays: string | null;  // Dia da rota/visita do vendedor (ex: "Terça")
@@ -831,9 +833,22 @@ export default function DeliveryManagement() {
                           )}
                         </div>
                         
-                        <div className="text-sm text-muted-foreground flex items-center">
-                          <MapPin className="h-3 w-3 mr-1" />
-                          {order.customerAddress}
+                        <div className="text-sm text-muted-foreground flex items-center justify-between">
+                          <div className="flex items-center">
+                            <MapPin className="h-3 w-3 mr-1" />
+                            {order.customerAddress}
+                          </div>
+                          <div className="text-xs text-gray-500 font-semibold text-right">
+                            {order.customerCity && order.customerNeighborhood && (
+                              <div>{order.customerNeighborhood}, {order.customerCity}</div>
+                            )}
+                            {order.customerCity && !order.customerNeighborhood && (
+                              <div>{order.customerCity}</div>
+                            )}
+                            {!order.customerCity && order.customerNeighborhood && (
+                              <div>{order.customerNeighborhood}</div>
+                            )}
+                          </div>
                         </div>
 
                         <div className="flex items-center space-x-4 text-xs text-gray-600">
