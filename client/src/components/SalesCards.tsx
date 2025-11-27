@@ -29,6 +29,7 @@ import SaleModal from "./SaleModal";
 import SalesCardDetailsModal from "./SalesCardDetailsModal";
 import SaleEditModal from "./SaleEditModal";
 import NoSaleModal from "./NoSaleModal";
+import WhatsAppButton from "./WhatsAppButton";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
@@ -587,15 +588,11 @@ export default function SalesCards() {
                 <div className="mt-6">
                   {card.status === 'pending' && (
                     <div className="flex items-center space-x-3">
-                      <Button
-                        className="flex-1 bg-green-500 hover:bg-green-600 text-white"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenWhatsApp(card.customer.phone, card.customer.fantasyName || card.customer.name);
-                        }}
-                      >
-                        <i className="fab fa-whatsapp mr-2"></i>WhatsApp
-                      </Button>
+                      <WhatsAppButton 
+                        phone={card.customer.phone} 
+                        customerName={card.customer.fantasyName || card.customer.name}
+                        className="flex-1"
+                      />
                       <Button
                         className="flex-1 bg-honest-blue hover:bg-blue-700"
                         onClick={(e) => {
