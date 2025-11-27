@@ -38,6 +38,10 @@
 - **Central de Atendimento**: Real-time chat interface at `/telemarketing/atendimento` with conversation management, agent assignment, status tracking, and quick template insertion.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), and robust weekday normalization for visit schedules.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard.
+- **Sales Card Access Control (UPDATED - 2025-11-27)**: Vendedores agora acessam TODOS os sales cards da sua área, mesmo que não estejam na rota do dia:
+  - Vendedor vê cards que criou (sales_cards.sellerId = vendedor.id)
+  - Vendedor vê cards de qualquer um criado para seus clientes (customers.sellerId = vendedor.id)
+  - Vendedor não vê cards de clientes que pertencem a outros vendedores
 - **Delivery & Route Optimization**:
     - **Route Generation**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, supporting both customers and leads.
     - **Regional Sectorization (NEW - 2025-11-25)**: Production-ready intelligent route distribution system featuring:

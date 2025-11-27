@@ -1023,7 +1023,14 @@ export class DatabaseStorage implements IStorage {
     let conditions = [];
     
     if (sellerId) {
-      conditions.push(eq(salesCards.sellerId, sellerId));
+      // 🎯 CORREÇÃO: Vendedores veem TODOS os cards da sua ÁREA (clientes que pertencem a eles)
+      // Em vez de filtrar por sales_cards.sellerId, filtra por customers.sellerId
+      conditions.push(
+        or(
+          eq(salesCards.sellerId, sellerId),  // Cards que o vendedor criou
+          eq(customers.sellerId, sellerId)    // Cards de clientes que pertencem ao vendedor
+        )!
+      );
     }
     
     if (filters?.routeDay) {
