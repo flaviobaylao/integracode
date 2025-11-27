@@ -9088,8 +9088,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Transferir parada para outro motorista
-  app.patch("/api/delivery-routes/stops/:stopId/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.patch("/api/delivery-routes/stops/:stopId/transfer", authenticateUser, async (req: any, res) => {
     console.log(`🔔 [TRANSFER-ENDPOINT] Endpoint chamado com stopId: ${req.params.stopId}`);
+    console.log(`🔐 [TRANSFER-ENDPOINT] User role: ${req.currentUser?.role}, email: ${req.currentUser?.email}`);
     try {
       const { stopId } = req.params;
       const { toDriverId, newPosition, routeDate } = req.body;
