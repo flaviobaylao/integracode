@@ -9131,8 +9131,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         toRouteId = existingRoutes[0].id;
         console.log(`✅ [TRANSFER-STOP] Rota existente encontrada: ${toRouteId}`);
       } else {
-        // Criar nova rota
+        // Criar nova rota com coordenadas da parada
         toRouteId = nanoid();
+        const startLat = currentStop.customerLatitude ? parseFloat(currentStop.customerLatitude.toString()) : -15.7942;
+        const startLng = currentStop.customerLongitude ? parseFloat(currentStop.customerLongitude.toString()) : -48.2720;
+        
         const newRoute = await db.insert(deliveryRoutes).values({
           id: toRouteId,
           routeName: `Rota-${toDriverId}-${new Date(routeDate).getDate()}`,
@@ -9140,12 +9143,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           driverId: toDriverId,
           driverName: "", // Será preenchido na query
           vehicleType: "Padrão",
-          totalDistance: "0",
+          startLatitude: startLat,
+          startLongitude: startLng,
+          totalDistance: 0,
           totalDuration: 0,
           totalDeliveries: 0,
           status: "planejada"
         }).returning();
-        console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId}`);
+        console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId} com coordenadas ${startLat},${startLng}`);
       }
 
       // Calcular próxima posição
