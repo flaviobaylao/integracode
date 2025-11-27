@@ -247,12 +247,18 @@ export default function RoutesSummary() {
       const payload = {
         toDriverId: data.toDriverId,
         newPosition: data.newPosition,
-        routeDate: selectedDate
+        routeDate: selectedDate,
+        fromRouteId: data.fromRouteId
       };
       console.log('📤 [TRANSFER-FRONTEND] Payload enviado:', payload);
-      const response = await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, payload);
-      console.log('✅ [TRANSFER-FRONTEND] Resposta recebida:', response);
-      return response;
+      try {
+        const response = await apiRequest('PATCH', `/api/delivery-routes/stops/${data.stopId}/transfer`, payload);
+        console.log('✅ [TRANSFER-FRONTEND] Resposta recebida:', response);
+        return response;
+      } catch (err) {
+        console.error('❌ [TRANSFER-FRONTEND] Erro ao fazer requisição:', err);
+        throw err;
+      }
     },
     onSuccess: () => {
       console.log('✅ [TRANSFER-SUCCESS] Parada transferida com sucesso');
