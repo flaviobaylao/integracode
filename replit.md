@@ -24,44 +24,16 @@
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista) restricting access based on user roles.
 - **WhatsApp Integration**: Evolution API (CHAT_HONEST instance) with webhook support for receiving messages, message sending, and real-time conversation tracking.
-- **WhatsApp Chat Center**: Complete conversational system at `/telemarketing/atendimento` with:
-  - Real-time conversation management with agent assignment
-  - Message read/unread tracking with visual indicators
-  - Automatic conversation creation from sales modals (SaleModal, SaleEditModal, CustomerDetailsModal, CustomerManagement)
-  - Quick template insertion for fast responses
-  - Status tracking (new → assigned → in-progress → resolved)
-  - **Chat History Synchronization** (NEW - 2025-11-25): Two-stage implementation:
-    - **Stage 1 - Conversation Sync** (`POST /api/chat/sync-conversations-only`): Creates conversation entries for all 1000+ WhatsApp contacts, accessible immediately for new messages
-    - **Stage 2 - Historical Message Import** (in progress): Via `POST /api/chat/sync-history` - attempts to fetch and import historical messages from Evolution API using `fetchChatHistory()` method
-    - **Debug Endpoint** (`GET /api/chat/debug-history/:phone`): Tests single contact history retrieval for troubleshooting
-    - Current status: Conversation creation working at 100%, historical message retrieval requires API response format verification
-- **Central de Atendimento**: Real-time chat interface at `/telemarketing/atendimento` with conversation management, agent assignment, status tracking, and quick template insertion.
+- **WhatsApp Chat Center**: Complete conversational system at `/telemarketing/atendimento` with real-time conversation management, agent assignment, message read/unread tracking, automatic conversation creation from sales modals, quick template insertion, and status tracking (new → assigned → in-progress → resolved). Includes synchronization for conversations and historical messages.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), and robust weekday normalization for visit schedules.
-- **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard.
-- **Sales Card Access Control (FIXED - 2025-11-27)**: Vendedores agora acessam TODOS os sales cards da sua área com lógica corrigida:
-  - ✅ Vendedor vê cards que criou (sales_cards.sellerId = vendedor.id) OU
-  - ✅ Vendedor vê cards de clientes atribuídos a ele (customers.sellerId = vendedor.id)
-  - ✅ Vendedor não vê cards de clientes que pertencem a outros vendedores
-  - 🔧 Correção aplicada em 4 funções: `getSalesCards`, `getSalesCardsByDate`, `getSalesCardsByDayAndDate`, `getSalesCardsByDateRange`
+- **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Sales cards are accessible by sellers based on creation or customer assignment. Order release workflow allows admins to approve any blocked order.
 - **Delivery & Route Optimization**:
     - **Route Generation**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, supporting both customers and leads.
-    - **Regional Sectorization (NEW - 2025-11-25)**: Production-ready intelligent route distribution system featuring:
-      - **Geographic Clustering**: K-means algorithm with Haversine distance for geographic coordinates
-      - **Smart Constraints**: Exclusive vehicle pre-assignment, multi-type vehicle compatibility, automatic cluster splitting for incompatible requirements
-      - **Validation Layers**: Pre-assignment validation, post-assignment compatibility checks, final delivery count verification
-      - **Fail-Fast Design**: Explicit errors with actionable diagnostics when requirements cannot be met, preventing silent delivery loss
-      - **CLI Testing Tool**: `server/scripts/generateSectorizedRoutes.ts` for validation and testing
-      - **Service File**: `server/regionalRouteOptimizationService.ts` - Main algorithm implementation
-      - **Driver Coordinates**: Required `home_latitude` and `home_longitude` in `delivery_drivers` table for route planning
+    - **Regional Sectorization**: Intelligent route distribution system using K-means clustering with Haversine distance, smart constraints for vehicle assignment, and validation layers.
     - **Features**: Visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, check-in/check-out, checkpoint distance tracking, and automatic check-out.
-    - **Driver Transfer & Route Management (FIXED - 2025-11-27)**: 
-      - ✅ **Delivery Transfer Endpoint**: `PATCH /api/delivery-routes/stops/:stopId/transfer` now fully functional
-      - ✅ **Map Visualization**: Route markers display stopOrder numbers (#1, #2, #3) inside colored pins for sequence clarity
-      - ✅ **Transfer Workflow**: Click any delivery pin → Select new driver → Transfer completes successfully
-      - ✅ **Frontend Error Handling**: Enhanced with try-catch blocks and detailed console logging
-      - ✅ **Backend Validation**: Removed restrictive role middleware, authentication-only access control
-    - **Driver Interface**: "Rota do Dia" page with auto-refreshing visualization, metrics, interactive map, photo markers, and smart visit lists with inline check-in/check-out and location validation. Simplified mobile-friendly app (`/rota-entrega`) for drivers with restricted access, date filtering, delivery lists, summary statistics, GPS check-in/check-out with mandatory photo capture, and Waze navigation.
-    - **Route Management**: Administrative users can manually add, delete, and optimize visits. Supports creation of empty routes for manual population.
+    - **Driver Transfer & Route Management**: Functionality to transfer deliveries between drivers and map visualization with stop order numbers.
+    - **Driver Interface**: Mobile-friendly app (`/rota-entrega`) for drivers with restricted access, date filtering, delivery lists, summary statistics, GPS check-in/check-out with mandatory photo capture, and Waze navigation.
+    - **Route Management**: Administrative users can manually add, delete, and optimize visits, including creation of empty routes.
     - **Delivery Status**: Four levels: PENDENTE, EFETUADA, EM PAUSA, DEVOLVIDA, with visual badges.
     - **Delivery History**: Comprehensive tracking with API endpoint for registering completed deliveries and automatic duration calculation.
     - **Scheduling**: Hourly time slots, persistent delivery configurations in customer profiles, and synchronized across locations.
@@ -74,19 +46,7 @@
 - **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation utility with dry-run mode.
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, recognition/registration, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
 - **Leads Management**: Integrated lead tracking with route optimization, access control, mandatory photo enforcement for check-in/check-out, and updates within daily routes.
-- **Automatic Data Backup (NEW - 2025-11-26)**: Complete backup system protecting all order data:
-  - **Automatic Backup Scheduler**: Executes daily at 2h UTC + on server startup via node-cron
-  - **Database Table**: `orders_backup` stores historical snapshots of all sales_cards and blocked_orders
-  - **Service File**: `server/backup-service.ts` handles backup operations and data retrieval
-  - **API Endpoints**: 
-    - `GET /api/admin/backups?startDate=&endDate=` - Retrieve backups by date range
-    - `GET /api/admin/backups/blocked-orders` - View backed-up blocked orders
-    - `POST /api/admin/backups/run` - Trigger manual backup on demand
-  - **Purpose**: Prevents data loss from accidental deletion, provides recovery mechanism for historical order data
-- **Order Release Workflow (UPDATED - 2025-11-26)**: 
-  - ✅ **Removed payment term blocking**: Orders with boleto prazo > 7 dias can now be released without restrictions
-  - Admins can approve and release any blocked order regardless of payment terms
-  - Full Omie integration for order creation and synchronization
+- **Automatic Data Backup**: Complete backup system protecting all order data with daily scheduled backups and manual trigger options. Stores historical snapshots in an `orders_backup` table.
 
 # External Dependencies
 
@@ -102,59 +62,4 @@
 - **Receita Federal API**
 - **Omie ERP**
 - **OSRM API**
-- **node-cron** - For scheduled backup tasks
-
-# Recent Changes (2025-11-27)
-
-## Delivery Management Customer Name Display - COMPLETE
-- **Fixed**:
-  - ✅ **Query Optimization**: Melhorado JOIN em `getPendingDeliveries()` com 4 estratégias de matching
-    - Prioriza `omie_client_code` como chave primária (nova)
-    - Fallback para fantasy_name, CPF, CNPJ
-    - Match rate: 68/82 clientes encontrados (83%)
-  - ✅ **Fantasy Name Display**: 100% dos billings retornam fantasy_name corretamente
-  - ✅ **Fallback Handling**: Clientes não encontrados retornam `customer_fantasy_name` do billing via COALESCE
-  - ✅ **Data Integrity**: Todos os 82 billings em "Aguardando Rota" retornam nomes fantasia válidos
-
-- **Technical Details**:
-  - Query: `LEFT JOIN customers c ON (omie_customer_code::text = omie_client_code OR ...)`
-  - Backend: `server/storage.ts` → `getPendingDeliveries()` função
-  - API: `GET /api/deliveries` retorna customerName com fantasy_name
-  - Testing: Verificado que 100% dos billings têm fantasy_name válida
-
-## WhatsApp Complete Mirror - COMPLETE
-- **Implemented**:
-  - ✅ **Webhook Events**: 5 eventos configurados (MESSAGES_UPSERT, SEND_MESSAGE, MESSAGES_UPDATE, MESSAGES_SET, MESSAGES_EDITED)
-  - ✅ **Full Message Capture**: Processa TODAS as mensagens - enviadas via celular (fromMe=true) E recebidas (fromMe=false)
-  - ✅ **All Media Types**: Suporte a texto, imagem, áudio, vídeo, documento, sticker e localização
-  - ✅ **Deduplication**: 3 níveis - índice único no DB, unique constraint no schema, ON CONFLICT DO NOTHING no storage
-  - ✅ **Media URL Storage**: Campo `mediaUrl` armazena URLs de mídia para visualização
-
-- **Technical Details**:
-  - Webhook endpoint: `POST /api/chat/webhook/messages`
-  - Storage: `createChatMessage()` usa ON CONFLICT para idempotência
-  - Schema: `chatMessages.externalId` com unique constraint
-  - Polling fallback: A cada 30 segundos como segurança
-
-## Driver Transfer & Route Map Visualization - COMPLETE
-- **Completed**:
-  - ✅ **Transfer Endpoint Fixed**: `PATCH /api/delivery-routes/stops/:stopId/transfer` fully operational
-  - ✅ **Route Map Markers**: Each delivery now displays its sequence number (#1, #2, #3) inside colored pins
-  - ✅ **Transfer Workflow**: Click delivery pin → Select destination driver → Transfer completes with success confirmation
-  - ✅ **Frontend Error Handling**: Enhanced mutation with try-catch and detailed console logging for debugging
-  - ✅ **Backend Route Access**: Removed `requireRole` middleware restriction, authentication-only access control
-  - ✅ **Payload Validation**: Frontend now sends complete transfer data including `fromRouteId` and `routeDate`
-
-- **System Status**:
-  - 🟢 **DRIVER TRANSFER OPERATIONAL**: Deliveries can now be reassigned to different drivers seamlessly
-  - 🟢 **MAP VISUALIZATION COMPLETE**: Route markers clearly show delivery sequence
-  - 🟢 **TRANSFER ENDPOINT ACTIVE**: Backend API responding correctly with proper database updates
-  - 🟢 **ERROR LOGGING ENHANCED**: Console shows detailed transfer status for troubleshooting
-  - 🟢 **APP RUNNING**: All systems operational on port 5000
-
-- **Key Benefits**:
-  - Drivers can be dynamically reassigned during route execution
-  - Visual route sequence clarity prevents delivery order confusion
-  - Complete audit trail with detailed console logs
-  - Production-ready transfer workflow
-
+- **node-cron**
