@@ -4238,10 +4238,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { startDate, endDate, page = 1, limit = 20, sellerId: filterSellerId } = req.query;
       
       const user = req.currentUser;
-      let sellerId = req.sellerId; // Set by checkSellerAccess middleware
+      let sellerId: string | undefined;
       
+      // Vendedores só veem seus próprios cards
+      if (user.role === 'vendedor') {
+        sellerId = user.id;
+      } 
       // Admin/coordinator/administrative podem filtrar por vendedor específico ou ver todos
-      if (!sellerId && ['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
         sellerId = filterSellerId && filterSellerId !== 'all' ? filterSellerId as string : undefined;
       }
       
