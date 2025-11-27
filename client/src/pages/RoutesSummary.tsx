@@ -129,10 +129,11 @@ export default function RoutesSummary() {
     return driverColors[driverId];
   };
 
-  // Gerar ícone colorido para cada motorista
-  const createColoredMarkerIcon = (color: string) => {
+  // Gerar ícone colorido para cada motorista com número da ordem
+  const createColoredMarkerIcon = (color: string, stopOrder?: number) => {
+    const number = stopOrder ? String(stopOrder) : '';
     return L.divIcon({
-      html: `<div style="background-color: ${color}; width: 32px; height: 40px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" />`,
+      html: `<div style="background-color: ${color}; width: 32px; height: 40px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); display: flex; align-items: center; justify-items: center; position: relative;"><div style="position: absolute; color: white; font-weight: bold; font-size: 10px; transform: rotate(45deg); width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">${number}</div></div>`,
       iconSize: [32, 40],
       iconAnchor: [16, 40],
       popupAnchor: [0, -40],
@@ -907,13 +908,14 @@ export default function RoutesSummary() {
                   />
                   {routes.map((route) => {
                     const driverColor = getDriverColor(route.driverId);
-                    const icon = createColoredMarkerIcon(driverColor);
                     
                     return route.stops?.map((stop) => {
                       const lat = parseFloat(stop.customerLatitude);
                       const lng = parseFloat(stop.customerLongitude);
                       
                       if (isNaN(lat) || isNaN(lng)) return null;
+                      
+                      const icon = createColoredMarkerIcon(driverColor, stop.stopOrder);
                       
                       return (
                         <Marker
