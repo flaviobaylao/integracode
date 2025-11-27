@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import WhatsAppButton from "./WhatsAppButton";
 import jsPDF from 'jspdf';
