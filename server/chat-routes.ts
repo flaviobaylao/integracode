@@ -1652,18 +1652,34 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // 📱 Enviar para WhatsApp via Evolution API
+      console.log(`📱 [SEND-WHATSAPP-START] Iniciando envio de mensagem via WhatsApp...`);
       try {
-        if (conversation.customerId) {
+        if (!conversation.customerId) {
+          console.warn(`⚠️ [SEND-WHATSAPP] Sem customerId na conversa`);
+        } else {
           const chatCustomer = await storage.getChatCustomer(conversation.customerId);
-          if (chatCustomer?.phone) {
-            const config = evolutionAPIService.getConfig();
-            if (config?.instanceName) {
+          console.log(`📱 [SEND-WHATSAPP] Cliente encontrado:`, chatCustomer?.id, chatCustomer?.phone);
+          
+          if (!chatCustomer?.phone) {
+            console.warn(`⚠️ [SEND-WHATSAPP] Cliente sem telefone`);
+          } else {
+            const config = {
+              instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST',
+              apiUrl: process.env.EVOLUTION_API_BASE_URL || 'https://api.bothonest.com.br',
+              apiKey: process.env.EVOLUTION_API_KEY || ''
+            };
+            
+            console.log(`📱 [SEND-WHATSAPP] Config: instanceName=${config.instanceName}, hasKey=${!!config.apiKey}`);
+            
+            if (!config.instanceName || !config.apiKey) {
+              console.warn(`⚠️ [SEND-WHATSAPP] Configuração incompleta da Evolution API`);
+            } else {
               const phoneNormalized = normalizePhoneNumber(chatCustomer.phone);
               const phoneFormatted = phoneNormalized.includes('@') 
                 ? phoneNormalized 
                 : `${phoneNormalized}@s.whatsapp.net`;
               
-              console.log(`📤 [SEND-WHATSAPP] Enviando para ${phoneFormatted}: ${content.substring(0, 50)}`);
+              console.log(`📤 [SEND-WHATSAPP] Enviando para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
               const sendResult = await evolutionAPIService.sendTextMessage(
                 config.instanceName,
                 phoneFormatted,
@@ -1671,15 +1687,15 @@ export function registerChatRoutes(app: Express): void {
               );
               
               if (sendResult.success) {
-                console.log(`✅ [SEND-WHATSAPP] Mensagem enviada com sucesso via WhatsApp`);
+                console.log(`✅ [SEND-WHATSAPP] Mensagem entregue com sucesso! ID:`, sendResult.messageId);
               } else {
-                console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar: ${sendResult.error}`);
+                console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar:`, sendResult.error);
               }
             }
           }
         }
-      } catch (err) {
-        console.warn("[WHATSAPP] Erro ao enviar para WhatsApp:", err);
+      } catch (err: any) {
+        console.error(`❌ [SEND-WHATSAPP] Erro crítico:`, err.message);
       }
 
       res.json(message);
