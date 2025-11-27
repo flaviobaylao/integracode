@@ -27,7 +27,7 @@ export default function WhatsAppButton({
     mutationFn: async () => {
       console.log('📲 [WhatsAppButton] Iniciando conversa para:', phone, customerName);
       try {
-        const response = await apiRequest('/api/chat/conversations/start', 'POST', {
+        const response = await apiRequest('POST', '/api/chat/conversations/start', {
           customerPhone: phone,
           customerName: customerName
         });
