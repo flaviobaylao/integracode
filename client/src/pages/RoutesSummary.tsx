@@ -147,18 +147,16 @@ export default function RoutesSummary() {
     staleTime: 5 * 60 * 1000, // Cache por 5 minutos
   });
 
-  // Buscar rotas com filtros - apenas rotas salvas
+  // Buscar rotas com filtros - inclui rotas criadas por transferência
   const { data: routes = [], isLoading } = useQuery<DeliveryRoute[]>({
     queryKey: ['/api/delivery-routes', { 
       routeDate: selectedDate, 
-      driverId: selectedDriver !== 'all' ? selectedDriver : undefined,
-      savedOnly: 'true' // Mostrar apenas rotas que foram salvas na Gestão de Entregas
+      driverId: selectedDriver !== 'all' ? selectedDriver : undefined
     }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedDate) params.append('routeDate', selectedDate);
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
-      params.append('savedOnly', 'true');
       
       const url = `/api/delivery-routes?${params.toString()}`;
       const res = await fetch(url, { credentials: 'include' });
