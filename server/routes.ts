@@ -16273,14 +16273,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Fase 1: Extrair e normalizar todos os documentos
         const documentsMap = new Map<string, { fantasyName: string; documentType: string }>();
         
+        // Debug: mostrar primeiras linhas e colunas
+        if (data.length > 0) {
+          console.log('📋 Primeiras linhas do arquivo:', JSON.stringify(data.slice(0, 2), null, 2));
+          console.log('📋 Colunas disponíveis:', Object.keys(data[0] || {}));
+        }
+        
         for (const row of data) {
-          let document = row['CPF/CNPJ'] || row['CNPJ'] || row['CPF'] || row['cpf'] || row['cnpj'] || row['documento'] || row['Documento'] || '';
-          let fantasyName = row['Nome Fantasia'] || row['NOME FANTASIA'] || row['Nome'] || row['nome'] || row['Fantasia'] || '';
+          // Mais flexível: procura em todas as chaves que contenham "cpf" ou "cnpj"
+          let document = '';
+          let fantasyName = '';
           
-          if (!document) continue;
+          // Buscar documento com mais flexibilidade
+          for (const key of Object.keys(row)) {
+            const keyLower = key.toLowerCase();
+            if ((keyLower.includes('cpf') || keyLower.includes('cnpj') || keyLower.includes('documento')) && !document) {
+              document = String(row[key] || '');
+            }
+            if ((keyLower.includes('fantasia') || keyLower.includes('nome')) && !fantasyName) {
+              fantasyName = String(row[key] || '');
+            }
+          }
+          
+          if (!document) {
+            console.log('⚠️ Linha sem documento encontrado:', Object.keys(row));
+            continue;
+          }
           
           const normalizedDoc = String(document).replace(/\D/g, '');
-          if (!normalizedDoc) continue;
+          if (!normalizedDoc) {
+            console.log('⚠️ Documento não possui dígitos:', document);
+            continue;
+          }
           
           const documentType = normalizedDoc.length <= 11 ? 'cpf' : 'cnpj';
           documentsMap.set(normalizedDoc, { fantasyName: fantasyName || '', documentType });
