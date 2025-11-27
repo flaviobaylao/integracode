@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,8 @@ import {
   Clock,
   AlertCircle,
   History,
-  Calendar
+  Calendar,
+  ArrowLeft
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -67,6 +69,7 @@ interface UploadRecord {
 }
 
 export default function ActiveCustomers() {
+  const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -174,6 +177,18 @@ export default function ActiveCustomers() {
     <div className="container mx-auto p-4 space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
+          <div className="flex items-center gap-3 mb-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/")}
+              className="hover:bg-gray-100"
+              data-testid="button-back-dashboard"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Dashboard
+            </Button>
+          </div>
           <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="page-title">
             <Users className="h-6 w-6" />
             Clientes Ativos
