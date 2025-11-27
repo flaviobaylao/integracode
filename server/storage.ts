@@ -5685,8 +5685,7 @@ export class DatabaseStorage implements IStorage {
       const allVisits = await db
         .select()
         .from(visitAgenda)
-        .where(inArray(visitAgenda.customerId, customerIds))
-        .orderBy(desc(visitAgenda.visitDate));
+        .where(inArray(visitAgenda.customerId, customerIds));
       
       // Group by customer
       for (const v of allVisits) {
