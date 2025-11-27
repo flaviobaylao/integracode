@@ -48,6 +48,7 @@ import QuickTemplates from "@/pages/QuickTemplates";
 import TelemarketingHub from "@/pages/TelemarketingHub";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
+import ActiveCustomers from "@/pages/ActiveCustomers";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -157,6 +158,7 @@ function Router() {
           <Route path="/delivery-management" component={DeliveryManagement} />
           <Route path="/delivery-routes" component={RoutesSummary} />
           <Route path="/mapa-clientes" component={ClientsMap} />
+          <Route path="/clientes-ativos" component={ActiveCustomers} />
           <Route path="/rota-entrega" component={RotaEntrega} />
           <Route path="/entregas-do-dia" component={DeliveryDailySummary} />
           <Route path="/driver-management" component={DriverManagement} />

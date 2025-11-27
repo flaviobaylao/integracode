@@ -32,6 +32,7 @@ import {
   leads,
   deliveryRoutes,
   deliveryRouteStops,
+  activeCustomers,
   normalizeWeekdayInput,
   type WeekdayCode,
 } from "@shared/schema";
@@ -16214,6 +16215,250 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Erro ao deletar lead:', error);
       res.status(500).json({ message: 'Erro ao deletar lead' });
+    }
+  });
+
+  // ============================================================================
+  // ACTIVE CUSTOMERS ENDPOINTS - Gestão de Clientes Ativos
+  // ============================================================================
+  
+  // Listar clientes ativos com histórico de visitas
+  app.get('/api/active-customers', authenticateUser, async (req: any, res) => {
+    try {
+      const activeCustomers = await storage.getActiveCustomersWithVisits();
+      res.json(activeCustomers);
+    } catch (error) {
+      console.error('Erro ao listar clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao listar clientes ativos' });
+    }
+  });
+  
+  // Histórico de uploads
+  app.get('/api/active-customers/uploads', authenticateUser, async (req: any, res) => {
+    try {
+      const uploads = await storage.getActiveCustomerUploads();
+      res.json(uploads);
+    } catch (error) {
+      console.error('Erro ao listar histórico de uploads:', error);
+      res.status(500).json({ message: 'Erro ao listar histórico de uploads' });
+    }
+  });
+  
+  // Upload de planilha de clientes ativos - OTIMIZADO com batch processing
+  app.post('/api/active-customers/upload', authenticateUser, requireRole(['admin', 'coordinator']), upload.single('file'), async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const file = req.file;
+      
+      if (!file) {
+        return res.status(400).json({ message: 'Nenhum arquivo enviado' });
+      }
+      
+      // Create upload record
+      const uploadRecord = await storage.createActiveCustomerUpload({
+        fileName: file.originalname,
+        uploadedBy: user.id,
+        processingStatus: 'processing'
+      });
+      
+      try {
+        // Parse Excel file
+        const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json<any>(worksheet);
+        
+        console.log(`📊 Processando ${data.length} linhas do arquivo ${file.originalname}`);
+        
+        // Fase 1: Extrair e normalizar todos os documentos
+        const documentsMap = new Map<string, { fantasyName: string; documentType: string }>();
+        
+        for (const row of data) {
+          let document = row['CPF/CNPJ'] || row['CNPJ'] || row['CPF'] || row['cpf'] || row['cnpj'] || row['documento'] || row['Documento'] || '';
+          let fantasyName = row['Nome Fantasia'] || row['NOME FANTASIA'] || row['Nome'] || row['nome'] || row['Fantasia'] || '';
+          
+          if (!document) continue;
+          
+          const normalizedDoc = String(document).replace(/\D/g, '');
+          if (!normalizedDoc) continue;
+          
+          const documentType = normalizedDoc.length <= 11 ? 'cpf' : 'cnpj';
+          documentsMap.set(normalizedDoc, { fantasyName: fantasyName || '', documentType });
+        }
+        
+        const documentsInFile = Array.from(documentsMap.keys());
+        console.log(`📋 ${documentsInFile.length} documentos únicos extraídos`);
+        
+        // Fase 2: Buscar todos os customers de uma vez (batch query)
+        const allCustomers = await db.select().from(customers).where(
+          or(
+            inArray(customers.cpf, documentsInFile),
+            inArray(customers.cnpj, documentsInFile)
+          )
+        );
+        
+        // Criar mapa de documento -> customer
+        const customerByDoc = new Map<string, typeof allCustomers[0]>();
+        for (const c of allCustomers) {
+          if (c.cpf) customerByDoc.set(c.cpf.replace(/\D/g, ''), c);
+          if (c.cnpj) customerByDoc.set(c.cnpj.replace(/\D/g, ''), c);
+        }
+        
+        console.log(`🔍 ${allCustomers.length} clientes encontrados no banco`);
+        
+        // Fase 3: Preparar dados para inserção
+        const customersToAdd: any[] = [];
+        let matched = 0;
+        let unmatched = 0;
+        
+        for (const [doc, info] of documentsMap) {
+          const customer = customerByDoc.get(doc);
+          
+          customersToAdd.push({
+            document: doc,
+            documentType: info.documentType,
+            fantasyNameImported: info.fantasyName || null,
+            customerId: customer?.id || null,
+            uploadId: uploadRecord.id,
+            matchStatus: customer ? 'matched' : 'unmatched',
+            isActive: true,
+            activatedAt: new Date()
+          });
+          
+          if (customer) {
+            matched++;
+          } else {
+            unmatched++;
+          }
+        }
+        
+        // Fase 4: Desativar clientes que não estão na nova lista
+        const removed = await storage.deactivateRemovedCustomers(uploadRecord.id, documentsInFile);
+        
+        // Fase 5: Upsert em lote
+        const { added, updated } = await storage.bulkUpsertActiveCustomers(customersToAdd);
+        
+        // Fase 6: Atualizar registro de upload
+        await storage.updateActiveCustomerUpload(uploadRecord.id, {
+          totalRecords: data.length,
+          matchedRecords: matched,
+          unmatchedRecords: unmatched,
+          addedCustomers: added,
+          removedCustomers: removed,
+          keptCustomers: updated,
+          processingStatus: 'completed'
+        });
+        
+        console.log(`✅ Upload processado: ${data.length} linhas, ${matched} encontrados, ${unmatched} não encontrados, ${added} adicionados, ${removed} removidos`);
+        
+        res.json({
+          message: 'Upload processado com sucesso',
+          uploadId: uploadRecord.id,
+          totalRecords: data.length,
+          matchedRecords: matched,
+          unmatchedRecords: unmatched,
+          addedCustomers: added,
+          removedCustomers: removed,
+          keptCustomers: updated
+        });
+        
+      } catch (parseError) {
+        console.error('Erro ao processar planilha:', parseError);
+        await storage.updateActiveCustomerUpload(uploadRecord.id, {
+          processingStatus: 'error',
+          errorMessage: String(parseError)
+        });
+        res.status(400).json({ message: 'Erro ao processar planilha', error: String(parseError) });
+      }
+      
+    } catch (error) {
+      console.error('Erro no upload de clientes ativos:', error);
+      res.status(500).json({ message: 'Erro ao processar upload' });
+    }
+  });
+  
+  // Verificar se cliente está na lista ativa
+  app.get('/api/active-customers/check/:customerId', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const isActive = await storage.isCustomerInActiveList(customerId);
+      res.json({ customerId, isActive });
+    } catch (error) {
+      console.error('Erro ao verificar cliente ativo:', error);
+      res.status(500).json({ message: 'Erro ao verificar cliente' });
+    }
+  });
+  
+  // Reconciliar clientes não vinculados (admin only)
+  app.post('/api/active-customers/reconcile', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      // Buscar todos os clientes ativos sem customerId
+      const unmatchedActive = await db.select().from(activeCustomers).where(
+        and(
+          eq(activeCustomers.isActive, true),
+          isNull(activeCustomers.customerId)
+        )
+      );
+      
+      if (unmatchedActive.length === 0) {
+        return res.json({ message: 'Nenhum cliente para reconciliar', reconciled: 0 });
+      }
+      
+      const documents = unmatchedActive.map(a => a.document);
+      
+      // Buscar customers por documento
+      const matchedCustomers = await db.select().from(customers).where(
+        or(
+          inArray(customers.cpf, documents),
+          inArray(customers.cnpj, documents)
+        )
+      );
+      
+      const customerByDoc = new Map<string, typeof matchedCustomers[0]>();
+      for (const c of matchedCustomers) {
+        if (c.cpf) customerByDoc.set(c.cpf.replace(/\D/g, ''), c);
+        if (c.cnpj) customerByDoc.set(c.cnpj.replace(/\D/g, ''), c);
+      }
+      
+      let reconciled = 0;
+      for (const ac of unmatchedActive) {
+        const customer = customerByDoc.get(ac.document);
+        if (customer) {
+          await db.update(activeCustomers)
+            .set({ customerId: customer.id, matchStatus: 'matched', updatedAt: new Date() })
+            .where(eq(activeCustomers.id, ac.id));
+          reconciled++;
+        }
+      }
+      
+      console.log(`✅ Reconciliação: ${reconciled} clientes vinculados de ${unmatchedActive.length} não vinculados`);
+      res.json({ message: 'Reconciliação concluída', reconciled, total: unmatchedActive.length });
+    } catch (error) {
+      console.error('Erro na reconciliação:', error);
+      res.status(500).json({ message: 'Erro na reconciliação' });
+    }
+  });
+  
+  // Baixar template de planilha
+  app.get('/api/active-customers/template', authenticateUser, (req: any, res) => {
+    try {
+      const templateData = [
+        { 'CPF/CNPJ': '00.000.000/0001-00', 'Nome Fantasia': 'Empresa Exemplo' },
+        { 'CPF/CNPJ': '000.000.000-00', 'Nome Fantasia': 'Cliente Exemplo' }
+      ];
+      
+      const worksheet = XLSX.utils.json_to_sheet(templateData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes Ativos');
+      
+      const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=template_clientes_ativos.xlsx');
+      res.send(buffer);
+    } catch (error) {
+      console.error('Erro ao gerar template:', error);
+      res.status(500).json({ message: 'Erro ao gerar template' });
     }
   });
 

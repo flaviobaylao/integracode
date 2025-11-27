@@ -167,6 +167,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast' },
     { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route' },
     { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt' },
+    { id: 'clientes-ativos', label: 'Clientes Ativos', icon: 'fas fa-users' },
     { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie' },
     { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
   ];
@@ -220,7 +221,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

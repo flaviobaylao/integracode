@@ -36,6 +36,8 @@ import {
   chatDeliveryRejectionReasons,
   whatsappConversationAnalysis,
   knowledgeBase,
+  activeCustomers,
+  activeCustomerUploads,
   type User,
   type UpsertUser,
   type Route,
@@ -95,6 +97,11 @@ import {
   type InsertWhatsappConversationAnalysis,
   type KnowledgeBase,
   type InsertKnowledgeBase,
+  type ActiveCustomer,
+  type InsertActiveCustomer,
+  type ActiveCustomerUpload,
+  type InsertActiveCustomerUpload,
+  type ActiveCustomerWithVisits,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -380,6 +387,22 @@ export interface IStorage {
   // Knowledge Base operations
   createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
   getKnowledgeBase(): Promise<KnowledgeBase[]>;
+  
+  // Active Customers operations
+  getActiveCustomers(): Promise<ActiveCustomer[]>;
+  getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]>;
+  getActiveCustomer(id: string): Promise<ActiveCustomer | undefined>;
+  getActiveCustomerByDocument(document: string): Promise<ActiveCustomer | undefined>;
+  createActiveCustomer(customer: InsertActiveCustomer): Promise<ActiveCustomer>;
+  updateActiveCustomer(id: string, customer: Partial<InsertActiveCustomer>): Promise<ActiveCustomer>;
+  deleteActiveCustomer(id: string): Promise<void>;
+  bulkUpsertActiveCustomers(customers: InsertActiveCustomer[]): Promise<{ added: number; updated: number }>;
+  deactivateRemovedCustomers(uploadId: string, currentDocuments: string[]): Promise<number>;
+  getActiveCustomerUploads(): Promise<ActiveCustomerUpload[]>;
+  createActiveCustomerUpload(upload: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload>;
+  updateActiveCustomerUpload(id: string, upload: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload>;
+  getCustomerByDocument(document: string): Promise<Customer | undefined>;
+  isCustomerInActiveList(customerId: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -5622,6 +5645,195 @@ export class DatabaseStorage implements IStorage {
       conversationId: conversation.id,
       messageCount
     };
+  }
+
+  // ============================================================================
+  // Active Customers operations
+  // ============================================================================
+  
+  async getActiveCustomers(): Promise<ActiveCustomer[]> {
+    return await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).orderBy(desc(activeCustomers.createdAt));
+  }
+  
+  async getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]> {
+    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
+    const result: ActiveCustomerWithVisits[] = [];
+    
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    for (const ac of active) {
+      let customer: Customer | undefined;
+      if (ac.customerId) {
+        const [c] = await db.select().from(customers).where(eq(customers.id, ac.customerId));
+        customer = c;
+      }
+      
+      // Fetch last 2 and next 3 visits from visit_schedule_history
+      const lastTwoVisits: Array<{ date: string; status: string }> = [];
+      const nextThreeVisits: Array<{ date: string; status: string }> = [];
+      
+      if (ac.customerId) {
+        // Get last 2 visits (past)
+        const pastVisits = await db
+          .select()
+          .from(visitAgenda)
+          .where(and(
+            eq(visitAgenda.customerId, ac.customerId),
+            lte(visitAgenda.visitDate, todayStr)
+          ))
+          .orderBy(desc(visitAgenda.visitDate))
+          .limit(2);
+        
+        for (const v of pastVisits) {
+          lastTwoVisits.push({ date: v.visitDate, status: v.status || 'scheduled' });
+        }
+        
+        // Get next 3 visits (future)
+        const futureVisits = await db
+          .select()
+          .from(visitAgenda)
+          .where(and(
+            eq(visitAgenda.customerId, ac.customerId),
+            gt(visitAgenda.visitDate, todayStr)
+          ))
+          .orderBy(visitAgenda.visitDate)
+          .limit(3);
+        
+        for (const v of futureVisits) {
+          nextThreeVisits.push({ date: v.visitDate, status: v.status || 'scheduled' });
+        }
+      }
+      
+      result.push({
+        ...ac,
+        customer,
+        lastTwoVisits,
+        nextThreeVisits
+      });
+    }
+    
+    return result;
+  }
+  
+  async getActiveCustomer(id: string): Promise<ActiveCustomer | undefined> {
+    const [ac] = await db.select().from(activeCustomers).where(eq(activeCustomers.id, id));
+    return ac;
+  }
+  
+  async getActiveCustomerByDocument(document: string): Promise<ActiveCustomer | undefined> {
+    const normalizedDoc = document.replace(/\D/g, '');
+    const [ac] = await db.select().from(activeCustomers).where(eq(activeCustomers.document, normalizedDoc));
+    return ac;
+  }
+  
+  async createActiveCustomer(customerData: InsertActiveCustomer): Promise<ActiveCustomer> {
+    const [ac] = await db.insert(activeCustomers).values(customerData).returning();
+    return ac;
+  }
+  
+  async updateActiveCustomer(id: string, customerData: Partial<InsertActiveCustomer>): Promise<ActiveCustomer> {
+    const [ac] = await db
+      .update(activeCustomers)
+      .set({ ...customerData, updatedAt: new Date() })
+      .where(eq(activeCustomers.id, id))
+      .returning();
+    return ac;
+  }
+  
+  async deleteActiveCustomer(id: string): Promise<void> {
+    await db.delete(activeCustomers).where(eq(activeCustomers.id, id));
+  }
+  
+  async bulkUpsertActiveCustomers(customersList: InsertActiveCustomer[]): Promise<{ added: number; updated: number }> {
+    let added = 0;
+    let updated = 0;
+    
+    for (const cust of customersList) {
+      const existing = await this.getActiveCustomerByDocument(cust.document);
+      if (existing) {
+        await db
+          .update(activeCustomers)
+          .set({
+            ...cust,
+            isActive: true,
+            deactivatedAt: null,
+            updatedAt: new Date()
+          })
+          .where(eq(activeCustomers.id, existing.id));
+        updated++;
+      } else {
+        await db.insert(activeCustomers).values(cust);
+        added++;
+      }
+    }
+    
+    return { added, updated };
+  }
+  
+  async deactivateRemovedCustomers(uploadId: string, currentDocuments: string[]): Promise<number> {
+    if (currentDocuments.length === 0) {
+      // Deactivate all
+      const result = await db
+        .update(activeCustomers)
+        .set({ isActive: false, deactivatedAt: new Date(), updatedAt: new Date() })
+        .where(eq(activeCustomers.isActive, true))
+        .returning();
+      return result.length;
+    }
+    
+    // Get all active that are NOT in the current list
+    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
+    const toDeactivate = active.filter(a => !currentDocuments.includes(a.document));
+    
+    for (const ac of toDeactivate) {
+      await db
+        .update(activeCustomers)
+        .set({ isActive: false, deactivatedAt: new Date(), updatedAt: new Date() })
+        .where(eq(activeCustomers.id, ac.id));
+    }
+    
+    return toDeactivate.length;
+  }
+  
+  async getActiveCustomerUploads(): Promise<ActiveCustomerUpload[]> {
+    return await db.select().from(activeCustomerUploads).orderBy(desc(activeCustomerUploads.uploadedAt));
+  }
+  
+  async createActiveCustomerUpload(uploadData: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload> {
+    const [upload] = await db.insert(activeCustomerUploads).values(uploadData).returning();
+    return upload;
+  }
+  
+  async updateActiveCustomerUpload(id: string, uploadData: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload> {
+    const [upload] = await db
+      .update(activeCustomerUploads)
+      .set(uploadData)
+      .where(eq(activeCustomerUploads.id, id))
+      .returning();
+    return upload;
+  }
+  
+  async getCustomerByDocument(document: string): Promise<Customer | undefined> {
+    const normalizedDoc = document.replace(/\D/g, '');
+    // Try CPF first
+    let [customer] = await db.select().from(customers).where(eq(customers.cpf, normalizedDoc));
+    if (customer) return customer;
+    
+    // Try CNPJ
+    [customer] = await db.select().from(customers).where(eq(customers.cnpj, normalizedDoc));
+    return customer;
+  }
+  
+  async isCustomerInActiveList(customerId: string): Promise<boolean> {
+    const [ac] = await db
+      .select()
+      .from(activeCustomers)
+      .where(and(
+        eq(activeCustomers.customerId, customerId),
+        eq(activeCustomers.isActive, true)
+      ));
+    return !!ac;
   }
 }
 
