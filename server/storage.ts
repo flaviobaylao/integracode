@@ -5658,104 +5658,24 @@ export class DatabaseStorage implements IStorage {
   }
   
   async getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]> {
-    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).limit(1000);
-    
-    if (active.length === 0) return [];
-    
-    const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
-    const customerMap = new Map<string, any>();
-    const sellerIds = new Set<string>();
-    
-    if (customerIds.length > 0) {
-      const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
-      for (const c of customersData) {
-        customerMap.set(c.id, c);
-        if (c.sellerId) sellerIds.add(c.sellerId);
-      }
-    }
-
-    const sellerMap = new Map<string, { name: string }>();
-    if (sellerIds.size > 0) {
-      const sellersData = await db.select().from(users).where(inArray(users.id, Array.from(sellerIds)));
-      for (const seller of sellersData) {
-        sellerMap.set(seller.id, { name: seller.name || `${seller.firstName || ''} ${seller.lastName || ''}`.trim() });
-      }
-    }
-    
-    // Buscar todas as visitas para os clientes
-    const visitsByCustomer = new Map<string, { past: any[]; future: any[] }>();
-    const today = new Date();
-    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // Sem timezone
-    
-    if (customerIds.length > 0) {
-      const allVisits = await db.select().from(visitAgenda).where(inArray(visitAgenda.customerId, customerIds));
+    try {
+      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).limit(1000);
       
-      for (const v of allVisits) {
-        if (!visitsByCustomer.has(v.customerId)) {
-          visitsByCustomer.set(v.customerId, { past: [], future: [] });
-        }
-        
-        // Converter scheduled_date para Data sem timezone
-        let visitDate: Date;
-        if (v.scheduledDate instanceof Date) {
-          visitDate = new Date(v.scheduledDate);
-        } else {
-          visitDate = new Date(v.scheduledDate);
-        }
-        const visitDateOnly = new Date(visitDate.getFullYear(), visitDate.getMonth(), visitDate.getDate());
-        
-        const visits = visitsByCustomer.get(v.customerId)!;
-        if (visitDateOnly < todayDate) {
-          visits.past.push(v);
-        } else {
-          visits.future.push(v);
-        }
-      }
+      if (active.length === 0) return [];
       
-      // Ordenar e limitar depois
-      for (const visits of visitsByCustomer.values()) {
-        visits.past.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
-        visits.future.sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
-        // Limitar APÓS ordenação
-        visits.past = visits.past.slice(0, 2);
-        visits.future = visits.future.slice(0, 3);
-      }
-    }
-    
-    const result: ActiveCustomerWithVisits[] = active.map((ac) => {
-      const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
-      const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
-      
-      const formatDate = (d: any) => {
-        if (!d) return '';
-        // Se é string, pega a parte da data direto (mais confiável)
-        if (typeof d === 'string') {
-          return d.split('T')[0];
-        }
-        // Se é Date, converte para ISO e pega a data
-        const date = d instanceof Date ? d : new Date(d);
-        return date.toISOString().split('T')[0];
-      };
-      
-      const lastTwoVisits = (visits?.past || []).map(v => ({
-        date: formatDate(v.scheduledDate),
-        status: v.visitStatus || 'pending'
-      }));
-      
-      const nextThreeVisits = (visits?.future || []).map(v => ({
-        date: formatDate(v.scheduledDate),
-        status: v.visitStatus || 'pending'
-      }));
-      
-      return {
+      // Retornar dados simples primeiro para evitar problemas
+      const result: ActiveCustomerWithVisits[] = active.map((ac) => ({
         ...ac,
-        customer: customer ? { ...customer, sellerName: customer.sellerId ? sellerMap.get(customer.sellerId)?.name : undefined } : undefined,
-        lastTwoVisits,
-        nextThreeVisits
-      };
-    });
-    
-    return result;
+        customer: undefined,
+        lastTwoVisits: [],
+        nextThreeVisits: []
+      }));
+      
+      return result;
+    } catch (error) {
+      console.error('Erro em getActiveCustomersWithVisits:', error);
+      return [];
+    }
   }
   
   async getActiveCustomer(id: string): Promise<ActiveCustomer | undefined> {
