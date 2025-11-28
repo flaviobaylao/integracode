@@ -105,7 +105,7 @@ import {
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
+import { eq, and, desc, asc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
@@ -5663,19 +5663,58 @@ export class DatabaseStorage implements IStorage {
       
       if (active.length === 0) return [];
       
-      // Buscar clientes associados
+      // Buscar clientes associados COM JOIN de vendedores
       const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
       const customerMap = new Map<string, any>();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
       
       if (customerIds.length > 0) {
         try {
           const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
           for (const c of customersData) {
-            customerMap.set(c.id, c);
+            // Adicionar sellerName juntando com users
+            let sellerName = undefined;
+            if (c.sellerId) {
+              try {
+                const seller = await db.select().from(users).where(eq(users.id, c.sellerId));
+                sellerName = seller[0]?.name || seller[0]?.email;
+              } catch (err) {
+                console.warn('Erro ao buscar vendedor:', err);
+              }
+            }
+            customerMap.set(c.id, { ...c, sellerName });
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
         }
+      }
+      
+      // Buscar próximas 3 visitas para cada cliente
+      const visitMap = new Map<string, Array<{ date: string; status: string }>>();
+      try {
+        if (customerIds.length > 0) {
+          const upcomingVisits = await db.select().from(visitAgenda)
+            .where(and(
+              inArray(visitAgenda.customerId, customerIds),
+              gte(visitAgenda.scheduledDate, today)
+            ))
+            .orderBy(asc(visitAgenda.scheduledDate))
+            .limit(customerIds.length * 3);
+          
+          for (const visit of upcomingVisits) {
+            if (!visitMap.has(visit.customerId)) {
+              visitMap.set(visit.customerId, []);
+            }
+            const visits = visitMap.get(visit.customerId)!;
+            if (visits.length < 3) {
+              const dateStr = visit.scheduledDate.toISOString().split('T')[0];
+              visits.push({ date: dateStr, status: visit.status || 'pending' });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao buscar próximas visitas:', err);
       }
       
       // Retornar dados com clientes disponíveis
@@ -5683,7 +5722,7 @@ export class DatabaseStorage implements IStorage {
         ...ac,
         customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
         lastTwoVisits: [],
-        nextThreeVisits: []
+        nextThreeVisits: ac.customerId ? (visitMap.get(ac.customerId) || []) : []
       }));
       
       return result;
