@@ -1713,18 +1713,15 @@ export const knowledgeBase = pgTable("knowledge_base", {
 // Chat Honest - Insert Schemas
 export const insertChatAgentSchema = createInsertSchema(chatAgents).omit({
   id: true,
-  activeConversations: true,
-  totalConversations: true,
-  lastActivity: true,
-  lastHeartbeat: true,
-  averageResponseTime: true,
-  totalHandledTime: true,
+  createdAt: true,
+  updatedAt: true,
 });
 
 export const insertChatCustomerSchema = createInsertSchema(chatCustomers).omit({
   id: true,
-  totalConversations: true,
-  lastContact: true,
+  createdAt: true,
+  updatedAt: true,
+  lastInteractionAt: true,
 });
 
 export const updateChatCustomerSchema = createInsertSchema(chatCustomers).pick({
@@ -1733,18 +1730,14 @@ export const updateChatCustomerSchema = createInsertSchema(chatCustomers).pick({
 
 export const insertChatConversationSchema = createInsertSchema(chatConversations).omit({
   id: true,
-  lastMessageTime: true,
-  lastAgentResponseTime: true,
-  assignedAt: true,
-  waitingTime: true,
-  responseTime: true,
   createdAt: true,
-  resolvedAt: true,
+  updatedAt: true,
+  lastMessageTime: true,
 });
 
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
   id: true,
-  timestamp: true,
+  createdAt: true,
 });
 
 export const insertChatReportSchema = createInsertSchema(chatReports).omit({
