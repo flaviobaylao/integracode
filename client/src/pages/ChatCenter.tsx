@@ -161,7 +161,9 @@ export default function ChatCenter() {
     },
     onSuccess: () => {
       setMessageText("");
+      // Invalidar tanto mensagens quanto conversas para recarregar agentId
       queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations"] });
     },
     onError: () => {
       toast({ title: "Erro", description: "Não foi possível enviar a mensagem", variant: "destructive" });
@@ -187,6 +189,7 @@ export default function ChatCenter() {
       setMediaCaption("");
       setSelectedFile(null);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations"] });
       toast({ title: "Sucesso", description: "Mídia enviada com sucesso" });
     },
     onError: () => {
@@ -407,6 +410,11 @@ export default function ChatCenter() {
                           <User className="w-3 h-3" />
                           <span>Vendedor: <strong>{sellerName}</strong></span>
                         </div>
+                        {selectedChat.agentId && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-green-600 font-semibold">
+                            <span>👤 Atendente: {agents.find(a => a.id === selectedChat.agentId)?.name || "Carregando..."}</span>
+                          </div>
+                        )}
                       </div>
                       <Badge className={getStatusColor(selectedChat.status)}>
                         {selectedChat.status === "new" ? "Novo" : 
