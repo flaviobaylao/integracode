@@ -1435,6 +1435,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update customer phone
+  app.patch('/api/customers/:id/phone', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { phone } = req.body;
+      
+      if (!phone) {
+        return res.status(400).json({ message: "Telefone é obrigatório" });
+      }
+      
+      const customer = await storage.updateCustomer(id, { phone });
+      res.json({ message: "Telefone atualizado com sucesso", customer });
+    } catch (error) {
+      console.error("Error updating customer phone:", error);
+      res.status(500).json({ message: "Falha ao atualizar telefone" });
+    }
+  });
+
   // Bulk update time slots for all customers - ADMIN ONLY
   app.post('/api/customers/bulk-update-time-slots', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
