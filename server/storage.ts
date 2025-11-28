@@ -5666,37 +5666,25 @@ export class DatabaseStorage implements IStorage {
       // Buscar clientes associados
       const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
       const customerMap = new Map<string, any>();
-      const sellerIds = new Set<string>();
       
       if (customerIds.length > 0) {
-        const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
-        for (const c of customersData) {
-          customerMap.set(c.id, c);
-          if (c.sellerId) sellerIds.add(c.sellerId);
+        try {
+          const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
+          for (const c of customersData) {
+            customerMap.set(c.id, c);
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar clientes, continuando sem eles:', err);
         }
       }
       
-      // Buscar vendedores
-      const sellerMap = new Map<string, any>();
-      if (sellerIds.size > 0) {
-        const sellersData = await db.select().from(users).where(inArray(users.id, Array.from(sellerIds)));
-        for (const s of sellersData) {
-          sellerMap.set(s.id, s);
-        }
-      }
-      
-      // Retornar dados com clientes e nomes de vendedores
-      const result: ActiveCustomerWithVisits[] = active.map((ac) => {
-        const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
-        const sellerName = customer?.sellerId ? sellerMap.get(customer.sellerId)?.name : undefined;
-        
-        return {
-          ...ac,
-          customer: customer ? { ...customer, sellerName } : undefined,
-          lastTwoVisits: [],
-          nextThreeVisits: []
-        };
-      });
+      // Retornar dados com clientes disponíveis
+      const result: ActiveCustomerWithVisits[] = active.map((ac) => ({
+        ...ac,
+        customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
+        lastTwoVisits: [],
+        nextThreeVisits: []
+      }));
       
       return result;
     } catch (error) {
