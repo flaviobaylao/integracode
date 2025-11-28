@@ -337,14 +337,14 @@ export default function ActiveCustomers() {
 
         <TabsContent value="list" className="space-y-4">
           <div className="flex flex-col gap-3">
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-2 flex-wrap">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex flex-row items-center gap-1 flex-wrap">
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nome ou CPF/CNPJ..."
+                  placeholder="Buscar..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 h-9"
                   data-testid="input-search"
                 />
               </div>
@@ -352,7 +352,7 @@ export default function ActiveCustomers() {
               <Filter className="h-4 w-4 text-muted-foreground" />
               
               <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger className="w-full md:w-[180px]" data-testid="select-seller-filter">
+                <SelectTrigger className="w-[120px] h-9" data-testid="select-seller-filter">
                   <SelectValue placeholder="Vendedor" />
                 </SelectTrigger>
                 <SelectContent>
@@ -365,8 +365,8 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
-                <SelectTrigger className="w-full md:w-[140px]" data-testid="select-day-filter">
-                  <SelectValue placeholder="Dia da Rota" />
+                <SelectTrigger className="w-[100px] h-9" data-testid="select-day-filter">
+                  <SelectValue placeholder="Dia" />
                 </SelectTrigger>
                 <SelectContent>
                   {daysOfRoute.map((day) => (
@@ -378,7 +378,7 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
-                <SelectTrigger className="w-full md:w-[120px]" data-testid="select-virtual-filter">
+                <SelectTrigger className="w-[100px] h-9" data-testid="select-virtual-filter">
                   <SelectValue placeholder="Tipo" />
                 </SelectTrigger>
                 <SelectContent>
@@ -388,8 +388,8 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
-                <SelectTrigger className="w-full md:w-[140px]" data-testid="select-periodicity-filter">
-                  <SelectValue placeholder="Periodicidade" />
+                <SelectTrigger className="w-[110px] h-9" data-testid="select-periodicity-filter">
+                  <SelectValue placeholder="Período" />
                 </SelectTrigger>
                 <SelectContent>
                   {periodicities.map((period) => (
@@ -410,11 +410,10 @@ export default function ActiveCustomers() {
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
                 }}
-                className="md:w-auto"
+                className="h-9"
                 data-testid="button-clear-all-filters"
               >
-                <X className="h-4 w-4 mr-1" />
-                Limpar
+                <X className="h-4 w-4" />
               </Button>
             </div>
 
