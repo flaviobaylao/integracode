@@ -497,12 +497,20 @@ export default function ActiveCustomers() {
                                 {ac.lastTwoVisits.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">Sem histórico</span>
                                 ) : (
-                                  ac.lastTwoVisits.map((v, i) => (
-                                    <div key={i} className="flex items-center gap-1 text-xs">
-                                      <span>{format(new Date(v.date), "dd/MM", { locale: ptBR })}</span>
-                                      {getVisitStatusBadge(v.status)}
-                                    </div>
-                                  ))
+                                  ac.lastTwoVisits.map((v, i) => {
+                                    try {
+                                      const date = v.date ? new Date(v.date) : null;
+                                      if (!date || isNaN(date.getTime())) return null;
+                                      return (
+                                        <div key={i} className="flex items-center gap-1 text-xs">
+                                          <span>{format(date, "dd/MM", { locale: ptBR })}</span>
+                                          {getVisitStatusBadge(v.status)}
+                                        </div>
+                                      );
+                                    } catch {
+                                      return null;
+                                    }
+                                  })
                                 )}
                               </div>
                             </TableCell>
@@ -511,12 +519,20 @@ export default function ActiveCustomers() {
                                 {ac.nextThreeVisits.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">Sem agendamento</span>
                                 ) : (
-                                  ac.nextThreeVisits.map((v, i) => (
-                                    <div key={i} className="flex items-center gap-1 text-xs">
-                                      <Calendar className="h-3 w-3 text-muted-foreground" />
-                                      <span>{format(new Date(v.date), "dd/MM", { locale: ptBR })}</span>
-                                    </div>
-                                  ))
+                                  ac.nextThreeVisits.map((v, i) => {
+                                    try {
+                                      const date = v.date ? new Date(v.date) : null;
+                                      if (!date || isNaN(date.getTime())) return null;
+                                      return (
+                                        <div key={i} className="flex items-center gap-1 text-xs">
+                                          <Calendar className="h-3 w-3 text-muted-foreground" />
+                                          <span>{format(date, "dd/MM", { locale: ptBR })}</span>
+                                        </div>
+                                      );
+                                    } catch {
+                                      return null;
+                                    }
+                                  })
                                 )}
                               </div>
                             </TableCell>
