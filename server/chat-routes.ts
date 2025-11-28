@@ -666,27 +666,44 @@ export function registerChatRoutes(app: Express): void {
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
     try {
-      const { event, instance, data } = req.body;
+      let { event, instance, data } = req.body;
       
-      // Log incoming webhook com dados completos para debug
+      // Debug: Log COMPLETO para diagnóstico
+      console.log(`\n📬 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(`📬 [WEBHOOK-MIRROR] Evento: ${event} | Instância: ${instance}`);
-      console.log(`📬 [WEBHOOK-MIRROR] Payload completo:`, JSON.stringify(req.body, null, 2).substring(0, 500));
+      console.log(`📬 [WEBHOOK-MIRROR] Payload:`, JSON.stringify(req.body, null, 2).substring(0, 800));
+      
+      // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
+      if (!event && req.body.webhook?.event) {
+        event = req.body.webhook.event;
+        instance = req.body.webhook.instance;
+        data = req.body.webhook.data;
+        console.log(`📬 [WEBHOOK-MIRROR] Detectado formato aninhado: evento=${event}`);
+      }
       
       // Aceitar múltiplos tipos de eventos de mensagem
       const messageEvents = [
         'messages.upsert', 'MESSAGES_UPSERT',
         'send.message', 'SEND_MESSAGE', 
         'message.create', 'MESSAGE_CREATE',
-        'messages.set', 'MESSAGES_SET'
+        'messages.set', 'MESSAGES_SET',
+        'messages.edited', 'MESSAGES_EDITED'
       ];
       
-      if (!event || !messageEvents.includes(event)) {
-        console.log(`⏭️  [WEBHOOK-MIRROR] Evento não processado: ${event}`);
+      if (!event) {
+        console.warn(`⚠️  [WEBHOOK-MIRROR] Evento não identificado no payload`);
+        console.log(`📬 [WEBHOOK-MIRROR] Keys no body:`, Object.keys(req.body));
+        return res.json({ received: false, reason: 'Evento não identificado' });
+      }
+      
+      if (!messageEvents.includes(event)) {
+        console.log(`⏭️  [WEBHOOK-MIRROR] Evento não é de mensagem: ${event}`);
         return res.json({ received: false, reason: `Evento ${event} não é de mensagem` });
       }
 
       if (!data || !data.key) {
         console.warn(`⚠️  [WEBHOOK-MIRROR] Dados inválidos recebidos`);
+        console.log(`📬 [WEBHOOK-MIRROR] data exist: ${!!data}, key exist: ${data?.key ? 'sim' : 'não'}`);
         return res.json({ received: false, reason: 'Dados inválidos' });
       }
 
@@ -977,173 +994,6 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/webhook/messages", (req, res) => {
     console.log(`✅ [WEBHOOK-GET] Validação do webhook recebida`);
     res.status(200).json({ status: 'ok', message: 'Webhook is active' });
-  });
-
-  // Webhook para receber mensagens recebidas via Evolution API
-  app.post("/api/chat/webhook/messages", async (req, res) => {
-    console.log(`\n\n⭐ [WEBHOOK-RECEIVED] POST request chegou ao webhook!`);
-    console.log(`📋 [WEBHOOK-HEADERS]`, JSON.stringify(req.headers, null, 2));
-    console.log(`📋 [WEBHOOK-BODY]`, JSON.stringify(req.body, null, 2));
-    
-    // RESPONDER IMEDIATAMENTE com 200 OK
-    res.status(200).json({ success: true, message: 'Webhook recebido' });
-    
-    // PROCESSAR WEBHOOK ASSINCRONAMENTE SEM ENVIAR RESPOSTA NOVAMENTE
-    (async () => {
-      try {
-        // Suportar múltiplos formatos de webhook
-        let event = req.body.event;
-        let instance = req.body.instance;
-        let data = req.body.data;
-
-        // Se vier com "webhook" aninhado
-        if (!event && req.body.webhook && req.body.webhook.event) {
-          event = req.body.webhook.event;
-          instance = req.body.webhook.instance;
-          data = req.body.webhook.data;
-        }
-
-        console.log(`📱 [WEBHOOK] Evento:`, event, `| Instance:`, instance, `| Has data:`, !!data);
-
-        if ((event === 'MESSAGES_UPSERT' || event === 'messages.upsert') && data) {
-          const message = data;
-          const remoteJid = message.key?.remoteJid;
-          const text = message.message?.conversation || message.message?.extendedTextMessage?.text;
-          const isFromMe = message.key?.fromMe;
-
-          console.log(`📱 [WEBHOOK-DETAILS]`, { remoteJid, isFromMe, hasText: !!text, textPreview: text?.substring(0, 50) });
-
-          if (!isFromMe && text) {
-            console.log(`💬 [WHATSAPP-RECEIVED] Mensagem recebida de ${remoteJid}: ${text}`);
-
-            try {
-              console.log(`🔍 [WEBHOOK] remoteJid recebido: ${remoteJid}`);
-              
-              // 🔧 Normalizar telefone usando função centralizada
-              const phoneFormatted = normalizePhoneNumber(remoteJid || '');
-              
-              if (!phoneFormatted) {
-                console.error(`❌ [WEBHOOK] Falha ao normalizar telefone: ${remoteJid}`);
-                return;
-              }
-
-              console.log(`🔍 [WEBHOOK] Buscando cliente pelo telefone: ${phoneFormatted}`);
-
-              // 1. Tentar buscar cliente regular (tabela customers) para pegar nome fantasia
-              let clientName = "Número Desconhecido";
-              try {
-                let existingClient = await storage.getCustomerByPhone(phoneFormatted).catch(() => null);
-                if (existingClient) {
-                  clientName = existingClient.fantasyName || existingClient.name || "Número Desconhecido";
-                  console.log(`✅ Cliente encontrado: ${clientName}`);
-                } else {
-                  console.log(`⚠️  Cliente não encontrado no sistema`);
-                }
-              } catch (err) {
-                console.warn(`⚠️  [WEBHOOK] Erro ao buscar cliente:`, err);
-              }
-
-              // 2. Buscar ou criar chat customer (phoneFormatted já é normalizado)
-              let chatCustomer: any;
-              try {
-                console.log(`🔎 [WEBHOOK] Buscando chatCustomer com telefone normalizado: ${phoneFormatted}`);
-                chatCustomer = await storage.getChatCustomerByPhone(phoneFormatted);
-                
-                if (!chatCustomer) {
-                  console.log(`📝 Criando novo chat customer...`);
-                  chatCustomer = await storage.createChatCustomer({
-                    name: clientName,
-                    phone: phoneFormatted
-                  });
-                  console.log(`✅ Chat customer criado: ${chatCustomer.id}`);
-                }
-              } catch (err) {
-                console.error(`❌ [WEBHOOK] Erro ao criar/buscar chat customer:`, err);
-                throw err;
-              }
-
-              // 3. Buscar ou criar conversa - GARANTIR PERSISTÊNCIA NO HISTÓRICO
-              let conversation: any;
-              try {
-                // ✅ VALIDAÇÃO: Telefone SEMPRE deve estar presente
-                if (!phoneFormatted) {
-                  throw new Error('Telefone não pode ser vazio ao criar conversa');
-                }
-
-                conversation = await storage.getChatConversationByCustomerId(chatCustomer.id);
-
-                if (!conversation) {
-                  console.log(`📝 Criando nova conversa para telefone: ${phoneFormatted}...`);
-                  
-                  // ✅ Garantir que customerPhone sempre é salvo
-                  const conversationData = {
-                    customerId: chatCustomer.id,
-                    customerName: clientName,
-                    customerPhone: phoneFormatted, // 🔒 CRÍTICO: Sempre salvar telefone
-                    status: "new" as const,
-                    priority: "normal" as const
-                  };
-                  
-                  conversation = await storage.createChatConversation(conversationData);
-                  
-                  // ✅ AUDITORIA: Confirmar que conversa foi salva com telefone
-                  console.log(`✅ [PERSISTÊNCIA] Conversa criada e gravada permanentemente:`);
-                  console.log(`   - ID: ${conversation.id}`);
-                  console.log(`   - Telefone: ${conversation.customerPhone}`);
-                  console.log(`   - Cliente: ${conversation.customerId}`);
-                  console.log(`   - Status: ${conversation.status}`);
-                  console.log(`   - Criada em: ${conversation.createdAt}`);
-                } else {
-                  console.log(`✅ Conversa encontrada no histórico:`);
-                  console.log(`   - ID: ${conversation.id}`);
-                  console.log(`   - Telefone: ${conversation.customerPhone}`);
-                  console.log(`   - Status: ${conversation.status}`);
-                }
-              } catch (err) {
-                console.error(`❌ [WEBHOOK] Erro ao criar/buscar conversa:`, err);
-                throw err;
-              }
-
-              // 4. Salvar mensagem - GARANTIR PERSISTÊNCIA
-              try {
-                const msg = await storage.createChatMessage({
-                  conversationId: conversation.id,
-                  senderId: remoteJid || "unknown",
-                  senderType: "customer",
-                  content: text || "[Mídia ou mensagem especial]",
-                  messageType: "text"
-                });
-
-                // ✅ AUDITORIA: Confirmar que mensagem foi salva no histórico atrelada ao telefone
-                console.log(`✅ [PERSISTÊNCIA] Mensagem gravada permanentemente no histórico:`);
-                console.log(`   - Mensagem ID: ${msg.id}`);
-                console.log(`   - Conversa ID: ${msg.conversationId}`);
-                console.log(`   - Telefone: ${conversation.customerPhone}`);
-                console.log(`   - Conteúdo: ${(text || "[Mídia]").substring(0, 50)}...`);
-                console.log(`   - Timestamp: ${msg.timestamp}`);
-
-                // 🟢 Incrementar contador de mensagens não lidas
-                try {
-                  await storage.incrementUnreadCount(conversation.id);
-                  console.log(`🟢 [UNREAD] Contador incrementado para conversa ${conversation.id}`);
-                } catch (err) {
-                  console.warn(`⚠️  [UNREAD] Erro ao incrementar contador:`, err);
-                }
-              } catch (err) {
-                console.error(`❌ [WEBHOOK] Erro ao salvar mensagem:`, err);
-                throw err;
-              }
-            } catch (err) {
-              console.error(`🚨 [WEBHOOK] ERRO CRÍTICO ao processar mensagem:`, err);
-            }
-          }
-        } else {
-          console.warn(`⚠️  [WEBHOOK] Evento não reconhecido ou sem dados:`, event);
-        }
-      } catch (error: any) {
-        console.error("[WEBHOOK] Erro ao processar webhook:", error);
-      }
-    })();
   });
 
   // Diagnóstico COMPLETO - verificar status da instância e webhook
