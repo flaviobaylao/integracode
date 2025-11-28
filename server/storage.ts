@@ -5726,15 +5726,21 @@ export class DatabaseStorage implements IStorage {
       const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
       const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
       
-      const lastTwoVisits = visits?.past.map(v => ({ 
-        date: v.scheduledDate.toISOString().split('T')[0], 
-        status: v.visitStatus || 'pending' 
-      })) || [];
+      const lastTwoVisits = visits?.past.map(v => {
+        const dateObj = v.scheduledDate instanceof Date ? v.scheduledDate : new Date(v.scheduledDate);
+        return { 
+          date: dateObj.toISOString().split('T')[0], 
+          status: v.visitStatus || 'pending' 
+        };
+      }) || [];
       
-      const nextThreeVisits = visits?.future.map(v => ({ 
-        date: v.scheduledDate.toISOString().split('T')[0], 
-        status: v.visitStatus || 'pending' 
-      })) || [];
+      const nextThreeVisits = visits?.future.map(v => {
+        const dateObj = v.scheduledDate instanceof Date ? v.scheduledDate : new Date(v.scheduledDate);
+        return { 
+          date: dateObj.toISOString().split('T')[0], 
+          status: v.visitStatus || 'pending' 
+        };
+      }) || [];
       
       // Adicionar sellerName ao customer se existir
       const enrichedCustomer = customer ? {
