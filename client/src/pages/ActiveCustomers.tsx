@@ -58,6 +58,8 @@ interface ActiveCustomerWithVisits {
     sellerId: string;
     sellerName?: string;
     virtualService: boolean;
+    weekdays?: string;
+    visitPeriodicity?: string;
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
   nextThreeVisits: Array<{ date: string; status: string }>;
@@ -352,8 +354,8 @@ export default function ActiveCustomers() {
                         <TableHead>CPF/CNPJ</TableHead>
                         <TableHead>Nome</TableHead>
                         <TableHead>Vendedor</TableHead>
-                        <TableHead>Cidade</TableHead>
-                        <TableHead>Virtual</TableHead>
+                        <TableHead>Dia da Rota</TableHead>
+                        <TableHead>Periodicidade</TableHead>
                         <TableHead>Últimas 2 Visitas</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                       </TableRow>
@@ -397,13 +399,22 @@ export default function ActiveCustomers() {
                                 {ac.customer?.sellerName || `Vendedor ${ac.customer?.sellerId?.slice(0, 4)}` || "-"}
                               </div>
                             </TableCell>
-                            <TableCell>{ac.customer?.city || "-"}</TableCell>
                             <TableCell>
-                              {ac.customer?.virtualService ? (
-                                <Badge variant="secondary">Sim</Badge>
-                              ) : (
-                                <span className="text-muted-foreground">Não</span>
-                              )}
+                              <div className="text-sm">
+                                {ac.customer?.weekdays ? (
+                                  JSON.parse(ac.customer.weekdays).join(", ")
+                                ) : "-"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">
+                                {ac.customer?.visitPeriodicity ? (
+                                  ac.customer.visitPeriodicity === 'semanal' ? 'Semanal' :
+                                  ac.customer.visitPeriodicity === 'quinzenal' ? 'Quinzenal' :
+                                  ac.customer.visitPeriodicity === 'mensal' ? 'Mensal' :
+                                  ac.customer.visitPeriodicity
+                                ) : "-"}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-col gap-1">
