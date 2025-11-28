@@ -5682,7 +5682,8 @@ export class DatabaseStorage implements IStorage {
     
     // Buscar todas as visitas para os clientes
     const visitsByCustomer = new Map<string, { past: any[]; future: any[] }>();
-    const todayMs = new Date().setHours(0, 0, 0, 0);
+    const today = new Date();
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // Sem timezone
     
     if (customerIds.length > 0) {
       const allVisits = await db.select().from(visitAgenda).where(inArray(visitAgenda.customerId, customerIds));
@@ -5692,16 +5693,17 @@ export class DatabaseStorage implements IStorage {
           visitsByCustomer.set(v.customerId, { past: [], future: [] });
         }
         
-        // Converter scheduled_date para timestamp em UTC (midnight)
-        let visitTime: number;
+        // Converter scheduled_date para Data sem timezone
+        let visitDate: Date;
         if (v.scheduledDate instanceof Date) {
-          visitTime = v.scheduledDate.setHours(0, 0, 0, 0);
+          visitDate = new Date(v.scheduledDate);
         } else {
-          visitTime = new Date(v.scheduledDate).setHours(0, 0, 0, 0);
+          visitDate = new Date(v.scheduledDate);
         }
+        const visitDateOnly = new Date(visitDate.getFullYear(), visitDate.getMonth(), visitDate.getDate());
         
         const visits = visitsByCustomer.get(v.customerId)!;
-        if (visitTime < todayMs) {
+        if (visitDateOnly < todayDate) {
           if (visits.past.length < 2) visits.past.push(v);
         } else {
           if (visits.future.length < 3) visits.future.push(v);
