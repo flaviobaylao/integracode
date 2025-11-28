@@ -365,7 +365,9 @@ export function registerChatRoutes(app: Express): void {
             return res.json(message);
           }
           
-          console.log(`📱 [CHAT-MESSAGE] Enviando para: ${conversation.customerPhone}`);
+          console.log(`📱 [CHAT-MESSAGE] Telefone do cliente: ${conversation.customerPhone}, Tipo: ${typeof conversation.customerPhone}`);
+          console.log(`📱 [CHAT-MESSAGE] Instância: ${config.instanceName}, URL: ${config.apiUrl}`);
+          
           const sendResult = await evolutionAPIService.sendTextMessage(
             config.instanceName,
             conversation.customerPhone,

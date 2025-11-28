@@ -253,11 +253,37 @@ class EvolutionAPIService {
     }
 
     // Format phone number for WhatsApp (add @s.whatsapp.net if not present)
-    const formattedNumber = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    // If number already has @, use as is
+    // If number is in format 5585987654321, convert to 5585987654321@s.whatsapp.net
+    // If number is in format 85987654321, add 55 and convert
+    let formattedNumber: string;
+    
+    if (to.includes('@')) {
+      formattedNumber = to;
+    } else {
+      const digitsOnly = to.replace(/\D/g, '');
+      
+      // If already starts with 55 (country code), use as is
+      if (digitsOnly.startsWith('55')) {
+        formattedNumber = `${digitsOnly}@s.whatsapp.net`;
+      } else if (digitsOnly.length === 11) {
+        // If 11 digits (DDD + number), add 55
+        formattedNumber = `55${digitsOnly}@s.whatsapp.net`;
+      } else if (digitsOnly.length === 9 || digitsOnly.length === 10) {
+        // If less than 11, assume it's incomplete
+        formattedNumber = `${digitsOnly}@s.whatsapp.net`;
+      } else {
+        // Default: use digits as is
+        formattedNumber = `${digitsOnly}@s.whatsapp.net`;
+      }
+    }
+
+    console.log(`📤 [EVOLUTION] Enviando mensagem - Input: ${to}, Formatado: ${formattedNumber}, Instância: ${instanceName}`);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`📤 Tentativa ${attempt}/${retries} de enviar mensagem para ${formattedNumber}`);
+        console.log(`📤 [EVOLUTION] Tentativa ${attempt}/${retries}: POST ${this.config!.apiUrl}/message/sendText/${instanceName}`);
+        console.log(`📤 [EVOLUTION] Payload: { number: "${formattedNumber}", text: "${text.substring(0, 50)}..." }`);
         
         const response = await fetch(`${this.config!.apiUrl}/message/sendText/${instanceName}`, {
           method: 'POST',
@@ -273,22 +299,23 @@ class EvolutionAPIService {
         });
 
         const data = await response.json();
+        console.log(`📤 [EVOLUTION] Response status: ${response.status}, Body:`, data);
 
         if (!response.ok) {
-          console.error(`❌ Erro (tentativa ${attempt}):`, data);
+          console.error(`❌ [EVOLUTION] Erro (tentativa ${attempt}): ${JSON.stringify(data)}`);
           if (attempt === retries) {
-            return { success: false, error: data.message || 'Erro ao enviar mensagem' };
+            return { success: false, error: data.message || `HTTP ${response.status}: Erro ao enviar mensagem` };
           }
           await new Promise(resolve => setTimeout(resolve, 2000)); // Aguardar 2s antes de retry
           continue;
         }
 
-        console.log('✅ Mensagem enviada via Evolution API');
+        console.log('✅ [EVOLUTION] Mensagem enviada com sucesso');
         return { success: true, messageId: data.key?.id };
       } catch (error: any) {
-        console.error(`❌ Erro na tentativa ${attempt}:`, error.message);
+        console.error(`❌ [EVOLUTION] Erro na tentativa ${attempt}: ${error.message}`);
         if (attempt === retries) {
-          console.error('❌ Todas as tentativas falharam:', error);
+          console.error('❌ [EVOLUTION] Todas as tentativas falharam:', error);
           return { success: false, error: error.message };
         }
         await new Promise(resolve => setTimeout(resolve, 2000)); // Aguardar 2s antes de retry
