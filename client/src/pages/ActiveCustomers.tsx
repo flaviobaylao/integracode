@@ -80,37 +80,38 @@ interface UploadRecord {
   errorMessage: string | null;
 }
 
-// Função robusta para parsear weekdays em qualquer formato
+// Função para parsear e NORMALIZAR weekdays para forma abreviada
 function parseWeekdaysArray(weekdays: any): string[] {
   if (!weekdays) return [];
   
   try {
-    // Se já é array, retorna direto
+    let days: string[] = [];
+    
+    // Se é array, usa diretamente
     if (Array.isArray(weekdays)) {
-      return weekdays.filter(d => typeof d === 'string' && d.trim());
+      days = weekdays.map(d => String(d).trim()).filter(d => d);
+    } else {
+      const str = String(weekdays).trim();
+      
+      // Se é JSON array
+      if (str.startsWith('[') && str.endsWith(']')) {
+        const parsed = JSON.parse(str);
+        days = (Array.isArray(parsed) ? parsed : []).map(d => String(d).trim()).filter(d => d);
+      }
+      // Se é PostgreSQL array
+      else if (str.startsWith('{') && str.endsWith('}')) {
+        const inner = str.slice(1, -1);
+        days = inner.split(',').map(d => d.trim().replace(/^"|"$/g, '')).filter(d => d);
+      }
+      // Se é string simples
+      else {
+        days = [str];
+      }
     }
     
-    const str = String(weekdays).trim();
-    
-    // Se é JSON válido, parse
-    if (str.startsWith('[') && str.endsWith(']')) {
-      const parsed = JSON.parse(str);
-      return Array.isArray(parsed) ? parsed : [];
-    }
-    
-    // Se é array PostgreSQL {Seg,Ter}
-    if (str.startsWith('{') && str.endsWith('}')) {
-      const inner = str.slice(1, -1);
-      return inner.split(',').map(d => d.trim()).filter(d => d);
-    }
-    
-    // Se é string separada por vírgulas/semicolons
-    if (str.includes(',') || str.includes(';') || str.includes('/')) {
-      return str.split(/[,;/]/).map(d => d.trim()).filter(d => d);
-    }
-    
-    // Se é um único valor
-    return [str];
+    // Retornar APENAS formatos abreviados (Seg, Ter, Qua, Qui, Sex, Sab, Dom)
+    // São os únicos formatos permitidos no sistema
+    return days.filter(d => ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'].includes(d));
   } catch (error) {
     console.warn('Erro ao parsear weekdays:', weekdays, error);
     return [];
