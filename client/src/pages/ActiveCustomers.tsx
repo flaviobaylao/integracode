@@ -80,53 +80,51 @@ interface UploadRecord {
   errorMessage: string | null;
 }
 
-// Função para parsear e NORMALIZAR weekdays para forma abreviada
-// NUNCA tenta JSON.parse - apenas extrai valores válidos
-function parseWeekdaysArray(weekdays: any): string[] {
-  if (!weekdays) return [];
+// Função ROBUSTA para parsear weekdays - NUNCA quebra
+// Suporta: arrays, PostgreSQL {}, JSON [], strings separadas por vírgula/semicolon/slash
+function parseWeekdaysArray(input: any): string[] {
+  const VALID_WEEKDAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
   
-  try {
-    let days: string[] = [];
+  if (!input) return [];
+  
+  let values: string[] = [];
+  
+  // Se é array, converte todos elementos para string
+  if (Array.isArray(input)) {
+    values = input.map(v => String(v || '').trim()).filter(v => v);
+  }
+  // Se é string
+  else {
+    const str = String(input || '').trim();
+    if (!str) return [];
     
-    // Se é array, usa diretamente
-    if (Array.isArray(weekdays)) {
-      days = weekdays.map(d => String(d).trim()).filter(d => d);
-    } else {
-      const str = String(weekdays).trim();
-      
-      // Se é PostgreSQL array format: {Seg,Ter} or {"Seg","Ter"}
-      if (str.startsWith('{') && str.endsWith('}')) {
-        const inner = str.slice(1, -1);
-        days = inner.split(',').map(d => d.trim().replace(/^"|"$/g, '')).filter(d => d);
-      }
-      // Se é JSON array format: ["Seg","Ter"]
-      else if (str.startsWith('[') && str.endsWith(']')) {
-        try {
-          const parsed = JSON.parse(str);
-          days = (Array.isArray(parsed) ? parsed : []).map(d => String(d).trim()).filter(d => d);
-        } catch {
-          // Se falhar JSON.parse, trata como string simples
-          days = [str];
-        }
-      }
-      // Se é string simples separada por vírgula/semicolon/space
-      // Ex: "segunda,terça" ou "segunda; terça" ou "segunda e terça"
-      else if (str.includes(',') || str.includes(';') || str.includes('/') || str.includes(' e ')) {
-        days = str.split(/[,;/]|\s+e\s+/).map(d => d.trim()).filter(d => d);
-      }
-      // Fallback: tratar como um único valor
-      else {
-        days = [str];
+    // Se é PostgreSQL array: {Seg,Ter} ou {"Seg","Ter"}
+    if (str.startsWith('{') && str.endsWith('}')) {
+      const inner = str.slice(1, -1);
+      values = inner.split(',').map(v => v.trim().replace(/^"|"$/g, '')).filter(v => v);
+    }
+    // Se é JSON array: ["Seg","Ter"] - SÓ tenta parse se for válido
+    else if (str.startsWith('[') && str.endsWith(']') && str.includes('"')) {
+      try {
+        const parsed = JSON.parse(str);
+        values = (Array.isArray(parsed) ? parsed : []).map(v => String(v || '').trim()).filter(v => v);
+      } catch {
+        // Falha silenciosa - não fazer nada
+        values = [];
       }
     }
-    
-    // Retornar APENAS formatos abreviados (Seg, Ter, Qua, Qui, Sex, Sab, Dom)
-    // São os únicos formatos permitidos no sistema
-    return days.filter(d => ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'].includes(d));
-  } catch (error) {
-    console.warn('Erro ao parsear weekdays:', weekdays, error);
-    return [];
+    // Se tem separadores: vírgula, semicolon, slash, ou " e "
+    else if (str.includes(',') || str.includes(';') || str.includes('/') || str.includes(' e ')) {
+      values = str.split(/[,;/]|\s+e\s+/).map(v => v.trim()).filter(v => v);
+    }
+    // Caso contrário: valor único
+    else {
+      values = [str];
+    }
   }
+  
+  // Retorna APENAS valores válidos (Seg, Ter, Qua, etc)
+  return values.filter(v => VALID_WEEKDAYS.includes(v));
 }
 
 export default function ActiveCustomers() {
