@@ -337,23 +337,23 @@ export default function ActiveCustomers() {
 
         <TabsContent value="list" className="space-y-4">
           <div className="flex flex-col gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por nome ou CPF/CNPJ..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-                data-testid="input-search"
-              />
-            </div>
-            
             <div className="flex flex-col md:flex-row items-start md:items-center gap-2 flex-wrap">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nome ou CPF/CNPJ..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                  data-testid="input-search"
+                />
+              </div>
+              
               <Filter className="h-4 w-4 text-muted-foreground" />
               
               <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger className="w-full md:w-[200px]" data-testid="select-seller-filter">
-                  <SelectValue placeholder="Vendedor..." />
+                <SelectTrigger className="w-full md:w-[180px]" data-testid="select-seller-filter">
+                  <SelectValue placeholder="Vendedor" />
                 </SelectTrigger>
                 <SelectContent>
                   {sellers.map((seller) => (
@@ -365,8 +365,8 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
-                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-day-filter">
-                  <SelectValue placeholder="Dia da Rota..." />
+                <SelectTrigger className="w-full md:w-[140px]" data-testid="select-day-filter">
+                  <SelectValue placeholder="Dia da Rota" />
                 </SelectTrigger>
                 <SelectContent>
                   {daysOfRoute.map((day) => (
@@ -378,8 +378,8 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
-                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-virtual-filter">
-                  <SelectValue placeholder="Tipo..." />
+                <SelectTrigger className="w-full md:w-[120px]" data-testid="select-virtual-filter">
+                  <SelectValue placeholder="Tipo" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="presencial">Presencial</SelectItem>
@@ -388,8 +388,8 @@ export default function ActiveCustomers() {
               </Select>
               
               <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
-                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-periodicity-filter">
-                  <SelectValue placeholder="Periodicidade..." />
+                <SelectTrigger className="w-full md:w-[140px]" data-testid="select-periodicity-filter">
+                  <SelectValue placeholder="Periodicidade" />
                 </SelectTrigger>
                 <SelectContent>
                   {periodicities.map((period) => (
@@ -400,28 +400,29 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
               
-              {(selectedSeller || selectedDayOfRoute || selectedPeriodicity) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSelectedSeller("");
-                    setSelectedDayOfRoute("");
-                    setSelectedPeriodicity("");
-                  }}
-                  className="px-2"
-                  data-testid="button-clear-all-filters"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedSeller("");
+                  setSelectedDayOfRoute("");
+                  setSelectedVirtualType("");
+                  setSelectedPeriodicity("");
+                }}
+                className="md:w-auto"
+                data-testid="button-clear-all-filters"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Limpar
+              </Button>
             </div>
 
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity) && (
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
