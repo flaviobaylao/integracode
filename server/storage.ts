@@ -5955,13 +5955,18 @@ export class DatabaseStorage implements IStorage {
 
                 if (dayName && weekdaysArray.includes(dayName)) {
                   // Verificar se já existe visita nesse dia
+                  const dateStr = currentDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+                  const dateStart = new Date(dateStr + 'T00:00:00');
+                  const dateEnd = new Date(dateStr + 'T23:59:59');
+                  
                   const exists = await db
                     .select()
                     .from(visitAgenda)
                     .where(
                       and(
                         eq(visitAgenda.customerId, activeCustomer.customerId),
-                        eq(visitAgenda.scheduledDate, currentDate)
+                        gte(visitAgenda.scheduledDate, dateStart),
+                        lte(visitAgenda.scheduledDate, dateEnd)
                       )
                     )
                     .then(rows => rows.length > 0);
