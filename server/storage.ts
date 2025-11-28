@@ -5890,8 +5890,8 @@ export class DatabaseStorage implements IStorage {
             .where(
               and(
                 eq(visitAgenda.customerId, activeCustomer.customerId),
-                gte(visitAgenda.visitDate, today.toISOString().split('T')[0]),
-                lte(visitAgenda.visitDate, futureCutoff.toISOString().split('T')[0])
+                gte(visitAgenda.scheduledDate, today),
+                lte(visitAgenda.scheduledDate, futureCutoff)
               )
             )
             .then(rows => rows.length);
@@ -5912,11 +5912,11 @@ export class DatabaseStorage implements IStorage {
               .select()
               .from(visitAgenda)
               .where(eq(visitAgenda.customerId, activeCustomer.customerId))
-              .orderBy(desc(visitAgenda.visitDate))
+              .orderBy(desc(visitAgenda.scheduledDate))
               .limit(1)
               .then(rows => rows[0]);
 
-            let startDate = lastVisit ? new Date(lastVisit.visitDate) : new Date(today);
+            let startDate = lastVisit ? new Date(lastVisit.scheduledDate) : new Date(today);
             if (lastVisit) startDate.setDate(startDate.getDate() + daysToAdd);
 
             // Gerar as 3 próximas visitas
@@ -5931,8 +5931,6 @@ export class DatabaseStorage implements IStorage {
                 const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
 
                 if (dayName && weekdaysArray.includes(dayName)) {
-                  const visitDateStr = currentDate.toISOString().split('T')[0];
-
                   // Verificar se já existe visita nesse dia
                   const exists = await db
                     .select()
@@ -5940,7 +5938,7 @@ export class DatabaseStorage implements IStorage {
                     .where(
                       and(
                         eq(visitAgenda.customerId, activeCustomer.customerId),
-                        eq(visitAgenda.visitDate, visitDateStr)
+                        eq(visitAgenda.scheduledDate, currentDate)
                       )
                     )
                     .then(rows => rows.length > 0);
@@ -5950,8 +5948,15 @@ export class DatabaseStorage implements IStorage {
                     await db.insert(visitAgenda).values({
                       customerId: activeCustomer.customerId,
                       sellerId: customer.sellerId,
-                      visitDate: visitDateStr,
-                      status: 'scheduled',
+                      scheduledDate: currentDate,
+                      routeDay: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][currentDate.getDay()],
+                      recurrenceType: customer.visitPeriodicity || 'semanal',
+                      isVirtual: customer.virtualService || false,
+                      visitStatus: 'pending',
+                      customerName: customer.name,
+                      customerLatitude: customer.latitude || null,
+                      customerLongitude: customer.longitude || null,
+                      customerAddress: customer.address || null,
                       createdAt: new Date()
                     });
                     generated++;
