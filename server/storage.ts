@@ -5948,9 +5948,12 @@ export class DatabaseStorage implements IStorage {
               .limit(1)
               .then(rows => rows[0]);
 
-            // Começar a partir da última visita + periodicidade
-            let baseDate = lastVisit ? new Date(lastVisit.scheduledDate) : new Date(today);
-            baseDate.setDate(baseDate.getDate() + daysToAdd);
+            // Começar a partir da última visita + periodicidade OU hoje
+            let baseDate = new Date(today);
+            if (lastVisit) {
+              baseDate = new Date(lastVisit.scheduledDate);
+              baseDate.setDate(baseDate.getDate() + daysToAdd);
+            }
 
             // Gerar as 3 próximas visitas
             for (let i = 0; i < visitsNeeded; i++) {
