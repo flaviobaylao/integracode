@@ -87,6 +87,8 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -186,8 +188,6 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
-  const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
-
   const filteredCustomers = activeCustomers.filter((ac) => {
     const searchLower = searchTerm.toLowerCase();
     const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
@@ -209,7 +209,10 @@ export default function ActiveCustomers() {
     const matchesVirtualType = !selectedVirtualType || 
       (selectedVirtualType === "virtual" ? ac.customer?.virtualService === true : ac.customer?.virtualService === false);
     
-    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType;
+    // Filtro de data - verificar se cliente tem visita agendada para aquele dia
+    const matchesDate = !selectedDate || ac.nextThreeVisits.some(v => v.date === selectedDate);
+    
+    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate;
   });
 
   const formatDocument = (doc: string, type: string) => {
@@ -399,6 +402,14 @@ export default function ActiveCustomers() {
                   ))}
                 </SelectContent>
               </Select>
+
+              <Input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-[130px] h-9"
+                data-testid="input-date-filter"
+              />
               
               <Button
                 variant="outline"
@@ -409,6 +420,7 @@ export default function ActiveCustomers() {
                   setSelectedDayOfRoute("");
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
+                  setSelectedDate("");
                 }}
                 className="h-9"
                 data-testid="button-clear-all-filters"
