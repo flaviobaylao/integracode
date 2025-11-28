@@ -400,6 +400,17 @@ export default function ActiveCustomers() {
                 </Button>
               )}
             </div>
+
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
+                📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
+              </Badge>
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity) && (
+                <span className="text-xs text-muted-foreground">
+                  {activeCustomers.length} total
+                </span>
+              )}
+            </div>
           </div>
 
           <Card>
