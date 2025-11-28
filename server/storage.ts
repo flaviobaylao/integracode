@@ -5689,14 +5689,15 @@ export class DatabaseStorage implements IStorage {
     // Fase 3: Batch load de visitas
     const visitsByCustomer = new Map<string, { past: any[]; future: any[] }>();
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    today.setHours(0, 0, 0, 0);
     
     if (customerIds.length > 0) {
       // Get all visits (past and future) for active customers in one query
       const allVisits = await db
         .select()
         .from(visitAgenda)
-        .where(inArray(visitAgenda.customerId, customerIds));
+        .where(inArray(visitAgenda.customerId, customerIds))
+        .orderBy(desc(visitAgenda.scheduledDate));
       
       // Group by customer
       for (const v of allVisits) {
@@ -5705,9 +5706,12 @@ export class DatabaseStorage implements IStorage {
         }
         
         const visits = visitsByCustomer.get(v.customerId)!;
-        if (v.visitDate <= todayStr) {
+        const visitDate = new Date(v.scheduledDate);
+        visitDate.setHours(0, 0, 0, 0);
+        
+        if (visitDate < today) {
           if (visits.past.length < 2) {
-            visits.past.unshift(v); // Add at beginning to maintain desc order
+            visits.past.push(v); // Already ordered desc, so add at end
           }
         } else {
           if (visits.future.length < 3) {
@@ -5723,13 +5727,13 @@ export class DatabaseStorage implements IStorage {
       const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
       
       const lastTwoVisits = visits?.past.map(v => ({ 
-        date: v.visitDate, 
-        status: v.status || 'scheduled' 
+        date: v.scheduledDate.toISOString().split('T')[0], 
+        status: v.visitStatus || 'pending' 
       })) || [];
       
       const nextThreeVisits = visits?.future.map(v => ({ 
-        date: v.visitDate, 
-        status: v.status || 'scheduled' 
+        date: v.scheduledDate.toISOString().split('T')[0], 
+        status: v.visitStatus || 'pending' 
       })) || [];
       
       // Adicionar sellerName ao customer se existir
@@ -5925,12 +5929,11 @@ export class DatabaseStorage implements IStorage {
             }
             const periodicity = customer.visitPeriodicity || 'semanal';
 
-            let daysToAdd = 1;
+            let daysToAdd = 7;
             if (periodicity === 'quinzenal') daysToAdd = 14;
             else if (periodicity === 'mensal') daysToAdd = 30;
-            else daysToAdd = 7; // semanal
 
-            // Encontrar a última visita agendada
+            // Encontrar a última visita realizada
             const lastVisit = await db
               .select()
               .from(visitAgenda)
@@ -5939,23 +5942,24 @@ export class DatabaseStorage implements IStorage {
               .limit(1)
               .then(rows => rows[0]);
 
-            let startDate = lastVisit ? new Date(lastVisit.scheduledDate) : new Date(today);
-            if (lastVisit) startDate.setDate(startDate.getDate() + daysToAdd);
+            // Começar a partir da última visita + periodicidade
+            let baseDate = lastVisit ? new Date(lastVisit.scheduledDate) : new Date(today);
+            baseDate.setDate(baseDate.getDate() + daysToAdd);
 
             // Gerar as 3 próximas visitas
             for (let i = 0; i < visitsNeeded; i++) {
-              let currentDate = new Date(startDate);
+              let currentDate = new Date(baseDate);
               let attempts = 0;
-              const maxAttempts = 120; // Máximo de 120 dias de tentativa
+              const maxAttempts = 8; // Máximo 8 dias de tentativa (para encontrar o dia da semana correto)
 
-              // Encontrar o próximo dia válido
+              // Procurar o próximo dia válido dentro dos próximos 8 dias
               while (attempts < maxAttempts) {
                 const dayOfWeek = currentDate.getDay();
                 const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
 
                 if (dayName && weekdaysArray.includes(dayName)) {
                   // Verificar se já existe visita nesse dia
-                  const dateStr = currentDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+                  const dateStr = currentDate.toISOString().split('T')[0];
                   const dateStart = new Date(dateStr + 'T00:00:00');
                   const dateEnd = new Date(dateStr + 'T23:59:59');
                   
@@ -5972,6 +5976,7 @@ export class DatabaseStorage implements IStorage {
                     .then(rows => rows.length > 0);
 
                   if (!exists) {
+                    console.log(`✅ [VISIT-SCHEDULER] Gerando visita para ${customer.name} em ${currentDate.toISOString().split('T')[0]}`);
                     // Criar visita
                     await db.insert(visitAgenda).values({
                       customerId: activeCustomer.customerId,
@@ -5996,7 +6001,9 @@ export class DatabaseStorage implements IStorage {
                 attempts++;
               }
 
-              startDate = currentDate;
+              // Próxima iteração começa a partir da data atual + dias
+              baseDate = new Date(currentDate);
+              baseDate.setDate(baseDate.getDate() + daysToAdd);
             }
           }
         } catch (error: any) {
