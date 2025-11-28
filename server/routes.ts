@@ -394,6 +394,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create session for local admin
       const sessionData = createLocalSession(user);
       (req.session as any).user = sessionData;
+      (req.session as any).userId = user.id;
+      (req.session as any).userEmail = user.email;
       
       res.json({ success: true, user });
     } catch (error) {
@@ -420,6 +422,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Criar sessão para o usuário
       const sessionData = createLocalSession(user);
       (req.session as any).user = sessionData;
+      (req.session as any).userId = user.id;
+      (req.session as any).userEmail = user.email;
       
       res.json({ success: true, user });
     } catch (error) {
