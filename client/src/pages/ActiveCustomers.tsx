@@ -518,19 +518,21 @@ export default function ActiveCustomers() {
                                 {ac.nextThreeVisits.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">Sem agendamento</span>
                                 ) : (
-                                  ac.nextThreeVisits.map((v, i) => {
-                                    try {
-                                      const date = v.date ? new Date(v.date) : null;
-                                      if (!date || isNaN(date.getTime())) return null;
-                                      return (
-                                        <Badge key={i} variant="secondary" className="text-xs">
-                                          {format(date, "dd/MM", { locale: ptBR })}
-                                        </Badge>
-                                      );
-                                    } catch {
-                                      return null;
-                                    }
-                                  })
+                                  ac.nextThreeVisits
+                                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                    .map((v, i) => {
+                                      try {
+                                        const date = v.date ? new Date(v.date) : null;
+                                        if (!date || isNaN(date.getTime())) return null;
+                                        return (
+                                          <Badge key={i} variant="secondary" className="text-xs">
+                                            {format(date, "dd/MM", { locale: ptBR })}
+                                          </Badge>
+                                        );
+                                      } catch {
+                                        return null;
+                                      }
+                                    })
                                 )}
                               </div>
                             </TableCell>
