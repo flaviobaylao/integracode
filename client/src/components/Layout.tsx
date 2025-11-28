@@ -101,7 +101,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       id: 'clientes-ativos', 
       label: 'Clientes Ativos',
       icon: 'fas fa-check-circle', 
-      available: canAccessReports,
+      available: !isMotorista,
       badge: null
     },
     { 
