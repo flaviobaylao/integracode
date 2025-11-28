@@ -74,7 +74,8 @@ const STATUS_COLORS = {
 
 const getWeekdaysLabel = (weekdays: string) => {
   try {
-    const days = JSON.parse(weekdays);
+    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    const days = safeParseWeekdays(weekdays);
     const dayLabels: Record<string, string> = {
       'Seg': 'Seg',
       'Ter': 'Ter',
@@ -82,15 +83,7 @@ const getWeekdaysLabel = (weekdays: string) => {
       'Qui': 'Qui',
       'Sex': 'Sex',
       'Sab': 'Sáb',
-      'Dom': 'Dom',
-      // Manter compatibilidade com formato antigo (se existir)
-      'segunda': 'Seg',
-      'terca': 'Ter',
-      'quarta': 'Qua',
-      'quinta': 'Qui',
-      'sexta': 'Sex',
-      'sabado': 'Sáb',
-      'domingo': 'Dom'
+      'Dom': 'Dom'
     };
     if (Array.isArray(days) && days.length > 0) {
       return days.map(d => dayLabels[d] || d).join(', ');

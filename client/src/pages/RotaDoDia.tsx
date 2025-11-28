@@ -26,21 +26,22 @@ import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
 // Funções auxiliares para formatar dados de agendamento
-function formatWeekdays(weekdaysJson: string | null | undefined): string {
+function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
   if (!weekdaysJson) return '';
   
   try {
-    const days = JSON.parse(weekdaysJson);
+    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    const days = safeParseWeekdays(weekdaysJson);
     if (!Array.isArray(days) || days.length === 0) return '';
     
     const dayMap: Record<string, string> = {
-      'segunda': 'Seg',
-      'terca': 'Ter',
-      'quarta': 'Qua',
-      'quinta': 'Qui',
-      'sexta': 'Sex',
-      'sabado': 'Sáb',
-      'domingo': 'Dom'
+      'Seg': 'Seg',
+      'Ter': 'Ter',
+      'Qua': 'Qua',
+      'Qui': 'Qui',
+      'Sex': 'Sex',
+      'Sab': 'Sáb',
+      'Dom': 'Dom'
     };
     
     return days.map(d => dayMap[d] || d).join(', ');
@@ -925,7 +926,7 @@ export default function RotaDoDia() {
                             {!isLead && ((visit as any).weekdays || (visit as any).visitPeriodicity) && (
                               <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-2 font-medium">
                                 <Calendar className="h-3 w-3" />
-                                {formatWeekdays((visit as any).weekdays)}
+                                {formatWeekdaysLocal((visit as any).weekdays)}
                                 {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
                                 {formatPeriodicity((visit as any).visitPeriodicity)}
                               </p>

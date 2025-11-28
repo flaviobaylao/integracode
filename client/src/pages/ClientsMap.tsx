@@ -64,7 +64,9 @@ const WEEKDAY_NAMES = {
 // Função para obter a cor do pin baseada no primeiro dia da semana do cliente
 function getPinColor(weekdays: string): string {
   try {
-    const days = JSON.parse(weekdays);
+    // Import at runtime to avoid circular dependency
+    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    const days = safeParseWeekdays(weekdays);
     if (Array.isArray(days) && days.length > 0) {
       const firstDay = days[0];
       return WEEKDAY_COLORS[firstDay as keyof typeof WEEKDAY_COLORS] || '#6b7280'; // Cinza padrão
@@ -78,7 +80,8 @@ function getPinColor(weekdays: string): string {
 // Função para obter o nome formatado do dia
 function getWeekdayName(weekdays: string): string {
   try {
-    const days = JSON.parse(weekdays);
+    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    const days = safeParseWeekdays(weekdays);
     if (Array.isArray(days) && days.length > 0) {
       const firstDay = days[0];
       return WEEKDAY_NAMES[firstDay as keyof typeof WEEKDAY_NAMES] || firstDay;

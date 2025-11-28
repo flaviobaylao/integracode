@@ -165,12 +165,18 @@ export default function CustomerEditModal({
       // Parse weekdays from JSON string
       let parsedWeekdays: string[] = [];
       try {
-        parsedWeekdays = typeof customer.weekdays === 'string' 
-          ? JSON.parse(customer.weekdays) 
-          : customer.weekdays || [];
+        if (typeof customer.weekdays === 'string') {
+          const parsed = (() => { try { return JSON.parse(customer.weekdays); } catch { return []; } })();
+          parsedWeekdays = Array.isArray(parsed) ? parsed : [];
+        } else {
+          parsedWeekdays = Array.isArray(customer.weekdays) ? customer.weekdays : [];
+        }
       } catch (e) {
         console.error("Error parsing weekdays:", e);
-        parsedWeekdays = [];
+        // Fallback: try to split by comma
+        if (typeof customer.weekdays === 'string') {
+          parsedWeekdays = customer.weekdays.split(/[,;\/]/).map(d => d.trim()).filter(d => d);
+        }
       }
 
       setFormData({

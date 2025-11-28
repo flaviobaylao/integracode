@@ -143,7 +143,15 @@ export function RouteManagement() {
   };
 
   const handleWeekdayToggle = (weekday: string) => {
-    const currentWeekdays = JSON.parse(form.getValues("weekdays") || "[]");
+    const weekdaysStr = form.getValues("weekdays") || "[]";
+    let currentWeekdays: string[] = [];
+    try {
+      currentWeekdays = JSON.parse(weekdaysStr);
+    } catch {
+      currentWeekdays = [];
+    }
+    if (!Array.isArray(currentWeekdays)) currentWeekdays = [];
+    
     const newWeekdays = currentWeekdays.includes(weekday)
       ? currentWeekdays.filter((w: string) => w !== weekday)
       : [...currentWeekdays, weekday];
@@ -153,6 +161,7 @@ export function RouteManagement() {
   const getWeekdayLabels = (weekdaysJson: string) => {
     try {
       const weekdays = JSON.parse(weekdaysJson);
+      if (!Array.isArray(weekdays)) return "";
       return weekdays
         .map((day: string) => weekdayOptions.find((opt) => opt.value === day)?.label)
         .filter(Boolean)

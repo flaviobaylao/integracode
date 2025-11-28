@@ -372,7 +372,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       if (card.customer?.weekdays) {
         try {
           const parsedWeekdays = typeof card.customer.weekdays === 'string' 
-            ? JSON.parse(card.customer.weekdays) 
+            ? (() => { try { return JSON.parse(card.customer.weekdays); } catch { return []; } })() 
             : card.customer.weekdays;
           setCustomerWeekdays(parsedWeekdays);
           setInitialWeekdays(parsedWeekdays);

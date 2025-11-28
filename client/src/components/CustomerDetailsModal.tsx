@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,7 +71,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
         let parsedWeekdays: string[] = [];
         try {
           parsedWeekdays = typeof customerData.weekdays === 'string' 
-            ? JSON.parse(customerData.weekdays) 
+            ? (() => { try { return JSON.parse(customerData.weekdays); } catch { return []; } })() 
             : customerData.weekdays;
         } catch (e) {
           parsedWeekdays = [];
@@ -172,7 +173,15 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
 
   const getWeekdaysLabel = (weekdays: string) => {
     try {
-      const days = JSON.parse(weekdays);
+      let days = [];
+    try {
+      days = JSON.parse(weekdays);
+      if (!Array.isArray(days)) days = [];
+    } catch {
+      days = weekdays && typeof weekdays === 'string' 
+        ? weekdays.split(/[,;/]/).map(d => d.trim()).filter(d => d)
+        : [];
+    }
       const dayLabels: { [key: string]: string } = {
         'monday': 'Seg',
         'tuesday': 'Ter',

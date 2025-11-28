@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,7 +48,13 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
   // Se for string JSON, parsear
   if (typeof weekdays === 'string') {
     try {
+      try {
       weekdaysArray = JSON.parse(weekdays);
+    } catch {
+      weekdaysArray = typeof weekdays === 'string'
+        ? weekdays.split(/[,;/]/).map(d => d.trim()).filter(d => d)
+        : [];
+    }
     } catch {
       // Se não for JSON válido, tratar como array único
       weekdaysArray = [weekdays];

@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -605,9 +606,7 @@ export default function ActiveCustomers() {
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">
-                                {ac.customer?.weekdays ? (
-                                  JSON.parse(ac.customer.weekdays).join(", ")
-                                ) : "-"}
+                                {ac.customer?.weekdays ? formatWeekdays(ac.customer.weekdays) : "-"}
                               </div>
                             </TableCell>
                             <TableCell>
