@@ -186,6 +186,8 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
+  const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
+
   const filteredCustomers = activeCustomers.filter((ac) => {
     const searchLower = searchTerm.toLowerCase();
     const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
@@ -203,7 +205,11 @@ export default function ActiveCustomers() {
     // Filtro de periodicidade
     const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
     
-    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity;
+    // Filtro de tipo (virtual/presencial)
+    const matchesVirtualType = !selectedVirtualType || 
+      (selectedVirtualType === "virtual" ? ac.customer?.virtualService === true : ac.customer?.virtualService === false);
+    
+    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType;
   });
 
   const formatDocument = (doc: string, type: string) => {
@@ -371,6 +377,16 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
               
+              <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
+                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-virtual-filter">
+                  <SelectValue placeholder="Tipo..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="presencial">Presencial</SelectItem>
+                  <SelectItem value="virtual">Virtual</SelectItem>
+                </SelectContent>
+              </Select>
+              
               <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
                 <SelectTrigger className="w-full md:w-[150px]" data-testid="select-periodicity-filter">
                   <SelectValue placeholder="Periodicidade..." />
@@ -430,6 +446,7 @@ export default function ActiveCustomers() {
                         <TableHead>CPF/CNPJ</TableHead>
                         <TableHead>Nome</TableHead>
                         <TableHead>Vendedor</TableHead>
+                        <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
                         <TableHead>Últimas 2 Visitas</TableHead>
@@ -439,7 +456,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -474,6 +491,11 @@ export default function ActiveCustomers() {
                               <div className="text-sm">
                                 {ac.customer?.sellerName || `Vendedor ${ac.customer?.sellerId?.slice(0, 4)}` || "-"}
                               </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={ac.customer?.virtualService ? "secondary" : "outline"}>
+                                {ac.customer?.virtualService ? "Virtual" : "Presencial"}
+                              </Badge>
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">
