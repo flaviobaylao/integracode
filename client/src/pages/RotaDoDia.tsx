@@ -23,6 +23,7 @@ import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { SalesCardWithRelations } from "@shared/schema";
+import EditablePhoneField from "@/components/EditablePhoneField";
 
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdays(weekdaysJson: string | null | undefined): string {
@@ -1283,20 +1284,11 @@ export default function RotaDoDia() {
                       </div>
                       {lead.contact && <div className="text-sm text-gray-500">{lead.contact}</div>}
                       {lead.phone && (
-                        <div 
-                          className="text-xs text-gray-400 cursor-pointer hover:text-blue-600 hover:underline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const phone = prompt('Novo telefone:', lead.phone);
-                            if (phone && phone !== lead.phone) {
-                              apiRequest('PATCH', `/api/customers/${lead.id}/phone`, { phone }).then(() => {
-                                toast({ title: "Telefone atualizado com sucesso" });
-                              }).catch(err => toast({ title: "Erro ao atualizar telefone", variant: "destructive" }));
-                            }
-                          }}
-                          data-testid={`editable-lead-phone-${lead.id}`}
-                        >
-                          {lead.phone}
+                        <div className="text-xs" onClick={(e) => e.stopPropagation()}>
+                          <EditablePhoneField 
+                            customerId={lead.id}
+                            phone={lead.phone}
+                          />
                         </div>
                       )}
                       <div className="text-xs text-purple-600 mt-1">

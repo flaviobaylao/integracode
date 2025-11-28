@@ -14,6 +14,7 @@ import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import CustomerInactivateModal from "@/components/CustomerInactivateModal";
+import EditablePhoneField from "@/components/EditablePhoneField";
 import {
   Calendar,
   Clock,
@@ -725,24 +726,10 @@ export default function SalesSchedule() {
                             {card.seller ? `${card.seller.firstName || ''} ${card.seller.lastName || ''}`.trim() || card.seller.email || 'Sem vendedor' : 'Sem vendedor'}
                           </span>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <Phone className="h-4 w-4" />
-                          <span 
-                            onClick={() => {
-                              const phone = prompt('Novo telefone:', card.customer.phone);
-                              if (phone && phone !== card.customer.phone) {
-                                apiRequest('PATCH', `/api/customers/${card.customerId}/phone`, { phone }).then(() => {
-                                  toast({ title: "Telefone atualizado com sucesso" });
-                                  window.location.reload();
-                                }).catch(err => toast({ title: "Erro ao atualizar telefone", variant: "destructive" }));
-                              }
-                            }}
-                            className="cursor-pointer hover:text-blue-600 hover:underline"
-                            data-testid={`editable-phone-${card.id}`}
-                          >
-                            {card.customer.phone}
-                          </span>
-                        </div>
+                        <EditablePhoneField 
+                          customerId={card.customerId}
+                          phone={card.customer.phone}
+                        />
                         <div className="flex items-center space-x-2">
                           <Calendar className="h-4 w-4" />
                           <span>{getWeekdaysLabel(card.customer.weekdays)}</span>
