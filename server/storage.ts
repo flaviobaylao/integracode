@@ -5704,16 +5704,19 @@ export class DatabaseStorage implements IStorage {
         
         const visits = visitsByCustomer.get(v.customerId)!;
         if (visitDateOnly < todayDate) {
-          if (visits.past.length < 2) visits.past.push(v);
+          visits.past.push(v);
         } else {
-          if (visits.future.length < 3) visits.future.push(v);
+          visits.future.push(v);
         }
       }
       
-      // Ordenar
+      // Ordenar e limitar depois
       for (const visits of visitsByCustomer.values()) {
         visits.past.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
         visits.future.sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
+        // Limitar APÓS ordenação
+        visits.past = visits.past.slice(0, 2);
+        visits.future = visits.future.slice(0, 3);
       }
     }
     
