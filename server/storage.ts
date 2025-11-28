@@ -5399,28 +5399,24 @@ export class DatabaseStorage implements IStorage {
   }
   
   async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
-    // 🪞 ESPELHO WHATSAPP: Usar ON CONFLICT para evitar duplicatas por externalId
+    // 🪞 ESPELHO WHATSAPP: Verificar duplicata por externalId antes de inserir
     // Se mensagem com mesmo externalId já existe, retorna a existente sem erro
     if (messageData.externalId) {
-      const result = await db
-        .insert(chatMessages)
-        .values(messageData)
-        .onConflictDoNothing({ target: chatMessages.externalId })
-        .returning();
+      // Primeiro verificar se já existe
+      const existing = await db
+        .select()
+        .from(chatMessages)
+        .where(eq(chatMessages.externalId, messageData.externalId))
+        .limit(1);
       
-      // Se insert foi ignorado (duplicata), buscar mensagem existente
-      if (result.length === 0) {
-        const existing = await db
-          .select()
-          .from(chatMessages)
-          .where(eq(chatMessages.externalId, messageData.externalId))
-          .limit(1);
-        if (existing.length > 0) {
-          return existing[0];
-        }
-      } else {
-        return result[0];
+      if (existing.length > 0) {
+        console.log(`⏭️  [STORAGE] Mensagem duplicada ignorada: ${messageData.externalId}`);
+        return existing[0];
       }
+      
+      // Se não existe, inserir normalmente
+      const [message] = await db.insert(chatMessages).values(messageData).returning();
+      return message;
     }
     
     // Fallback para mensagens sem externalId (mensagens internas do sistema)
