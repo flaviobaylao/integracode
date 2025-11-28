@@ -519,14 +519,15 @@ export default function ActiveCustomers() {
                                   <span className="text-xs text-muted-foreground">Sem agendamento</span>
                                 ) : (
                                   ac.nextThreeVisits
-                                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                    .sort((a, b) => a.date.localeCompare(b.date))
                                     .map((v, i) => {
                                       try {
-                                        const date = v.date ? new Date(v.date) : null;
-                                        if (!date || isNaN(date.getTime())) return null;
+                                        if (!v.date || v.date.length === 0) return null;
+                                        // Formato: YYYY-MM-DD -> DD/MM
+                                        const [year, month, day] = v.date.split('-');
                                         return (
                                           <Badge key={i} variant="secondary" className="text-xs">
-                                            {format(date, "dd/MM", { locale: ptBR })}
+                                            {day}/{month}
                                           </Badge>
                                         );
                                       } catch {

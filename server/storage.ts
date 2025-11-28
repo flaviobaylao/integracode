@@ -5723,16 +5723,13 @@ export class DatabaseStorage implements IStorage {
       
       const formatDate = (d: any) => {
         if (!d) return '';
-        // Se é string, pega a parte da data direto
+        // Se é string, pega a parte da data direto (mais confiável)
         if (typeof d === 'string') {
           return d.split('T')[0];
         }
-        // Se é Date, usa UTC para evitar problema de timezone
+        // Se é Date, converte para ISO e pega a data
         const date = d instanceof Date ? d : new Date(d);
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        return date.toISOString().split('T')[0];
       };
       
       const lastTwoVisits = (visits?.past || []).map(v => ({
