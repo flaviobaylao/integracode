@@ -97,7 +97,16 @@ export default function ChatCenter() {
       return response.json();
     }
   });
-  const messages = (messagesData as ChatMessage[]) || [];
+  const messagesRaw = (messagesData as ChatMessage[]) || [];
+  
+  // 📍 Ordenar mensagens: não lidas primeiro, depois por data
+  const messages = [...messagesRaw].sort((a, b) => {
+    // Não lidas vêm primeiro
+    if (!a.isRead && b.isRead) return -1;
+    if (a.isRead && !b.isRead) return 1;
+    // Se ambas têm o mesmo status de leitura, ordenar por data
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 
   // Fetch agents
   const { data: agentsData } = useQuery({
@@ -410,16 +419,24 @@ export default function ChatCenter() {
                           messages.map((msg: any) => (
                             <div
                               key={msg.id}
-                              className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"}`}
+                              className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"} ${!msg.isRead ? "mb-3 p-2 bg-blue-50 rounded border-l-4 border-blue-500" : ""}`}
                               data-testid={`message-${msg.id}`}
                             >
                               <div
                                 className={`max-w-xs px-4 py-2 rounded-lg ${
                                   msg.senderType === "agent"
                                     ? "bg-green-600 text-white"
+                                    : !msg.isRead
+                                    ? "bg-blue-200 text-gray-900 font-semibold border-2 border-blue-400"
                                     : "bg-gray-200 text-gray-900"
                                 }`}
                               >
+                                {!msg.isRead && msg.senderType !== "agent" && (
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="inline-block h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
+                                    <span className="text-xs font-bold text-blue-700">NÃO LIDA</span>
+                                  </div>
+                                )}
                                 {msg.mediaUrl && (
                                   <div className="mb-2">
                                     {msg.messageType === 'image' && <img src={msg.mediaUrl} alt="mídia" className="max-w-sm rounded" />}
@@ -429,7 +446,7 @@ export default function ChatCenter() {
                                   </div>
                                 )}
                                 <p className="text-sm">{msg.content}</p>
-                                <p className="text-xs opacity-70 mt-1">
+                                <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                   {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                 </p>
                               </div>
