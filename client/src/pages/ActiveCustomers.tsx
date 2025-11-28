@@ -109,11 +109,32 @@ export default function ActiveCustomers() {
         body: formData,
         credentials: "include",
       });
+      
+      const contentType = response.headers.get("content-type");
+      const text = await response.text();
+      
+      console.log("Upload response:", {
+        ok: response.ok,
+        status: response.status,
+        contentType,
+        textLength: text.length,
+        firstChars: text.substring(0, 100)
+      });
+      
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Erro no upload");
+        try {
+          const error = JSON.parse(text);
+          throw new Error(error.message || `Erro: ${response.status}`);
+        } catch (e) {
+          throw new Error(`Erro no upload (${response.status}): ${text.substring(0, 200)}`);
+        }
       }
-      return response.json();
+      
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Resposta inválida do servidor: ${text.substring(0, 200)}`);
+      }
     },
     onSuccess: (data) => {
       toast({
@@ -124,6 +145,7 @@ export default function ActiveCustomers() {
       queryClient.invalidateQueries({ queryKey: ["/api/active-customers/uploads"] });
     },
     onError: (error: Error) => {
+      console.error("Upload error:", error);
       toast({
         title: "Erro no upload",
         description: error.message,
