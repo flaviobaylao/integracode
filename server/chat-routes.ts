@@ -1525,16 +1525,16 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // POST /api/chat/conversations/:conversationId/message - Enviar mensagem
+  // POST /api/chat/conversations/:conversationId/message - Enviar mensagem ou mídia
   app.post("/api/chat/conversations/:conversationId/message", authenticateUser, async (req, res) => {
     try {
       const { conversationId } = req.params;
-      const { content, messageType = "text" } = req.body;
+      const { content, messageType = "text", mediaUrl, mediaCaption } = req.body;
       const userId = (req as any).currentUser?.id;
       const currentUser = (req as any).currentUser;
 
-      if (!content) {
-        return res.status(400).json({ error: "Conteúdo da mensagem é obrigatório" });
+      if (!content && !mediaUrl) {
+        return res.status(400).json({ error: "Conteúdo ou mídia é obrigatório" });
       }
 
       // 🔍 Buscar conversa
@@ -1558,8 +1558,9 @@ export function registerChatRoutes(app: Express): void {
         conversationId: conversation.id,
         senderId: userId,
         senderType: "agent",
-        content,
-        messageType
+        content: content || mediaCaption || "Mídia enviada",
+        messageType,
+        mediaUrl
       });
 
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
@@ -1573,7 +1574,7 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // 📱 Enviar para WhatsApp via Evolution API
-      console.log(`📱 [SEND-WHATSAPP-START] Iniciando envio de mensagem via WhatsApp...`);
+      console.log(`📱 [SEND-WHATSAPP-START] Iniciando envio ${messageType} via WhatsApp...`);
       try {
         if (!conversation.customerId) {
           console.warn(`⚠️ [SEND-WHATSAPP] Sem customerId na conversa`);
@@ -1600,12 +1601,26 @@ export function registerChatRoutes(app: Express): void {
                 ? phoneNormalized 
                 : `${phoneNormalized}@s.whatsapp.net`;
               
-              console.log(`📤 [SEND-WHATSAPP] Enviando para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
-              const sendResult = await evolutionAPIService.sendTextMessage(
-                config.instanceName,
-                phoneFormatted,
-                content
-              );
+              let sendResult;
+              if (messageType === 'text' && content) {
+                console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
+                sendResult = await evolutionAPIService.sendTextMessage(
+                  config.instanceName,
+                  phoneFormatted,
+                  content
+                );
+              } else if (mediaUrl) {
+                console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
+                sendResult = await evolutionAPIService.sendMediaMessage(
+                  config.instanceName,
+                  phoneFormatted,
+                  mediaUrl,
+                  mediaCaption || content || undefined,
+                  messageType as 'image' | 'audio' | 'video' | 'document'
+                );
+              } else {
+                sendResult = { success: false, error: 'Tipo de mensagem não suportado' };
+              }
               
               if (sendResult.success) {
                 console.log(`✅ [SEND-WHATSAPP] Mensagem entregue com sucesso! ID:`, sendResult.messageId);

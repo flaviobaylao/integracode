@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -58,6 +58,9 @@ export default function ChatCenter() {
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [newPhoneNumber, setNewPhoneNumber] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [mediaCaption, setMediaCaption] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
@@ -108,6 +111,24 @@ export default function ChatCenter() {
   });
   const templates = (templatesData as any[]) || [];
 
+  // Mutation para fazer upload de arquivo
+  const uploadFileMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return fetch("/api/chat/upload", {
+        method: "POST",
+        body: formData
+      }).then(r => r.json());
+    },
+    onSuccess: (data) => {
+      toast({ title: "Sucesso", description: "Arquivo enviado com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Falha ao fazer upload do arquivo", variant: "destructive" });
+    }
+  });
+
   // Mutation para enviar mensagem
   const sendMessageMutation = useMutation({
     mutationFn: async (content: string) => {
@@ -128,6 +149,32 @@ export default function ChatCenter() {
     },
     onError: () => {
       toast({ title: "Erro", description: "Não foi possível enviar a mensagem", variant: "destructive" });
+    }
+  });
+
+  // Mutation para enviar mídia
+  const sendMediaMutation = useMutation({
+    mutationFn: async ({ mediaUrl, messageType }: { mediaUrl: string; messageType: string }) => {
+      if (!selectedConversation) throw new Error("Nenhuma conversa selecionada");
+      return fetch(`/api/chat/conversations/${selectedConversation}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: mediaCaption || "",
+          mediaUrl,
+          messageType,
+          senderType: "agent"
+        })
+      }).then(r => r.json());
+    },
+    onSuccess: () => {
+      setMediaCaption("");
+      setSelectedFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      toast({ title: "Sucesso", description: "Mídia enviada com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Falha ao enviar mídia", variant: "destructive" });
     }
   });
 
@@ -198,6 +245,37 @@ export default function ChatCenter() {
   const handleSendMessage = async () => {
     if (!messageText.trim()) return;
     await sendMessageMutation.mutateAsync(messageText);
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file);
+  };
+
+  const getMediaType = (file: File): 'image' | 'audio' | 'video' | 'document' => {
+    const mime = file.type;
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('video/')) return 'video';
+    return 'document';
+  };
+
+  const handleSendMedia = async () => {
+    if (!selectedFile) return;
+    
+    try {
+      const uploadResult = await uploadFileMutation.mutateAsync(selectedFile);
+      if (uploadResult.success && uploadResult.file?.url) {
+        const mediaType = getMediaType(selectedFile);
+        await sendMediaMutation.mutateAsync({
+          mediaUrl: uploadResult.file.url,
+          messageType: mediaType
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao enviar mídia:', error);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -329,7 +407,7 @@ export default function ChatCenter() {
                         ) : messages.length === 0 ? (
                           <div className="text-center py-8 text-gray-500">Nenhuma mensagem ainda</div>
                         ) : (
-                          messages.map((msg) => (
+                          messages.map((msg: any) => (
                             <div
                               key={msg.id}
                               className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"}`}
@@ -342,6 +420,14 @@ export default function ChatCenter() {
                                     : "bg-gray-200 text-gray-900"
                                 }`}
                               >
+                                {msg.mediaUrl && (
+                                  <div className="mb-2">
+                                    {msg.messageType === 'image' && <img src={msg.mediaUrl} alt="mídia" className="max-w-sm rounded" />}
+                                    {msg.messageType === 'audio' && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
+                                    {msg.messageType === 'video' && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
+                                    {msg.messageType === 'document' && <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="underline">📄 {msg.content || 'Documento'}</a>}
+                                  </div>
+                                )}
                                 <p className="text-sm">{msg.content}</p>
                                 <p className="text-xs opacity-70 mt-1">
                                   {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
@@ -427,6 +513,20 @@ export default function ChatCenter() {
                         ))}
                       </div>
                     )}
+                    {selectedFile && (
+                      <div className="bg-blue-50 p-3 rounded flex items-center justify-between">
+                        <span className="text-sm text-gray-700">📎 {selectedFile.name}</span>
+                        <button onClick={() => setSelectedFile(null)} className="text-red-500 text-sm">✕</button>
+                      </div>
+                    )}
+                    {selectedFile && (
+                      <Input
+                        placeholder="Adicione uma legenda (opcional)..."
+                        value={mediaCaption}
+                        onChange={(e) => setMediaCaption(e.target.value)}
+                        data-testid="input-media-caption"
+                      />
+                    )}
                     <div className="flex gap-2">
                       <Textarea
                         placeholder="Digite sua mensagem (Ctrl+Enter para enviar)..."
@@ -440,15 +540,48 @@ export default function ChatCenter() {
                         data-testid="textarea-message"
                         className="resize-none"
                         rows={3}
+                        disabled={!!selectedFile}
                       />
-                      <Button
-                        onClick={handleSendMessage}
-                        disabled={!messageText.trim() || sendMessageMutation.isPending}
-                        data-testid="button-send"
-                        className="self-end"
-                      >
-                        <Send className="w-4 h-4" />
-                      </Button>
+                      <div className="flex flex-col gap-2 self-end">
+                        {!selectedFile ? (
+                          <>
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              onChange={handleFileSelect}
+                              accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+                              className="hidden"
+                              data-testid="input-file"
+                            />
+                            <Button
+                              onClick={() => fileInputRef.current?.click()}
+                              variant="outline"
+                              size="icon"
+                              data-testid="button-upload"
+                            >
+                              <Paperclip className="w-4 h-4" />
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            onClick={handleSendMedia}
+                            disabled={sendMediaMutation.isPending || uploadFileMutation.isPending}
+                            data-testid="button-send-media"
+                            className="bg-blue-600"
+                          >
+                            {uploadFileMutation.isPending ? "Enviando..." : <Send className="w-4 h-4" />}
+                          </Button>
+                        )}
+                        {!selectedFile && (
+                          <Button
+                            onClick={handleSendMessage}
+                            disabled={!messageText.trim() || sendMessageMutation.isPending}
+                            data-testid="button-send"
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
