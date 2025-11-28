@@ -5679,12 +5679,17 @@ export class DatabaseStorage implements IStorage {
               try {
                 const seller = await db.select().from(users).where(eq(users.id, c.sellerId));
                 if (seller[0]) {
-                  // Montar nome completo: firstName + lastName, ou apenas firstName, ou apenas lastName
-                  const firstName = seller[0].firstName || '';
-                  const lastName = seller[0].lastName || '';
-                  sellerName = (firstName && lastName) 
-                    ? `${firstName} ${lastName}` 
-                    : firstName || lastName || seller[0].email;
+                  // Montar nome: firstName + lastName, ou extrair do email
+                  const firstName = seller[0].firstName?.trim() || '';
+                  const lastName = seller[0].lastName?.trim() || '';
+                  
+                  if (firstName || lastName) {
+                    sellerName = `${firstName} ${lastName}`.trim();
+                  } else {
+                    // Se não houver nome, extrair do email (antes do @)
+                    const email = seller[0].email || '';
+                    sellerName = email.split('@')[0] || email;
+                  }
                 }
               } catch (err) {
                 console.warn('Erro ao buscar vendedor:', err);
