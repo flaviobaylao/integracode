@@ -449,14 +449,13 @@ export default function ActiveCustomers() {
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
-                        <TableHead>Últimas 2 Visitas</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -515,29 +514,7 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col gap-1">
-                                {ac.lastTwoVisits.length === 0 ? (
-                                  <span className="text-xs text-muted-foreground">Sem histórico</span>
-                                ) : (
-                                  ac.lastTwoVisits.map((v, i) => {
-                                    try {
-                                      const date = v.date ? new Date(v.date) : null;
-                                      if (!date || isNaN(date.getTime())) return null;
-                                      return (
-                                        <div key={i} className="flex items-center gap-1 text-xs">
-                                          <span>{format(date, "dd/MM", { locale: ptBR })}</span>
-                                          {getVisitStatusBadge(v.status)}
-                                        </div>
-                                      );
-                                    } catch {
-                                      return null;
-                                    }
-                                  })
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-col gap-1">
+                              <div className="flex gap-2">
                                 {ac.nextThreeVisits.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">Sem agendamento</span>
                                 ) : (
@@ -546,10 +523,9 @@ export default function ActiveCustomers() {
                                       const date = v.date ? new Date(v.date) : null;
                                       if (!date || isNaN(date.getTime())) return null;
                                       return (
-                                        <div key={i} className="flex items-center gap-1 text-xs">
-                                          <Calendar className="h-3 w-3 text-muted-foreground" />
-                                          <span>{format(date, "dd/MM", { locale: ptBR })}</span>
-                                        </div>
+                                        <Badge key={i} variant="secondary" className="text-xs">
+                                          {format(date, "dd/MM", { locale: ptBR })}
+                                        </Badge>
                                       );
                                     } catch {
                                       return null;
