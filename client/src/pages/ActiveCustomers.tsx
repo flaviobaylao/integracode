@@ -81,6 +81,7 @@ interface UploadRecord {
 }
 
 // Função para parsear e NORMALIZAR weekdays para forma abreviada
+// NUNCA tenta JSON.parse - apenas extrai valores válidos
 function parseWeekdaysArray(weekdays: any): string[] {
   if (!weekdays) return [];
   
@@ -93,17 +94,27 @@ function parseWeekdaysArray(weekdays: any): string[] {
     } else {
       const str = String(weekdays).trim();
       
-      // Se é JSON array
-      if (str.startsWith('[') && str.endsWith(']')) {
-        const parsed = JSON.parse(str);
-        days = (Array.isArray(parsed) ? parsed : []).map(d => String(d).trim()).filter(d => d);
-      }
-      // Se é PostgreSQL array
-      else if (str.startsWith('{') && str.endsWith('}')) {
+      // Se é PostgreSQL array format: {Seg,Ter} or {"Seg","Ter"}
+      if (str.startsWith('{') && str.endsWith('}')) {
         const inner = str.slice(1, -1);
         days = inner.split(',').map(d => d.trim().replace(/^"|"$/g, '')).filter(d => d);
       }
-      // Se é string simples
+      // Se é JSON array format: ["Seg","Ter"]
+      else if (str.startsWith('[') && str.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(str);
+          days = (Array.isArray(parsed) ? parsed : []).map(d => String(d).trim()).filter(d => d);
+        } catch {
+          // Se falhar JSON.parse, trata como string simples
+          days = [str];
+        }
+      }
+      // Se é string simples separada por vírgula/semicolon/space
+      // Ex: "segunda,terça" ou "segunda; terça" ou "segunda e terça"
+      else if (str.includes(',') || str.includes(';') || str.includes('/') || str.includes(' e ')) {
+        days = str.split(/[,;/]|\s+e\s+/).map(d => d.trim()).filter(d => d);
+      }
+      // Fallback: tratar como um único valor
       else {
         days = [str];
       }
