@@ -49,6 +49,7 @@ import TelemarketingHub from "@/pages/TelemarketingHub";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
 import ActiveCustomers from "@/pages/ActiveCustomers";
+import ChatTest from "@/pages/ChatTest";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -182,6 +183,7 @@ function Router() {
           <Route path="/telemarketing/conversas" component={ChatManagement} />
           <Route path="/telemarketing/atendimento" component={ChatCenter} />
           <Route path="/telemarketing/templates" component={QuickTemplates} />
+          <Route path="/telemarketing/test" component={ChatTest} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />

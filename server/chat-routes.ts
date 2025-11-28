@@ -2055,5 +2055,94 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/sync-contacts - Sincronizar contatos do WhatsApp para o banco de dados
+  app.post("/api/chat/sync-contacts", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log("👥 [SYNC-CONTACTS] Iniciando sincronização de contatos do WhatsApp...");
+      
+      // Buscar todas as conversas do WhatsApp (os contatos)
+      const allChatsResult = await evolutionAPIService.fetchAllChats('CHAT_HONEST');
+      
+      if (!allChatsResult.success || !allChatsResult.chats) {
+        return res.status(400).json({ 
+          error: allChatsResult.error || 'Erro ao buscar contatos do WhatsApp',
+          success: false 
+        });
+      }
+
+      const chats = allChatsResult.chats;
+      console.log(`👥 [SYNC-CONTACTS] Total de contatos encontrados: ${chats.length}`);
+      
+      let createdCount = 0;
+      let alreadyExists = 0;
+      let errorCount = 0;
+      const results: any[] = [];
+
+      for (let i = 0; i < chats.length; i++) {
+        try {
+          const chat = chats[i];
+          const contactPhone = evolutionAPIService.extractPhoneNumber(chat.id);
+          const normalizedPhone = normalizePhoneNumber(contactPhone);
+          const contactName = chat.name || contactPhone;
+          
+          if (!normalizedPhone || normalizedPhone.length < 10) {
+            console.warn(`⚠️  [SYNC-CONTACTS] Telefone inválido: ${contactPhone}`);
+            continue;
+          }
+
+          // Buscar ou criar cliente
+          let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+          if (!customer) {
+            customer = await storage.createChatCustomer({
+              phone: normalizedPhone,
+              name: contactName
+            });
+            createdCount++;
+            console.log(`✅ [SYNC-CONTACTS] Contato criado: ${contactName} (${normalizedPhone})`);
+            results.push({
+              phone: normalizedPhone,
+              name: contactName,
+              status: 'created'
+            });
+          } else {
+            alreadyExists++;
+            console.log(`⚪ [SYNC-CONTACTS] Contato já existe: ${contactName} (${normalizedPhone})`);
+            results.push({
+              phone: normalizedPhone,
+              name: contactName,
+              status: 'exists'
+            });
+          }
+        } catch (error: any) {
+          errorCount++;
+          console.error(`❌ [SYNC-CONTACTS] Erro ao sincronizar contato:`, error.message);
+          results.push({
+            status: 'error',
+            error: error.message
+          });
+        }
+      }
+
+      console.log(`🎉 [SYNC-CONTACTS] Sincronização concluída: ${createdCount} criados, ${alreadyExists} já existiam`);
+      
+      res.json({
+        success: true,
+        summary: {
+          totalContacts: chats.length,
+          created: createdCount,
+          alreadyExists,
+          errors: errorCount
+        },
+        details: results.slice(0, 50)
+      });
+    } catch (error: any) {
+      console.error("[SYNC-CONTACTS] Erro:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro ao sincronizar contatos", 
+        success: false 
+      });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
