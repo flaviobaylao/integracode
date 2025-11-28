@@ -553,6 +553,7 @@ export default function ActiveCustomers() {
                         <TableHead>Status</TableHead>
                         <TableHead>CPF/CNPJ</TableHead>
                         <TableHead>Nome</TableHead>
+                        <TableHead>Telefone</TableHead>
                         <TableHead>Vendedor</TableHead>
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
@@ -563,7 +564,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -593,6 +594,9 @@ export default function ActiveCustomers() {
                                   {ac.customer.neighborhood}
                                 </div>
                               )}
+                            </TableCell>
+                            <TableCell className="font-mono text-sm">
+                              {ac.customer?.phone || "-"}
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">
