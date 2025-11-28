@@ -5656,15 +5656,10 @@ export class DatabaseStorage implements IStorage {
   }
   
   async getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]> {
-    // Fase 1: Buscar todos os clientes ativos
     const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).limit(1000);
     
-    if (active.length === 0) {
-      console.log('ℹ️ Nenhum cliente ativo encontrado');
-      return [];
-    }
+    if (active.length === 0) return [];
     
-    // Fase 2: Batch load de customers (máximo 1000)
     const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
     const customerMap = new Map<string, any>();
     const sellerIds = new Set<string>();
@@ -5677,7 +5672,6 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    // Fase 2b: Batch load de sellers para pegar nomes
     const sellerMap = new Map<string, { name: string }>();
     if (sellerIds.size > 0) {
       const sellersData = await db.select().from(users).where(inArray(users.id, Array.from(sellerIds)));
@@ -5686,88 +5680,63 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
-    // Fase 3: Batch load de visitas
+    // Buscar todas as visitas para os clientes
     const visitsByCustomer = new Map<string, { past: any[]; future: any[] }>();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayMs = new Date().setHours(0, 0, 0, 0);
     
     if (customerIds.length > 0) {
-      // Get all visits (past and future) for active customers in one query
-      const allVisits = await db
-        .select()
-        .from(visitAgenda)
-        .where(inArray(visitAgenda.customerId, customerIds))
-        .orderBy(desc(visitAgenda.scheduledDate));
+      const allVisits = await db.select().from(visitAgenda).where(inArray(visitAgenda.customerId, customerIds));
       
-      // Group by customer
       for (const v of allVisits) {
         if (!visitsByCustomer.has(v.customerId)) {
           visitsByCustomer.set(v.customerId, { past: [], future: [] });
         }
         
-        const visits = visitsByCustomer.get(v.customerId)!;
-        
-        // Convert scheduledDate to Date object properly
-        let visitDate: Date;
+        // Converter scheduled_date para timestamp em UTC (midnight)
+        let visitTime: number;
         if (v.scheduledDate instanceof Date) {
-          visitDate = new Date(v.scheduledDate);
+          visitTime = v.scheduledDate.setHours(0, 0, 0, 0);
         } else {
-          // Try to parse as string or timestamp
-          visitDate = new Date(v.scheduledDate);
+          visitTime = new Date(v.scheduledDate).setHours(0, 0, 0, 0);
         }
         
-        // Normalize to midnight for comparison
-        const visitDateNorm = new Date(visitDate.getFullYear(), visitDate.getMonth(), visitDate.getDate());
-        const todayNorm = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        
-        if (visitDateNorm < todayNorm) {
-          if (visits.past.length < 2) {
-            visits.past.push(v);
-          }
+        const visits = visitsByCustomer.get(v.customerId)!;
+        if (visitTime < todayMs) {
+          if (visits.past.length < 2) visits.past.push(v);
         } else {
-          if (visits.future.length < 3) {
-            visits.future.push(v);
-          }
+          if (visits.future.length < 3) visits.future.push(v);
         }
+      }
+      
+      // Ordenar
+      for (const visits of visitsByCustomer.values()) {
+        visits.past.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
+        visits.future.sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
       }
     }
     
-    // Fase 4: Montar resultado final
     const result: ActiveCustomerWithVisits[] = active.map((ac) => {
       const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
       const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
       
-      const lastTwoVisits = visits?.past.map(v => {
-        const dateObj = v.scheduledDate instanceof Date ? v.scheduledDate : new Date(v.scheduledDate);
-        return { 
-          date: dateObj.toISOString().split('T')[0], 
-          status: v.visitStatus || 'pending' 
-        };
-      }) || [];
+      const lastTwoVisits = (visits?.past || []).map(v => ({
+        date: v.scheduledDate instanceof Date ? v.scheduledDate.toISOString().split('T')[0] : new Date(v.scheduledDate).toISOString().split('T')[0],
+        status: v.visitStatus || 'pending'
+      }));
       
-      const nextThreeVisits = visits?.future.map(v => {
-        const dateObj = v.scheduledDate instanceof Date ? v.scheduledDate : new Date(v.scheduledDate);
-        return { 
-          date: dateObj.toISOString().split('T')[0], 
-          status: v.visitStatus || 'pending' 
-        };
-      }) || [];
-      
-      // Adicionar sellerName ao customer se existir
-      const enrichedCustomer = customer ? {
-        ...customer,
-        sellerName: customer.sellerId ? sellerMap.get(customer.sellerId)?.name : undefined
-      } : undefined;
+      const nextThreeVisits = (visits?.future || []).map(v => ({
+        date: v.scheduledDate instanceof Date ? v.scheduledDate.toISOString().split('T')[0] : new Date(v.scheduledDate).toISOString().split('T')[0],
+        status: v.visitStatus || 'pending'
+      }));
       
       return {
         ...ac,
-        customer: enrichedCustomer,
+        customer: customer ? { ...customer, sellerName: customer.sellerId ? sellerMap.get(customer.sellerId)?.name : undefined } : undefined,
         lastTwoVisits,
         nextThreeVisits
       };
     });
     
-    console.log(`✅ Retornando ${result.length} clientes ativos com visitas`);
     return result;
   }
   
