@@ -5706,14 +5706,15 @@ export class DatabaseStorage implements IStorage {
       const visitMap = new Map<string, Array<{ date: string; status: string }>>();
       try {
         if (customerIds.length > 0) {
+          // Buscar TODAS as visitas futuras (sem limit global que prejudica clientes no final)
           const upcomingVisits = await db.select().from(visitAgenda)
             .where(and(
               inArray(visitAgenda.customerId, customerIds),
               gte(visitAgenda.scheduledDate, today)
             ))
-            .orderBy(asc(visitAgenda.scheduledDate))
-            .limit(customerIds.length * 3);
+            .orderBy(asc(visitAgenda.scheduledDate));
           
+          // Agrupar por cliente e manter apenas 3 primeiras visitas de cada
           for (const visit of upcomingVisits) {
             if (!visitMap.has(visit.customerId)) {
               visitMap.set(visit.customerId, []);
