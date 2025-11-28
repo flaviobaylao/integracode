@@ -85,6 +85,8 @@ export default function ActiveCustomers() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const [selectedSeller, setSelectedSeller] = useState<string>("");
+  const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
+  const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -159,6 +161,31 @@ export default function ActiveCustomers() {
     ).values()
   ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+  // Obter lista única de dias de rota
+  const daysOfRoute = Array.from(
+    new Set(
+      activeCustomers
+        .filter(ac => ac.customer?.weekdays)
+        .flatMap(ac => {
+          try {
+            return JSON.parse(ac.customer?.weekdays || "[]");
+          } catch {
+            return [];
+          }
+        })
+    )
+  ).sort();
+
+  // Obter lista única de periodicidades
+  const periodicities = Array.from(
+    new Set(
+      activeCustomers
+        .filter(ac => ac.customer?.visitPeriodicity)
+        .map(ac => ac.customer?.visitPeriodicity)
+        .filter(Boolean) as string[]
+    )
+  ).sort();
+
   const filteredCustomers = activeCustomers.filter((ac) => {
     const searchLower = searchTerm.toLowerCase();
     const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
@@ -170,7 +197,13 @@ export default function ActiveCustomers() {
     // Filtro de vendedor
     const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
     
-    return matchesSearch && matchesSeller;
+    // Filtro de dia de rota
+    const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? JSON.parse(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
+    
+    // Filtro de periodicidade
+    const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
+    
+    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity;
   });
 
   const formatDocument = (doc: string, type: string) => {
@@ -297,7 +330,7 @@ export default function ActiveCustomers() {
         </TabsList>
 
         <TabsContent value="list" className="space-y-4">
-          <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
+          <div className="flex flex-col gap-3">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -309,11 +342,12 @@ export default function ActiveCustomers() {
               />
             </div>
             
-            <div className="flex items-center gap-2 w-full md:w-auto">
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-2 flex-wrap">
               <Filter className="h-4 w-4 text-muted-foreground" />
+              
               <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger className="w-full md:w-[250px]" data-testid="select-seller-filter">
-                  <SelectValue placeholder="Filtrar por vendedor..." />
+                <SelectTrigger className="w-full md:w-[200px]" data-testid="select-seller-filter">
+                  <SelectValue placeholder="Vendedor..." />
                 </SelectTrigger>
                 <SelectContent>
                   {sellers.map((seller) => (
@@ -323,13 +357,44 @@ export default function ActiveCustomers() {
                   ))}
                 </SelectContent>
               </Select>
-              {selectedSeller && (
+              
+              <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
+                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-day-filter">
+                  <SelectValue placeholder="Dia da Rota..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {daysOfRoute.map((day) => (
+                    <SelectItem key={day} value={day}>
+                      {day}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              
+              <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
+                <SelectTrigger className="w-full md:w-[150px]" data-testid="select-periodicity-filter">
+                  <SelectValue placeholder="Periodicidade..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {periodicities.map((period) => (
+                    <SelectItem key={period} value={period}>
+                      {period === 'semanal' ? 'Semanal' : period === 'quinzenal' ? 'Quinzenal' : period === 'mensal' ? 'Mensal' : period}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              
+              {(selectedSeller || selectedDayOfRoute || selectedPeriodicity) && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setSelectedSeller("")}
+                  onClick={() => {
+                    setSelectedSeller("");
+                    setSelectedDayOfRoute("");
+                    setSelectedPeriodicity("");
+                  }}
                   className="px-2"
-                  data-testid="button-clear-seller-filter"
+                  data-testid="button-clear-all-filters"
                 >
                   <X className="h-4 w-4" />
                 </Button>
