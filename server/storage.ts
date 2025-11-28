@@ -136,6 +136,7 @@ export interface IStorage {
   getCustomerByCpf(cpf: string): Promise<Customer | undefined>;
   getCustomerByCnpj(cnpj: string): Promise<Customer | undefined>;
   getCustomerByDocument(document: string): Promise<Customer | undefined>;
+  getCustomerByPhone(phone: string): Promise<CustomerWithSeller | undefined>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   updateCustomer(id: string, customer: Partial<InsertCustomer>): Promise<Customer>;
   inactivateCustomer(customerId: string, currentCardId: string): Promise<{ customer: Customer; deletedCards: number }>;
@@ -703,6 +704,21 @@ export class DatabaseStorage implements IStorage {
       );
     
     return customer;
+  }
+
+  async getCustomerByPhone(phone: string): Promise<CustomerWithSeller | undefined> {
+    const [result] = await db
+      .select()
+      .from(customers)
+      .leftJoin(users, eq(customers.sellerId, users.id))
+      .where(eq(customers.phone, phone));
+    
+    if (!result) return undefined;
+    
+    return {
+      ...result.customers,
+      seller: result.users!,
+    };
   }
 
   async createCustomer(customer: InsertCustomer): Promise<Customer> {

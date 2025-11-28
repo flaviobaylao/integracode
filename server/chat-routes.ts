@@ -2072,6 +2072,34 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/customer-seller/:phone - Buscar vendedor associado ao cliente
+  app.get("/api/chat/customer-seller/:phone", authenticateUser, async (req, res) => {
+    try {
+      const { phone } = req.params;
+      const customer = await storage.getCustomerByPhone(phone);
+      
+      if (!customer) {
+        return res.json({ 
+          success: true,
+          sellerName: "Sem vendedor atrelado",
+          found: false 
+        });
+      }
+      
+      const sellerName = customer.seller?.firstName ? `${customer.seller.firstName} ${customer.seller.lastName || ''}`.trim() : "Sem vendedor atrelado";
+      
+      res.json({
+        success: true,
+        sellerName,
+        found: true,
+        sellerId: customer.seller?.id
+      });
+    } catch (error: any) {
+      console.error("[CUSTOMER-SELLER] Erro:", error);
+      res.json({ success: true, sellerName: "Sem vendedor atrelado", found: false });
+    }
+  });
+
   // POST /api/chat/sync-contacts - Sincronizar contatos do WhatsApp para o banco de dados
   app.post("/api/chat/sync-contacts", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {

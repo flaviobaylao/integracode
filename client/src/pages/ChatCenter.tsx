@@ -120,6 +120,13 @@ export default function ChatCenter() {
   });
   const templates = (templatesData as any[]) || [];
 
+  // Fetch seller info for customer
+  const { data: sellerInfoData } = useQuery({
+    queryKey: ["/api/chat/customer-seller", selectedChat?.customerPhone],
+    enabled: !!selectedChat?.customerPhone,
+  });
+  const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
+
   // Mutation para fazer upload de arquivo
   const uploadFileMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -396,6 +403,10 @@ export default function ChatCenter() {
                           <Phone className="w-4 h-4 text-gray-600" />
                           <span className="text-sm text-gray-600">{selectedChat.customerPhone}</span>
                         </div>
+                        <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
+                          <User className="w-3 h-3" />
+                          <span>Vendedor: <strong>{sellerName}</strong></span>
+                        </div>
                       </div>
                       <Badge className={getStatusColor(selectedChat.status)}>
                         {selectedChat.status === "new" ? "Novo" : 
@@ -435,6 +446,11 @@ export default function ChatCenter() {
                                   <div className="flex items-center gap-2 mb-2">
                                     <span className="inline-block h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
                                     <span className="text-xs font-bold text-blue-700">NÃO LIDA</span>
+                                  </div>
+                                )}
+                                {msg.senderType !== "agent" && (
+                                  <div className="text-xs font-semibold mb-1 opacity-80">
+                                    👤 {sellerName}
                                   </div>
                                 )}
                                 {msg.mediaUrl && (
