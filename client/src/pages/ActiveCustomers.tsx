@@ -92,12 +92,24 @@ export default function ActiveCustomers() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery<ActiveCustomerWithVisits[]>({
+  const { 
+    data: activeCustomers = [], 
+    isLoading: isLoadingCustomers,
+    isError: isErrorCustomers,
+    error: customerError
+  } = useQuery<ActiveCustomerWithVisits[]>({
     queryKey: ["/api/active-customers"],
+    retry: 2,
   });
 
-  const { data: uploads = [], isLoading: isLoadingUploads } = useQuery<UploadRecord[]>({
+  const { 
+    data: uploads = [], 
+    isLoading: isLoadingUploads,
+    isError: isErrorUploads,
+    error: uploadError
+  } = useQuery<UploadRecord[]>({
     queryKey: ["/api/active-customers/uploads"],
+    retry: 2,
   });
 
   const uploadMutation = useMutation({
@@ -268,6 +280,26 @@ export default function ActiveCustomers() {
     unmatched: activeCustomers.filter(ac => ac.matchStatus === "unmatched").length,
     virtual: activeCustomers.filter(ac => ac.customer?.virtualService).length,
   };
+
+  // Mostrar erro se houver
+  if (isErrorCustomers) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-6 flex items-center justify-center">
+        <div className="max-w-md bg-white rounded-lg shadow-lg p-8 text-center">
+          <div className="text-4xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Erro ao carregar clientes</h2>
+          <p className="text-gray-600 mb-6">{customerError?.message || "Não foi possível carregar a lista de clientes ativos"}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+            data-testid="button-reload"
+          >
+            Recarregar Página
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto p-4 space-y-6">
