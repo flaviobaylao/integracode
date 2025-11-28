@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -137,8 +138,33 @@ export default function ActiveCustomers() {
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
+  const [editingPhone, setEditingPhone] = useState<{customerId: string; currentPhone: string} | null>(null);
+  const [phoneInput, setPhoneInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const updatePhoneMutation = useMutation({
+    mutationFn: async (data: { customerId: string; phone: string }) => {
+      const res = await apiRequest('PATCH', `/api/customers/${data.customerId}/phone`, { phone: data.phone });
+      return res;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Sucesso",
+        description: "Telefone atualizado com sucesso!",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      setEditingPhone(null);
+      setPhoneInput("");
+    },
+    onError: () => {
+      toast({
+        title: "Erro",
+        description: "Falha ao atualizar telefone",
+        variant: "destructive",
+      });
+    },
+  });
 
   const { 
     data: activeCustomers = [], 
@@ -570,7 +596,17 @@ export default function ActiveCustomers() {
                         </TableRow>
                       ) : (
                         filteredCustomers.map((ac) => (
-                          <TableRow key={ac.id} data-testid={`row-customer-${ac.id}`}>
+                          <TableRow 
+                            key={ac.id} 
+                            data-testid={`row-customer-${ac.id}`}
+                            onClick={() => {
+                              if (ac.customer?.id) {
+                                setEditingPhone({ customerId: ac.customer.id, currentPhone: ac.customer.phone || "" });
+                                setPhoneInput(ac.customer.phone || "");
+                              }
+                            }}
+                            className="cursor-pointer hover:bg-muted/50 transition-colors"
+                          >
                             <TableCell>
                               {ac.matchStatus === "matched" ? (
                                 <span title="Encontrado no sistema">
@@ -657,6 +693,52 @@ export default function ActiveCustomers() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Dialog para editar telefone */}
+        <Dialog open={!!editingPhone} onOpenChange={(open) => !open && setEditingPhone(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Editar Telefone de Contato</DialogTitle>
+              <DialogDescription>
+                Clique na linha do cliente para editar o telefone de contato
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Novo Telefone</label>
+                <Input
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="Digite o novo telefone"
+                  data-testid="input-phone-edit"
+                />
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditingPhone(null)}
+                  data-testid="button-cancel-phone"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (editingPhone && phoneInput.trim()) {
+                      updatePhoneMutation.mutate({
+                        customerId: editingPhone.customerId,
+                        phone: phoneInput.trim()
+                      });
+                    }
+                  }}
+                  disabled={updatePhoneMutation.isPending || !phoneInput.trim()}
+                  data-testid="button-save-phone"
+                >
+                  {updatePhoneMutation.isPending ? "Salvando..." : "Salvar"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <TabsContent value="history" className="space-y-4">
           <Card>
