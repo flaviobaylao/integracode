@@ -16245,8 +16245,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   
   // Listar clientes ativos com histórico de visitas
-  app.get('/api/active-customers', authenticateUser, async (req: any, res) => {
+  app.get('/api/active-customers', async (req: any, res) => {
     try {
+      // Autenticação simples - apenas verificar se há usuário
+      if (!req.session?.userId && !req.session?.user?.claims?.sub) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
       const activeCustomers = await storage.getActiveCustomersWithVisits();
       res.json(activeCustomers);
     } catch (error) {
@@ -16256,8 +16261,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Histórico de uploads
-  app.get('/api/active-customers/uploads', authenticateUser, async (req: any, res) => {
+  app.get('/api/active-customers/uploads', async (req: any, res) => {
     try {
+      // Autenticação simples
+      if (!req.session?.userId && !req.session?.user?.claims?.sub) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
       const uploads = await storage.getActiveCustomerUploads();
       res.json(uploads);
     } catch (error) {
