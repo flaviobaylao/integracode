@@ -5719,13 +5719,22 @@ export class DatabaseStorage implements IStorage {
       const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
       const visits = ac.customerId ? visitsByCustomer.get(ac.customerId) : undefined;
       
+      const formatDate = (d: any) => {
+        if (!d) return '';
+        const date = d instanceof Date ? d : new Date(d);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      
       const lastTwoVisits = (visits?.past || []).map(v => ({
-        date: v.scheduledDate instanceof Date ? v.scheduledDate.toISOString().split('T')[0] : new Date(v.scheduledDate).toISOString().split('T')[0],
+        date: formatDate(v.scheduledDate),
         status: v.visitStatus || 'pending'
       }));
       
       const nextThreeVisits = (visits?.future || []).map(v => ({
-        date: v.scheduledDate instanceof Date ? v.scheduledDate.toISOString().split('T')[0] : new Date(v.scheduledDate).toISOString().split('T')[0],
+        date: formatDate(v.scheduledDate),
         status: v.visitStatus || 'pending'
       }));
       
