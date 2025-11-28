@@ -80,6 +80,43 @@ interface UploadRecord {
   errorMessage: string | null;
 }
 
+// Função robusta para parsear weekdays em qualquer formato
+function parseWeekdaysArray(weekdays: any): string[] {
+  if (!weekdays) return [];
+  
+  try {
+    // Se já é array, retorna direto
+    if (Array.isArray(weekdays)) {
+      return weekdays.filter(d => typeof d === 'string' && d.trim());
+    }
+    
+    const str = String(weekdays).trim();
+    
+    // Se é JSON válido, parse
+    if (str.startsWith('[') && str.endsWith(']')) {
+      const parsed = JSON.parse(str);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+    
+    // Se é array PostgreSQL {Seg,Ter}
+    if (str.startsWith('{') && str.endsWith('}')) {
+      const inner = str.slice(1, -1);
+      return inner.split(',').map(d => d.trim()).filter(d => d);
+    }
+    
+    // Se é string separada por vírgulas/semicolons
+    if (str.includes(',') || str.includes(';') || str.includes('/')) {
+      return str.split(/[,;/]/).map(d => d.trim()).filter(d => d);
+    }
+    
+    // Se é um único valor
+    return [str];
+  } catch (error) {
+    console.warn('Erro ao parsear weekdays:', weekdays, error);
+    return [];
+  }
+}
+
 export default function ActiveCustomers() {
   const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
@@ -202,13 +239,7 @@ export default function ActiveCustomers() {
     new Set(
       activeCustomers
         .filter(ac => ac.customer?.weekdays)
-        .flatMap(ac => {
-          try {
-            return JSON.parse(ac.customer?.weekdays || "[]");
-          } catch {
-            return [];
-          }
-        })
+        .flatMap(ac => parseWeekdaysArray(ac.customer?.weekdays))
     )
   ).sort();
 
@@ -234,7 +265,7 @@ export default function ActiveCustomers() {
     const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
     
     // Filtro de dia de rota
-    const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? JSON.parse(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
+    const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
     
     // Filtro de periodicidade
     const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
