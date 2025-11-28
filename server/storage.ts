@@ -5663,10 +5663,21 @@ export class DatabaseStorage implements IStorage {
       
       if (active.length === 0) return [];
       
-      // Retornar dados simples primeiro para evitar problemas
+      // Buscar clientes associados
+      const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
+      const customerMap = new Map<string, any>();
+      
+      if (customerIds.length > 0) {
+        const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
+        for (const c of customersData) {
+          customerMap.set(c.id, c);
+        }
+      }
+      
+      // Retornar dados com clientes
       const result: ActiveCustomerWithVisits[] = active.map((ac) => ({
         ...ac,
-        customer: undefined,
+        customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
         lastTwoVisits: [],
         nextThreeVisits: []
       }));
