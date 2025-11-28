@@ -1282,7 +1282,23 @@ export default function RotaDoDia() {
                         {lead.fantasyName}
                       </div>
                       {lead.contact && <div className="text-sm text-gray-500">{lead.contact}</div>}
-                      {lead.phone && <div className="text-xs text-gray-400">{lead.phone}</div>}
+                      {lead.phone && (
+                        <div 
+                          className="text-xs text-gray-400 cursor-pointer hover:text-blue-600 hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const phone = prompt('Novo telefone:', lead.phone);
+                            if (phone && phone !== lead.phone) {
+                              apiRequest('PATCH', `/api/customers/${lead.id}/phone`, { phone }).then(() => {
+                                toast({ title: "Telefone atualizado com sucesso" });
+                              }).catch(err => toast({ title: "Erro ao atualizar telefone", variant: "destructive" }));
+                            }
+                          }}
+                          data-testid={`editable-lead-phone-${lead.id}`}
+                        >
+                          {lead.phone}
+                        </div>
+                      )}
                       <div className="text-xs text-purple-600 mt-1">
                         Status: {lead.status === 'pending' ? 'Pendente' : lead.status}
                       </div>

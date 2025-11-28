@@ -427,7 +427,22 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               
               <div className="flex items-center space-x-2 text-gray-700">
                 <Phone className="h-4 w-4" />
-                <span>{card.customer.phone}</span>
+                <span 
+                  onClick={() => {
+                    const phone = prompt('Novo telefone:', card.customer.phone);
+                    if (phone && phone !== card.customer.phone) {
+                      apiRequest('PATCH', `/api/customers/${card.customer.id}/phone`, { phone }).then(() => {
+                        toast({ title: "Telefone atualizado com sucesso" });
+                        queryClient.invalidateQueries({ queryKey: ['/api/sales-cards', card.id] });
+                        onClose?.();
+                      }).catch(err => toast({ title: "Erro ao atualizar telefone", variant: "destructive" }));
+                    }
+                  }}
+                  className="cursor-pointer hover:text-blue-600 hover:underline"
+                  data-testid={`editable-phone-modal-${card.id}`}
+                >
+                  {card.customer.phone}
+                </span>
                 <WhatsAppButton 
                   phone={card.customer.phone} 
                   customerName={card.customer.fantasyName || card.customer.name}
