@@ -5706,12 +5706,23 @@ export class DatabaseStorage implements IStorage {
         }
         
         const visits = visitsByCustomer.get(v.customerId)!;
-        const visitDate = new Date(v.scheduledDate);
-        visitDate.setHours(0, 0, 0, 0);
         
-        if (visitDate < today) {
+        // Convert scheduledDate to Date object properly
+        let visitDate: Date;
+        if (v.scheduledDate instanceof Date) {
+          visitDate = new Date(v.scheduledDate);
+        } else {
+          // Try to parse as string or timestamp
+          visitDate = new Date(v.scheduledDate);
+        }
+        
+        // Normalize to midnight for comparison
+        const visitDateNorm = new Date(visitDate.getFullYear(), visitDate.getMonth(), visitDate.getDate());
+        const todayNorm = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        
+        if (visitDateNorm < todayNorm) {
           if (visits.past.length < 2) {
-            visits.past.push(v); // Already ordered desc, so add at end
+            visits.past.push(v);
           }
         } else {
           if (visits.future.length < 3) {
