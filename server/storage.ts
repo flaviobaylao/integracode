@@ -5399,24 +5399,30 @@ export class DatabaseStorage implements IStorage {
   }
   
   async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
-    // 🪞 ESPELHO WHATSAPP: Verificar duplicata por externalId antes de inserir
+    // 🪞 ESPELHO WHATSAPP: Inserir com proteção contra race conditions
     // Se mensagem com mesmo externalId já existe, retorna a existente sem erro
     if (messageData.externalId) {
-      // Primeiro verificar se já existe
-      const existing = await db
-        .select()
-        .from(chatMessages)
-        .where(eq(chatMessages.externalId, messageData.externalId))
-        .limit(1);
-      
-      if (existing.length > 0) {
-        console.log(`⏭️  [STORAGE] Mensagem duplicada ignorada: ${messageData.externalId}`);
-        return existing[0];
+      try {
+        // Tentar inserir diretamente - o índice único irá rejeitar duplicatas
+        const [message] = await db.insert(chatMessages).values(messageData).returning();
+        return message;
+      } catch (error: any) {
+        // Se for erro de duplicata (código 23505 = unique_violation), buscar existente
+        if (error.code === '23505' && error.constraint?.includes('external_id')) {
+          console.log(`⏭️  [STORAGE] Mensagem duplicada (race condition), buscando existente: ${messageData.externalId}`);
+          const existing = await db
+            .select()
+            .from(chatMessages)
+            .where(eq(chatMessages.externalId, messageData.externalId))
+            .limit(1);
+          
+          if (existing.length > 0) {
+            return existing[0];
+          }
+        }
+        // Re-lançar outros erros
+        throw error;
       }
-      
-      // Se não existe, inserir normalmente
-      const [message] = await db.insert(chatMessages).values(messageData).returning();
-      return message;
     }
     
     // Fallback para mensagens sem externalId (mensagens internas do sistema)
