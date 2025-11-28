@@ -16246,6 +16246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Upload de planilha de clientes ativos - OTIMIZADO com batch processing
   app.post('/api/active-customers/upload', authenticateUser, requireRole(['admin', 'coordinator']), upload.single('file'), async (req: any, res) => {
+    let uploadRecord: any = null;
     try {
       const user = req.currentUser;
       const file = req.file;
@@ -16254,12 +16255,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Nenhum arquivo enviado' });
       }
       
+      if (!user || !user.id) {
+        return res.status(401).json({ message: 'Usuário não autenticado' });
+      }
+      
       // Create upload record
-      const uploadRecord = await storage.createActiveCustomerUpload({
-        fileName: file.originalname,
-        uploadedBy: user.id,
-        processingStatus: 'processing'
-      });
+      try {
+        uploadRecord = await storage.createActiveCustomerUpload({
+          fileName: file.originalname,
+          uploadedBy: user.id,
+          processingStatus: 'processing'
+        });
+      } catch (uploadRecordError) {
+        console.error('❌ Erro ao criar registro de upload:', uploadRecordError);
+        return res.status(500).json({ message: 'Erro ao criar registro de upload', error: String(uploadRecordError) });
+      }
       
       try {
         // Parse Excel file
@@ -16270,17 +16280,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`📊 Processando ${data.length} linhas do arquivo ${file.originalname}`);
         
+        if (data.length === 0) {
+          await storage.updateActiveCustomerUpload(uploadRecord.id, {
+            processingStatus: 'error',
+            errorMessage: 'Arquivo vazio'
+          });
+          return res.status(400).json({ message: 'Arquivo vazio' });
+        }
+        
         // Fase 1: Extrair e normalizar todos os documentos
         const documentsMap = new Map<string, { fantasyName: string; documentType: string }>();
         
-        // Debug: mostrar primeiras linhas e colunas
-        if (data.length > 0) {
-          console.log('📋 Primeiras linhas do arquivo:', JSON.stringify(data.slice(0, 2), null, 2));
-          console.log('📋 Colunas disponíveis:', Object.keys(data[0] || {}));
-        }
-        
         for (const row of data) {
-          // Mais flexível: procura em todas as chaves que contenham "cpf" ou "cnpj"
           let document = '';
           let fantasyName = '';
           
@@ -16295,16 +16306,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
           
-          if (!document) {
-            console.log('⚠️ Linha sem documento encontrado:', Object.keys(row));
-            continue;
-          }
+          if (!document) continue;
           
           const normalizedDoc = String(document).replace(/\D/g, '');
-          if (!normalizedDoc) {
-            console.log('⚠️ Documento não possui dígitos:', document);
-            continue;
-          }
+          if (!normalizedDoc) continue;
           
           const documentType = normalizedDoc.length <= 11 ? 'cpf' : 'cnpj';
           documentsMap.set(normalizedDoc, { fantasyName: fantasyName || '', documentType });
@@ -16375,7 +16380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`✅ Upload processado: ${data.length} linhas, ${matched} encontrados, ${unmatched} não encontrados, ${added} adicionados, ${removed} removidos`);
         
-        res.json({
+        const response = {
           message: 'Upload processado com sucesso',
           uploadId: uploadRecord.id,
           totalRecords: data.length,
@@ -16384,20 +16389,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           addedCustomers: added,
           removedCustomers: removed,
           keptCustomers: updated
-        });
+        };
+        
+        return res.json(response);
         
       } catch (parseError) {
-        console.error('Erro ao processar planilha:', parseError);
-        await storage.updateActiveCustomerUpload(uploadRecord.id, {
-          processingStatus: 'error',
-          errorMessage: String(parseError)
-        });
-        res.status(400).json({ message: 'Erro ao processar planilha', error: String(parseError) });
+        console.error('❌ Erro ao processar planilha:', parseError);
+        if (uploadRecord) {
+          await storage.updateActiveCustomerUpload(uploadRecord.id, {
+            processingStatus: 'error',
+            errorMessage: String(parseError)
+          });
+        }
+        return res.status(400).json({ message: 'Erro ao processar planilha', error: String(parseError) });
       }
       
     } catch (error) {
-      console.error('Erro no upload de clientes ativos:', error);
-      res.status(500).json({ message: 'Erro ao processar upload' });
+      console.error('❌ Erro no upload de clientes ativos:', error);
+      if (uploadRecord) {
+        try {
+          await storage.updateActiveCustomerUpload(uploadRecord.id, {
+            processingStatus: 'error',
+            errorMessage: String(error)
+          });
+        } catch (e) {
+          console.error('Erro ao atualizar status de upload:', e);
+        }
+      }
+      return res.status(500).json({ message: 'Erro ao processar upload', error: String(error) });
     }
   });
   
