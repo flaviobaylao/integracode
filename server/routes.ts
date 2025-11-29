@@ -16304,6 +16304,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ACTIVE CUSTOMERS ENDPOINTS - Gestão de Clientes Ativos
   // ============================================================================
   
+  // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas do banco principal)
+  app.get('/api/customers/map-data', async (req: any, res) => {
+    try {
+      // Buscar todos os clientes ativos com seus dados de visita
+      const activeCustomers = await storage.getActiveCustomersWithVisits() || [];
+      
+      // Buscar todos os clientes do banco principal
+      const allCustomers = await storage.getCustomers() || [];
+      
+      // Criar mapa para busca rápida por CPF/CNPJ
+      const customerByCpfCnpj = new Map();
+      allCustomers.forEach((c: any) => {
+        if (c.document) {
+          customerByCpfCnpj.set(c.document.replace(/\D/g, ''), c);
+        }
+      });
+      
+      // Sincronizar: pegar dados de clientes ativos mas com coordenadas do banco principal
+      const mapData = activeCustomers
+        .map((ac: any) => {
+          const cleanDoc = ac.document?.replace(/\D/g, '');
+          const mainCustomer = cleanDoc ? customerByCpfCnpj.get(cleanDoc) : null;
+          
+          if (mainCustomer && mainCustomer.latitude && mainCustomer.longitude) {
+            return {
+              id: mainCustomer.id,
+              name: mainCustomer.name,
+              fantasyName: mainCustomer.fantasyName,
+              phone: mainCustomer.phone,
+              address: mainCustomer.address,
+              document: mainCustomer.document,
+              latitude: mainCustomer.latitude,
+              longitude: mainCustomer.longitude,
+              weekdays: mainCustomer.weekdays,
+              isActive: true,
+              visitDay: mainCustomer.weekdays,
+              customerId: ac.customerId,
+              sellerName: ac.customer?.sellerName
+            };
+          }
+          return null;
+        })
+        .filter((c: any) => c !== null);
+      
+      console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados`);
+      res.json(mapData);
+    } catch (error) {
+      console.error('Erro ao buscar dados do mapa:', error);
+      res.status(500).json({ message: 'Erro ao buscar dados do mapa' });
+    }
+  });
+  
   // Listar clientes ativos com histórico de visitas
   app.get('/api/active-customers', async (req: any, res) => {
     try {

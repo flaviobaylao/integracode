@@ -136,11 +136,12 @@ export default function ClientsMap() {
   // Controle de acesso: apenas administrativos
   const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
-  // Query para buscar todos os clientes ativos
+  // Query para buscar clientes mapeados (sincroniza Clientes Ativos com coordenadas)
   const { data: customers = [], isLoading } = useQuery<Customer[]>({
-    queryKey: ['/api/customers'],
-    queryFn: () => apiRequest('GET', '/api/customers'),
+    queryKey: ['/api/customers/map-data'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-data'),
     enabled: !!canAccess,
+    refetchInterval: 30000, // Atualizar a cada 30 segundos
   });
 
   // Filtrar apenas clientes ativos com coordenadas válidas
