@@ -1004,6 +1004,38 @@ export class DatabaseStorage implements IStorage {
   // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda) 
   // CRUZANDO COM active_customers para usar APENAS clientes da planilha importada
   // IMPORTANTE: Respeita o limite de 3 PRÓXIMAS VISITAS por cliente
+  // Buscar clientes com visitas virtuais marcadas na visitAgenda para uma data específica
+  async getCustomersWithVirtualVisitsOnDate(sellerId: string, date: Date): Promise<Customer[]> {
+    try {
+      const dateStr = date.toISOString().split('T')[0];
+      const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
+      const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+      
+      // Buscar visitas marcadas como virtuais para esta data
+      const virtualVisits = await db.select({
+        customerId: visitAgenda.customerId
+      })
+      .from(visitAgenda)
+      .where(
+        and(
+          gte(visitAgenda.scheduledDate, startOfDay),
+          lte(visitAgenda.scheduledDate, endOfDay),
+          eq(visitAgenda.sellerId, sellerId),
+          eq(visitAgenda.isVirtual, true)
+        )
+      );
+      
+      if (virtualVisits.length === 0) return [];
+      
+      const customerIds = [...new Set(virtualVisits.map(v => v.customerId))];
+      
+      return await db.select().from(customers).where(inArray(customers.id, customerIds));
+    } catch (error: any) {
+      console.warn(`⚠️ Erro em getCustomersWithVirtualVisitsOnDate:`, error.message);
+      return [];
+    }
+  }
+
   async getCustomersFromPlannedVisits(sellerId: string, date: Date): Promise<Customer[]> {
     try {
       const dateStr = date.toISOString().split('T')[0];

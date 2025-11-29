@@ -327,6 +327,7 @@ export async function planDailyRoute(
   totalDistance: number;
   totalVisits: number;
   routePoints: any[];
+  virtualCustomers: any[];
   customersWithoutCoords: any[];
   customersWithSuspiciousCoords: any[];
   warnings: string[];
@@ -360,10 +361,21 @@ export async function planDailyRoute(
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
-  // Filtrar apenas visitas presenciais (não virtuais)
-  const customersToVisit = customersScheduled.filter(c => !c.virtualService);
+  // ✅ NOVO: Buscar informações de is_virtual para cada cliente na data alvo
+  // Usa o método direto de getDailyRoute para pegar visitas virtuais
+  let virtualCustomerIds = new Set<string>();
+  try {
+    const virtuals = await (storage as any).getCustomersWithVirtualVisitsOnDate(sellerId, routeDate);
+    virtualCustomerIds = new Set(virtuals.map((c: any) => c.id));
+  } catch (err) {
+    console.warn('⚠️ Não foi possível buscar visitas virtuais:', err);
+  }
+  
+  // Separar presenciais e virtuais
+  const customersToVisit = customersScheduled.filter(c => !virtualCustomerIds.has(c.id));
+  const virtualCustomers = customersScheduled.filter(c => virtualCustomerIds.has(c.id));
 
-  console.log(`   ✅ ${customersToVisit.length} visitas presenciais (após filtro de virtual)`);
+  console.log(`   ✅ ${customersToVisit.length} visitas presenciais + ${virtualCustomers.length} virtuais`);
 
   // ✅ CORREÇÃO (Nov 13, 2025): REMOVIDA validação duplicada!
   // getCustomersForDate() já faz a filtragem correta usando calculateNextVisitDate()
@@ -474,12 +486,13 @@ export async function planDailyRoute(
     totalDistance: optimizedRoute.totalDistance,
     totalVisits: optimizedRoute.orderedPoints.length,
     routePoints: optimizedRoute.orderedPoints,
+    virtualCustomers,
     customersWithoutCoords,
     customersWithSuspiciousCoords,
     warnings
   };
 
-  console.log(`   🔍 DEBUG - Resultado final: ${result.totalVisits} visitas, ${result.optimizedOrder.length} IDs em optimizedOrder`);
+  console.log(`   🔍 DEBUG - Resultado final: ${result.totalVisits} visitas presenciais + ${virtualCustomers.length} virtuais`);
   
   return result;
 }
@@ -540,6 +553,7 @@ export async function generateDailyRoute(
     sellerId,
     sellerName: `${plan.sellerData.firstName} ${plan.sellerData.lastName || ''}`,
     routeDate: startOfDay,
+    virtualCustomers: plan.virtualCustomers || [],
     startLocation: {
       latitude: parseFloat(plan.sellerData.homeLatitude as any),
       longitude: parseFloat(plan.sellerData.homeLongitude as any),
