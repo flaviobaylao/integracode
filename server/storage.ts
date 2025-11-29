@@ -1001,7 +1001,8 @@ export class DatabaseStorage implements IStorage {
     return customersToVisit;
   }
 
-  // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda)
+  // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda) 
+  // CRUZANDO COM active_customers para usar APENAS clientes da planilha importada
   async getCustomersFromPlannedVisits(sellerId: string, date: Date): Promise<Customer[]> {
     try {
       const dateStr = date.toISOString().split('T')[0];
@@ -1010,32 +1011,63 @@ export class DatabaseStorage implements IStorage {
       
       console.log(`📅 getCustomersFromPlannedVisits: Buscando visitas para ${dateStr} do vendedor ${sellerId}`);
       
-      // Buscar visitas planejadas da tabela visitAgenda para a data
+      // 1. Buscar IDs de clientes ativos (da planilha de Clientes Ativos)
+      const activeCustomersList = await db
+        .select({ customerId: activeCustomers.customerId })
+        .from(activeCustomers)
+        .where(
+          and(
+            eq(activeCustomers.isActive, true),
+            isNotNull(activeCustomers.customerId)
+          )
+        );
+      
+      const activeCustomerIds = activeCustomersList
+        .map(ac => ac.customerId)
+        .filter((id): id is string => id !== null);
+      
+      console.log(`   📋 ${activeCustomerIds.length} clientes na lista de Clientes Ativos`);
+      
+      if (activeCustomerIds.length === 0) {
+        console.log(`   ⚠️ Nenhum cliente ativo encontrado, retornando vazio`);
+        return [];
+      }
+      
+      // 2. Buscar visitas planejadas da visitAgenda para a data E vendedor
+      // APENAS para clientes que estão na lista de Clientes Ativos
       const plannedVisits = await db
         .select({
           customerId: visitAgenda.customerId,
           scheduledDate: visitAgenda.scheduledDate,
-          status: visitAgenda.status
+          visitStatus: visitAgenda.visitStatus,
+          isVirtual: visitAgenda.isVirtual
         })
         .from(visitAgenda)
         .where(
           and(
             gte(visitAgenda.scheduledDate, startOfDay),
             lte(visitAgenda.scheduledDate, endOfDay),
+            eq(visitAgenda.sellerId, sellerId),
+            inArray(visitAgenda.customerId, activeCustomerIds),
             or(
-              eq(visitAgenda.status, 'pending'),
-              eq(visitAgenda.status, 'scheduled')
+              eq(visitAgenda.visitStatus, 'pending'),
+              eq(visitAgenda.visitStatus, 'scheduled')
             )
           )
         );
       
-      console.log(`   📋 Encontradas ${plannedVisits.length} visitas planejadas na agenda`);
+      console.log(`   📋 Encontradas ${plannedVisits.length} visitas planejadas na agenda (cruzadas com Clientes Ativos)`);
       
       if (plannedVisits.length === 0) {
         return [];
       }
       
-      // Buscar os clientes correspondentes às visitas
+      // Contar virtuais e presenciais
+      const virtualCount = plannedVisits.filter(v => v.isVirtual).length;
+      const physicalCount = plannedVisits.length - virtualCount;
+      console.log(`   📊 ${physicalCount} presenciais + ${virtualCount} virtuais = ${plannedVisits.length} total`);
+      
+      // 3. Buscar os clientes correspondentes às visitas
       const customerIds = [...new Set(plannedVisits.map(v => v.customerId))];
       
       const customersData = await db
