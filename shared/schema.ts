@@ -1951,6 +1951,8 @@ export const activeCustomers = pgTable("active_customers", {
   customerId: varchar("customer_id"), // Referência ao customer encontrado (pode ser null se não encontrou)
   uploadId: varchar("upload_id").notNull(), // Referência ao upload que trouxe este registro
   matchStatus: varchar("match_status").notNull().default('pending'), // pending, matched, unmatched
+  latitude: decimal("latitude", { precision: 10, scale: 8 }), // Coordenada do cliente
+  longitude: decimal("longitude", { precision: 11, scale: 8 }), // Coordenada do cliente
   isActive: boolean("is_active").notNull().default(true),
   activatedAt: timestamp("activated_at").defaultNow(),
   deactivatedAt: timestamp("deactivated_at"),

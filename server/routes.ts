@@ -16482,51 +16482,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ACTIVE CUSTOMERS ENDPOINTS - Gestão de Clientes Ativos
   // ============================================================================
   
-  // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas do banco principal)
+  // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas)
   app.get('/api/customers/map-data', async (req: any, res) => {
     try {
-      // Buscar todos os clientes ativos com seus dados de visita
-      const activeCustomers = await storage.getActiveCustomersWithVisits() || [];
+      // 🎯 Buscar clientes ativos DIRETAMENTE com coordenadas
+      const activeCustomers = await db
+        .select()
+        .from(activeCustomers as any)
+        .where(eq(activeCustomers.isActive as any, true))
+        .limit(1000);
       
-      // Buscar todos os clientes do banco principal
-      const allCustomers = await storage.getCustomers() || [];
-      
-      // Criar mapa para busca rápida por CPF/CNPJ
-      const customerByCpfCnpj = new Map();
-      allCustomers.forEach((c: any) => {
-        if (c.document) {
-          customerByCpfCnpj.set(c.document.replace(/\D/g, ''), c);
-        }
-      });
-      
-      // Sincronizar: pegar dados de clientes ativos mas com coordenadas do banco principal
+      // Filtrar apenas clientes com coordenadas válidas
       const mapData = activeCustomers
-        .map((ac: any) => {
-          const cleanDoc = ac.document?.replace(/\D/g, '');
-          const mainCustomer = cleanDoc ? customerByCpfCnpj.get(cleanDoc) : null;
-          
-          if (mainCustomer && mainCustomer.latitude && mainCustomer.longitude) {
-            return {
-              id: mainCustomer.id,
-              name: mainCustomer.name,
-              fantasyName: mainCustomer.fantasyName,
-              phone: mainCustomer.phone,
-              address: mainCustomer.address,
-              document: mainCustomer.document,
-              latitude: mainCustomer.latitude,
-              longitude: mainCustomer.longitude,
-              weekdays: mainCustomer.weekdays,
-              isActive: true,
-              visitDay: mainCustomer.weekdays,
-              customerId: ac.customerId,
-              sellerName: ac.customer?.sellerName
-            };
-          }
-          return null;
-        })
-        .filter((c: any) => c !== null);
+        .filter((ac: any) => ac.latitude && ac.longitude)
+        .map((ac: any) => ({
+          id: ac.id,
+          name: ac.fantasyNameImported || `Cliente ${ac.document}`,
+          fantasyName: ac.fantasyNameImported,
+          phone: '',
+          address: '',
+          document: ac.document,
+          latitude: parseFloat(String(ac.latitude)),
+          longitude: parseFloat(String(ac.longitude)),
+          weekdays: 'Seg', // Padrão, será atualizado quando linkedar com customer
+          isActive: true,
+          visitDay: 'Seg',
+          customerId: ac.customerId
+        }));
       
-      console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados`);
+      console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados com coordenadas`);
       res.json(mapData);
     } catch (error) {
       console.error('Erro ao buscar dados do mapa:', error);
@@ -16655,6 +16639,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const [doc, info] of documentsMap) {
           const customer = customerByDoc.get(doc);
           
+          // 📍 Extrair coordenadas da planilha se disponíveis
+          let latitude: number | null = null;
+          let longitude: number | null = null;
+          const originalRow = data.find(row => {
+            const rowDoc = String(row[Object.keys(row).find(k => k.toLowerCase().includes('cpf') || k.toLowerCase().includes('cnpj')) || ''] || '').replace(/\D/g, '');
+            return rowDoc === doc;
+          });
+          if (originalRow) {
+            for (const key of Object.keys(originalRow)) {
+              const keyLower = key.toLowerCase();
+              if (keyLower.includes('latitude') || keyLower.includes('lat')) {
+                latitude = parseFloat(String(originalRow[key]));
+              }
+              if (keyLower.includes('longitude') || keyLower.includes('long')) {
+                longitude = parseFloat(String(originalRow[key]));
+              }
+            }
+          }
+
           customersToAdd.push({
             document: doc,
             documentType: info.documentType,
@@ -16662,6 +16665,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerId: customer?.id || null,
             uploadId: uploadRecord.id,
             matchStatus: customer ? 'matched' : 'unmatched',
+            latitude: latitude && !isNaN(latitude) ? latitude : null,
+            longitude: longitude && !isNaN(longitude) ? longitude : null,
             isActive: true,
             activatedAt: new Date()
           });
