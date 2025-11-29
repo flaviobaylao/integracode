@@ -814,6 +814,16 @@ export function registerChatRoutes(app: Express): void {
               externalId: messageId // Guardar ID externo para evitar duplicatas
             });
             console.log(`💬 [WEBHOOK-MIRROR] Mensagem salva: ${message.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
+            
+            // 🟢 Incrementar contador de unread APENAS para mensagens recebidas
+            if (!isFromMe) {
+              try {
+                await storage.incrementUnreadCount(matchingConv.id);
+                console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${matchingConv.id}`);
+              } catch (err) {
+                console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao incrementar unreadCount:`, err);
+              }
+            }
           }
 
           console.log(`✅ [WEBHOOK-MIRROR] Processamento concluído com sucesso`);
