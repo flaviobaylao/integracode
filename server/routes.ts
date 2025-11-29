@@ -13059,6 +13059,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Deletar rota inteira (limpar)
+  app.delete('/api/daily-routes/:routeId', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      
+      // Apenas administradores podem deletar rotas
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem deletar rotas.' });
+      }
+      
+      // Buscar rota para confirmar que existe
+      const route = await storage.getDailyRoute(routeId);
+      
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Verificar se o usuário é admin ou se é o vendedor da rota
+      if (user.role === 'vendedor' && route.sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado. Você só pode deletar sua própria rota.' });
+      }
+      
+      // Deletar a rota
+      await storage.deleteDailyRoute(routeId);
+      
+      res.json({
+        success: true,
+        message: 'Rota deletada com sucesso'
+      });
+    } catch (error: any) {
+      console.error('Erro ao deletar rota:', error);
+      res.status(500).json({ 
+        message: 'Erro ao deletar rota',
+        error: error.message 
+      });
+    }
+  });
+
   // Remover visita da rota do dia
   app.delete('/api/daily-routes/:routeId/visits/:visitId', authenticateUser, async (req: any, res) => {
     try {

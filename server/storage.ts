@@ -4990,6 +4990,12 @@ export class DatabaseStorage implements IStorage {
     return route;
   }
 
+  async deleteDailyRoute(id: string): Promise<void> {
+    await db
+      .delete(dailyRoutes)
+      .where(eq(dailyRoutes.id, id));
+  }
+
   async getLastCheckpoint(dailyRouteId: string): Promise<any | undefined> {
     const [checkpoint] = await db
       .select()

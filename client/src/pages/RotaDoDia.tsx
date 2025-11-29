@@ -274,6 +274,26 @@ export default function RotaDoDia() {
     },
   });
 
+  const deleteRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('DELETE', `/api/daily-routes/${routeId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Rota limpa com sucesso!",
+        description: "Você pode gerar uma nova rota agora",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao limpar rota",
+        description: error.message || "Ocorreu um erro ao limpar a rota",
+      });
+    },
+  });
+
   const optimizeRouteMutation = useMutation({
     mutationFn: async (routeId: string) => {
       return await apiRequest('POST', `/api/daily-routes/${routeId}/optimize`);
@@ -594,25 +614,6 @@ export default function RotaDoDia() {
               <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
                 <Button 
                   variant="default" 
-                  data-testid="button-generate-from-planned"
-                  onClick={() => generateFromPlannedVisitsMutation.mutate()}
-                  disabled={generateFromPlannedVisitsMutation.isPending || generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {generateFromPlannedVisitsMutation.isPending ? (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                      Gerando...
-                    </>
-                  ) : (
-                    <>
-                      <Target className="mr-2 h-4 w-4" />
-                      Gerar de Clientes Ativos
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  variant="default" 
                   data-testid="button-generate-route"
                   onClick={() => generateRouteMutation.mutate()}
                   disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || generateFromPlannedVisitsMutation.isPending || !selectedSellerId}
@@ -659,7 +660,29 @@ export default function RotaDoDia() {
                 <span>
                   {formatInTimeZone(new Date(selectedDate + 'T12:00:00.000Z'), 'America/Sao_Paulo', "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isAdmin && route?.id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => deleteRouteMutation.mutate(route.id)}
+                      disabled={deleteRouteMutation.isPending}
+                      data-testid="button-clear-route"
+                      className="border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950"
+                    >
+                      {deleteRouteMutation.isPending ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Limpando...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Limpar Rota
+                        </>
+                      )}
+                    </Button>
+                  )}
                   {(() => {
                     const hasCheckins = route.checkpoints?.some((cp: any) => cp.checkpointType === 'check_in');
                     const lunchBreak = (route.progress as any)?.lunchBreak;
