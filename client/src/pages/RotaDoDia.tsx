@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
@@ -807,7 +807,7 @@ export default function RotaDoDia() {
               <CardContent>
                 <RouteMap
                   homeLocation={route.sellerHome}
-                  visits={(route.visits || []).map(visit => ({
+                  visits={((route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual')).map(visit => ({
                     ...visit,
                     customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
                     customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
@@ -822,7 +822,7 @@ export default function RotaDoDia() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Lista de Visitas</CardTitle>
+                <CardTitle>Visitas Presenciais ({(route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual').length})</CardTitle>
                 {isAdmin && route.id && (
                   <div className="flex gap-2">
                     <Button
@@ -852,7 +852,7 @@ export default function RotaDoDia() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {route.visits?.map((visit, index) => {
+                {((route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual')).map((visit, index) => {
                   const checkInCheckpoint = route.checkpoints?.find(
                     cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
                   );
@@ -1055,6 +1055,53 @@ export default function RotaDoDia() {
                     </div>
                   );
                 })}
+
+                {(() => {
+                  const virtualVisits = (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual');
+                  if (virtualVisits.length === 0) return null;
+
+                  return (
+                    <div className="my-6 border-t-2 border-blue-300 dark:border-blue-700 pt-4">
+                      <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
+                        <Phone className="h-5 w-5" />
+                        Atendimentos Virtuais ({virtualVisits.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {virtualVisits.map((visit, index) => (
+                          <div
+                            key={visit.id || visit.customerId}
+                            className="p-3 border border-blue-200 dark:border-blue-700 rounded-lg bg-blue-50 dark:bg-blue-950 hover:shadow-md transition-all"
+                            data-testid={`virtual-visit-${visit.customerId}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3 flex-1">
+                                <div className="flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold bg-blue-500">
+                                  {index + 1}
+                                </div>
+                                <div className="flex-1">
+                                  <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                                    <Phone className="h-4 w-4" />
+                                    {visit.customerName}
+                                  </p>
+                                  {visit.phone && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                      📱 {visit.phone}
+                                    </p>
+                                  )}
+                                  {visit.customerAddress && (
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                      📍 {visit.customerAddress}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {route.checkpoints && (() => {
                   const offsiteCheckIns = route.checkpoints.filter(
