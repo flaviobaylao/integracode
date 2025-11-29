@@ -123,6 +123,28 @@ export default function RotaDoDia() {
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
   });
 
+  const generateFromPlannedVisitsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedSellerId || !selectedDate) throw new Error('Vendedor e data são obrigatórios');
+      return apiRequest('POST', '/api/daily-routes/from-planned-visits', {
+        sellerId: selectedSellerId,
+        date: selectedDate
+      });
+    },
+    onSuccess: (data) => {
+      if (data.totalVisits === 0) {
+        toast({ title: "Aviso", description: "Nenhuma visita planejada para esta data" });
+      } else {
+        toast({ title: "Sucesso", description: `Rota gerada com ${data.totalVisits} visitas planejadas` });
+      }
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao gerar rota", variant: "destructive" });
+    }
+  });
+
   const generateRouteMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest('POST', '/api/daily-routes/generate', {
@@ -572,9 +594,28 @@ export default function RotaDoDia() {
               <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
                 <Button 
                   variant="default" 
+                  data-testid="button-generate-from-planned"
+                  onClick={() => generateFromPlannedVisitsMutation.mutate()}
+                  disabled={generateFromPlannedVisitsMutation.isPending || generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {generateFromPlannedVisitsMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Gerando...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="mr-2 h-4 w-4" />
+                      Gerar de Clientes Ativos
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="default" 
                   data-testid="button-generate-route"
                   onClick={() => generateRouteMutation.mutate()}
-                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || generateFromPlannedVisitsMutation.isPending || !selectedSellerId}
                 >
                   {generateRouteMutation.isPending ? (
                     <>
@@ -592,7 +633,7 @@ export default function RotaDoDia() {
                   variant="outline" 
                   data-testid="button-create-empty-route"
                   onClick={() => createEmptyRouteMutation.mutate()}
-                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || !selectedSellerId}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || generateFromPlannedVisitsMutation.isPending || !selectedSellerId}
                 >
                   {createEmptyRouteMutation.isPending ? (
                     <>

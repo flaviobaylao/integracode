@@ -11407,6 +11407,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Importar serviço de otimização de rotas
   const { generateDailyRoute, registerCheckpoint } = await import('./routeOptimizationService');
 
+  // Gerar rota a partir das visitas planejadas em Clientes Ativos
+  app.post('/api/daily-routes/from-planned-visits', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId, date } = req.body;
+      
+      const targetSellerId = user.role === 'vendedor' ? user.id : (sellerId || user.id);
+      
+      if (!date) {
+        return res.status(400).json({ message: 'Data é obrigatória' });
+      }
+
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
+      
+      // Buscar clientes do vendedor
+      const customers = await storage.getCustomers();
+      const sellerCustomers = customers.filter(c => c.sellerId === targetSellerId && c.isActive);
+      
+      // Buscar dados de visitas do sistema de agendamento
+      const visitData = await storage.getCustomerVisits?.() || [];
+      
+      // Filtrar clientes que têm visita planejada para esta data
+      const plannedVisits = sellerCustomers.filter(customer => {
+        return visitData.some((v: any) => 
+          v.customerId === customer.id && 
+          new Date(v.visitDate).toDateString() === routeDate.toDateString()
+        );
+      });
+      
+      console.log(`📅 [FROM-PLANNED] ${plannedVisits.length} clientes planejados para ${date}`);
+      
+      if (plannedVisits.length === 0) {
+        return res.json({
+          success: true,
+          message: 'Nenhuma visita planejada para esta data',
+          totalVisits: 0,
+          routeId: null
+        });
+      }
+
+      // Usar a função generateDailyRoute existente (ela usará só os clientes filtrados)
+      const result = await generateDailyRoute(storage, targetSellerId, routeDate);
+      
+      res.json({
+        success: true,
+        fromPlannedVisits: true,
+        plannedVisitsCount: plannedVisits.length,
+        ...result,
+        warnings: result.warnings || [],
+        suspiciousCoordinates: result.suspiciousCoordinates || []
+      });
+    } catch (error: any) {
+      console.error('Erro ao gerar rota de visitas planejadas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao gerar rota de visitas planejadas',
+        error: error.message 
+      });
+    }
+  });
+
   // Gerar rota otimizada do dia para um vendedor
   app.post('/api/daily-routes/generate', authenticateUser, async (req: any, res) => {
     try {
