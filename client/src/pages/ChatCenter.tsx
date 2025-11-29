@@ -448,21 +448,22 @@ export default function ChatCenter() {
                               className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"} ${!msg.isRead ? "mb-3 p-2 bg-blue-50 rounded border-l-4 border-blue-500" : ""}`}
                               data-testid={`message-${msg.id}`}
                             >
-                              <div
-                                className={`max-w-xs px-4 py-2 rounded-lg ${
-                                  msg.senderType === "agent"
-                                    ? "bg-green-600 text-white"
-                                    : !msg.isRead
-                                    ? "bg-blue-200 text-gray-900 font-semibold border-2 border-blue-400"
-                                    : "bg-gray-200 text-gray-900"
-                                }`}
-                              >
-                                {!msg.isRead && msg.senderType !== "agent" && (
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <span className="inline-block h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
-                                    <span className="text-xs font-bold text-blue-700">NÃO LIDA</span>
-                                  </div>
-                                )}
+                              <div className="flex gap-2 items-flex-end">
+                                <div
+                                  className={`max-w-xs px-4 py-2 rounded-lg ${
+                                    msg.senderType === "agent"
+                                      ? "bg-green-600 text-white"
+                                      : !msg.isRead
+                                      ? "bg-blue-200 text-gray-900 font-semibold border-2 border-blue-400"
+                                      : "bg-gray-200 text-gray-900"
+                                  }`}
+                                >
+                                  {!msg.isRead && msg.senderType !== "agent" && (
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="inline-block h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
+                                      <span className="text-xs font-bold text-blue-700">NÃO LIDA</span>
+                                    </div>
+                                  )}
                                 {msg.senderType !== "agent" && (
                                   <div className="text-xs font-semibold mb-1 opacity-80">
                                     👤 {sellerName}
@@ -477,9 +478,15 @@ export default function ChatCenter() {
                                   </div>
                                 )}
                                 <p className="text-sm">{msg.content}</p>
-                                <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
-                                  {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
-                                </p>
+                                  <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
+                                    {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
+                                  </p>
+                                </div>
+                                {!msg.isRead && msg.senderType !== "agent" && (
+                                  <Badge className="bg-green-500 text-white text-xs whitespace-nowrap mb-2" data-testid={`badge-unread-${msg.id}`}>
+                                    🟢 Não Lida
+                                  </Badge>
+                                )}
                               </div>
                             </div>
                           ))
