@@ -1525,6 +1525,49 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/agents/stats - Stats de conversas por agente (admin only)
+  app.get("/api/chat/agents/stats", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
+    try {
+      const stats = await storage.getConversationsCountByAgent();
+      res.json(stats);
+    } catch (error: any) {
+      console.error("[CHAT-AGENT-STATS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar stats de agentes" });
+    }
+  });
+
+  // PATCH /api/chat/conversations/:conversationId/transfer - Transferir conversa (admin only)
+  app.patch("/api/chat/conversations/:conversationId/transfer", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { newAgentId } = req.body;
+
+      if (!newAgentId) {
+        return res.status(400).json({ error: "newAgentId é obrigatório" });
+      }
+
+      // Validar que conversa existe
+      const conversation = await storage.getChatConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversa não encontrada" });
+      }
+
+      // Validar que agente existe
+      const agents = await storage.getChatAgents();
+      const targetAgent = agents.find(a => a.id === newAgentId);
+      if (!targetAgent) {
+        return res.status(404).json({ error: "Agente não encontrado" });
+      }
+
+      // Transferir
+      const updated = await storage.transferConversation(conversationId, newAgentId);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("[CHAT-TRANSFER] Erro:", error);
+      res.status(500).json({ error: "Erro ao transferir conversa" });
+    }
+  });
+
   // POST /api/chat/conversations/:conversationId/message - Enviar mensagem ou mídia
   app.post("/api/chat/conversations/:conversationId/message", authenticateUser, async (req, res) => {
     try {

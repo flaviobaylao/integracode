@@ -44,6 +44,7 @@ import ChatDeliveries from "@/pages/ChatDeliveries";
 import ChatAnalysis from "@/pages/ChatAnalysis";
 import ChatManagement from "@/pages/ChatManagement";
 import ChatCenter from "@/pages/ChatCenter";
+import AgentManagement from "@/pages/AgentManagement";
 import QuickTemplates from "@/pages/QuickTemplates";
 import TelemarketingHub from "@/pages/TelemarketingHub";
 import ClientsMap from "@/pages/ClientsMap";
@@ -182,6 +183,7 @@ function Router() {
           <Route path="/telemarketing/analysis" component={ChatAnalysis} />
           <Route path="/telemarketing/conversas" component={ChatManagement} />
           <Route path="/telemarketing/atendimento" component={ChatCenter} />
+          <Route path="/telemarketing/agentes" component={AgentManagement} />
           <Route path="/telemarketing/templates" component={QuickTemplates} />
           <Route path="/telemarketing/test" component={ChatTest} />
           <Route path="/admin/users" component={UserManagementPage} />

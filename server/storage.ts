@@ -339,6 +339,8 @@ export interface IStorage {
   updateChatAgentStatus(id: string, status: string): Promise<ChatAgent>;
   syncUsersAsAgents(): Promise<void>;
   closeInactiveConversations(): Promise<number>;
+  getConversationsCountByAgent(): Promise<Array<{ agentId: string | null; agentName: string | null; count: number; conversations: ChatConversation[] }>>;
+  transferConversation(conversationId: string, newAgentId: string): Promise<ChatConversation>;
   
   // Chat Customers operations
   getChatCustomers(): Promise<ChatCustomer[]>;
@@ -5403,6 +5405,53 @@ export class DatabaseStorage implements IStorage {
     return conversation;
   }
   
+  // Obter conversas em andamento agrupadas por agente
+  async getConversationsCountByAgent(): Promise<Array<{ agentId: string | null; agentName: string | null; count: number; conversations: ChatConversation[] }>> {
+    const conversations = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.status, 'in-progress' as any));
+    
+    // Agrupar por agente
+    const grouped = new Map<string | null, ChatConversation[]>();
+    for (const conv of conversations) {
+      const key = conv.agentId || 'unassigned';
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key)!.push(conv);
+    }
+
+    // Buscar nomes dos agentes
+    const agents = await db.select().from(chatAgents);
+    const result = Array.from(grouped.entries()).map(([agentId, convs]) => {
+      const agent = agents.find(a => a.id === agentId);
+      return {
+        agentId: agentId === 'unassigned' ? null : agentId,
+        agentName: agent?.name || (agentId === 'unassigned' ? 'Sem Atribução' : 'Desconhecido'),
+        count: convs.length,
+        conversations: convs
+      };
+    });
+
+    return result;
+  }
+
+  // Transferir conversa para outro agente
+  async transferConversation(conversationId: string, newAgentId: string): Promise<ChatConversation> {
+    const [conversation] = await db
+      .update(chatConversations)
+      .set({ 
+        agentId: newAgentId,
+        updatedAt: new Date()
+      })
+      .where(eq(chatConversations.id, conversationId))
+      .returning();
+    
+    console.log(`✅ [TRANSFER] Conversa ${conversationId} transferida para agente ${newAgentId}`);
+    return conversation;
+  }
+
   // Chat Conversations operations
   async getChatConversations(): Promise<ChatConversation[]> {
     return await db.select().from(chatConversations).orderBy(desc(chatConversations.createdAt));
