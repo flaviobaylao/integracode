@@ -110,6 +110,16 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 
 export interface IStorage {
+  getAgentDetailedStats(): Promise<Array<{ 
+    id: string; 
+    name: string; 
+    email: string;
+    status: string;
+    lastActivity?: Date;
+    messagesAnswered: number;
+    messagesToRespond: number;
+  }>>;
+
   // User operations
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
@@ -5450,6 +5460,41 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`✅ [TRANSFER] Conversa ${conversationId} transferida para agente ${newAgentId}`);
     return conversation;
+  }
+
+  // Obter stats detalhados de todos os agentes
+  async getAgentDetailedStats(): Promise<Array<{ 
+    id: string; 
+    name: string; 
+    email: string;
+    status: string;
+    lastActivity?: Date;
+    messagesAnswered: number;
+    messagesToRespond: number;
+  }>> {
+    const agents = await db.select().from(chatAgents);
+    const messages = await db.select().from(chatMessages);
+
+    return agents.map(agent => {
+      // Mensagens respondidas pelo agente
+      const agentMessages = messages.filter(m => m.senderId === agent.id && m.senderType === 'agent');
+      
+      // Mensagens não lidas que o agente deveria responder (de clientes)
+      const unreadMessages = messages.filter(m => 
+        m.senderType === 'customer' && 
+        !m.isRead
+      );
+
+      return {
+        id: agent.id,
+        name: agent.name,
+        email: agent.email,
+        status: agent.status || 'offline',
+        lastActivity: agent.lastActivity,
+        messagesAnswered: agentMessages.length,
+        messagesToRespond: unreadMessages.length
+      };
+    });
   }
 
   // Chat Conversations operations

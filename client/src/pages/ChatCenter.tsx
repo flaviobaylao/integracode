@@ -15,6 +15,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { useAuth } from "@/hooks/useAuth";
 
 interface ChatMessage {
   id: string;
@@ -52,6 +53,7 @@ interface Agent {
 export default function ChatCenter() {
   const { toast } = useToast();
   const [location] = useLocation();
+  const { user } = useAuth();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
   const [assignedAgent, setAssignedAgent] = useState<string>("");
@@ -119,6 +121,15 @@ export default function ChatCenter() {
     queryKey: ["/api/chat/quick-templates"],
   });
   const templates = (templatesData as any[]) || [];
+
+  // Fetch agent detailed stats (admin only)
+  const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  const { data: agentStatsData } = useQuery({
+    queryKey: ["/api/chat/agents/detailed-stats"],
+    enabled: isAdmin,
+    refetchInterval: 5000,
+  });
+  const agentStats = (agentStatsData as any[]) || [];
 
   // Seller info will be fetched later after selectedChat is determined
 
@@ -330,7 +341,39 @@ export default function ChatCenter() {
           <BackToDashboardButton />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-5" : "lg:grid-cols-4"} gap-6`}>
+          {isAdmin && (
+            // Sidebar esquerda com stats de agentes
+            <div className="lg:col-span-1">
+              <Card className="h-full">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">Atendentes</CardTitle>
+                  <CardDescription>Status e performance</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[600px] pr-4">
+                    {agentStats.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500 text-xs">Carregando...</div>
+                    ) : (
+                      agentStats.map((agent: any) => (
+                        <div key={agent.id} className="border rounded-lg p-2 mb-2 bg-gray-50 hover:bg-gray-100 transition">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`inline-block w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+                            <p className="text-xs font-semibold truncate flex-1">{agent.name}</p>
+                          </div>
+                          <div className="text-xs text-gray-600 space-y-0.5 ml-3">
+                            <p>✅ Respondidas: <span className="font-semibold">{agent.messagesAnswered}</span></p>
+                            <p>📥 A responder: <span className="font-semibold text-red-600">{agent.messagesToRespond}</span></p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
           {/* Lista de Conversas */}
           <div className="lg:col-span-1">
             <Card className="h-full">

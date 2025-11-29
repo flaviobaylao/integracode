@@ -1536,6 +1536,17 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/agents/detailed-stats - Stats detalhadas por agente (admin only)
+  app.get("/api/chat/agents/detailed-stats", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
+    try {
+      const stats = await storage.getAgentDetailedStats();
+      res.json(stats);
+    } catch (error: any) {
+      console.error("[CHAT-AGENT-DETAILED-STATS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar stats detalhadas de agentes" });
+    }
+  });
+
   // PATCH /api/chat/conversations/:conversationId/transfer - Transferir conversa (admin only)
   app.patch("/api/chat/conversations/:conversationId/transfer", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
     try {
