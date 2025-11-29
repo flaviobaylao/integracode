@@ -5629,23 +5629,33 @@ export class DatabaseStorage implements IStorage {
     messagesToRespond: number;
   }>> {
     const agents = await db.select().from(chatAgents);
+    const conversations = await db.select().from(chatConversations);
     const messages = await db.select().from(chatMessages);
 
     return agents.map(agent => {
-      // Mensagens respondidas pelo agente
-      const agentMessages = messages.filter(m => m.senderId === agent.id && m.senderType === 'agent');
+      // 🔍 Buscar conversas atribuídas ao agente
+      const agentConversations = conversations.filter(c => c.agentId === agent.id);
+      const agentConvIds = agentConversations.map(c => c.id);
       
-      // Mensagens não lidas que o agente deveria responder (de clientes)
+      // 💬 Mensagens respondidas pelo agente (apenas suas conversas)
+      const agentMessages = messages.filter(m => 
+        m.senderId === agent.id && 
+        m.senderType === 'agent' &&
+        agentConvIds.includes(m.conversationId)
+      );
+      
+      // 📥 Mensagens não lidas de clientes APENAS nas conversas do agente
       const unreadMessages = messages.filter(m => 
         m.senderType === 'customer' && 
-        !m.isRead
+        !m.isRead &&
+        agentConvIds.includes(m.conversationId)
       );
 
       return {
         id: agent.id,
         name: agent.name,
         email: agent.email,
-        status: agent.status || 'offline',
+        status: agent.status === 'online' ? 'online' : 'offline',
         lastActivity: agent.lastActivity,
         messagesAnswered: agentMessages.length,
         messagesToRespond: unreadMessages.length
