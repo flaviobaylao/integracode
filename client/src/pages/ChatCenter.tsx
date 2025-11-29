@@ -11,7 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
 import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin } from "lucide-react";
-import { format } from "date-fns";
+import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -367,6 +367,22 @@ export default function ChatCenter() {
     return priority === "urgent" ? "🔴" : "⚪";
   };
 
+  const formatLastMessageTime = (timestamp: string | undefined) => {
+    if (!timestamp) return "sem mensagens";
+    try {
+      const date = new Date(timestamp);
+      if (isToday(date)) {
+        return format(date, "HH:mm", { locale: ptBR });
+      } else if (isYesterday(date)) {
+        return "Ontem";
+      } else {
+        return format(date, "dd/MM", { locale: ptBR });
+      }
+    } catch {
+      return timestamp;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
@@ -464,7 +480,16 @@ export default function ChatCenter() {
                                 )}
                               </div>
                               <p className="text-xs text-gray-500">{conv.customerPhone}</p>
-                              <p className="text-xs text-gray-600 truncate mt-1">{conv.lastMessageTime}</p>
+                              {/* 👤 Nome do agente em atendimento */}
+                              {conv.agentName && (
+                                <p className="text-xs text-green-600 font-semibold mt-0.5">
+                                  👤 {conv.agentName}
+                                </p>
+                              )}
+                              {/* 📅 Data e hora da última mensagem */}
+                              <p className="text-xs text-gray-500 truncate mt-1">
+                                📅 {formatLastMessageTime(conv.lastMessageTime)}
+                              </p>
                             </div>
                             <div className="flex items-center gap-1">
                               <span className="text-xs">{getPriorityIcon(conv.priority)}</span>
