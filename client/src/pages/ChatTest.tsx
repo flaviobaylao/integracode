@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Loader2, Send, Download } from "lucide-react";
 
 export default function ChatTest() {
@@ -116,9 +117,12 @@ export default function ChatTest() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Teste de WhatsApp</h1>
-          <p className="text-gray-600">Enviar e receber mensagens, sincronizar contatos e histórico</p>
+        <div className="mb-8 flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Teste de WhatsApp</h1>
+            <p className="text-gray-600">Enviar e receber mensagens, sincronizar contatos e histórico</p>
+          </div>
+          <BackToDashboardButton />
         </div>
 
         {/* Sincronização de Contatos */}
