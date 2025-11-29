@@ -105,7 +105,7 @@ import {
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, gte, lte, gt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
+import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 

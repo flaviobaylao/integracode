@@ -1,13 +1,29 @@
 import { useState } from "react";
-import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, CheckCircle, AlertTriangle } from "lucide-react";
+import { AlertCircle, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
+
+interface ValidationResult {
+  success: boolean;
+  validation: {
+    totalPlanned: number;
+    totalInRoutes: number;
+    dateRanges: Array<any>;
+    missing: Array<any>;
+    extra: Array<any>;
+    wrongSeller: Array<any>;
+    summary: {
+      ok: number;
+      withIssues: number;
+    };
+  };
+  message: string;
+}
 
 export default function RoutesValidation() {
   const { user } = useAuth();
@@ -15,19 +31,16 @@ export default function RoutesValidation() {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [isValidating, setIsValidating] = useState(false);
-
-  const { data: validation, refetch } = useQuery({
-    queryKey: ['/api/routes/validate', startDate, endDate],
-    queryFn: () => apiRequest('GET', `/api/routes/validate?startDate=${startDate}&endDate=${endDate}`),
-    enabled: false,
-  });
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
 
   const handleValidate = async () => {
     setIsValidating(true);
     try {
-      await refetch();
+      const result = await apiRequest('GET', `/api/routes/validate?startDate=${startDate}&endDate=${endDate}`);
+      setValidation(result);
       toast({ title: "Validação concluída" });
     } catch (error: any) {
+      console.error('Erro ao validar:', error);
       toast({ title: "Erro", description: error.message, variant: "destructive" });
     } finally {
       setIsValidating(false);
@@ -88,8 +101,13 @@ export default function RoutesValidation() {
                 onClick={handleValidate} 
                 disabled={isValidating}
                 className="w-full"
+                data-testid="button-validate-routes"
               >
-                {isValidating ? "Validando..." : "Validar Rotas"}
+                {isValidating ? (
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Validando...</>
+                ) : (
+                  "Validar Rotas"
+                )}
               </Button>
             </div>
           </CardContent>
