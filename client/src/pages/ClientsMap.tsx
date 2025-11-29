@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Users, Pencil, AlertCircle } from "lucide-react";
+import { MapPin, Users, Pencil, AlertCircle, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
 
 // Cores dos pins baseadas no dia da semana
@@ -128,6 +130,8 @@ export default function ClientsMap() {
   const { user } = useAuth();
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedDay, setSelectedDay] = useState<string>("");
 
   // Controle de acesso: apenas administrativos
   const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
@@ -140,7 +144,7 @@ export default function ClientsMap() {
   });
 
   // Filtrar apenas clientes ativos com coordenadas válidas
-  const activeCustomersWithCoords = customers.filter(
+  let activeCustomersWithCoords = customers.filter(
     (customer) =>
       customer.isActive &&
       customer.latitude &&
@@ -149,13 +153,29 @@ export default function ClientsMap() {
       Number(customer.longitude) !== 0
   );
 
+  // Aplicar filtro de busca por nome/telefone
+  if (searchTerm.trim()) {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) =>
+        (c.fantasyName || c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (c.phone || '').includes(searchTerm.replace(/\D/g, ''))
+    );
+  }
+
+  // Aplicar filtro de dia da semana
+  if (selectedDay) {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => getWeekdayName(c.weekdays) === selectedDay
+    );
+  }
+
   // Agrupar clientes por dia da semana
   const customersByDay = {
-    Segunda: activeCustomersWithCoords.filter(c => getWeekdayName(c.weekdays) === 'Segunda'),
-    Terça: activeCustomersWithCoords.filter(c => getWeekdayName(c.weekdays) === 'Terça'),
-    Quarta: activeCustomersWithCoords.filter(c => getWeekdayName(c.weekdays) === 'Quarta'),
-    Quinta: activeCustomersWithCoords.filter(c => getWeekdayName(c.weekdays) === 'Quinta'),
-    Sexta: activeCustomersWithCoords.filter(c => getWeekdayName(c.weekdays) === 'Sexta'),
+    Segunda: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Segunda'),
+    Terça: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Terça'),
+    Quarta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Quarta'),
+    Quinta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Quinta'),
+    Sexta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Sexta'),
   };
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
@@ -210,7 +230,7 @@ export default function ClientsMap() {
             Localização dos Clientes
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4" />
@@ -218,6 +238,49 @@ export default function ClientsMap() {
                 {activeCustomersWithCoords.length} clientes ativos mapeados
               </span>
             </div>
+          </div>
+          
+          {/* Filtros */}
+          <div className="flex gap-4 flex-wrap items-end">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-sm font-medium mb-2 block">Buscar Cliente</label>
+              <Input
+                placeholder="Nome ou telefone..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                data-testid="input-search-customers"
+              />
+            </div>
+            <div className="flex-1 min-w-[150px]">
+              <label className="text-sm font-medium mb-2 block">Dia da Semana</label>
+              <Select value={selectedDay} onValueChange={setSelectedDay}>
+                <SelectTrigger data-testid="select-day-map">
+                  <SelectValue placeholder="Todos os dias" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos os dias</SelectItem>
+                  <SelectItem value="Segunda">Segunda</SelectItem>
+                  <SelectItem value="Terça">Terça</SelectItem>
+                  <SelectItem value="Quarta">Quarta</SelectItem>
+                  <SelectItem value="Quinta">Quinta</SelectItem>
+                  <SelectItem value="Sexta">Sexta</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {(searchTerm || selectedDay) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedDay("");
+                }}
+                data-testid="button-clear-filters"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Limpar Filtros
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
