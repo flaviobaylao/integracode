@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -120,17 +120,7 @@ export default function ChatCenter() {
   });
   const templates = (templatesData as any[]) || [];
 
-  // Fetch seller info for customer
-  const { data: sellerInfoData } = useQuery({
-    queryKey: ["/api/chat/customer-seller", selectedChat?.customerPhone],
-    enabled: !!selectedChat?.customerPhone,
-    queryFn: async () => {
-      const response = await fetch(`/api/chat/customer-seller/${selectedChat?.customerPhone}`);
-      if (!response.ok) throw new Error("Falha ao buscar vendedor");
-      return response.json();
-    }
-  });
-  const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
+  // Seller info will be fetched later after selectedChat is determined
 
   // Mutation para fazer upload de arquivo
   const uploadFileMutation = useMutation({
@@ -259,6 +249,18 @@ export default function ChatCenter() {
   });
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
+
+  // Fetch seller info for customer (after selectedChat is defined)
+  const { data: sellerInfoData } = useQuery({
+    queryKey: ["/api/chat/customer-seller", selectedChat?.customerPhone],
+    enabled: !!selectedChat?.customerPhone,
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/customer-seller/${selectedChat?.customerPhone}`);
+      if (!response.ok) throw new Error("Falha ao buscar vendedor");
+      return response.json();
+    }
+  });
+  const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
 
   useEffect(() => {
     if (scrollRef.current) {
