@@ -124,6 +124,11 @@ export default function ChatCenter() {
   const { data: sellerInfoData } = useQuery({
     queryKey: ["/api/chat/customer-seller", selectedChat?.customerPhone],
     enabled: !!selectedChat?.customerPhone,
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/customer-seller/${selectedChat?.customerPhone}`);
+      if (!response.ok) throw new Error("Falha ao buscar vendedor");
+      return response.json();
+    }
   });
   const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
 
