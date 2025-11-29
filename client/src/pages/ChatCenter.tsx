@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -200,6 +200,44 @@ export default function ChatCenter() {
     },
     onError: () => {
       toast({ title: "Erro", description: "Falha ao enviar mídia", variant: "destructive" });
+    }
+  });
+
+  // Mutation para enviar localização
+  const sendLocationMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedConversation) throw new Error("Nenhuma conversa selecionada");
+      return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            try {
+              const response = await fetch(`/api/chat/conversations/${selectedConversation}/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  content: "Localização compartilhada",
+                  latitude: position.coords.latitude,
+                  longitude: position.coords.longitude,
+                  messageType: "location",
+                  senderType: "agent"
+                })
+              });
+              resolve(response.json());
+            } catch (error) {
+              reject(error);
+            }
+          },
+          (error) => reject(error)
+        );
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations"] });
+      toast({ title: "Sucesso", description: "Localização enviada com sucesso" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error?.message || "Falha ao obter localização", variant: "destructive" });
     }
   });
 
@@ -512,15 +550,19 @@ export default function ChatCenter() {
                                     👤 {sellerName}
                                   </div>
                                 )}
-                                {msg.mediaUrl && (
+                                {msg.messageType === 'location' && msg.content.includes('[Localização:') ? (
+                                  <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
+                                    <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
+                                  </div>
+                                ) : msg.mediaUrl ? (
                                   <div className="mb-2">
                                     {msg.messageType === 'image' && <img src={msg.mediaUrl} alt="mídia" className="max-w-sm rounded" />}
                                     {msg.messageType === 'audio' && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
                                     {msg.messageType === 'video' && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
                                     {msg.messageType === 'document' && <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="underline">📄 {msg.content || 'Documento'}</a>}
                                   </div>
-                                )}
-                                <p className="text-sm">{msg.content}</p>
+                                ) : null}
+                                {msg.messageType !== 'location' && <p className="text-sm">{msg.content}</p>}
                                   <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>
@@ -656,8 +698,19 @@ export default function ChatCenter() {
                               variant="outline"
                               size="icon"
                               data-testid="button-upload"
+                              title="Enviar mídia"
                             >
                               <Paperclip className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              onClick={() => sendLocationMutation.mutate()}
+                              variant="outline"
+                              size="icon"
+                              disabled={sendLocationMutation.isPending}
+                              data-testid="button-location"
+                              title="Enviar localização"
+                            >
+                              <MapPin className="w-4 h-4" />
                             </Button>
                           </>
                         ) : (
