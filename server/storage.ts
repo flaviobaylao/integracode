@@ -1003,6 +1003,7 @@ export class DatabaseStorage implements IStorage {
 
   // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda) 
   // CRUZANDO COM active_customers para usar APENAS clientes da planilha importada
+  // IMPORTANTE: Respeita o limite de 3 PRÓXIMAS VISITAS por cliente
   async getCustomersFromPlannedVisits(sellerId: string, date: Date): Promise<Customer[]> {
     try {
       const dateStr = date.toISOString().split('T')[0];
@@ -1033,9 +1034,11 @@ export class DatabaseStorage implements IStorage {
         return [];
       }
       
-      // 2. Buscar visitas planejadas da visitAgenda para a data E vendedor
-      // APENAS para clientes que estão na lista de Clientes Ativos
-      const plannedVisits = await db
+      // 2. Buscar TODAS as próximas visitas (sem limit global) e filtrar por cliente
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const allUpcomingVisits = await db
         .select({
           customerId: visitAgenda.customerId,
           scheduledDate: visitAgenda.scheduledDate,
@@ -1045,18 +1048,43 @@ export class DatabaseStorage implements IStorage {
         .from(visitAgenda)
         .where(
           and(
-            gte(visitAgenda.scheduledDate, startOfDay),
-            lte(visitAgenda.scheduledDate, endOfDay),
-            eq(visitAgenda.sellerId, sellerId),
+            gte(visitAgenda.scheduledDate, today),
             inArray(visitAgenda.customerId, activeCustomerIds),
+            eq(visitAgenda.sellerId, sellerId),
             or(
               eq(visitAgenda.visitStatus, 'pending'),
               eq(visitAgenda.visitStatus, 'scheduled')
             )
           )
-        );
+        )
+        .orderBy(asc(visitAgenda.scheduledDate));
       
-      console.log(`   📋 Encontradas ${plannedVisits.length} visitas planejadas na agenda (cruzadas com Clientes Ativos)`);
+      // 3. Agrupar por cliente e manter apenas as 3 PRIMEIRAS visitas
+      const nextThreeVisitsMap = new Map<string, Array<{
+        customerId: string;
+        scheduledDate: Date;
+        visitStatus: string;
+        isVirtual: boolean;
+      }>>();
+      
+      for (const visit of allUpcomingVisits) {
+        if (!nextThreeVisitsMap.has(visit.customerId)) {
+          nextThreeVisitsMap.set(visit.customerId, []);
+        }
+        const visits = nextThreeVisitsMap.get(visit.customerId)!;
+        if (visits.length < 3) {
+          visits.push(visit);
+        }
+      }
+      
+      // 4. Filtrar apenas visitas na data alvo E que estão entre as próximas 3 visitas
+      const plannedVisits = allUpcomingVisits.filter(visit => {
+        const dateStrVisit = visit.scheduledDate.toISOString().split('T')[0];
+        const nextThree = nextThreeVisitsMap.get(visit.customerId) || [];
+        return dateStrVisit === dateStr && nextThree.some(v => v.scheduledDate.toISOString().split('T')[0] === dateStr);
+      });
+      
+      console.log(`   📋 Encontradas ${plannedVisits.length} visitas planejadas na agenda (entre próximas 3 visitas de cada cliente)`);
       
       if (plannedVisits.length === 0) {
         return [];
@@ -1067,7 +1095,7 @@ export class DatabaseStorage implements IStorage {
       const physicalCount = plannedVisits.length - virtualCount;
       console.log(`   📊 ${physicalCount} presenciais + ${virtualCount} virtuais = ${plannedVisits.length} total`);
       
-      // 3. Buscar os clientes correspondentes às visitas
+      // 5. Buscar os clientes correspondentes às visitas
       const customerIds = [...new Set(plannedVisits.map(v => v.customerId))];
       
       const customersData = await db
