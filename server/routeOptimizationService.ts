@@ -348,9 +348,15 @@ export async function planDailyRoute(
   
   console.log(`📅 Planejando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // NOVA ARQUITETURA: Buscar clientes direto da tabela customers
-  // Usa calculateNextVisitDate() com weekdays, periodicity e lastCompletedDate
-  const customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
+  // PRIORIDADE: Buscar clientes das VISITAS PLANEJADAS (visitAgenda)
+  // Isso garante que usamos os dados da aba Clientes Ativos
+  let customersScheduled = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
+  
+  if (customersScheduled.length === 0) {
+    // FALLBACK: Se não houver visitas planejadas, usar cálculo de periodicidade
+    console.log(`   ⚠️ Nenhuma visita planejada encontrada, usando cálculo de periodicidade...`);
+    customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
+  }
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   

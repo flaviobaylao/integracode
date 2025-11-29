@@ -154,6 +154,7 @@ export interface IStorage {
   getCustomersByRoute(route: string): Promise<Customer[]>;
   getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]>;
   getCustomersForDate(sellerId: string, date: Date): Promise<Customer[]>;
+  getCustomersFromPlannedVisits(sellerId: string, date: Date): Promise<Customer[]>;
   
   // Product operations
   getProducts(): Promise<Product[]>;
@@ -998,6 +999,63 @@ export class DatabaseStorage implements IStorage {
     console.log(`✅ getCustomersForDate: ${customersToVisit.length} clientes devem ser visitados em ${targetDateBRT.toLocaleDateString('pt-BR')}`);
     
     return customersToVisit;
+  }
+
+  // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda)
+  async getCustomersFromPlannedVisits(sellerId: string, date: Date): Promise<Customer[]> {
+    try {
+      const dateStr = date.toISOString().split('T')[0];
+      const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
+      const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+      
+      console.log(`📅 getCustomersFromPlannedVisits: Buscando visitas para ${dateStr} do vendedor ${sellerId}`);
+      
+      // Buscar visitas planejadas da tabela visitAgenda para a data
+      const plannedVisits = await db
+        .select({
+          customerId: visitAgenda.customerId,
+          scheduledDate: visitAgenda.scheduledDate,
+          status: visitAgenda.status
+        })
+        .from(visitAgenda)
+        .where(
+          and(
+            gte(visitAgenda.scheduledDate, startOfDay),
+            lte(visitAgenda.scheduledDate, endOfDay),
+            or(
+              eq(visitAgenda.status, 'pending'),
+              eq(visitAgenda.status, 'scheduled')
+            )
+          )
+        );
+      
+      console.log(`   📋 Encontradas ${plannedVisits.length} visitas planejadas na agenda`);
+      
+      if (plannedVisits.length === 0) {
+        return [];
+      }
+      
+      // Buscar os clientes correspondentes às visitas
+      const customerIds = [...new Set(plannedVisits.map(v => v.customerId))];
+      
+      const customersData = await db
+        .select()
+        .from(customers)
+        .where(
+          and(
+            inArray(customers.id, customerIds),
+            eq(customers.sellerId, sellerId),
+            eq(customers.omieStatus, 'ativo')
+          )
+        );
+      
+      console.log(`   ✅ ${customersData.length} clientes encontrados para as visitas planejadas`);
+      
+      return customersData;
+    } catch (error: any) {
+      console.error(`❌ Erro em getCustomersFromPlannedVisits:`, error.message);
+      return [];
+    }
   }
 
   // Product operations
