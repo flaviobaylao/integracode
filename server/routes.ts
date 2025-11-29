@@ -11407,6 +11407,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Importar serviço de otimização de rotas
   const { generateDailyRoute, registerCheckpoint } = await import('./routeOptimizationService');
 
+  // ========================================
+  // VALIDAÇÃO DE ROTAS
+  // ========================================
+  
+  // Validar se todas visitas planejadas estão nas rotas corretas
+  app.get('/api/routes/validate', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      
+      let start = new Date();
+      let end = new Date();
+      
+      if (startDate) start = new Date(startDate as string);
+      if (endDate) end = new Date(endDate as string);
+      
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      
+      // Buscar todas visitas planejadas em Clientes Ativos
+      const activeCustomersData = await storage.getActiveCustomersWithVisits() || [];
+      
+      // Buscar todas rotas no período
+      const routes = await db.select().from(dailyRoutes)
+        .where(and(
+          gte(dailyRoutes.routeDate, start),
+          lte(dailyRoutes.routeDate, end)
+        ));
+      
+      // Mapear visitas planejadas por data+vendedor
+      const plannedVisits = new Map<string, Array<{customerId: string; customerName: string; sellerId: string}>>();
+      
+      for (const ac of activeCustomersData) {
+        const customer = ac.customer;
+        if (!customer || !customer.sellerId) continue;
+        
+        // Buscar próximas 3 visitas deste cliente
+        const upcomingVisits = await db.select().from(visitAgenda)
+          .where(and(
+            eq(visitAgenda.customerId, customer.id),
+            gte(visitAgenda.scheduledDate, start),
+            lte(visitAgenda.scheduledDate, end)
+          ));
+        
+        for (const visit of upcomingVisits) {
+          const key = `${visit.scheduledDate.toISOString().split('T')[0]}|${customer.sellerId}`;
+          if (!plannedVisits.has(key)) {
+            plannedVisits.set(key, []);
+          }
+          plannedVisits.get(key)!.push({
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            sellerId: customer.sellerId
+          });
+        }
+      }
+      
+      // Analisar cada rota gerada
+      const validation = {
+        totalPlanned: 0,
+        totalInRoutes: 0,
+        dateRanges: [] as Array<any>,
+        missing: [] as Array<any>,
+        extra: [] as Array<any>,
+        wrongSeller: [] as Array<any>,
+        summary: {
+          ok: 0,
+          withIssues: 0
+        }
+      };
+      
+      const analyzedDates = new Set<string>();
+      
+      for (const route of routes) {
+        const dateStr = route.routeDate.toISOString().split('T')[0];
+        const key = `${dateStr}|${route.sellerId}`;
+        
+        if (!analyzedDates.has(key)) {
+          analyzedDates.add(key);
+          
+          const planned = plannedVisits.get(key) || [];
+          const inRoute = route.optimizedOrder || [];
+          
+          validation.totalPlanned += planned.length;
+          validation.totalInRoutes += inRoute.length;
+          
+          // Identificar visitas faltando
+          const missing = planned.filter(p => !inRoute.includes(p.customerId));
+          const extra = inRoute.filter(id => !planned.find(p => p.customerId === id));
+          
+          if (missing.length > 0 || extra.length > 0) {
+            validation.summary.withIssues++;
+            
+            missing.forEach(m => {
+              validation.missing.push({
+                date: dateStr,
+                customerId: m.customerId,
+                customerName: m.customerName,
+                sellerId: route.sellerId,
+                issue: 'Visita planejada não está na rota'
+              });
+            });
+            
+            extra.forEach(e => {
+              validation.extra.push({
+                date: dateStr,
+                customerId: e,
+                routeId: route.id,
+                issue: 'Visita na rota mas não foi planejada'
+              });
+            });
+          } else {
+            validation.summary.ok++;
+          }
+          
+          validation.dateRanges.push({
+            date: dateStr,
+            sellerId: route.sellerId,
+            routeId: route.id,
+            planned: planned.length,
+            inRoute: inRoute.length,
+            status: missing.length === 0 && extra.length === 0 ? 'ok' : 'issues'
+          });
+        }
+      }
+      
+      res.json({
+        success: true,
+        validation,
+        message: `${validation.summary.ok} datas OK, ${validation.summary.withIssues} com problemas`
+      });
+    } catch (error: any) {
+      console.error('Erro ao validar rotas:', error);
+      res.status(500).json({ 
+        message: 'Erro ao validar rotas',
+        error: error.message 
+      });
+    }
+  });
+
   // Gerar rota a partir das visitas planejadas em Clientes Ativos
   app.post('/api/daily-routes/from-planned-visits', authenticateUser, async (req: any, res) => {
     try {

@@ -51,6 +51,7 @@ import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
 import ActiveCustomers from "@/pages/ActiveCustomers";
 import ChatTest from "@/pages/ChatTest";
+import RoutesValidation from "@/pages/RoutesValidation";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -188,6 +189,7 @@ function Router() {
           <Route path="/telemarketing/test" component={ChatTest} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
+          <Route path="/admin/validacao-rotas" component={RoutesValidation} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
