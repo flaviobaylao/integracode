@@ -16483,17 +16483,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   
   // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas)
-  app.get('/api/customers/map-data', async (req: any, res) => {
+  app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
       // 🎯 Buscar clientes ativos DIRETAMENTE com coordenadas
-      const activeCustomers = await db
+      const activeCustomersTable = activeCustomers; // Renomear para evitar conflito com variável
+      const activeCustomersData = await db
         .select()
-        .from(activeCustomers as any)
-        .where(eq(activeCustomers.isActive as any, true))
+        .from(activeCustomersTable as any)
+        .where(eq(activeCustomersTable.isActive as any, true))
         .limit(1000);
       
       // Filtrar apenas clientes com coordenadas válidas
-      const mapData = activeCustomers
+      const mapData = activeCustomersData
         .filter((ac: any) => ac.latitude && ac.longitude)
         .map((ac: any) => ({
           id: ac.id,
