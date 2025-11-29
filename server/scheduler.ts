@@ -6,6 +6,20 @@ import { generateDailyRoute } from './routeOptimizationService';
 
 console.log('Inicializando agendador de tarefas...');
 
+// Sincronizar usuários como agentes na inicialização
+(async () => {
+  await storage.syncUsersAsAgents();
+})();
+
+// Job para encerrar conversas inativas a cada 5 minutos
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    await storage.closeInactiveConversations();
+  } catch (error) {
+    console.error('❌ Erro ao encerrar conversas inativas:', error);
+  }
+});
+
 // Função para sincronização completa (Clientes + Faturamentos + Débitos Vencidos)
 async function syncComplete(horario: string) {
   console.log(`🔄 [${horario}] Iniciando sincronização completa automática...`);

@@ -337,6 +337,8 @@ export interface IStorage {
   createChatAgent(agent: InsertChatAgent): Promise<ChatAgent>;
   deleteChatAgent(id: string): Promise<void>;
   updateChatAgentStatus(id: string, status: string): Promise<ChatAgent>;
+  syncUsersAsAgents(): Promise<void>;
+  closeInactiveConversations(): Promise<number>;
   
   // Chat Customers operations
   getChatCustomers(): Promise<ChatCustomer[]>;
@@ -5287,6 +5289,53 @@ export class DatabaseStorage implements IStorage {
       .where(eq(chatAgents.id, id))
       .returning();
     return agent;
+  }
+
+  // Sincronizar todos os usuários como agentes de chat
+  async syncUsersAsAgents(): Promise<void> {
+    try {
+      const allUsers = await this.getUsers();
+      for (const user of allUsers) {
+        const existing = await db.select().from(chatAgents).where(eq(chatAgents.userId, user.id));
+        if (!existing.length) {
+          await db.insert(chatAgents).values({
+            userId: user.id,
+            name: user.name || user.email,
+            email: user.email,
+            phone: user.phone,
+            status: 'offline',
+            isActive: true
+          }).onConflictDoNothing();
+        }
+      }
+      console.log(`✅ [SYNC-AGENTS] Sincronizados ${allUsers.length} usuários como agentes`);
+    } catch (error) {
+      console.error(`❌ [SYNC-AGENTS] Erro ao sincronizar agentes:`, error);
+    }
+  }
+
+  // Encerrar conversas inativas (30+ minutos)
+  async closeInactiveConversations(): Promise<number> {
+    try {
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const result = await db
+        .update(chatConversations)
+        .set({ status: 'resolved' })
+        .where(
+          and(
+            eq(chatConversations.status, 'in-progress' as any),
+            lt(chatConversations.lastMessageTime, thirtyMinutesAgo)
+          )
+        )
+        .returning();
+      if (result.length > 0) {
+        console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade`);
+      }
+      return result.length;
+    } catch (error) {
+      console.error(`❌ [INACTIVE-CONV] Erro ao encerrar conversas inativas:`, error);
+      return 0;
+    }
   }
   
   // Chat Customers operations
