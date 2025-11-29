@@ -189,7 +189,7 @@ function Router() {
           <Route path="/telemarketing/test" component={ChatTest} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
-          <Route path="/admin/validacao-rotas" component={RoutesValidation} />
+          <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}

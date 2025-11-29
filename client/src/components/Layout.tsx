@@ -165,6 +165,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
+    { id: 'validacao-rotas', label: 'Validação de Rotas', icon: 'fas fa-check-double', available: user?.role && ['admin', 'coordinator'].includes(user.role), badge: null },
     { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports || isTelemarketing, badge: null },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
   ];
@@ -227,7 +228,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
