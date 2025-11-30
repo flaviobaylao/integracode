@@ -1125,95 +1125,65 @@ export default function DailyRouteView() {
             })}
           </div>
 
-          {/* Atendimentos Virtuais (se houver) */}
+          {/* Atendimentos Virtuais (se houver) - ANTES do Retorno Casa */}
           {route?.visits && route.visits.filter((v: any) => v.isVirtual).length > 0 && (
-            <>
-              {/* Fim - Casa */}
-              <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-2 border border-green-200 dark:border-green-800">
-                <div className="flex items-center">
-                  <Home className="h-5 w-5 text-green-600 mr-3" />
-                  <div className="flex-1">
-                    <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
-                    <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
-                  </div>
+            <div className="mt-6 bg-blue-50 dark:bg-blue-900/20 rounded-lg border-2 border-blue-300 dark:border-blue-700 p-4">
+              <div className="flex items-center mb-4">
+                <Phone className="h-6 w-6 text-blue-600 mr-3" />
+                <div>
+                  <h3 className="text-lg font-bold text-blue-900 dark:text-blue-100">Atendimentos Virtuais do Dia</h3>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">{route.visits.filter((v: any) => v.isVirtual).length} chamadas/WhatsApp</p>
                 </div>
-                {/* Distância de retorno */}
-                {route.segments && route.segments.find((s: any) => s.visitId === 'return') && (
-                  <div className="mt-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-md">
-                    <div className="flex items-center text-sm font-medium text-green-800 dark:text-green-200">
-                      <Navigation className="h-4 w-4 mr-2" />
-                      <span className="text-xs text-green-600 dark:text-green-300 mr-2">
-                        {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
-                      </span>
-                      <span className="font-bold text-green-900 dark:text-green-100">
-                        {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance || 0)}
-                      </span>
-                    </div>
-                  </div>
-                )}
               </div>
-
-              {/* Atendimentos Virtuais */}
-              <div className="mt-6 bg-blue-50 dark:bg-blue-900/20 rounded-lg border-2 border-blue-300 dark:border-blue-700 p-4">
-                <div className="flex items-center mb-4">
-                  <Phone className="h-6 w-6 text-blue-600 mr-3" />
-                  <div>
-                    <h3 className="text-lg font-bold text-blue-900 dark:text-blue-100">Atendimentos Virtuais do Dia</h3>
-                    <p className="text-sm text-blue-700 dark:text-blue-300">{route.visits.filter((v: any) => v.isVirtual).length} chamadas/WhatsApp</p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {route.visits.filter((v: any) => v.isVirtual).map((visit: any, index: number) => (
-                    <div key={visit.id} className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-700 hover:shadow-sm transition-all">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Phone className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                            <p className="font-semibold text-gray-900 dark:text-white truncate">
-                              {visit.customerName}
-                            </p>
-                          </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 ml-6">
-                            {visit.customerPhone}
+              <div className="space-y-2">
+                {route.visits.filter((v: any) => v.isVirtual).map((visit: any, index: number) => (
+                  <div key={visit.id} className="p-3 bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-700 hover:shadow-sm transition-all">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Phone className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                          <p className="font-semibold text-gray-900 dark:text-white truncate">
+                            {visit.customerName}
                           </p>
                         </div>
-                        <Badge className="bg-blue-500 hover:bg-blue-600 text-white text-xs flex-shrink-0">
-                          Virtual
-                        </Badge>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 ml-6">
+                          {visit.customerPhone}
+                        </p>
                       </div>
+                      <Badge className="bg-blue-500 hover:bg-blue-600 text-white text-xs flex-shrink-0">
+                        Virtual
+                      </Badge>
                     </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-          
-          {/* Se NÃO houver virtuais, mostrar o bloco "Retorno - Casa" normalmente */}
-          {(!route?.visits || route.visits.filter((v: any) => v.isVirtual).length === 0) && (
-            <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-2 border border-green-200 dark:border-green-800">
-              <div className="flex items-center">
-                <Home className="h-5 w-5 text-green-600 mr-3" />
-                <div className="flex-1">
-                  <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
-                  <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
-                </div>
-              </div>
-              {/* Distância de retorno */}
-              {route?.segments && route.segments.find((s: any) => s.visitId === 'return') && (
-                <div className="mt-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-md">
-                  <div className="flex items-center text-sm font-medium text-green-800 dark:text-green-200">
-                    <Navigation className="h-4 w-4 mr-2" />
-                    <span className="text-xs text-green-600 dark:text-green-300 mr-2">
-                      {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
-                    </span>
-                    <span className="font-bold text-green-900 dark:text-green-100">
-                      {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance || 0)}
-                    </span>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
           )}
+
+          {/* Fim - Casa (sempre ao final) */}
+          <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg mt-6 border border-green-200 dark:border-green-800">
+            <div className="flex items-center">
+              <Home className="h-5 w-5 text-green-600 mr-3" />
+              <div className="flex-1">
+                <p className="font-semibold text-green-800 dark:text-green-200">Retorno - Sua Casa</p>
+                <p className="text-sm text-green-700 dark:text-green-300">Fim da rota</p>
+              </div>
+            </div>
+            {/* Distância de retorno */}
+            {route?.segments && route.segments.find((s: any) => s.visitId === 'return') && (
+              <div className="mt-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-md">
+                <div className="flex items-center text-sm font-medium text-green-800 dark:text-green-200">
+                  <Navigation className="h-4 w-4 mr-2" />
+                  <span className="text-xs text-green-600 dark:text-green-300 mr-2">
+                    {route.segments.find((s: any) => s.visitId === 'return')?.from} → Casa:
+                  </span>
+                  <span className="font-bold text-green-900 dark:text-green-100">
+                    {formatDistance(route.segments.find((s: any) => s.visitId === 'return')?.distance || 0)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
