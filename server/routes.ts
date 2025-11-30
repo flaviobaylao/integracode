@@ -16511,24 +16511,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas)
   app.get('/api/customers/map-data', async (req: any, res) => {
     try {
-      // 🎯 Buscar clientes ativos DIRETAMENTE com coordenadas
-      const activeCustomersData = await storage.getActiveCustomersWithVisits();
+      // 🎯 Buscar clientes ativos COM coordenadas do customers table
+      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
+      
+      if (active.length === 0) {
+        return res.json([]);
+      }
+      
+      const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
+      if (customerIds.length === 0) {
+        return res.json([]);
+      }
+      
+      // Buscar clientes com coordenadas
+      const customersData = await db.select().from(customers).where(
+        and(
+          inArray(customers.id, customerIds),
+          isNotNull(customers.latitude),
+          isNotNull(customers.longitude)
+        )
+      );
       
       // Filtrar apenas clientes com coordenadas válidas
-      const mapData = (activeCustomersData || [])
-        .filter((c: any) => c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0)
-        .map((c: any) => ({
+      const mapData = customersData
+        .filter((c) => Number(c.latitude) !== 0 && Number(c.longitude) !== 0)
+        .map((c) => ({
           id: c.id,
           name: c.fantasyName || c.name || `Cliente ${c.document}`,
           fantasyName: c.fantasyName,
           phone: c.phone || '',
           address: c.address || '',
+          neighborhood: c.neighborhood || '',
           document: c.document,
           latitude: parseFloat(String(c.latitude)),
           longitude: parseFloat(String(c.longitude)),
           weekdays: c.weekdays || 'Seg',
-          isActive: c.isActive !== false,
-          visitDay: c.visitDay || 'Seg',
+          isActive: true,
+          visitDay: c.weekdays ? (Array.isArray(c.weekdays) ? (c.weekdays as string[])[0] : String(c.weekdays)) : 'Seg',
           customerId: c.id
         }));
       
