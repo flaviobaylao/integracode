@@ -6181,7 +6181,7 @@ export class DatabaseStorage implements IStorage {
     return upload;
   }
 
-  async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number }> {
+  async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number; corrected?: number }> {
     const WEEKDAY_MAP: Record<string, number> = {
       'Seg': 1, 'Segunda': 1, 'segunda': 1,
       'Ter': 2, 'Terça': 2, 'terça': 2,
@@ -6190,6 +6190,10 @@ export class DatabaseStorage implements IStorage {
       'Sex': 5, 'Sexta': 5, 'sexta': 5,
       'Sab': 6, 'Sábado': 6, 'sábado': 6,
       'Dom': 0, 'Domingo': 0, 'domingo': 0
+    };
+
+    const REVERSE_WEEKDAY_MAP: Record<number, string> = {
+      0: 'Dom', 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sab'
     };
 
     try {
@@ -6204,6 +6208,7 @@ export class DatabaseStorage implements IStorage {
       let processed = 0;
       let skipped = 0;
       let generated = 0;
+      let corrected = 0;
       let errors = 0;
 
       const today = new Date();
@@ -6236,11 +6241,48 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
 
-          // 3. Contar visitas futuras
+          // Parse weekdays
+          let weekdaysArray = [];
+          try {
+            weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
+          } catch (e) {
+            console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, customer.weekdays);
+            skipped++;
+            continue;
+          }
+
+          // 3. Buscar todas as visitas futuras
           const futureCutoff = new Date(today);
           futureCutoff.setDate(futureCutoff.getDate() + 60); // Próximos 60 dias
 
-          const futureVisits = await db
+          const allFutureVisits = await db
+            .select()
+            .from(visitAgenda)
+            .where(
+              and(
+                eq(visitAgenda.customerId, activeCustomer.customerId),
+                gte(visitAgenda.scheduledDate, today),
+                lte(visitAgenda.scheduledDate, futureCutoff)
+              )
+            );
+
+          // 4. Verificar e corrigir visitas em dias incorretos
+          const visitsInWrongDays = allFutureVisits.filter(visit => {
+            const visitDayOfWeek = visit.scheduledDate.getDay();
+            const visitDayName = REVERSE_WEEKDAY_MAP[visitDayOfWeek];
+            return !weekdaysArray.includes(visitDayName);
+          });
+
+          if (visitsInWrongDays.length > 0) {
+            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: ${visitsInWrongDays.length} visita(s) em dia(s) incorreto(s) - deletando...`);
+            for (const wrongVisit of visitsInWrongDays) {
+              await db.delete(visitAgenda).where(eq(visitAgenda.id, wrongVisit.id));
+              corrected++;
+            }
+          }
+
+          // Recalcular após correção
+          const validFutureVisits = await db
             .select()
             .from(visitAgenda)
             .where(
@@ -6252,22 +6294,12 @@ export class DatabaseStorage implements IStorage {
             )
             .then(rows => rows.length);
 
-          console.log(`📊 [VISIT-SCHEDULER] Cliente ${customer.name}: ${futureVisits} visitas futuras`);
+          console.log(`📊 [VISIT-SCHEDULER] Cliente ${customer.name}: ${validFutureVisits} visitas futuras válidas`);
 
-          // 4. Se tiver menos de 3 visitas, gerar as que faltam
-          if (futureVisits < 3) {
-            const visitsNeeded = 3 - futureVisits;
-            let weekdaysArray = [];
-            try {
-              weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
-            } catch (e) {
-              console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, customer.weekdays);
-              skipped++;
-              continue;
-            }
-            
-            // Debug: mostrar o que foi parseado
-            console.log(`📋 [VISIT-SCHEDULER] Weekdays para ${customer.name}: ${JSON.stringify(weekdaysArray)}`);
+          // 5. Se tiver menos de 3 visitas, gerar as que faltam
+          if (validFutureVisits < 3) {
+            const visitsNeeded = 3 - validFutureVisits;
+            console.log(`📋 [VISIT-SCHEDULER] Gerando ${visitsNeeded} visita(s) para ${customer.name}`);
             const periodicity = customer.visitPeriodicity || 'semanal';
 
             let daysToAdd = 7;
@@ -6358,10 +6390,11 @@ export class DatabaseStorage implements IStorage {
 
       console.log(`✅ [VISIT-SCHEDULER] Processamento concluído:`);
       console.log(`   - ${processed} processados`);
+      console.log(`   - ${corrected} visita(s) corrigida(s) (dias incorretos removidos)`);
       console.log(`   - ${generated} visitas geradas`);
       console.log(`   - ${skipped} pulados (sem customer_id ou weekdays)`);
       console.log(`   - ${errors} erros`);
-      return { processed, generated, errors };
+      return { processed, generated, errors, corrected };
     } catch (error: any) {
       console.error(`❌ [VISIT-SCHEDULER] Erro crítico:`, error.message);
       return { processed: 0, generated: 0, errors: 1 };
