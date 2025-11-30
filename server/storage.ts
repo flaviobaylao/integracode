@@ -6302,19 +6302,24 @@ export class DatabaseStorage implements IStorage {
             if (periodicity === 'quinzenal') daysToAdd = 14;
             else if (periodicity === 'mensal') daysToAdd = 30;
 
-            // Encontrar a última visita realizada
-            const lastVisit = await db
+            // Buscar a ÚLTIMA VISITA FUTURA (não histórica) para manter sequência
+            const lastFutureVisit = await db
               .select()
               .from(visitAgenda)
-              .where(eq(visitAgenda.customerId, activeCustomer.customerId))
+              .where(
+                and(
+                  eq(visitAgenda.customerId, activeCustomer.customerId),
+                  gte(visitAgenda.scheduledDate, today)
+                )
+              )
               .orderBy(desc(visitAgenda.scheduledDate))
               .limit(1)
               .then(rows => rows[0]);
 
-            // Começar a partir da última visita + periodicidade OU hoje
+            // Começar a partir da última visita futura + periodicidade
             let baseDate = new Date(today);
-            if (lastVisit) {
-              baseDate = new Date(lastVisit.scheduledDate);
+            if (lastFutureVisit) {
+              baseDate = new Date(lastFutureVisit.scheduledDate);
               baseDate.setDate(baseDate.getDate() + daysToAdd);
             }
 
