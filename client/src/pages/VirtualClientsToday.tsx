@@ -9,6 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import SaleEditModal from "@/components/SaleEditModal";
+import NoSaleModal from "@/components/NoSaleModal";
 import { 
   Search, 
   Phone, 
@@ -59,6 +61,10 @@ export default function VirtualClientsToday() {
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [selectedSalesCard, setSelectedSalesCard] = useState<any>(null);
   const [showSalesCardModal, setShowSalesCardModal] = useState(false);
+  const [showSaleEditModal, setShowSaleEditModal] = useState(false);
+  const [showNoSaleModal, setShowNoSaleModal] = useState(false);
+  const [selectedCardForEdit, setSelectedCardForEdit] = useState<any>(null);
+  const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<any>(null);
   const { toast } = useToast();
 
   const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery({
@@ -179,6 +185,18 @@ export default function VirtualClientsToday() {
         variant: "destructive"
       });
     }
+  };
+
+  const handleEditSale = (card: any) => {
+    setSelectedCardForEdit(card);
+    setShowSalesCardModal(false);
+    setShowSaleEditModal(true);
+  };
+
+  const handleNoSale = (card: any) => {
+    setSelectedCardForNoSale(card);
+    setShowSalesCardModal(false);
+    setShowNoSaleModal(true);
   };
 
   const handleWhatsAppClick = (phone: string) => {
@@ -420,6 +438,28 @@ export default function VirtualClientsToday() {
         isOpen={showSalesCardModal}
         onClose={() => setShowSalesCardModal(false)}
         card={selectedSalesCard}
+        onStartSale={handleEditSale}
+        onStartNoSale={handleNoSale}
+      />
+
+      {/* Modal de edição de venda */}
+      <SaleEditModal
+        isOpen={showSaleEditModal}
+        onClose={() => {
+          setShowSaleEditModal(false);
+          setSelectedCardForEdit(null);
+        }}
+        card={selectedCardForEdit}
+      />
+
+      {/* Modal de não venda */}
+      <NoSaleModal
+        isOpen={showNoSaleModal}
+        onClose={() => {
+          setShowNoSaleModal(false);
+          setSelectedCardForNoSale(null);
+        }}
+        card={selectedCardForNoSale}
       />
     </div>
   );
