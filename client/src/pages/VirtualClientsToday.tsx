@@ -199,16 +199,8 @@ export default function VirtualClientsToday() {
     setShowNoSaleModal(true);
   };
 
-  const handleWhatsAppClick = (phone: string) => {
-    if (!phone) return;
-    const cleanPhone = phone.replace(/\D/g, "");
-    const isPhone = cleanPhone.length <= 11;
-    const whatsappNumber = isPhone ? cleanPhone : cleanPhone.slice(-11);
-    const message = "Olá! Somos da Honest Sucos.";
-    window.open(
-      `https://wa.me/55${whatsappNumber}?text=${encodeURIComponent(message)}`,
-      "_blank"
-    );
+  const handleWhatsAppClick = () => {
+    navigate("/telemarketing/atendimento");
   };
 
   return (
@@ -416,8 +408,7 @@ export default function VirtualClientsToday() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={(e) => {e.stopPropagation(); handleWhatsAppClick(client.customer?.phone || "");}}
-                            disabled={!client.customer?.phone}
+                            onClick={(e) => {e.stopPropagation(); handleWhatsAppClick();}}
                             data-testid={`button-whatsapp-${client.id}`}
                           >
                             <Phone className="h-4 w-4" />
