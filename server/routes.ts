@@ -868,21 +868,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Filtrar apenas clientes com coordenadas válidas
       const mapData = customersData
         .filter((c) => Number(c.latitude) !== 0 && Number(c.longitude) !== 0)
-        .map((c) => ({
-          id: c.id,
-          name: c.fantasyName || c.name || `Cliente ${c.document}`,
-          fantasyName: c.fantasyName,
-          phone: c.phone || '',
-          address: c.address || '',
-          neighborhood: c.neighborhood || '',
-          document: c.document,
-          latitude: parseFloat(String(c.latitude)),
-          longitude: parseFloat(String(c.longitude)),
-          weekdays: c.weekdays || 'Seg',
-          isActive: true,
-          visitDay: c.weekdays ? (Array.isArray(c.weekdays) ? (c.weekdays as string[])[0] : String(c.weekdays)) : 'Seg',
-          customerId: c.id
-        }));
+        .map((c) => {
+          // Parse weekdays: pode ser array, string JSON ou string simples
+          let parsedWeekdays: string[] = [];
+          try {
+            if (Array.isArray(c.weekdays)) {
+              parsedWeekdays = c.weekdays as string[];
+            } else if (typeof c.weekdays === 'string') {
+              // Tentar parse como JSON
+              if (c.weekdays.startsWith('[')) {
+                parsedWeekdays = JSON.parse(c.weekdays);
+              } else {
+                parsedWeekdays = [c.weekdays];
+              }
+            }
+          } catch (e) {
+            parsedWeekdays = ['Seg'];
+          }
+          
+          const visitDay = parsedWeekdays.length > 0 ? parsedWeekdays[0] : 'Seg';
+          
+          return {
+            id: c.id,
+            name: c.fantasyName || c.name || `Cliente ${c.document}`,
+            fantasyName: c.fantasyName,
+            phone: c.phone || '',
+            address: c.address || '',
+            neighborhood: c.neighborhood || '',
+            document: c.document,
+            latitude: parseFloat(String(c.latitude)),
+            longitude: parseFloat(String(c.longitude)),
+            weekdays: parsedWeekdays.join(', '),
+            isActive: true,
+            visitDay: visitDay,
+            customerId: c.id
+          };
+        });
       
       console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados com coordenadas`);
       res.json(mapData);
