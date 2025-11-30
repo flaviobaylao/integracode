@@ -12318,6 +12318,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Note: visit_agenda não tem leadId direto, mas pode ter sido criado por sales_card
         // com customerId como o entityId do lead, então buscamos por ambos
         
+        const whereConditions = [
+          eq(visitAgenda.sellerId, sellerId),
+          eq(sql`DATE(${visitAgenda.scheduledDate})`, date)
+        ];
+        
+        if (conditions.length > 0) {
+          whereConditions.push(or(...conditions));
+        }
+        
         visitAgendaData = await db
           .select({
             customerId: visitAgenda.customerId,
@@ -12326,11 +12335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isVirtual: visitAgenda.isVirtual
           })
           .from(visitAgenda)
-          .where(and(
-            eq(visitAgenda.sellerId, sellerId),
-            eq(sql`DATE(${visitAgenda.scheduledDate})`, date),
-            conditions.length > 0 ? or(...conditions) : sql`1=1`
-          ));
+          .where(and(...whereConditions));
       }
       
       const visitAgendaByEntityId = new Map<string, any>();
