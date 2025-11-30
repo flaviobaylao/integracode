@@ -111,11 +111,16 @@ export default function VirtualClientsToday() {
       // Filtro de dia da semana
       if (selectedDayOfRoute) {
         const weekdays = ac.customer?.weekdays;
-        const weekdayArray = Array.isArray(weekdays)
-          ? weekdays
-          : typeof weekdays === "string"
-          ? [weekdays]
-          : [];
+        let weekdayArray: string[] = [];
+        try {
+          weekdayArray = Array.isArray(weekdays)
+            ? weekdays
+            : typeof weekdays === "string"
+            ? JSON.parse(weekdays)
+            : [];
+        } catch {
+          weekdayArray = [];
+        }
         if (!weekdayArray.includes(selectedDayOfRoute)) return false;
       }
 

@@ -5988,7 +5988,7 @@ export class DatabaseStorage implements IStorage {
       
       if (active.length === 0) return [];
       
-      // Buscar clientes associados COM JOIN de vendedores
+      // Buscar clientes associados COM JOIN de vendedores (otimizado - single query)
       const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
       const customerMap = new Map<string, any>();
       const today = new Date();
@@ -5996,30 +5996,26 @@ export class DatabaseStorage implements IStorage {
       
       if (customerIds.length > 0) {
         try {
+          // 1. Buscar TODOS os vendedores de uma vez
           const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
-          for (const c of customersData) {
-            // Adicionar sellerName juntando com users
-            let sellerName = undefined;
-            if (c.sellerId) {
-              try {
-                const seller = await db.select().from(users).where(eq(users.id, c.sellerId));
-                if (seller[0]) {
-                  // Montar nome: firstName + lastName, ou extrair do email
-                  const firstName = seller[0].firstName?.trim() || '';
-                  const lastName = seller[0].lastName?.trim() || '';
-                  
-                  if (firstName || lastName) {
-                    sellerName = `${firstName} ${lastName}`.trim();
-                  } else {
-                    // Se não houver nome, extrair do email (antes do @)
-                    const email = seller[0].email || '';
-                    sellerName = email.split('@')[0] || email;
-                  }
-                }
-              } catch (err) {
-                console.warn('Erro ao buscar vendedor:', err);
-              }
+          const sellerIds = Array.from(new Set(customersData.map(c => c.sellerId).filter(Boolean)));
+          
+          let sellerMap = new Map<string, string>();
+          if (sellerIds.length > 0) {
+            const sellersData = await db.select().from(users).where(inArray(users.id, sellerIds));
+            for (const seller of sellersData) {
+              const firstName = seller.firstName?.trim() || '';
+              const lastName = seller.lastName?.trim() || '';
+              const sellerName = firstName || lastName
+                ? `${firstName} ${lastName}`.trim()
+                : seller.email?.split('@')[0] || seller.email || 'Desconhecido';
+              sellerMap.set(seller.id, sellerName);
             }
+          }
+          
+          // 2. Mapear clientes com nomes de vendedores
+          for (const c of customersData) {
+            const sellerName = c.sellerId ? sellerMap.get(c.sellerId) : undefined;
             customerMap.set(c.id, { ...c, sellerName });
           }
         } catch (err) {
