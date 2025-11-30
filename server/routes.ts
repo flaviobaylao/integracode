@@ -12173,7 +12173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         route: {
           ...route,
-          visits: visits.filter(Boolean),
+          visits: allVisits.filter(Boolean),
           checkpoints,
           segments,
           sellerHome: {
@@ -12404,7 +12404,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .filter(Boolean);
       
-      console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
+      console.log(`✅ [DEBUG] ${visits.length} visitas presenciais montadas na ordem do optimizedOrder`);
+      
+      // Buscar visitas VIRTUAIS separadamente (não estão no optimizedOrder pois não têm otimização de rota)
+      let virtualVisits: any[] = [];
+      const virtualVisitsData = await db
+        .select({
+          customerId: visitAgenda.customerId,
+          customerName: visitAgenda.customerName,
+          customerPhone: visitAgenda.customerPhone,
+          isVirtual: visitAgenda.isVirtual
+        })
+        .from(visitAgenda)
+        .where(and(
+          eq(visitAgenda.sellerId, sellerId),
+          eq(sql`DATE(${visitAgenda.scheduledDate})`, date),
+          eq(visitAgenda.isVirtual, true),
+          eq(visitAgenda.visitStatus, 'pending')
+        ));
+      
+      virtualVisits = virtualVisitsData.map((va: any, index: number) => ({
+        id: `virtual-${va.customerId}-${index}`,
+        visitType: 'virtual' as const,
+        customerId: va.customerId,
+        customerName: va.customerName,
+        customerPhone: va.customerPhone,
+        scheduledDate: route.routeDate,
+        isVirtual: true
+      }));
+      
+      console.log(`✅ [DEBUG] ${virtualVisits.length} visitas virtuais encontradas para hoje`);
+      
+      // Combinar visitas presenciais + virtuais
+      const allVisits = [...visits, ...virtualVisits];
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
