@@ -105,6 +105,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { 
+      id: 'clientes-virtuais-hoje', 
+      label: 'Clientes Virtuais do Dia',
+      icon: 'fas fa-phone', 
+      available: !isMotorista,
+      badge: null
+    },
+    { 
       id: 'leads', 
       label: 'LEADs',
       icon: 'fas fa-crosshairs', 
@@ -228,7 +235,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente

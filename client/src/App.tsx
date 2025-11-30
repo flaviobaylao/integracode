@@ -50,6 +50,7 @@ import TelemarketingHub from "@/pages/TelemarketingHub";
 import ClientsMap from "@/pages/ClientsMap";
 import SystemAdmin from "@/pages/SystemAdmin";
 import ActiveCustomers from "@/pages/ActiveCustomers";
+import VirtualClientsToday from "@/pages/VirtualClientsToday";
 import ChatTest from "@/pages/ChatTest";
 import RoutesValidation from "@/pages/RoutesValidation";
 
@@ -162,6 +163,7 @@ function Router() {
           <Route path="/delivery-routes" component={RoutesSummary} />
           <Route path="/mapa-clientes" component={ClientsMap} />
           <Route path="/clientes-ativos" component={ActiveCustomers} />
+          <Route path="/clientes-virtuais-hoje" component={VirtualClientsToday} />
           <Route path="/rota-entrega" component={RotaEntrega} />
           <Route path="/entregas-do-dia" component={DeliveryDailySummary} />
           <Route path="/driver-management" component={DriverManagement} />
