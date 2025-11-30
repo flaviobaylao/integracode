@@ -4225,7 +4225,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/dashboard/today-clients', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
-      const sellerId = req.sellerId;
+      const user = req.currentUser;
+      let sellerId = req.sellerId;
+      
+      // Admin/Coordinator/Administrative ver TODOS os clientes do dia
+      // Vendedor vê apenas seus próprios clientes
+      if (['admin', 'coordinator', 'administrative'].includes(user?.role)) {
+        sellerId = undefined; // Retorna todos os clientes
+      }
       
       // Obter data atual no timezone do Brasil (UTC-3)
       const now = new Date();
