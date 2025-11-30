@@ -429,7 +429,7 @@ export default function ChatCenter() {
           )}
           
           {/* Lista de Conversas */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-2">
             <Card className="h-full">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -506,7 +506,7 @@ export default function ChatCenter() {
           </div>
 
           {/* Chat */}
-          <div className="lg:col-span-3 space-y-4">
+          <div className="lg:col-span-2 space-y-4">
             {selectedChat ? (
               <>
                 {/* Info do Cliente */}
