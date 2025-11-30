@@ -528,16 +528,16 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="p-6">
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-96 overflow-y-auto">
               {todayClients && todayClients.length > 0 ? (
-                todayClients.slice(0, 5).map((client: any) => (
+                todayClients.map((client: any) => (
                   <div
                     key={client.id}
                     className={`flex items-center justify-between p-4 rounded-lg border ${
                       client.status === 'completed'
                         ? 'bg-green-50 border-green-200'
-                        : client.status === 'in_progress'
-                        ? 'bg-yellow-50 border-yellow-200'
+                        : client.status === 'no_sale'
+                        ? 'bg-red-50 border-red-200'
                         : 'bg-gray-50 border-gray-200'
                     }`}
                   >
@@ -546,24 +546,24 @@ export default function Dashboard() {
                         className={`w-10 h-10 rounded-full flex items-center justify-center ${
                           client.status === 'completed'
                             ? 'bg-green-500'
-                            : client.status === 'in_progress'
-                            ? 'bg-yellow-500'
-                            : 'bg-honest-blue'
+                            : client.status === 'no_sale'
+                            ? 'bg-red-500'
+                            : 'bg-gray-400'
                         }`}
                       >
                         <i
                           className={`${
                             client.status === 'completed'
                               ? 'fas fa-check'
-                              : client.status === 'in_progress'
-                              ? 'fas fa-spinner'
+                              : client.status === 'no_sale'
+                              ? 'fas fa-times'
                               : 'fas fa-clock'
                           } text-white`}
                         ></i>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-800">{client.customer.fantasyName || client.customer.name}</p>
-                        <p className="text-sm text-gray-600">{client.customer.address}</p>
+                        <p className="font-medium text-gray-800">{client.customer?.fantasyName || client.customer?.name || 'Cliente'}</p>
+                        <p className="text-sm text-gray-600">{client.customer?.address || '-'}</p>
                       </div>
                     </div>
                     <div className="text-right">
@@ -583,10 +583,6 @@ export default function Dashboard() {
                   Nenhum cliente agendado para hoje
                 </p>
               )}
-              
-              <Button variant="ghost" className="w-full text-honest-blue hover:bg-blue-50">
-                Ver todos os clientes do dia
-              </Button>
             </div>
           </CardContent>
         </Card>
