@@ -258,10 +258,13 @@ export default function ActiveCustomers() {
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("/api/admin/generate-next-visits", {
+      const response = await fetch("/api/admin/generate-next-visits", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
-      return response;
+      if (!response.ok) throw new Error("Erro ao gerar agendamentos");
+      return response.json();
     },
     onSuccess: (data: any) => {
       toast({ 
