@@ -26,7 +26,8 @@ import {
   Calendar,
   ArrowLeft,
   Filter,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -255,6 +256,26 @@ export default function ActiveCustomers() {
     }
   };
 
+  const generateVisitsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("/api/admin/generate-next-visits", {
+        method: "POST",
+      });
+      return response;
+    },
+    onSuccess: (data: any) => {
+      toast({ 
+        title: "✅ Agendamentos gerados!", 
+        description: `${data.stats?.generated || 0} visitas criadas • ${data.stats?.processed || 0} clientes processados`
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
+    },
+    onError: (error: any) => {
+      const message = error.message || "Erro ao gerar agendamentos";
+      toast({ title: "❌ Erro", description: message, variant: "destructive" });
+    }
+  });
+
   const handleDownloadTemplate = () => {
     window.location.href = "/api/active-customers/template";
   };
@@ -417,6 +438,15 @@ export default function ActiveCustomers() {
           >
             <Upload className="h-4 w-4 mr-2" />
             {uploadMutation.isPending ? "Enviando..." : "Enviar Planilha"}
+          </Button>
+          <Button 
+            onClick={() => generateVisitsMutation.mutate()}
+            disabled={generateVisitsMutation.isPending}
+            className="bg-blue-600 hover:bg-blue-700"
+            data-testid="button-generate-visits"
+          >
+            <Zap className="h-4 w-4 mr-2" />
+            {generateVisitsMutation.isPending ? "Gerando..." : "Gerar Agendamentos"}
           </Button>
         </div>
       </div>
