@@ -2679,53 +2679,36 @@ export class DatabaseStorage implements IStorage {
     // Overdue clients
     const overdueCards = await this.getOverdueSalesCards(sellerId);
     
-    // Conversion rate (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    let totalCardsQuery = db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(salesCards)
-      .where(gte(salesCards.completedDate, thirtyDaysAgo));
-    
-    let completedCardsQuery = db
+    // Conversion rate (today: completed sales / total clients today)
+    let todayCompletedQuery = db
       .select({ count: sql<number>`COUNT(*)` })
       .from(salesCards)
       .where(
         and(
-          gte(salesCards.completedDate, thirtyDaysAgo),
+          gte(salesCards.scheduledDate, today),
+          lte(salesCards.scheduledDate, tomorrow),
           eq(salesCards.status, 'completed')
         )
       );
     
     if (sellerId) {
-      totalCardsQuery = db
+      todayCompletedQuery = db
         .select({ count: sql<number>`COUNT(*)` })
         .from(salesCards)
         .where(
           and(
-            gte(salesCards.completedDate, thirtyDaysAgo),
-            eq(salesCards.sellerId, sellerId)
-          )
-        );
-      
-      completedCardsQuery = db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(salesCards)
-        .where(
-          and(
-            gte(salesCards.completedDate, thirtyDaysAgo),
+            gte(salesCards.scheduledDate, today),
+            lte(salesCards.scheduledDate, tomorrow),
             eq(salesCards.status, 'completed'),
             eq(salesCards.sellerId, sellerId)
           )
         );
     }
     
-    const [totalCardsResult] = await totalCardsQuery;
-    const [completedCardsResult] = await completedCardsQuery;
+    const [todayCompletedResult] = await todayCompletedQuery;
     
-    const conversionRate = totalCardsResult.count > 0 
-      ? Math.round((completedCardsResult.count / totalCardsResult.count) * 100)
+    const conversionRate = todayClientsResult.count > 0 
+      ? Math.round((todayCompletedResult.count / todayClientsResult.count) * 100)
       : 0;
     
     return {
