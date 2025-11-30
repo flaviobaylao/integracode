@@ -12307,7 +12307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar dados de visit_agenda para obter isAutoCheckout e visitDuration
       // Incluindo tanto customerIds quanto leadIds
       const { visitAgenda } = await import('../shared/schema');
-      const { or } = await import('drizzle-orm');
+      const { or, and, eq, sql } = await import('drizzle-orm');
       
       let visitAgendaData: any[] = [];
       if (customerIds.length > 0 || leadIds.length > 0) {
