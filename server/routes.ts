@@ -12322,7 +12322,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .select({
             customerId: visitAgenda.customerId,
             isAutoCheckout: visitAgenda.isAutoCheckout,
-            visitDuration: visitAgenda.visitDuration
+            visitDuration: visitAgenda.visitDuration,
+            isVirtual: visitAgenda.isVirtual
           })
           .from(visitAgenda)
           .where(and(
@@ -12370,7 +12371,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerLongitude: customer.longitude,
               customerAddress: customer.address,
               scheduledDate: route.routeDate,
-              isVirtual: customer.virtualService,
+              isVirtual: visitAgendaInfo?.isVirtual ?? customer.virtualService ?? false,
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
