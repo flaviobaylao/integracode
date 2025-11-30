@@ -6051,7 +6051,12 @@ export class DatabaseStorage implements IStorage {
             }
             const visits = visitMap.get(visit.customerId)!;
             if (visits.length < 3) {
-              const dateStr = visit.scheduledDate.toISOString().split('T')[0];
+              // Extrair data SEM converter para UTC (usar apenas a data do banco)
+              const visitDate = new Date(visit.scheduledDate);
+              const year = visitDate.getFullYear();
+              const month = String(visitDate.getMonth() + 1).padStart(2, '0');
+              const day = String(visitDate.getDate()).padStart(2, '0');
+              const dateStr = `${year}-${month}-${day}`;
               visits.push({ date: dateStr, status: visit.visitStatus || 'pending' });
               console.log(`  ✅ Visita adicionada para ${visit.customerId}: ${dateStr}`);
             }

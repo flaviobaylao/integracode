@@ -83,9 +83,14 @@ export default function VirtualClientsToday() {
 
   // Filtrar apenas clientes virtuais com visitas para o dia selecionado
   const filteredClients = useMemo(() => {
-    const today = new Date(selectedDate);
-    const todayStr = format(today, 'yyyy-MM-dd');
-    const todayWeekday = daysOfRoute[today.getDay() === 0 ? 6 : today.getDay() - 1];
+    // Parse date string directly without timezone conversion
+    // selectedDate formato: "2025-12-01"
+    const todayStr = selectedDate;
+    
+    // Calcular dia da semana da data selecionada usando the date string
+    const [yearStr, monthStr, dayStr] = selectedDate.split('-');
+    const dateObj = new Date(parseInt(yearStr), parseInt(monthStr) - 1, parseInt(dayStr));
+    const todayWeekday = daysOfRoute[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
 
     return (activeCustomers as VirtualClient[]).filter((ac) => {
       // Apenas clientes virtuais
