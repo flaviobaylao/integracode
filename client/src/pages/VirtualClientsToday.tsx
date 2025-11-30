@@ -179,7 +179,11 @@ export default function VirtualClientsToday() {
           Clientes Virtuais do Dia
         </h1>
         <p className="text-muted-foreground">
-          Gerencie os atendimentos virtuais agendados para {format(new Date(selectedDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+          Gerencie os atendimentos virtuais agendados para {(() => {
+            const [yearStr, monthStr, dayStr] = selectedDate.split('-');
+            const dateObj = new Date(parseInt(yearStr), parseInt(monthStr) - 1, parseInt(dayStr));
+            return format(dateObj, "dd 'de' MMMM 'de' yyyy", { locale: ptBR });
+          })()}
         </p>
       </div>
 
