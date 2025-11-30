@@ -6208,8 +6208,11 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
 
-          if (!customer.weekdays) {
-            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${customer.id} sem weekdays configurados`);
+          // Usar weekdays ou deliveryWeekdays como fallback
+          let weekdaysToUse = customer.weekdays || (customer.deliveryWeekdays ? JSON.stringify(customer.deliveryWeekdays) : null);
+          
+          if (!weekdaysToUse) {
+            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${customer.id} sem weekdays ou deliveryWeekdays configurados`);
             skipped++;
             continue;
           }
@@ -6237,9 +6240,14 @@ export class DatabaseStorage implements IStorage {
             const visitsNeeded = 3 - futureVisits;
             let weekdaysArray = [];
             try {
-              weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
+              if (typeof weekdaysToUse === 'string') {
+                const parsed = JSON.parse(weekdaysToUse);
+                weekdaysArray = Array.isArray(parsed) ? parsed : [parsed];
+              } else {
+                weekdaysArray = weekdaysToUse || [];
+              }
             } catch (e) {
-              console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, customer.weekdays);
+              console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, weekdaysToUse);
               skipped++;
               continue;
             }
