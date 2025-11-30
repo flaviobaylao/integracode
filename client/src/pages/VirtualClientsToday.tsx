@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import { 
   Search, 
   Phone, 
@@ -56,12 +57,21 @@ export default function VirtualClientsToday() {
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState("");
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedSalesCard, setSelectedSalesCard] = useState<any>(null);
+  const [showSalesCardModal, setShowSalesCardModal] = useState(false);
   const { toast } = useToast();
 
   const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery({
     queryKey: ['/api/active-customers'],
     queryFn: () => fetch('/api/active-customers').then(r => r.json()),
     refetchInterval: 30000,
+  });
+
+  // Buscar cards de venda da data selecionada
+  const { data: salesCards = [] } = useQuery({
+    queryKey: ['/api/sales-cards/by-date', selectedDate],
+    queryFn: () => fetch(`/api/sales-cards/by-date/${selectedDate}`).then(r => r.json()).then(d => d.cards || []),
+    enabled: !!selectedDate,
   });
 
   // Extrair vendedores únicos e dias da semana
@@ -144,6 +154,21 @@ export default function VirtualClientsToday() {
     setSelectedDayOfRoute("");
     setSelectedPeriodicity("");
     setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
+  };
+
+  const handleRowClick = (client: VirtualClient) => {
+    if (!client.customerId || !selectedDate) return;
+    const card = salesCards.find((c: any) => c.customerId === client.customerId);
+    if (card) {
+      setSelectedSalesCard(card);
+      setShowSalesCardModal(true);
+    } else {
+      toast({
+        title: "Card não encontrado",
+        description: "Nenhum card de venda encontrado para este cliente nesta data.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleWhatsAppClick = (phone: string) => {
@@ -314,7 +339,12 @@ export default function VirtualClientsToday() {
                     </TableRow>
                   ) : (
                     filteredClients.map((client) => (
-                      <TableRow key={client.id} data-testid={`row-client-${client.id}`}>
+                      <TableRow 
+                        key={client.id} 
+                        data-testid={`row-client-${client.id}`}
+                        className="cursor-pointer hover:bg-muted transition-colors"
+                        onClick={() => handleRowClick(client)}
+                      >
                         <TableCell>
                           <div className="font-medium">
                             {client.customer?.fantasyName || client.customer?.name || client.fantasyNameImported || "-"}
@@ -374,6 +404,13 @@ export default function VirtualClientsToday() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal de detalhes do card de venda */}
+      <SalesCardDetailsModal
+        isOpen={showSalesCardModal}
+        onClose={() => setShowSalesCardModal(false)}
+        card={selectedSalesCard}
+      />
     </div>
   );
 }
