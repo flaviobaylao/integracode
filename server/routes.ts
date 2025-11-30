@@ -3843,6 +3843,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Gerar próximas 3 visitas para clientes ativos (admin only)
+  app.post('/api/admin/generate-next-visits', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log(`📅 [MANUAL] Iniciando geração manual de próximas 3 visitas para clientes ativos...`);
+      const result = await storage.generateNextVisitsForActiveCustomers();
+      console.log(`✅ [MANUAL] Geração de visitas concluída:`);
+      console.log(`   - ${result.processed} clientes processados`);
+      console.log(`   - ${result.generated} visitas geradas`);
+      if (result.errors > 0) {
+        console.log(`   - ⚠️ ${result.errors} erro(s) encontrado(s)`);
+      }
+      res.json({
+        success: true,
+        message: 'Geração de visitas concluída',
+        stats: result
+      });
+    } catch (error: any) {
+      console.error('❌ Erro na geração manual de visitas:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Erro ao gerar visitas',
+        error: error.message 
+      });
+    }
+  });
+
   // Run migration to permanent cards (admin only)
   app.post('/api/admin/migrate-to-permanent-cards', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
