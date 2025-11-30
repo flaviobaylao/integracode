@@ -131,7 +131,7 @@ export default function ClientsMap() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedDay, setSelectedDay] = useState<string>("");
+  const [selectedDay, setSelectedDay] = useState<string>("all");
 
   // Controle de acesso: apenas administrativos
   const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
@@ -164,7 +164,7 @@ export default function ClientsMap() {
   }
 
   // Aplicar filtro de dia da semana
-  if (selectedDay) {
+  if (selectedDay && selectedDay !== "all") {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
       (c) => getWeekdayName(c.weekdays) === selectedDay
     );
@@ -259,7 +259,7 @@ export default function ClientsMap() {
                   <SelectValue placeholder="Todos os dias" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos os dias</SelectItem>
+                  <SelectItem value="all">Todos os dias</SelectItem>
                   <SelectItem value="Segunda">Segunda</SelectItem>
                   <SelectItem value="Terça">Terça</SelectItem>
                   <SelectItem value="Quarta">Quarta</SelectItem>
@@ -268,13 +268,13 @@ export default function ClientsMap() {
                 </SelectContent>
               </Select>
             </div>
-            {(searchTerm || selectedDay) && (
+            {(searchTerm || (selectedDay && selectedDay !== "all")) && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
                   setSearchTerm("");
-                  setSelectedDay("");
+                  setSelectedDay("all");
                 }}
                 data-testid="button-clear-filters"
               >
