@@ -156,16 +156,26 @@ export default function VirtualClientsToday() {
     setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
   };
 
-  const handleRowClick = (client: VirtualClient) => {
-    if (!client.customerId || !selectedDate) return;
-    const card = salesCards.find((c: any) => c.customerId === client.customerId);
+  const handleRowClick = (e: React.MouseEvent, client: VirtualClient) => {
+    e.stopPropagation();
+    if (!client.customerId || !selectedDate) {
+      console.log('Debug: customerId=', client.customerId, 'selectedDate=', selectedDate);
+      return;
+    }
+    
+    console.log('🔍 Procurando card para customerId:', client.customerId);
+    console.log('📊 salesCards disponíveis:', salesCards?.length, salesCards);
+    
+    const card = salesCards?.find((c: any) => c.customerId === client.customerId);
+    console.log('✅ Card encontrado:', card);
+    
     if (card) {
       setSelectedSalesCard(card);
       setShowSalesCardModal(true);
     } else {
       toast({
         title: "Card não encontrado",
-        description: "Nenhum card de venda encontrado para este cliente nesta data.",
+        description: `Nenhum card encontrado para cliente ${client.customerId} em ${selectedDate}. Disponíveis: ${salesCards?.length || 0}`,
         variant: "destructive"
       });
     }
@@ -343,7 +353,7 @@ export default function VirtualClientsToday() {
                         key={client.id} 
                         data-testid={`row-client-${client.id}`}
                         className="cursor-pointer hover:bg-muted transition-colors"
-                        onClick={() => handleRowClick(client)}
+                        onClick={(e) => handleRowClick(e, client)}
                       >
                         <TableCell>
                           <div className="font-medium">
@@ -388,7 +398,7 @@ export default function VirtualClientsToday() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleWhatsAppClick(client.customer?.phone || "")}
+                            onClick={(e) => {e.stopPropagation(); handleWhatsAppClick(client.customer?.phone || "");}}
                             disabled={!client.customer?.phone}
                             data-testid={`button-whatsapp-${client.id}`}
                           >
