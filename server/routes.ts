@@ -11615,11 +11615,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Usar a função generateDailyRoute existente (ela usará só os clientes filtrados)
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
       
+      if (!result) {
+        return res.status(500).json({
+          success: false,
+          message: 'Erro interno ao gerar rota de visitas planejadas'
+        });
+      }
+      
       res.json({
         success: true,
         fromPlannedVisits: true,
         plannedVisitsCount: plannedVisits.length,
-        ...result,
+        routeId: result.routeId,
+        totalVisits: result.totalVisits || 0,
         warnings: result.warnings || [],
         suspiciousCoordinates: result.suspiciousCoordinates || []
       });
