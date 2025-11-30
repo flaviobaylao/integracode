@@ -11615,19 +11615,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Usar a função generateDailyRoute existente (ela usará só os clientes filtrados)
       const result = await generateDailyRoute(storage, targetSellerId, routeDate);
       
-      if (!result) {
-        return res.status(500).json({
-          success: false,
-          message: 'Erro interno ao gerar rota de visitas planejadas'
-        });
-      }
-      
       res.json({
         success: true,
         fromPlannedVisits: true,
         plannedVisitsCount: plannedVisits.length,
-        routeId: result.routeId,
-        totalVisits: result.totalVisits || 0,
+        ...result,
         warnings: result.warnings || [],
         suspiciousCoordinates: result.suspiciousCoordinates || []
       });
@@ -11757,29 +11749,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Proteção contra result undefined
-      if (!result) {
-        console.error('❌ generateDailyRoute retornou undefined!');
-        return res.status(500).json({ 
-          success: false,
-          message: 'Erro interno ao gerar rota - resultado vazio' 
-        });
-      }
-      
       res.json({
         success: true,
         regenerated: false,
-        routeId: result.routeId,
-        totalVisits: result.totalVisits || 0,
-        totalEstimatedDistance: result.optimizedRoute?.totalDistance || 0,
+        ...result,
         warnings: result.warnings || [],
-        suspiciousCoordinates: result.suspiciousCoordinates || [],
-        visitsWithoutCoordinates: result.visitsWithoutCoordinates || [],
-        virtualCustomers: result.virtualCustomers || []
+        suspiciousCoordinates: result.suspiciousCoordinates || []
       });
     } catch (error: any) {
       console.error('Erro ao gerar rota diária:', error);
-      console.error('Stack trace:', error.stack);
       res.status(500).json({ 
         message: 'Erro ao gerar rota',
         error: error.message 
@@ -12195,7 +12173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         route: {
           ...route,
-          visits: allVisits.filter(Boolean),
+          visits: visits.filter(Boolean),
           checkpoints,
           segments,
           sellerHome: {
@@ -12329,7 +12307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar dados de visit_agenda para obter isAutoCheckout e visitDuration
       // Incluindo tanto customerIds quanto leadIds
       const { visitAgenda } = await import('../shared/schema');
-      const { or, and, eq, sql } = await import('drizzle-orm');
+      const { or } = await import('drizzle-orm');
       
       let visitAgendaData: any[] = [];
       if (customerIds.length > 0 || leadIds.length > 0) {
@@ -12340,24 +12318,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Note: visit_agenda não tem leadId direto, mas pode ter sido criado por sales_card
         // com customerId como o entityId do lead, então buscamos por ambos
         
-        const whereConditions = [
-          eq(visitAgenda.sellerId, sellerId),
-          eq(sql`DATE(${visitAgenda.scheduledDate})`, date)
-        ];
-        
-        if (conditions.length > 0) {
-          whereConditions.push(or(...conditions));
-        }
-        
         visitAgendaData = await db
           .select({
             customerId: visitAgenda.customerId,
             isAutoCheckout: visitAgenda.isAutoCheckout,
-            visitDuration: visitAgenda.visitDuration,
-            isVirtual: visitAgenda.isVirtual
+            visitDuration: visitAgenda.visitDuration
           })
           .from(visitAgenda)
-          .where(and(...whereConditions));
+          .where(and(
+            eq(visitAgenda.sellerId, sellerId),
+            eq(sql`DATE(${visitAgenda.scheduledDate})`, date),
+            conditions.length > 0 ? or(...conditions) : sql`1=1`
+          ));
       }
       
       const visitAgendaByEntityId = new Map<string, any>();
@@ -12398,7 +12370,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerLongitude: customer.longitude,
               customerAddress: customer.address,
               scheduledDate: route.routeDate,
-              isVirtual: visitAgendaInfo?.isVirtual ?? customer.virtualService ?? false,
+              isVirtual: customer.virtualService,
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
@@ -12431,39 +12403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .filter(Boolean);
       
-      console.log(`✅ [DEBUG] ${visits.length} visitas presenciais montadas na ordem do optimizedOrder`);
-      
-      // Buscar visitas VIRTUAIS separadamente (não estão no optimizedOrder pois não têm otimização de rota)
-      let virtualVisits: any[] = [];
-      const virtualVisitsData = await db
-        .select({
-          customerId: visitAgenda.customerId,
-          customerName: visitAgenda.customerName,
-          customerPhone: visitAgenda.customerPhone,
-          isVirtual: visitAgenda.isVirtual
-        })
-        .from(visitAgenda)
-        .where(and(
-          eq(visitAgenda.sellerId, sellerId),
-          eq(sql`DATE(${visitAgenda.scheduledDate})`, date),
-          eq(visitAgenda.isVirtual, true),
-          eq(visitAgenda.visitStatus, 'pending')
-        ));
-      
-      virtualVisits = virtualVisitsData.map((va: any, index: number) => ({
-        id: `virtual-${va.customerId}-${index}`,
-        visitType: 'virtual' as const,
-        customerId: va.customerId,
-        customerName: va.customerName,
-        customerPhone: va.customerPhone,
-        scheduledDate: route.routeDate,
-        isVirtual: true
-      }));
-      
-      console.log(`✅ [DEBUG] ${virtualVisits.length} visitas virtuais encontradas para hoje`);
-      
-      // Combinar visitas presenciais + virtuais
-      const allVisits = [...visits, ...virtualVisits];
+      console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
