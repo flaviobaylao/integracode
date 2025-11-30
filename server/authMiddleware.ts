@@ -4,6 +4,11 @@ import { storage } from './storage';
 // Middleware que funciona tanto com Replit Auth quanto com autenticação local
 export const authenticateUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Bypass para endpoints públicos
+    if (req.path === '/api/customers/map-data') {
+      return next();
+    }
+    
     let userId: string | null = null;
     let userEmail: string | null = null;
     

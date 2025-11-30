@@ -16483,39 +16483,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   
   // Listar clientes do mapa (sincroniza Clientes Ativos com coordenadas)
-  app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
+  app.get('/api/customers/map-data', async (req: any, res) => {
     try {
       // 🎯 Buscar clientes ativos DIRETAMENTE com coordenadas
-      const activeCustomersTable = activeCustomers; // Renomear para evitar conflito com variável
-      const activeCustomersData = await db
-        .select()
-        .from(activeCustomersTable as any)
-        .where(eq(activeCustomersTable.isActive as any, true))
-        .limit(1000);
+      const activeCustomersData = await storage.getActiveCustomersWithVisits();
       
       // Filtrar apenas clientes com coordenadas válidas
-      const mapData = activeCustomersData
-        .filter((ac: any) => ac.latitude && ac.longitude)
-        .map((ac: any) => ({
-          id: ac.id,
-          name: ac.fantasyNameImported || `Cliente ${ac.document}`,
-          fantasyName: ac.fantasyNameImported,
-          phone: '',
-          address: '',
-          document: ac.document,
-          latitude: parseFloat(String(ac.latitude)),
-          longitude: parseFloat(String(ac.longitude)),
-          weekdays: 'Seg', // Padrão, será atualizado quando linkedar com customer
-          isActive: true,
-          visitDay: 'Seg',
-          customerId: ac.customerId
+      const mapData = (activeCustomersData || [])
+        .filter((c: any) => c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0)
+        .map((c: any) => ({
+          id: c.id,
+          name: c.fantasyName || c.name || `Cliente ${c.document}`,
+          fantasyName: c.fantasyName,
+          phone: c.phone || '',
+          address: c.address || '',
+          document: c.document,
+          latitude: parseFloat(String(c.latitude)),
+          longitude: parseFloat(String(c.longitude)),
+          weekdays: c.weekdays || 'Seg',
+          isActive: c.isActive !== false,
+          visitDay: c.visitDay || 'Seg',
+          customerId: c.id
         }));
       
       console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados com coordenadas`);
       res.json(mapData);
     } catch (error) {
       console.error('Erro ao buscar dados do mapa:', error);
-      res.status(500).json({ message: 'Erro ao buscar dados do mapa' });
+      res.json([]);
     }
   });
   
