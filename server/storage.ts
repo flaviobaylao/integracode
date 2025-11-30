@@ -6031,13 +6031,22 @@ export class DatabaseStorage implements IStorage {
       const visitMap = new Map<string, Array<{ date: string; status: string }>>();
       try {
         if (customerIds.length > 0) {
+          console.log('🔍 DEBUG: Buscando visitas para', customerIds.length, 'clientes, data:', today);
+          
           // Buscar TODAS as visitas futuras (sem limit global que prejudica clientes no final)
-          const upcomingVisits = await db.select().from(visitAgenda)
+          const upcomingVisits = await db.select({
+            customerId: visitAgenda.customerId,
+            scheduledDate: visitAgenda.scheduledDate,
+            visitStatus: visitAgenda.visitStatus,
+            isVirtual: visitAgenda.isVirtual
+          }).from(visitAgenda)
             .where(and(
               inArray(visitAgenda.customerId, customerIds),
               gte(visitAgenda.scheduledDate, today)
             ))
             .orderBy(asc(visitAgenda.scheduledDate));
+          
+          console.log('📊 DEBUG: Encontradas', upcomingVisits.length, 'visitas futuras');
           
           // Agrupar por cliente e manter apenas 3 primeiras visitas de cada
           for (const visit of upcomingVisits) {
@@ -6048,20 +6057,33 @@ export class DatabaseStorage implements IStorage {
             if (visits.length < 3) {
               const dateStr = visit.scheduledDate.toISOString().split('T')[0];
               visits.push({ date: dateStr, status: visit.visitStatus || 'pending' });
+              console.log(`  ✅ Visita adicionada para ${visit.customerId}: ${dateStr}`);
             }
+          }
+          
+          console.log('📍 DEBUG: visitMap tem', visitMap.size, 'clientes com visitas');
+          if (visitMap.has('omie-client-4254745473')) {
+            const caverna = visitMap.get('omie-client-4254745473');
+            console.log('🎯 LA CAVERNA tem', caverna?.length, 'visitas:', caverna);
           }
         }
       } catch (err) {
-        console.warn('Erro ao buscar próximas visitas:', err);
+        console.error('❌ Erro ao buscar próximas visitas:', err);
       }
       
       // Retornar dados com clientes disponíveis
-      const result: ActiveCustomerWithVisits[] = active.map((ac) => ({
-        ...ac,
-        customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
-        lastTwoVisits: [],
-        nextThreeVisits: ac.customerId ? (visitMap.get(ac.customerId) || []) : []
-      }));
+      const result: ActiveCustomerWithVisits[] = active.map((ac) => {
+        const visits = ac.customerId ? (visitMap.get(ac.customerId) || []) : [];
+        if (ac.customerId === 'omie-client-4254745473') {
+          console.log(`🎯 LA CAVERNA final result: ${visits.length} visitas`);
+        }
+        return {
+          ...ac,
+          customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
+          lastTwoVisits: [],
+          nextThreeVisits: visits
+        };
+      });
       
       return result;
     } catch (error) {
