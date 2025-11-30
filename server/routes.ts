@@ -11749,15 +11749,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Proteção contra result undefined
+      if (!result) {
+        console.error('❌ generateDailyRoute retornou undefined!');
+        return res.status(500).json({ 
+          success: false,
+          message: 'Erro interno ao gerar rota - resultado vazio' 
+        });
+      }
+      
       res.json({
         success: true,
         regenerated: false,
-        ...result,
+        routeId: result.routeId,
+        totalVisits: result.totalVisits || 0,
+        totalEstimatedDistance: result.optimizedRoute?.totalDistance || 0,
         warnings: result.warnings || [],
-        suspiciousCoordinates: result.suspiciousCoordinates || []
+        suspiciousCoordinates: result.suspiciousCoordinates || [],
+        visitsWithoutCoordinates: result.visitsWithoutCoordinates || [],
+        virtualCustomers: result.virtualCustomers || []
       });
     } catch (error: any) {
       console.error('Erro ao gerar rota diária:', error);
+      console.error('Stack trace:', error.stack);
       res.status(500).json({ 
         message: 'Erro ao gerar rota',
         error: error.message 
