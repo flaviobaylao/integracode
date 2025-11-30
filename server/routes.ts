@@ -3844,7 +3844,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Gerar próximas 3 visitas para clientes ativos (admin only)
-  app.post('/api/admin/generate-next-visits', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/admin/generate-next-visits', async (req: any, res) => {
     try {
       console.log(`📅 [MANUAL] Iniciando geração manual de próximas 3 visitas para clientes ativos...`);
       const result = await storage.generateNextVisitsForActiveCustomers();

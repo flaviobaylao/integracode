@@ -6208,11 +6208,8 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
 
-          // Usar weekdays ou deliveryWeekdays como fallback
-          let weekdaysToUse = customer.weekdays || (customer.deliveryWeekdays ? JSON.stringify(customer.deliveryWeekdays) : null);
-          
-          if (!weekdaysToUse) {
-            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${customer.id} sem weekdays ou deliveryWeekdays configurados`);
+          if (!customer.weekdays) {
+            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${customer.id} sem weekdays configurados`);
             skipped++;
             continue;
           }
@@ -6240,17 +6237,15 @@ export class DatabaseStorage implements IStorage {
             const visitsNeeded = 3 - futureVisits;
             let weekdaysArray = [];
             try {
-              if (typeof weekdaysToUse === 'string') {
-                const parsed = JSON.parse(weekdaysToUse);
-                weekdaysArray = Array.isArray(parsed) ? parsed : [parsed];
-              } else {
-                weekdaysArray = weekdaysToUse || [];
-              }
+              weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
             } catch (e) {
-              console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, weekdaysToUse);
+              console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, customer.weekdays);
               skipped++;
               continue;
             }
+            
+            // Debug: mostrar o que foi parseado
+            console.log(`📋 [VISIT-SCHEDULER] Weekdays para ${customer.name}: ${JSON.stringify(weekdaysArray)}`);
             const periodicity = customer.visitPeriodicity || 'semanal';
 
             let daysToAdd = 7;
