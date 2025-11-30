@@ -6047,7 +6047,7 @@ export class DatabaseStorage implements IStorage {
             const visits = visitMap.get(visit.customerId)!;
             if (visits.length < 3) {
               const dateStr = visit.scheduledDate.toISOString().split('T')[0];
-              visits.push({ date: dateStr, status: visit.status || 'pending' });
+              visits.push({ date: dateStr, status: visit.visitStatus || 'pending' });
             }
           }
         }
