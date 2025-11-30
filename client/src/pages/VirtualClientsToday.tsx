@@ -60,6 +60,7 @@ export default function VirtualClientsToday() {
 
   const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery({
     queryKey: ['/api/active-customers'],
+    queryFn: () => fetch('/api/active-customers').then(r => r.json()),
     refetchInterval: 30000,
   });
 
