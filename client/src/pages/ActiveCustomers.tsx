@@ -237,6 +237,8 @@ export default function ActiveCustomers() {
   } = useQuery<ActiveCustomerWithVisits[]>({
     queryKey: ["/api/active-customers"],
     retry: 2,
+    refetchInterval: 30000, // Atualizar a cada 30s para garantir sincronização
+    staleTime: 0, // Dados sempre considerados antigos
   });
 
   const { 

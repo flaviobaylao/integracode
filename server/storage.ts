@@ -5974,7 +5974,15 @@ export class DatabaseStorage implements IStorage {
       // Buscar clientes associados COM JOIN de vendedores (otimizado - single query)
       const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
       const customerMap = new Map<string, any>();
-      const today = new Date();
+      
+      // Data de hoje em Brasília (sem timezone issues)
+      const todayBrasilia = toZonedTime(new Date(), 'America/Sao_Paulo');
+      const todayYear = todayBrasilia.getFullYear();
+      const todayMonth = String(todayBrasilia.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(todayBrasilia.getDate()).padStart(2, '0');
+      const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+      
+      const today = new Date(todayStr);
       today.setHours(0, 0, 0, 0);
       
       if (customerIds.length > 0) {
@@ -6046,9 +6054,13 @@ export class DatabaseStorage implements IStorage {
           }
           
           console.log('📍 DEBUG: visitMap tem', visitMap.size, 'clientes com visitas');
-          if (visitMap.has('omie-client-4254745473')) {
-            const caverna = visitMap.get('omie-client-4254745473');
-            console.log('🎯 LA CAVERNA tem', caverna?.length, 'visitas:', caverna);
+          
+          // Debug TUTTO PANE
+          for (const [custId, visits] of visitMap) {
+            const cust = customerMap.get(custId);
+            if (cust && (cust.fantasyName?.includes('TUTTO') || cust.name?.includes('TUTTO'))) {
+              console.log(`🎯 TUTTO PANE (${custId}): ${visits.length} visitas:`, visits);
+            }
           }
         }
       } catch (err) {
@@ -6058,12 +6070,16 @@ export class DatabaseStorage implements IStorage {
       // Retornar dados com clientes disponíveis
       const result: ActiveCustomerWithVisits[] = active.map((ac) => {
         const visits = ac.customerId ? (visitMap.get(ac.customerId) || []) : [];
-        if (ac.customerId === 'omie-client-4254745473') {
-          console.log(`🎯 LA CAVERNA final result: ${visits.length} visitas`);
+        const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
+        
+        // Debug TUTTO PANE final
+        if (customer && (customer.fantasyName?.includes('TUTTO') || customer.name?.includes('TUTTO'))) {
+          console.log(`🎯 TUTTO PANE final: ${visits.length} visitas, periodicity=${customer.visitPeriodicity}`);
         }
+        
         return {
           ...ac,
-          customer: ac.customerId ? customerMap.get(ac.customerId) : undefined,
+          customer,
           lastTwoVisits: [],
           nextThreeVisits: visits
         };
