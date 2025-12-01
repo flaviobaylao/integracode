@@ -16427,6 +16427,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`   - Clientes atualizados: ${updated}`);
       console.log(`   - Erros: ${errors.length}`);
 
+      // ⭐ ADICIONAL: Se não for dry-run, regenerar as próximas 3 visitas para todos os clientes
+      let visitsGenerated = 0;
+      let visitsError = 0;
+      
+      if (!dryRun && updated > 0) {
+        console.log(`🚀 [AGENDAMENTOS] Regenerando próximas 3 visitas para ${updated} cliente(s) com mudanças...`);
+        try {
+          const visitResult = await storage.generateNextVisitsForActiveCustomers();
+          visitsGenerated = visitResult.generated || 0;
+          visitsError = visitResult.errors || 0;
+          console.log(`✅ [AGENDAMENTOS] Visitas regeneradas: ${visitsGenerated} geradas, ${visitResult.corrected || 0} corrigidas`);
+        } catch (visitError) {
+          console.error(`❌ [AGENDAMENTOS] Erro ao regenerar visitas:`, visitError);
+          visitsError = 1;
+        }
+      }
+
       res.json({
         mode: dryRun ? 'DRY RUN' : 'APLICADO',
         totalCustomers: allCustomers.length,
@@ -16434,11 +16451,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updated: updated,
         skipped: skipped,
         errors: errors.length,
+        visitsGenerated: visitsGenerated,
+        visitsError: visitsError,
         details: changes.slice(0, 100), // Limitar a 100 para não sobrecarregar a resposta
         errorDetails: errors,
         message: dryRun 
           ? `${changes.length} cliente(s) teriam dias de entrega recalculados (dry-run)`
-          : `${updated} cliente(s) com dias de entrega recalculados com sucesso`
+          : `${updated} cliente(s) com dias de entrega recalculados. ${visitsGenerated} próximas visitas regeneradas com sucesso!`
       });
 
     } catch (error) {
