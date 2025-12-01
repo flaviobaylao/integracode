@@ -6235,48 +6235,37 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
 
-          // 3. Buscar todas as visitas futuras
+          // 3. AGRESSIVAMENTE: Deletar TODAS as próximas visitas futuras para este cliente
+          // Isso força a regeneração completa quando o dia da rota muda
           const futureCutoff = new Date(today);
-          futureCutoff.setDate(futureCutoff.getDate() + 60); // Próximos 60 dias
+          futureCutoff.setDate(futureCutoff.getDate() + 90); // Próximos 90 dias
 
-          const allFutureVisits = await db
+          // Deletar TODAS as visitas futuras (não apenas as em dias incorretos)
+          const visitsToDelete = await db
             .select()
             .from(visitAgenda)
             .where(
               and(
                 eq(visitAgenda.customerId, activeCustomer.customerId),
-                gte(visitAgenda.scheduledDate, today),
-                lte(visitAgenda.scheduledDate, futureCutoff)
+                gte(visitAgenda.scheduledDate, today)
               )
             );
 
-          // 4. Verificar e corrigir visitas em dias incorretos
-          const visitsInWrongDays = allFutureVisits.filter(visit => {
-            const visitDayOfWeek = visit.scheduledDate.getDay();
-            const visitDayName = REVERSE_WEEKDAY_MAP[visitDayOfWeek];
-            return !weekdaysArray.includes(visitDayName);
-          });
-
-          if (visitsInWrongDays.length > 0) {
-            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: ${visitsInWrongDays.length} visita(s) em dia(s) incorreto(s) - deletando...`);
-            for (const wrongVisit of visitsInWrongDays) {
-              await db.delete(visitAgenda).where(eq(visitAgenda.id, wrongVisit.id));
-              corrected++;
-            }
+          if (visitsToDelete.length > 0) {
+            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: Deletando ${visitsToDelete.length} visita(s) futuras para regeneração...`);
+            await db
+              .delete(visitAgenda)
+              .where(
+                and(
+                  eq(visitAgenda.customerId, activeCustomer.customerId),
+                  gte(visitAgenda.scheduledDate, today)
+                )
+              );
+            corrected += visitsToDelete.length;
           }
 
-          // Recalcular após correção
-          const validFutureVisits = await db
-            .select()
-            .from(visitAgenda)
-            .where(
-              and(
-                eq(visitAgenda.customerId, activeCustomer.customerId),
-                gte(visitAgenda.scheduledDate, today),
-                lte(visitAgenda.scheduledDate, futureCutoff)
-              )
-            )
-            .then(rows => rows.length);
+          // Após deletar, contar visitas restantes (deve ser 0)
+          const validFutureVisits = 0;
 
           console.log(`📊 [VISIT-SCHEDULER] Cliente ${customer.name}: ${validFutureVisits} visitas futuras válidas`);
 
