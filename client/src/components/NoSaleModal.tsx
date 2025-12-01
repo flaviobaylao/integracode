@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -20,9 +20,17 @@ interface NoSaleModalProps {
 export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps) {
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
+  const [phone, setPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Initialize phone when card opens
+  useEffect(() => {
+    if (card?.customer?.phone) {
+      setPhone(card.customer.phone);
+    }
+  }, [card?.customer?.phone, isOpen]);
 
   const updateCardMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
@@ -46,9 +54,19 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
     },
   });
 
+  const updateCustomerMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      await apiRequest('PUT', `/api/customers/${id}`, data);
+    },
+    onError: (error) => {
+      console.warn("Aviso ao atualizar telefone:", error.message);
+    },
+  });
+
   const resetForm = () => {
     setReason('');
     setNotes('');
+    setPhone('');
     setIsSubmitting(false);
   };
 
@@ -66,6 +84,14 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
 
     setIsSubmitting(true);
     try {
+      // Se o telefone foi alterado, atualizar no cliente
+      if (phone && phone !== card.customer?.phone) {
+        await updateCustomerMutation.mutateAsync({
+          id: card.customerId,
+          data: { phone: phone }
+        });
+      }
+
       await updateCardMutation.mutateAsync({
         id: card.id,
         data: {
@@ -117,9 +143,18 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg space-y-2">
                 <p className="font-semibold">{card.customer.fantasyName || card.customer.name}</p>
-                <p className="text-sm text-gray-600">{card.customer.phone}</p>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Telefone:</label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="(00) 00000-0000"
+                    className="w-full text-sm border rounded px-2 py-1 mt-1"
+                  />
+                </div>
                 <p className="text-sm text-gray-600">{card.customer.address}</p>
               </div>
             </CardContent>

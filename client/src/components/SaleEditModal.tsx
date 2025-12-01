@@ -316,6 +316,14 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       // A próxima data será calculada automaticamente pelo backend ao completar
       const nextScheduledDate = null;
 
+      // Se o telefone foi alterado, atualizar no cliente
+      if (customerPhone && customerPhone !== card.customer?.phone) {
+        await updateCustomerMutation.mutateAsync({
+          id: card.customerId,
+          data: { phone: customerPhone }
+        });
+      }
+
       // Atualizar card com dados da venda e reagendar
       await updateCardMutation.mutateAsync({
         id: card.id,
