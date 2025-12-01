@@ -2357,11 +2357,33 @@ export class OmieService {
         const omieClient = await this.getClientByCnpjCpf(document);
         if (omieClient) {
           omieClientCode = omieClient.codigo_cliente_omie;
+          console.log(`✅ Cliente encontrado no Omie: ${omieClientCode}`);
         }
       }
 
+      // Se cliente não existir no Omie, criar automaticamente
       if (!omieClientCode) {
-        throw new Error('Cliente não encontrado no Omie ERP');
+        console.log(`⚠️ Cliente não encontrado no Omie. Criando automaticamente...`);
+        
+        const createResult = await this.createClient({
+          cnpj: customer.cnpj || null,
+          cpf: customer.cpf || null,
+          name: customer.name || customer.fantasyName || 'Cliente CRM',
+          fantasyName: customer.fantasyName || customer.name || null,
+          email: customer.email || null,
+          phone: customer.phone || null,
+          address: customer.address || null,
+          city: customer.city || null,
+          state: customer.state || null,
+          zipCode: customer.zipCode || customer.cep || null
+        });
+        
+        if (createResult.success && createResult.omieClientCode) {
+          omieClientCode = createResult.omieClientCode;
+          console.log(`✅ Cliente criado no Omie com sucesso: ${omieClientCode}`);
+        } else {
+          throw new Error(`Falha ao criar cliente no Omie: ${createResult.message}`);
+        }
       }
 
       // Buscar código do vendedor no Omie

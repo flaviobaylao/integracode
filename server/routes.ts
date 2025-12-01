@@ -9757,6 +9757,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Card não encontrado' });
       }
       
+      console.log('📋 Card encontrado:', {
+        id: card.id,
+        customerId: card.customerId,
+        customerName: card.customer?.name || card.customer?.fantasyName,
+        customerCnpj: card.customer?.cnpj,
+        customerCpf: card.customer?.cpf,
+        saleValue: card.saleValue
+      });
+      
       if (!card.saleValue || parseFloat(card.saleValue) === 0) {
         return res.status(400).json({ 
           message: 'Este card não possui uma venda registrada para enviar ao Omie' 
