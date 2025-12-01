@@ -12,6 +12,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import SaleEditModal from "@/components/SaleEditModal";
+import NoSaleModal from "@/components/NoSaleModal";
+import type { SalesCardWithRelations } from "@shared/schema";
 import { 
   Upload, 
   Download, 
@@ -137,12 +141,58 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
-  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [editingPhone, setEditingPhone] = useState<{customerId: string; currentPhone: string} | null>(null);
   const [phoneInput, setPhoneInput] = useState("");
+  const [showCardModal, setShowCardModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showNoSaleModal, setShowNoSaleModal] = useState(false);
+  const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const handleRowClick = async (customerId: string) => {
+    try {
+      const response = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, {
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Falha ao buscar card de vendas');
+      }
+      
+      const card = await response.json();
+      setSelectedCard(card);
+      setShowCardModal(true);
+    } catch (error) {
+      console.error('Erro ao abrir card de vendas:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao abrir card",
+        description: "Não foi possível carregar o card de vendas do cliente."
+      });
+    }
+  };
+
+  const handleEditSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setShowEditModal(true);
+  };
+
+  const handleNoSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setShowNoSaleModal(true);
+  };
+
+  const closeModals = () => {
+    setShowCardModal(false);
+    setShowEditModal(false);
+    setShowNoSaleModal(false);
+    setSelectedCard(null);
+  };
 
   const updatePhoneMutation = useMutation({
     mutationFn: async (data: { customerId: string; phone: string }) => {
@@ -634,8 +684,7 @@ export default function ActiveCustomers() {
                             data-testid={`row-customer-${ac.id}`}
                             onClick={() => {
                               if (ac.customer?.id) {
-                                setEditingPhone({ customerId: ac.customer.id, currentPhone: ac.customer.phone || "" });
-                                setPhoneInput(ac.customer.phone || "");
+                                handleRowClick(ac.customer.id);
                               }
                             }}
                             className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -727,51 +776,32 @@ export default function ActiveCustomers() {
           </Card>
         </TabsContent>
 
-        {/* Dialog para editar telefone */}
-        <Dialog open={!!editingPhone} onOpenChange={(open) => !open && setEditingPhone(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Editar Telefone de Contato</DialogTitle>
-              <DialogDescription>
-                Clique na linha do cliente para editar o telefone de contato
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Novo Telefone</label>
-                <Input
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="Digite o novo telefone"
-                  data-testid="input-phone-edit"
-                />
-              </div>
-              <div className="flex gap-3 justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => setEditingPhone(null)}
-                  data-testid="button-cancel-phone"
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  onClick={() => {
-                    if (editingPhone && phoneInput.trim()) {
-                      updatePhoneMutation.mutate({
-                        customerId: editingPhone.customerId,
-                        phone: phoneInput.trim()
-                      });
-                    }
-                  }}
-                  disabled={updatePhoneMutation.isPending || !phoneInput.trim()}
-                  data-testid="button-save-phone"
-                >
-                  {updatePhoneMutation.isPending ? "Salvando..." : "Salvar"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {/* Modais de card de vendas */}
+        {showCardModal && selectedCard && (
+          <SalesCardDetailsModal
+            isOpen={showCardModal}
+            onClose={closeModals}
+            card={selectedCard}
+            onStartSale={handleEditSale}
+            onStartNoSale={handleNoSale}
+          />
+        )}
+
+        {showEditModal && selectedCard && (
+          <SaleEditModal
+            isOpen={showEditModal}
+            onClose={closeModals}
+            card={selectedCard}
+          />
+        )}
+
+        {showNoSaleModal && selectedCard && (
+          <NoSaleModal
+            isOpen={showNoSaleModal}
+            onClose={closeModals}
+            card={selectedCard}
+          />
+        )}
 
         <TabsContent value="history" className="space-y-4">
           <Card>
