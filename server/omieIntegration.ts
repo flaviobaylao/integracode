@@ -2351,14 +2351,22 @@ export class OmieService {
       // Buscar código do cliente no Omie
       let omieClientCode = null;
       
-      // Tentar encontrar cliente pelo CPF/CNPJ
-      const document = customer.cnpj || customer.cpf;
+      // Tentar encontrar cliente pelo CPF/CNPJ (normalizado sem formatação)
+      let document = customer.cnpj || customer.cpf;
       if (document) {
-        const omieClient = await this.getClientByCnpjCpf(document);
+        // Normalizar: remover formatação (pontos, barras, traços)
+        const normalizedDocument = document.replace(/[.\-\/]/g, '');
+        console.log(`🔍 [OMIE-CLIENT] Buscando cliente: documento original="${document}" -> normalizado="${normalizedDocument}"`);
+        
+        const omieClient = await this.getClientByCnpjCpf(normalizedDocument);
         if (omieClient) {
           omieClientCode = omieClient.codigo_cliente_omie;
           console.log(`✅ Cliente encontrado no Omie: ${omieClientCode}`);
+        } else {
+          console.log(`⚠️ Cliente não encontrado com documento normalizado: ${normalizedDocument}`);
         }
+      } else {
+        console.log(`⚠️ Cliente não tem CPF/CNPJ: ${customer.name}`);
       }
 
       // Se cliente não existir no Omie, criar automaticamente
