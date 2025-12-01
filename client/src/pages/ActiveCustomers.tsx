@@ -835,13 +835,6 @@ export default function ActiveCustomers() {
           />
         )}
 
-        {/* Modal de edição de cliente */}
-        <CustomerEditModal
-          isOpen={showCustomerEditModal}
-          onClose={handleCustomerEditClose}
-          customer={selectedCustomerForEdit}
-        />
-
         <TabsContent value="history" className="space-y-4">
           <Card>
             <CardHeader>
