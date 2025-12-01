@@ -84,9 +84,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const canManageRouteAndRecurrence = userLoading || (user && ['admin', 'coordinator', 'administrative'].includes(user.role));
 
   // Buscar produtos disponíveis
-  const { data: availableProducts } = useQuery({
+  const { data: availableProducts, isLoading: isLoadingProducts, refetch: refetchProducts } = useQuery({
     queryKey: ['/api/products'],
-    retry: false,
+    retry: 3,
+    staleTime: 60000,
   });
 
   useEffect(() => {
@@ -1225,70 +1226,95 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Carregando produtos */}
+              {isLoadingProducts && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-2"></div>
+                  <p className="text-gray-600">Carregando produtos...</p>
+                </div>
+              )}
+
+              {/* Erro ao carregar produtos */}
+              {!isLoadingProducts && (!Array.isArray(availableProducts) || availableProducts.length === 0) && (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg space-y-2">
+                  <p className="text-sm font-medium text-yellow-800">Nenhum produto disponível</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => refetchProducts()}
+                    className="text-yellow-800 border-yellow-300 hover:bg-yellow-100"
+                  >
+                    Tentar Novamente
+                  </Button>
+                </div>
+              )}
+
               {/* Lista de produtos ativos com checkbox */}
-              <div className="space-y-3">
-                {Array.isArray(availableProducts) && availableProducts
-                  .filter((p: any) => p.isActive === true)
-                  .map((product: any) => {
-                    const selectedProduct = products.find(p => p.id === product.id);
-                    const isSelected = !!selectedProduct;
-                    
-                    return (
-                      <div key={product.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`product-${product.id}`}
-                            checked={isSelected}
-                            onCheckedChange={(checked) => handleProductToggle(product.id, checked as boolean)}
-                            data-testid={`checkbox-product-${product.id}`}
-                          />
-                          <Label 
-                            htmlFor={`product-${product.id}`} 
-                            className="text-sm font-medium cursor-pointer flex-1"
-                          >
-                            {product.name}
-                          </Label>
-                        </div>
-                        
-                        {isSelected && (
-                          <div className="grid grid-cols-3 gap-3 ml-6">
-                            <div>
-                              <Label className="text-xs">Quantidade</Label>
-                              <Input
-                                type="number"
-                                min="1"
-                                value={selectedProduct.quantity}
-                                onChange={(e) => updateProductQuantity(product.id, parseInt(e.target.value) || 1)}
-                                data-testid={`input-quantity-${product.id}`}
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-xs">Preço Unit. (R$)</Label>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={selectedProduct.unitPrice}
-                                onChange={(e) => updateProductPrice(product.id, parseFloat(e.target.value) || 0)}
-                                data-testid={`input-price-${product.id}`}
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-xs">Total (R$)</Label>
-                              <Input
-                                value={selectedProduct.totalPrice.toFixed(2)}
-                                disabled
-                                className="bg-green-50 font-semibold"
-                                data-testid={`input-total-${product.id}`}
-                              />
-                            </div>
+              {!isLoadingProducts && Array.isArray(availableProducts) && availableProducts.length > 0 && (
+                <div className="space-y-3">
+                  {availableProducts
+                    .filter((p: any) => p.isActive === true)
+                    .map((product: any) => {
+                      const selectedProduct = products.find(p => p.id === product.id);
+                      const isSelected = !!selectedProduct;
+                      
+                      return (
+                        <div key={product.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`product-${product.id}`}
+                              checked={isSelected}
+                              onCheckedChange={(checked) => handleProductToggle(product.id, checked as boolean)}
+                              data-testid={`checkbox-product-${product.id}`}
+                            />
+                            <Label 
+                              htmlFor={`product-${product.id}`} 
+                              className="text-sm font-medium cursor-pointer flex-1"
+                            >
+                              {product.name}
+                            </Label>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })
-                }
-              </div>
+                          
+                          {isSelected && (
+                            <div className="grid grid-cols-3 gap-3 ml-6">
+                              <div>
+                                <Label className="text-xs">Quantidade</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={selectedProduct.quantity}
+                                  onChange={(e) => updateProductQuantity(product.id, parseInt(e.target.value) || 1)}
+                                  data-testid={`input-quantity-${product.id}`}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Preço Unit. (R$)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={selectedProduct.unitPrice}
+                                  onChange={(e) => updateProductPrice(product.id, parseFloat(e.target.value) || 0)}
+                                  data-testid={`input-price-${product.id}`}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Total (R$)</Label>
+                                <Input
+                                  value={selectedProduct.totalPrice.toFixed(2)}
+                                  disabled
+                                  className="bg-green-50 font-semibold"
+                                  data-testid={`input-total-${product.id}`}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
               
               {/* Total Geral */}
               {products.length > 0 && (
