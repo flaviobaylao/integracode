@@ -4,14 +4,12 @@ import { useLocation } from "wouter";
 import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
@@ -141,10 +139,7 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
-  const [editingPhone, setEditingPhone] = useState<{customerId: string; currentPhone: string} | null>(null);
-  const [phoneInput, setPhoneInput] = useState("");
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
@@ -154,23 +149,29 @@ export default function ActiveCustomers() {
 
   const handleRowClick = async (customerId: string) => {
     try {
-      const response = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, {
+      const dateToUse = new Date().toISOString().split('T')[0];
+      console.log('🔍 Abrindo card para customer:', customerId, 'data:', dateToUse);
+      
+      const response = await fetch(`/api/customers/${customerId}/sales-card/${dateToUse}`, {
         credentials: 'include'
       });
       
       if (!response.ok) {
-        throw new Error('Falha ao buscar card de vendas');
+        const errorText = await response.text();
+        console.error('❌ Erro na resposta:', response.status, errorText);
+        throw new Error(`Falha ao buscar card de vendas: ${response.status}`);
       }
       
       const card = await response.json();
+      console.log('✅ Card carregado:', card);
       setSelectedCard(card);
       setShowCardModal(true);
     } catch (error) {
-      console.error('Erro ao abrir card de vendas:', error);
+      console.error('❌ Erro ao abrir card de vendas:', error);
       toast({
         variant: "destructive",
         title: "Erro ao abrir card",
-        description: "Não foi possível carregar o card de vendas do cliente."
+        description: error instanceof Error ? error.message : "Não foi possível carregar o card de vendas do cliente."
       });
     }
   };
@@ -194,28 +195,6 @@ export default function ActiveCustomers() {
     setSelectedCard(null);
   };
 
-  const updatePhoneMutation = useMutation({
-    mutationFn: async (data: { customerId: string; phone: string }) => {
-      const res = await apiRequest('PATCH', `/api/customers/${data.customerId}/phone`, { phone: data.phone });
-      return res;
-    },
-    onSuccess: () => {
-      toast({
-        title: "Sucesso",
-        description: "Telefone atualizado com sucesso!",
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
-      setEditingPhone(null);
-      setPhoneInput("");
-    },
-    onError: () => {
-      toast({
-        title: "Erro",
-        description: "Falha ao atualizar telefone",
-        variant: "destructive",
-      });
-    },
-  });
 
   const { 
     data: activeCustomers = [], 
