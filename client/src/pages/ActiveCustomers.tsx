@@ -14,7 +14,8 @@ import { queryClient } from "@/lib/queryClient";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
-import type { SalesCardWithRelations } from "@shared/schema";
+import CustomerEditModal from "@/components/CustomerEditModal";
+import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { 
   Upload, 
   Download, 
@@ -30,7 +31,8 @@ import {
   ArrowLeft,
   Filter,
   X,
-  Zap
+  Zap,
+  Pencil
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -145,7 +147,9 @@ export default function ActiveCustomers() {
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
+  const [showCustomerEditModal, setShowCustomerEditModal] = useState(false);
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
+  const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState<Customer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -194,7 +198,34 @@ export default function ActiveCustomers() {
     setShowCardModal(false);
     setShowEditModal(false);
     setShowNoSaleModal(false);
+    setShowCustomerEditModal(false);
     setSelectedCard(null);
+    setSelectedCustomerForEdit(null);
+  };
+
+  const handleEditCustomer = async (e: React.MouseEvent, customerId: string) => {
+    e.stopPropagation();
+    try {
+      const response = await fetch(`/api/customers/${customerId}`, {
+        credentials: 'include'
+      });
+      if (!response.ok) throw new Error('Falha ao carregar cliente');
+      const customer = await response.json();
+      setSelectedCustomerForEdit(customer);
+      setShowCustomerEditModal(true);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao carregar cliente",
+        description: "Não foi possível carregar os dados do cliente."
+      });
+    }
+  };
+
+  const handleCustomerEditClose = () => {
+    setShowCustomerEditModal(false);
+    setSelectedCustomerForEdit(null);
+    queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
   };
 
 
@@ -655,12 +686,13 @@ export default function ActiveCustomers() {
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
+                        <TableHead>Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -752,6 +784,19 @@ export default function ActiveCustomers() {
                                 )}
                               </div>
                             </TableCell>
+                            <TableCell>
+                              {ac.customer?.id && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => handleEditCustomer(e, ac.customer!.id)}
+                                  title="Editar cliente"
+                                  data-testid={`button-edit-customer-${ac.id}`}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -789,6 +834,13 @@ export default function ActiveCustomers() {
             card={selectedCard}
           />
         )}
+
+        {/* Modal de edição de cliente */}
+        <CustomerEditModal
+          isOpen={showCustomerEditModal}
+          onClose={handleCustomerEditClose}
+          customer={selectedCustomerForEdit}
+        />
 
         <TabsContent value="history" className="space-y-4">
           <Card>
