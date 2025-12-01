@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -139,6 +140,7 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -530,7 +532,7 @@ export default function ActiveCustomers() {
                 <Input
                   placeholder="Buscar..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
                   className="pl-10 h-9"
                   data-testid="input-search"
                 />
@@ -590,7 +592,7 @@ export default function ActiveCustomers() {
               <Input
                 type="date"
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSelectedDate(e.target.value)}
                 className="w-[130px] h-9"
                 data-testid="input-date-filter"
               />
