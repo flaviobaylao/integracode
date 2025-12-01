@@ -164,24 +164,43 @@ export default function VirtualClientsToday() {
 
   const handleRowClick = (e: React.MouseEvent, client: VirtualClient) => {
     e.stopPropagation();
-    if (!client.customerId || !selectedDate) {
-      console.log('Debug: customerId=', client.customerId, 'selectedDate=', selectedDate);
-      return;
+    if (!selectedDate) return;
+    
+    // Procurar card pelo customerId
+    let card = salesCards?.find((c: any) => c.customerId === client.customerId);
+    
+    // Se não encontrou e o cliente tem customerId, tentar buscar pelo documento
+    if (!card && client.document) {
+      card = salesCards?.find((c: any) => c.document === client.document);
     }
     
-    console.log('🔍 Procurando card para customerId:', client.customerId);
-    console.log('📊 salesCards disponíveis:', salesCards?.length, salesCards);
-    
-    const card = salesCards?.find((c: any) => c.customerId === client.customerId);
-    console.log('✅ Card encontrado:', card);
+    // Se não encontrou, criar card virtual a partir dos dados do cliente
+    if (!card && client.customer) {
+      card = {
+        id: `virtual-${client.id}`,
+        customerId: client.customerId || client.id,
+        customerName: client.customer.name || client.fantasyNameImported || 'Cliente',
+        customerPhone: client.customer.phone || '',
+        document: client.document || '',
+        address: client.customer.address || '',
+        sellerName: client.customer.sellerName || '',
+        sellerId: client.customer.sellerId || '',
+        scheduledDate: selectedDate,
+        status: 'pending',
+        items: [],
+        totalValue: 0,
+        notes: '',
+        source: 'virtual-client'
+      };
+    }
     
     if (card) {
       setSelectedSalesCard(card);
       setShowSalesCardModal(true);
     } else {
       toast({
-        title: "Card não encontrado",
-        description: `Nenhum card encontrado para cliente ${client.customerId} em ${selectedDate}. Disponíveis: ${salesCards?.length || 0}`,
+        title: "Erro ao abrir card",
+        description: "Não foi possível abrir o card de vendas para este cliente",
         variant: "destructive"
       });
     }
