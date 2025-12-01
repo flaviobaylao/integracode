@@ -6293,7 +6293,7 @@ export class DatabaseStorage implements IStorage {
               .limit(1)
               .then(rows => rows[0]);
 
-            // Começar a partir da última visita futura + periodicidade
+            // Começar a partir de HOJE, procurando o primeiro dia da semana válido
             let baseDate = new Date(today);
             if (lastFutureVisit) {
               baseDate = new Date(lastFutureVisit.scheduledDate);
@@ -6304,14 +6304,15 @@ export class DatabaseStorage implements IStorage {
             for (let i = 0; i < visitsNeeded; i++) {
               let currentDate = new Date(baseDate);
               let attempts = 0;
-              const maxAttempts = 8; // Máximo 8 dias de tentativa (para encontrar o dia da semana correto)
+              const maxAttempts = 14; // Aumentado para 14 dias (2 semanas) para garantir encontrar o dia
 
-              // Procurar o próximo dia válido dentro dos próximos 8 dias
+              // Procurar o próximo dia válido dentro dos próximos dias
               while (attempts < maxAttempts) {
                 const dayOfWeek = currentDate.getDay();
                 const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
 
                 if (dayName && weekdaysArray.includes(dayName)) {
+                  console.log(`🔍 [VISIT-SCHEDULER] ${customer.name}: Tentativa ${attempts + 1}, verificando ${dayName} em ${currentDate.toISOString().split('T')[0]}`);
                   // Verificar se já existe visita nesse dia
                   const dateStr = currentDate.toISOString().split('T')[0];
                   const dateStart = new Date(dateStr + 'T00:00:00');
