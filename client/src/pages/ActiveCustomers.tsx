@@ -289,22 +289,28 @@ export default function ActiveCustomers() {
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/admin/generate-next-visits", {
+      const response = await fetch("/api/admin/recalculate-delivery-days", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ dryRun: false })
       });
-      if (!response.ok) throw new Error("Erro ao gerar agendamentos");
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Erro ao gerar agendamentos");
+      }
       return response.json();
     },
     onSuccess: (data: any) => {
+      console.log('✅ Sucesso ao regenerar agendamentos:', data);
       toast({ 
-        title: "✅ Agendamentos gerados!", 
-        description: `${data.stats?.generated || 0} visitas criadas • ${data.stats?.processed || 0} clientes processados`
+        title: "✅ Agendamentos regenerados!", 
+        description: "Próximas 3 visitas foram recalculadas para todos os clientes!"
       });
       queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
     },
     onError: (error: any) => {
+      console.error('❌ Erro ao regenerar agendamentos:', error);
       const message = error.message || "Erro ao gerar agendamentos";
       toast({ title: "❌ Erro", description: message, variant: "destructive" });
     }
