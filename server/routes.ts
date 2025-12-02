@@ -16346,6 +16346,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { dryRun = true } = req.body;
 
       console.log(`🚚 Iniciando recálculo de dias de entrega (dryRun: ${dryRun})...`);
+      
+      // ⭐ CRÍTICO: PRIMEIRA COISA - Corrigir visitas em dias ERRADOS
+      console.log(`🔧 [CORRECAO] Iniciando correção de visitas com weekdays incorretos...`);
+      let correctedVisits = 0;
+      let generatedVisits = 0;
+      
+      if (!dryRun) {
+        const correctionResult = await storage.correctInvalidVisitsForActiveCustomers();
+        correctedVisits = correctionResult.corrected;
+        generatedVisits = correctionResult.generated;
+        console.log(`✅ [CORRECAO] Correção concluída: ${correctedVisits} deletadas, ${generatedVisits} regeneradas`);
+      } else {
+        console.log(`📋 [CORRECAO] Modo dry-run: correção será executada se confirmado`);
+      }
 
       // Buscar todos os clientes com weekdays não-null
       const allCustomers = await db
@@ -16451,13 +16465,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updated: updated,
         skipped: skipped,
         errors: errors.length,
+        visitsCorrections: {
+          corrected: correctedVisits,
+          generated: generatedVisits
+        },
         visitsGenerated: visitsGenerated,
         visitsError: visitsError,
         details: changes.slice(0, 100), // Limitar a 100 para não sobrecarregar a resposta
         errorDetails: errors,
         message: dryRun 
-          ? `${changes.length} cliente(s) teriam dias de entrega recalculados (dry-run)`
-          : `${updated} cliente(s) com dias de entrega recalculados. ${visitsGenerated} próximas visitas regeneradas com sucesso!`
+          ? `${changes.length} cliente(s) teriam dias de entrega recalculados (dry-run). Não será feita correção de visitas em modo dry-run.`
+          : `✅ CONCLUÍDO: ${correctedVisits} visita(s) corrigida(s), ${generatedVisits} regenerada(s), ${updated} cliente(s) com dias de entrega recalculados, ${visitsGenerated} próximas visitas regeneradas!`
       });
 
     } catch (error) {
