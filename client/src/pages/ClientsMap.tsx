@@ -163,13 +163,6 @@ export default function ClientsMap() {
     );
   }
 
-  // Aplicar filtro de dia da semana
-  if (selectedDay && selectedDay !== "all") {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => getWeekdayName(c.weekdays) === selectedDay
-    );
-  }
-
   // Aplicar filtro de vendedor
   if (selectedSeller && selectedSeller !== "all") {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
@@ -186,14 +179,21 @@ export default function ClientsMap() {
     )
   ).sort() as string[];
 
-  // Agrupar clientes por dia da semana
+  // Agrupar clientes por dia da semana (ANTES de aplicar filtro de dia, para atualizar a legenda)
   const customersByDay = {
-    Segunda: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Segunda'),
-    Terça: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Terça'),
-    Quarta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Quarta'),
-    Quinta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Quinta'),
-    Sexta: customers.filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && getWeekdayName(c.weekdays) === 'Sexta'),
+    Segunda: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
+    Terça: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Terça'),
+    Quarta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Quarta'),
+    Quinta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Quinta'),
+    Sexta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Sexta'),
   };
+
+  // Aplicar filtro de dia da semana
+  if (selectedDay && selectedDay !== "all") {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => getWeekdayName(c.weekdays) === selectedDay
+    );
+  }
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
   const defaultCenter: [number, number] = [-23.55052, -46.633308];
