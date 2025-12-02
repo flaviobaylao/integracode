@@ -6811,15 +6811,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[${timestamp}] Fetching ALL contas receber from Omie...`);
       const contasData = await omieService.getAllContasReceber();
       
-      // Enriquecer com dados de cliente
+      // Enriquecer com dados de cliente - Mapear campos corretamente do Omie
       const enrichedTitulos = contasData.titulos.map((titulo: any) => ({
         ...titulo,
-        // Mapear campos do Omie para o formato esperado
         numero_documento: titulo.numero_documento || titulo.numero_nf || titulo.numero_titulo || '',
-        razao_social: titulo.razao_social || titulo.cliente_razao_social || titulo.nome_cliente || `Cliente ${titulo.codigo_cliente_omie || ''}`,
-        cnpj_cpf: titulo.cnpj_cpf || titulo.cliente_cpf_cnpj || titulo.cpf_cnpj || '',
-        valor_documento: titulo.valor_documento || titulo.valor_titulo || 0,
-        valor_a_receber: titulo.valor_a_receber || titulo.valor_aberto || titulo.valor_documento || 0,
+        razao_social: titulo.nome_fantasia || titulo.razao_social || `Cliente ${titulo.codigo_cliente_omie || ''}`,
+        cnpj_cpf: titulo.cpf_cnpj || titulo.cnpj_cpf || '',
+        valor_documento: parseFloat(titulo.valor_documento) || 0,
+        valor_a_receber: parseFloat(titulo.valor_a_receber || titulo.valor_aberto || titulo.valor_documento || 0),
         data_vencimento: titulo.data_vencimento || titulo.data_venc || '',
         data_previsao: titulo.data_previsao || titulo.data_venc || '',
         status_titulo: titulo.status_titulo || titulo.situacao || ''
