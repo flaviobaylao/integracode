@@ -738,14 +738,50 @@ export function registerChatRoutes(app: Express): void {
 
           // Buscar ou criar cliente (o "outro lado" da conversa)
           let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+          let matchingConv: any = null;
+          
           if (!customer) {
-            // Usar pushName se disponível para dar nome ao cliente
-            const customerName = !isFromMe && pushName ? pushName : `Cliente ${normalizedPhone}`;
-            customer = await storage.createChatCustomer({
-              phone: normalizedPhone,
-              name: customerName
-            });
-            console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
+            // ⚠️ Cliente não encontrado pelo normalizedPhone
+            // Se é uma mensagem recebida (isFromMe = false), verificar se há conversa recente
+            // onde enviamos mensagens (pode ser um número que evoluiu)
+            if (!isFromMe) {
+              console.log(`⚠️  [WEBHOOK-MIRROR] Cliente ${normalizedPhone} não encontrado. Procurando conversa ativa com nossas mensagens...`);
+              try {
+                const allConversations = await storage.getChatConversations();
+                // Ordenar por mais recente (updated)
+                const sortedConvs = allConversations.sort((a: any, b: any) => 
+                  new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+                );
+                
+                console.log(`📋 [WEBHOOK-MIRROR] Buscando entre ${sortedConvs.length} conversas...`);
+                
+                // Usar a conversa MAIS RECENTE onde enviamos mensagens
+                for (const conv of sortedConvs) {
+                  const convMessages = await storage.getChatMessages(conv.id);
+                  const hasOurMessage = convMessages.some((m: any) => m.senderType === 'agent');
+                  
+                  if (hasOurMessage) {
+                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${conv.customerPhone} -> Novo número: ${normalizedPhone}`);
+                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento: ${normalizedPhone} → ${conv.customerPhone}`);
+                    matchingConv = conv;
+                    customer = await storage.getChatCustomer(conv.customerId);
+                    break; // SEMPRE usar a primeira encontrada (mais recente)
+                  }
+                }
+              } catch (err) {
+                console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao procurar conversa ativa:`, err);
+              }
+            }
+            
+            // Se ainda não encontrou conversa, criar novo cliente
+            if (!matchingConv) {
+              const customerName = !isFromMe && pushName ? pushName : `Cliente ${normalizedPhone}`;
+              customer = await storage.createChatCustomer({
+                phone: normalizedPhone,
+                name: customerName
+              });
+              console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
+            }
           } else if (!isFromMe && pushName && customer.name?.startsWith('Cliente ')) {
             // Atualizar nome do cliente se recebemos pushName e o nome atual é genérico
             await storage.updateChatCustomer(customer.id, { name: pushName });
@@ -753,13 +789,15 @@ export function registerChatRoutes(app: Express): void {
           }
 
           // Buscar ou criar conversa (com UPSERT para evitar duplicatas)
-          let matchingConv = await storage.upsertChatConversation({
-            customerId: customer.id,
-            customerName: customer.name || `Cliente ${normalizedPhone}`,
-            customerPhone: normalizedPhone,
-            status: 'new' as const,
-            priority: 'normal' as const
-          });
+          if (!matchingConv) {
+            matchingConv = await storage.upsertChatConversation({
+              customerId: customer!.id,
+              customerName: customer!.name || `Cliente ${normalizedPhone}`,
+              customerPhone: normalizedPhone,
+              status: 'new' as const,
+              priority: 'normal' as const
+            });
+          }
           console.log(`✅ [WEBHOOK-MIRROR] Conversa: ${matchingConv.id}`);
 
           // Determinar tipo de mensagem e conteúdo
