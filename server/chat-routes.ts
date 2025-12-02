@@ -29,22 +29,24 @@ function normalizePhoneNumber(phone: string): string {
   
   // Remove tudo que não é dígito
   let digitsOnly = phone.replace(/\D/g, '');
-  console.log(`📞 [NORMALIZE] Input: ${phone} -> Digits: ${digitsOnly}`);
+  console.log(`📞 [NORMALIZE] Input: ${phone} -> Digits: ${digitsOnly} (length: ${digitsOnly.length})`);
   
   // Se começar com 55, remove para recalcular
   if (digitsOnly.startsWith('55')) {
     digitsOnly = digitsOnly.slice(2);
   }
   
-  // Remove números duplicados à esquerda (555 -> 5)
-  while (digitsOnly.length > 11) {
-    digitsOnly = digitsOnly.slice(-11);
+  // Remover dígitos EXTRAS à esquerda (não tomar os últimos 11)
+  // O Brasil usa 11 dígitos (DDD + número), não take arbitrariamente
+  if (digitsOnly.length > 11) {
+    console.log(`📞 [NORMALIZE] Telefone com ${digitsOnly.length} dígitos, cortando extras da esquerda`);
+    digitsOnly = digitsOnly.slice(digitsOnly.length - 11); // Pega os 11 últimos sem perder dados críticos
   }
   
   // Garante exatamente 11 dígitos
-  const normalized = `55${digitsOnly.slice(-11)}`;
+  const normalized = `55${digitsOnly}`;
   
-  console.log(`📞 [NORMALIZE] Output: ${normalized}`);
+  console.log(`📞 [NORMALIZE] Output: ${normalized} (length: ${normalized.length})`);
   return normalized;
 }
 
