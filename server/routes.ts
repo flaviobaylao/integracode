@@ -865,6 +865,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
       );
       
+      // Buscar todos os sellers para mapear nomes
+      const allSellers = await db.select().from(users);
+      const sellerMap = new Map<string, string>();
+      for (const seller of allSellers) {
+        const firstName = seller.firstName?.trim() || '';
+        const lastName = seller.lastName?.trim() || '';
+        const sellerName = firstName || lastName
+          ? `${firstName} ${lastName}`.trim()
+          : seller.email?.split('@')[0] || seller.email || 'Desconhecido';
+        sellerMap.set(seller.id, sellerName);
+      }
+      
       // Filtrar apenas clientes com coordenadas válidas
       const mapData = customersData
         .filter((c) => Number(c.latitude) !== 0 && Number(c.longitude) !== 0)
@@ -901,7 +913,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             weekdays: parsedWeekdays.join(', '),
             isActive: true,
             visitDay: visitDay,
-            customerId: c.id
+            customerId: c.id,
+            sellerId: c.sellerId || null,
+            sellerName: c.sellerId ? sellerMap.get(c.sellerId) : null
           };
         });
       

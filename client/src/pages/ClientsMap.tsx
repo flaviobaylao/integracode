@@ -375,6 +375,11 @@ export default function ClientsMap() {
                             📅 Dia de Visita: <span style={{ color }}>{dayName}</span>
                           </p>
                           <p>📞 {customer.phone}</p>
+                          {customer.sellerName && (
+                            <p className="font-medium">
+                              👤 Vendedor: {customer.sellerName}
+                            </p>
+                          )}
                         </div>
                         <Button
                           size="sm"
