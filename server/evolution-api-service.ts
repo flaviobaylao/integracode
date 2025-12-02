@@ -587,7 +587,21 @@ class EvolutionAPIService {
     }
 
     // Format phone number with @s.whatsapp.net suffix if not present
-    const cleanPhone = contactPhone.replace(/\D/g, '').slice(-11); // Pega últimos 11 dígitos
+    let cleanPhone = contactPhone.replace(/\D/g, ''); // Remove tudo que não é dígito
+    console.log(`🔍 [FETCH-HISTORY] Telefone recebido: ${contactPhone} -> Dígitos: ${cleanPhone} (length: ${cleanPhone.length})`);
+    
+    // Se começar com 55, remove (será re-adicionado)
+    if (cleanPhone.startsWith('55')) {
+      cleanPhone = cleanPhone.slice(2);
+      console.log(`🔍 [FETCH-HISTORY] Removido prefixo 55 -> ${cleanPhone} (length: ${cleanPhone.length})`);
+    }
+    
+    // Garante exatamente 11 dígitos (DDD + número)
+    if (cleanPhone.length > 11) {
+      console.log(`🔍 [FETCH-HISTORY] ⚠️ Telefone com ${cleanPhone.length} dígitos, pegando últimos 11`);
+      cleanPhone = cleanPhone.slice(cleanPhone.length - 11);
+    }
+    
     const remoteJid = `55${cleanPhone}@s.whatsapp.net`;
     
     console.log(`🔍 Buscando mensagens para: ${contactPhone} -> ${remoteJid}`);
