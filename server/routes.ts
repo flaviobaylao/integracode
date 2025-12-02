@@ -6794,7 +6794,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Nova rota: Buscar TODAS as contas a receber (sem filtros)
   app.get('/api/omie/contas-receber', authenticateUser, async (req: any, res) => {
     try {
-      // Evitar cache
       res.set({
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
@@ -6811,8 +6810,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timestamp = new Date().toISOString();
       console.log(`[${timestamp}] Fetching ALL contas receber from Omie...`);
       const contasData = await omieService.getAllContasReceber();
+      
+      // Enriquecer com dados de cliente
+      const enrichedTitulos = contasData.titulos.map((titulo: any) => ({
+        ...titulo,
+        // Mapear campos do Omie para o formato esperado
+        numero_documento: titulo.numero_documento || titulo.numero_nf || titulo.numero_titulo || '',
+        razao_social: titulo.razao_social || titulo.cliente_razao_social || titulo.nome_cliente || `Cliente ${titulo.codigo_cliente_omie || ''}`,
+        cnpj_cpf: titulo.cnpj_cpf || titulo.cliente_cpf_cnpj || titulo.cpf_cnpj || '',
+        valor_documento: titulo.valor_documento || titulo.valor_titulo || 0,
+        valor_a_receber: titulo.valor_a_receber || titulo.valor_aberto || titulo.valor_documento || 0,
+        data_vencimento: titulo.data_vencimento || titulo.data_venc || '',
+        data_previsao: titulo.data_previsao || titulo.data_venc || '',
+        status_titulo: titulo.status_titulo || titulo.situacao || ''
+      }));
+      
       console.log(`[${timestamp}] Contas receber fetch complete - returning ${contasData.totalTitulos} títulos`);
-      res.json(contasData);
+      res.json({
+        ...contasData,
+        titulos: enrichedTitulos
+      });
 
     } catch (error) {
       console.error("Error fetching contas receber from Omie:", error);
