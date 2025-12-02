@@ -484,7 +484,7 @@ export async function planDailyRoute(
     sellerData: seller,
     optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
     totalDistance: optimizedRoute.totalDistance,
-    totalVisits: optimizedRoute.orderedPoints.length + virtualCustomers.length,
+    totalVisits: optimizedRoute.orderedPoints.length,
     routePoints: optimizedRoute.orderedPoints,
     virtualCustomers,
     customersWithoutCoords,
@@ -492,7 +492,7 @@ export async function planDailyRoute(
     warnings
   };
 
-  console.log(`   🔍 DEBUG - Resultado final: ${optimizedRoute.orderedPoints.length} visitas presenciais + ${virtualCustomers.length} virtuais = ${result.totalVisits} total`);
+  console.log(`   🔍 DEBUG - Resultado final: ${result.totalVisits} visitas presenciais + ${virtualCustomers.length} virtuais`);
   
   return result;
 }
