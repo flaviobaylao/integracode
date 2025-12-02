@@ -131,6 +131,7 @@ export default function ClientsMap() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDay, setSelectedDay] = useState<string>("all");
+  const [selectedSeller, setSelectedSeller] = useState<string>("all");
 
   // Controle de acesso: apenas administrativos
   const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
@@ -168,6 +169,22 @@ export default function ClientsMap() {
       (c) => getWeekdayName(c.weekdays) === selectedDay
     );
   }
+
+  // Aplicar filtro de vendedor
+  if (selectedSeller && selectedSeller !== "all") {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => (c as any).sellerName === selectedSeller
+    );
+  }
+
+  // Extrair vendedores únicos
+  const uniqueSellers = Array.from(
+    new Set(
+      customers
+        .filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
+        .map((c) => (c as any).sellerName)
+    )
+  ).sort() as string[];
 
   // Agrupar clientes por dia da semana
   const customersByDay = {
@@ -252,6 +269,22 @@ export default function ClientsMap() {
               />
             </div>
             <div className="flex-1 min-w-[150px]">
+              <label className="text-sm font-medium mb-2 block">Vendedor</label>
+              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                <SelectTrigger data-testid="select-seller-map">
+                  <SelectValue placeholder="Todos os vendedores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os vendedores</SelectItem>
+                  {uniqueSellers.map((seller) => (
+                    <SelectItem key={seller} value={seller}>
+                      {seller}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[150px]">
               <label className="text-sm font-medium mb-2 block">Dia da Semana</label>
               <Select value={selectedDay} onValueChange={setSelectedDay}>
                 <SelectTrigger data-testid="select-day-map">
@@ -267,13 +300,14 @@ export default function ClientsMap() {
                 </SelectContent>
               </Select>
             </div>
-            {(searchTerm || (selectedDay && selectedDay !== "all")) && (
+            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all")) && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
                   setSearchTerm("");
                   setSelectedDay("all");
+                  setSelectedSeller("all");
                 }}
                 data-testid="button-clear-filters"
               >
@@ -375,9 +409,9 @@ export default function ClientsMap() {
                             📅 Dia de Visita: <span style={{ color }}>{dayName}</span>
                           </p>
                           <p>📞 {customer.phone}</p>
-                          {customer.sellerName && (
+                          {(customer as any).sellerName && (
                             <p className="font-medium">
-                              👤 Vendedor: {customer.sellerName}
+                              👤 Vendedor: {(customer as any).sellerName}
                             </p>
                           )}
                         </div>
