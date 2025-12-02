@@ -6146,6 +6146,149 @@ export class DatabaseStorage implements IStorage {
     
     return { added, updated };
   }
+
+  async correctInvalidVisitsForActiveCustomers(): Promise<{ corrected: number; generated: number }> {
+    const WEEKDAY_MAP: Record<string, number> = {
+      'Seg': 1, 'Ter': 2, 'Qua': 3, 'Qui': 4, 'Sex': 5, 'Sab': 6, 'Dom': 0
+    };
+
+    let corrected = 0;
+    let generated = 0;
+
+    try {
+      const activeCustomersList = await db
+        .select()
+        .from(activeCustomers)
+        .where(eq(activeCustomers.isActive, true));
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      for (const activeCustomer of activeCustomersList) {
+        if (!activeCustomer.customerId) continue;
+
+        const customer = await db
+          .select()
+          .from(customers)
+          .where(eq(customers.id, activeCustomer.customerId))
+          .then(rows => rows[0]);
+
+        if (!customer || !customer.weekdays) continue;
+
+        let weekdaysArray = [];
+        try {
+          weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
+        } catch (e) {
+          continue;
+        }
+
+        if (weekdaysArray.length === 0) continue;
+
+        // Buscar visitas futuras
+        const futureVisits = await db
+          .select()
+          .from(visitAgenda)
+          .where(
+            and(
+              eq(visitAgenda.customerId, activeCustomer.customerId),
+              gte(visitAgenda.scheduledDate, today)
+            )
+          )
+          .orderBy(asc(visitAgenda.scheduledDate));
+
+        // Deletar visitas em dias ERRADOS
+        for (const visit of futureVisits) {
+          const visitDate = new Date(visit.scheduledDate);
+          const dayOfWeek = visitDate.getDay();
+          const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+          const dayName = dayNames[dayOfWeek];
+
+          if (!weekdaysArray.includes(dayName)) {
+            await db.delete(visitAgenda).where(eq(visitAgenda.id, visit.id));
+            corrected++;
+          }
+        }
+
+        // Verificar se precisa regenerar visitas
+        const validFutureVisits = await db
+          .select()
+          .from(visitAgenda)
+          .where(
+            and(
+              eq(visitAgenda.customerId, activeCustomer.customerId),
+              gte(visitAgenda.scheduledDate, today)
+            )
+          );
+
+        if (validFutureVisits.length < 3) {
+          const visitsNeeded = 3 - validFutureVisits.length;
+          
+          let baseDate = today;
+          if (validFutureVisits.length > 0) {
+            const lastVisit = validFutureVisits[validFutureVisits.length - 1];
+            baseDate = new Date(lastVisit.scheduledDate);
+            baseDate.setDate(baseDate.getDate() + 1);
+          }
+
+          for (let i = 0; i < visitsNeeded; i++) {
+            let currentDate = new Date(baseDate);
+            let found = false;
+
+            for (let attempt = 0; attempt < 14; attempt++) {
+              const dayOfWeek = currentDate.getDay();
+              const dayName = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][dayOfWeek];
+
+              if (weekdaysArray.includes(dayName)) {
+                const exists = await db
+                  .select()
+                  .from(visitAgenda)
+                  .where(
+                    and(
+                      eq(visitAgenda.customerId, activeCustomer.customerId),
+                      gte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T00:00:00')),
+                      lte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T23:59:59'))
+                    )
+                  )
+                  .then(rows => rows.length > 0);
+
+                if (!exists) {
+                  await db.insert(visitAgenda).values({
+                    customerId: activeCustomer.customerId,
+                    sellerId: customer.sellerId,
+                    scheduledDate: currentDate,
+                    routeDay: dayName,
+                    recurrenceType: customer.visitPeriodicity || 'semanal',
+                    isVirtual: customer.virtualService || false,
+                    visitStatus: 'pending',
+                    customerName: customer.name,
+                    customerLatitude: customer.latitude || null,
+                    customerLongitude: customer.longitude || null,
+                    customerAddress: customer.address || null,
+                    createdAt: new Date()
+                  });
+                  generated++;
+                  baseDate = new Date(currentDate);
+                  baseDate.setDate(baseDate.getDate() + 1);
+                  found = true;
+                  break;
+                }
+              }
+
+              currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            if (!found) break;
+          }
+        }
+      }
+
+      console.log(`✅ [VISIT-CORRECTION] Visitas corrigidas: ${corrected}, regeneradas: ${generated}`);
+      return { corrected, generated };
+    } catch (error: any) {
+      console.error(`❌ Erro ao corrigir visitas:`, error.message);
+      return { corrected: 0, generated: 0 };
+    }
+  }
   
   async deactivateRemovedCustomers(uploadId: string, currentDocuments: string[]): Promise<number> {
     if (currentDocuments.length === 0) {

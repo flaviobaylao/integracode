@@ -16781,6 +16781,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Fase 5: Upsert em lote
         const { added, updated } = await storage.bulkUpsertActiveCustomers(customersToAdd);
         
+        // Fase 5.5: CRÍTICO - Corrigir visitas com weekdays incorretos
+        const { corrected, generated } = await storage.correctInvalidVisitsForActiveCustomers();
+        
         // Fase 6: Atualizar registro de upload
         await storage.updateActiveCustomerUpload(uploadRecord.id, {
           totalRecords: data.length,
@@ -16793,6 +16796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         
         console.log(`✅ Upload processado: ${data.length} linhas, ${matched} encontrados, ${unmatched} não encontrados, ${added} adicionados, ${removed} removidos`);
+        console.log(`✅ Visitas corrigidas: ${corrected} deletadas, ${generated} regeneradas`);
         
         const response = {
           message: 'Upload processado com sucesso',
@@ -16802,7 +16806,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           unmatchedRecords: unmatched,
           addedCustomers: added,
           removedCustomers: removed,
-          keptCustomers: updated
+          keptCustomers: updated,
+          visitsCorrections: { corrected, generated }
         };
         
         return res.json(response);
