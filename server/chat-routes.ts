@@ -720,8 +720,9 @@ export function registerChatRoutes(app: Express): void {
       const pushName = data.pushName || '';
 
       console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`📱 [WEBHOOK-MIRROR] RemoteJid: ${data.key.remoteJid} | IsFromMe: ${isFromMe}`);
       console.log(`📱 [WEBHOOK-MIRROR] Direção: ${isFromMe ? '📤 ENVIADA (celular/sistema)' : '📥 RECEBIDA (cliente)'}`);
-      console.log(`📱 [WEBHOOK-MIRROR] Telefone: ${phoneNumber}`);
+      console.log(`📱 [WEBHOOK-MIRROR] Cliente (remoteJid): ${phoneNumber}`);
       console.log(`📱 [WEBHOOK-MIRROR] Texto: ${messageText?.substring(0, 100) || '(sem texto)'}`);
       console.log(`📱 [WEBHOOK-MIRROR] MessageId: ${messageId}`);
       console.log(`📱 [WEBHOOK-MIRROR] PushName: ${pushName}`);

@@ -253,32 +253,44 @@ class EvolutionAPIService {
     }
 
     // Format phone number for WhatsApp (add @s.whatsapp.net if not present)
-    // If number already has @, use as is
-    // If number is in format 5585987654321, convert to 5585987654321@s.whatsapp.net
-    // If number is in format 85987654321, add 55 and convert
+    // Input pode ser: 5585987654321, 85987654321, 5585987654321@s.whatsapp.net, etc.
     let formattedNumber: string;
     
     if (to.includes('@')) {
+      // Já tem @, usar como está (mas verificar número)
       formattedNumber = to;
+      console.log(`📤 [EVOLUTION] Número já formatado com @: ${formattedNumber}`);
     } else {
-      const digitsOnly = to.replace(/\D/g, '');
+      let digitsOnly = to.replace(/\D/g, ''); // Remove tudo que não é dígito
+      console.log(`📤 [EVOLUTION] Dígitos extraídos: ${digitsOnly} (length: ${digitsOnly.length})`);
       
-      // If already starts with 55 (country code), use as is
+      // Se começar com 55, é número internacional completo (55 + DDD + número = 13 dígitos)
       if (digitsOnly.startsWith('55')) {
+        if (digitsOnly.length !== 13) {
+          console.warn(`⚠️  [EVOLUTION] Aviso: Número com 55 tem ${digitsOnly.length} dígitos, esperado 13`);
+          // Pegar últimos 11 depois do 55
+          digitsOnly = digitsOnly.slice(0, 2) + digitsOnly.slice(digitsOnly.length - 11);
+        }
         formattedNumber = `${digitsOnly}@s.whatsapp.net`;
       } else if (digitsOnly.length === 11) {
-        // If 11 digits (DDD + number), add 55
+        // Se tem 11 dígitos (DDD + número), adicionar 55
         formattedNumber = `55${digitsOnly}@s.whatsapp.net`;
       } else if (digitsOnly.length === 9 || digitsOnly.length === 10) {
-        // If less than 11, assume it's incomplete
+        // Se menos de 11, adicionar 55 e usar como está
+        formattedNumber = `55${digitsOnly}@s.whatsapp.net`;
+      } else if (digitsOnly.length > 13) {
+        // Se mais de 13, pegar últimos 13 (55 + DDD + número)
+        console.warn(`⚠️  [EVOLUTION] Número com ${digitsOnly.length} dígitos, usando últimos 13`);
+        digitsOnly = digitsOnly.slice(digitsOnly.length - 13);
         formattedNumber = `${digitsOnly}@s.whatsapp.net`;
       } else {
-        // Default: use digits as is
+        // Default: usar como está
+        console.warn(`⚠️  [EVOLUTION] Formato não identificado (${digitsOnly.length} dígitos), usando como está`);
         formattedNumber = `${digitsOnly}@s.whatsapp.net`;
       }
     }
 
-    console.log(`📤 [EVOLUTION] Enviando mensagem - Input: ${to}, Formatado: ${formattedNumber}, Instância: ${instanceName}`);
+    console.log(`📤 [EVOLUTION] Enviando mensagem - Input: ${to}, Formatado FINAL: ${formattedNumber}, Instância: ${instanceName}`);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
