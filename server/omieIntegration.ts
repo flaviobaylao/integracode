@@ -2776,6 +2776,7 @@ export class OmieService {
       console.log('🔄 Buscando TODAS as contas a receber do Omie...');
       
       const allTitulos: any[] = [];
+      const clienteCache = new Map(); // Cache para evitar buscar cliente várias vezes
       let currentPage = 1;
       let hasMorePages = true;
       const pageSize = 500;
@@ -2796,8 +2797,36 @@ export class OmieService {
                        response.lista_contas_receber || 
                        [];
 
-        // Adicionar todos os títulos ao array
-        allTitulos.push(...contas);
+        // Enriquecer cada conta com dados do cliente
+        for (const conta of contas) {
+          const codigoCliente = conta.codigo_cliente_fornecedor || conta.codigo_cliente_omie;
+          
+          // Tentar buscar cliente do cache
+          let clienteData = null;
+          if (codigoCliente && clienteCache.has(codigoCliente)) {
+            clienteData = clienteCache.get(codigoCliente);
+          } else if (codigoCliente) {
+            // Buscar cliente do Omie
+            try {
+              clienteData = await this.getClientByCode(codigoCliente);
+              if (clienteData) {
+                clienteCache.set(codigoCliente, clienteData);
+              }
+            } catch (error) {
+              console.warn(`⚠️ Erro ao buscar cliente ${codigoCliente}:`, error);
+            }
+          }
+          
+          // Enriquecer conta com dados do cliente
+          const tituloEnriquecido = {
+            ...conta,
+            nome_fantasia: clienteData?.nome_fantasia || conta.nome_fantasia || `Cliente ${codigoCliente}`,
+            razao_social: clienteData?.razao_social || conta.razao_social || `Cliente ${codigoCliente}`,
+            cpf_cnpj: clienteData?.cpf_cnpj || conta.cpf_cnpj || 'Documento não informado'
+          };
+          
+          allTitulos.push(tituloEnriquecido);
+        }
         
         totalPages = response.total_de_paginas || 1;
         hasMorePages = currentPage < totalPages;
