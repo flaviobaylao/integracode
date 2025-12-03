@@ -2397,8 +2397,18 @@ export class OmieService {
       // Buscar código do vendedor no Omie
       let omieVendorCode = null;
       
-      // Primeiro tentar buscar pelo sellerId do card
-      if (sellerId && this.storage && !sellerId.startsWith('omie-vendor-')) {
+      // ✅ CORREÇÃO: Se sellerId começa com 'omie-vendor-', extrair o código do Omie
+      if (sellerId && sellerId.startsWith('omie-vendor-')) {
+        try {
+          const extractedCode = sellerId.replace('omie-vendor-', '');
+          omieVendorCode = parseInt(extractedCode, 10);
+          console.log(`✅ Código de vendedor Omie extraído: ${sellerId} -> ${omieVendorCode}`);
+        } catch (error) {
+          console.error('❌ Erro ao extrair código do vendedor:', error);
+        }
+      } 
+      // Caso 2: Se sellerId não começa com 'omie-vendor-', buscar pelo email no Omie
+      else if (sellerId && this.storage) {
         try {
           const seller = await this.storage.getUser(sellerId);
           if (seller && seller.email) {
