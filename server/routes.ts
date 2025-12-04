@@ -12089,8 +12089,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (route.lunchBreakActivatedAt) {
         const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
         
-        // ✅ CORREÇÃO: Usar TEMPO DE ATIVAÇÃO do almoço como lunchStart
-        // Encontrar primeiro checkin após a ativação do almoço
+        // ✅ Encontrar ÚLTIMO checkout ANTES/NO MOMENTO da ativação do almoço
+        const checkoutsBeforeLunch = checkOuts
+          .filter(cp => new Date(cp.checkpointTime).getTime() <= lunchActivationTime)
+          .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
+        
+        // Encontrar PRIMEIRO checkin APÓS a ativação do almoço
         const checkinsAfterLunch = checkIns
           .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
           .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
@@ -12098,14 +12102,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // DEBUG: Logs detalhados do cálculo de almoço
         console.log(`\n🍽️ ===== CÁLCULO DE HORÁRIO DE ALMOÇO - ROTA ${route.sellerId} (${route.date}) =====`);
         console.log(`⏰ Almoço ativado em: ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')} (${new Date(lunchActivationTime).toISOString()})`);
+        console.log(`📊 Checkouts ANTES/NO MOMENTO da ativação (≤ ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkoutsBeforeLunch.length}`);
+        checkoutsBeforeLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
         console.log(`✅ Check-ins DEPOIS do almoço (> ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkinsAfterLunch.length}`);
         checkinsAfterLunch.forEach((cp, idx) => {
           console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
         });
         
-        if (checkinsAfterLunch.length > 0) {
-          // Almoço completo: calcular duração de lunchActivationTime até primeiro checkin
-          let lunchStart = new Date(lunchActivationTime);
+        if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
+          // Almoço completo: do ÚLTIMO checkout antes até o PRIMEIRO check-in depois
+          let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
           let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
           
           console.log(`\n🔢 CÁLCULO DO TEMPO DE ALMOÇO:`);
@@ -12148,14 +12156,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
               formatted: 'Aguardando retorno'
             };
           }
-        } else {
-          // Almoço pendente: ativado mas sem check-in de retorno
+        } else if (checkoutsBeforeLunch.length > 0) {
+          // Almoço pendente: saiu mas ainda não retornou
           lunchBreak = {
             status: 'pending',
-            startTime: new Date(lunchActivationTime),
+            startTime: new Date(checkoutsBeforeLunch[0].checkpointTime),
             endTime: null,
             minutes: null,
-            formatted: 'Aguardando início'
+            formatted: 'Aguardando retorno'
+          };
+        } else {
+          // Sem checkout antes da ativação (caso raro)
+          lunchBreak = {
+            status: 'pending',
+            startTime: null,
+            endTime: null,
+            minutes: null,
+            formatted: 'Nenhum checkout antes do almoço'
           };
         }
       }
@@ -12606,8 +12623,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (route.lunchBreakActivatedAt) {
         const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
         
-        // ✅ CORREÇÃO: Usar TEMPO DE ATIVAÇÃO do almoço como lunchStart
-        // Encontrar primeiro checkin após a ativação do almoço
+        // ✅ Encontrar ÚLTIMO checkout ANTES/NO MOMENTO da ativação do almoço
+        const checkoutsBeforeLunch = checkOuts
+          .filter(cp => new Date(cp.checkpointTime).getTime() <= lunchActivationTime)
+          .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
+        
+        // Encontrar PRIMEIRO checkin APÓS a ativação do almoço
         const checkinsAfterLunch = checkIns
           .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
           .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
@@ -12615,14 +12636,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // DEBUG: Logs detalhados do cálculo de almoço
         console.log(`\n🍽️ ===== CÁLCULO DE HORÁRIO DE ALMOÇO - ROTA ${route.sellerId} (${route.date}) =====`);
         console.log(`⏰ Almoço ativado em: ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')} (${new Date(lunchActivationTime).toISOString()})`);
+        console.log(`📊 Checkouts ANTES/NO MOMENTO da ativação (≤ ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkoutsBeforeLunch.length}`);
+        checkoutsBeforeLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
         console.log(`✅ Check-ins DEPOIS do almoço (> ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkinsAfterLunch.length}`);
         checkinsAfterLunch.forEach((cp, idx) => {
           console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
         });
         
-        if (checkinsAfterLunch.length > 0) {
-          // Almoço completo: calcular duração de lunchActivationTime até primeiro checkin
-          let lunchStart = new Date(lunchActivationTime);
+        if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
+          // Almoço completo: do ÚLTIMO checkout antes até o PRIMEIRO check-in depois
+          let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
           let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
           
           console.log(`\n🔢 CÁLCULO DO TEMPO DE ALMOÇO:`);
@@ -12665,14 +12690,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
               formatted: 'Aguardando retorno'
             };
           }
-        } else {
-          // Almoço pendente: ativado mas sem check-in de retorno
+        } else if (checkoutsBeforeLunch.length > 0) {
+          // Almoço pendente: saiu mas ainda não retornou
           lunchBreak = {
             status: 'pending',
-            startTime: new Date(lunchActivationTime),
+            startTime: new Date(checkoutsBeforeLunch[0].checkpointTime),
             endTime: null,
             minutes: null,
-            formatted: 'Aguardando início'
+            formatted: 'Aguardando retorno'
+          };
+        } else {
+          // Sem checkout antes da ativação (caso raro)
+          lunchBreak = {
+            status: 'pending',
+            startTime: null,
+            endTime: null,
+            minutes: null,
+            formatted: 'Nenhum checkout antes do almoço'
           };
         }
       }
