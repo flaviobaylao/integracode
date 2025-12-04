@@ -889,6 +889,7 @@ export const routeCheckpoints = pgTable("route_checkpoints", {
   
   // Controle de visitas extras (fora da rota planejada)
   isOffRoute: boolean("is_off_route").default(false).notNull(), // true se não estava na rota original
+  isAutomatic: boolean("is_automatic").default(false).notNull(), // true se foi gerado automaticamente (ex: por criação de pedido)
   validationStatus: varchar("validation_status").default("pending"), // pending, validated, cancelled
   validatedBy: varchar("validated_by"), // ID do admin que validou/cancelou
   validatedAt: timestamp("validated_at"),

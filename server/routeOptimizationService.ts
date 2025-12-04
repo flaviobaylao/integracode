@@ -584,7 +584,8 @@ export async function registerCheckpoint(
   sellerId: string,
   checkpointType: 'check_in' | 'check_out',
   latitude: number,
-  longitude: number
+  longitude: number,
+  isAutomatic: boolean = false
 ): Promise<{ distanceFromPrevious: number; totalDistanceSoFar: number; completedVisits: number; isOffRoute: boolean }> {
   // Buscar a rota para verificar se é visita off-route
   const route = await storage.getDailyRoute(dailyRouteId);
@@ -640,7 +641,7 @@ export async function registerCheckpoint(
   const checkpoints = await storage.getRouteCheckpoints(dailyRouteId);
   const sequenceNumber = checkpoints.length + 1;
 
-  // Salvar checkpoint (incluindo informação se é off-route)
+  // Salvar checkpoint (incluindo informação se é off-route e se é automático)
   await storage.createRouteCheckpoint({
     dailyRouteId,
     visitId,
@@ -651,6 +652,7 @@ export async function registerCheckpoint(
     checkpointLongitude: longitude.toString(),
     checkpointTime: new Date(),
     isOffRoute,
+    isAutomatic, // ✅ Marcar checkpoints automáticos (ex: auto-checkout ao criar pedido)
     validationStatus: isOffRoute ? 'pending' : 'validated', // Off-route precisa validação, rotas normais são auto-validadas
     distanceFromPrevious: distanceFromPrevious.toString(),
     previousLatitude: previousLat?.toString() || null,
