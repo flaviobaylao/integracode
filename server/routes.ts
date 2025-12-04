@@ -12089,9 +12089,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (route.lunchBreakActivatedAt) {
         const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
         
-        // Encontrar último checkout antes da ativação do almoço
+        // Encontrar último checkout antes/no momento da ativação do almoço (usar <= para capturar checkouts simultâneos)
         const checkoutsBeforeLunch = checkOuts
-          .filter(cp => new Date(cp.checkpointTime).getTime() < lunchActivationTime)
+          .filter(cp => new Date(cp.checkpointTime).getTime() <= lunchActivationTime)
           .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
         
         // Encontrar primeiro checkin após a ativação do almoço
@@ -12601,9 +12601,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (route.lunchBreakActivatedAt) {
         const lunchActivationTime = new Date(route.lunchBreakActivatedAt).getTime();
         
-        // Encontrar último checkout antes da ativação do almoço
+        // Encontrar último checkout antes/no momento da ativação do almoço (usar <= para capturar checkouts simultâneos)
         const checkoutsBeforeLunch = checkOuts
-          .filter(cp => new Date(cp.checkpointTime).getTime() < lunchActivationTime)
+          .filter(cp => new Date(cp.checkpointTime).getTime() <= lunchActivationTime)
           .sort((a, b) => new Date(b.checkpointTime).getTime() - new Date(a.checkpointTime).getTime());
         
         // Encontrar primeiro checkin após a ativação do almoço
