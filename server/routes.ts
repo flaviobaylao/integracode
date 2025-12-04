@@ -12099,16 +12099,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
           .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
+        // DEBUG: Logs detalhados do cálculo de almoço
+        console.log(`\n🍽️ ===== CÁLCULO DE HORÁRIO DE ALMOÇO - ROTA ${route.sellerId} (${route.date}) =====`);
+        console.log(`⏰ Almoço ativado em: ${new Date(lunchActivationTime).toISOString()}`);
+        console.log(`📊 Checkouts ANTES do almoço (≤ ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkoutsBeforeLunch.length}`);
+        checkoutsBeforeLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
+        console.log(`✅ Check-ins DEPOIS do almoço (> ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkinsAfterLunch.length}`);
+        checkinsAfterLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
+        
         if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
           // Almoço completo: calcular duração medida
           let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
           let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
+          
+          console.log(`\n🔢 CÁLCULO DO TEMPO DE ALMOÇO:`);
+          console.log(`   Saída (checkout): ${lunchStart.toLocaleTimeString('pt-BR')} (${lunchStart.toISOString()})`);
+          console.log(`   Retorno (checkin): ${lunchEnd.toLocaleTimeString('pt-BR')} (${lunchEnd.toISOString()})`);
           
           // Validar timestamps para evitar NaN
           if (!isNaN(lunchStart.getTime()) && !isNaN(lunchEnd.getTime())) {
             // Normalizar timestamps que cruzam a meia-noite
             // Se lunchEnd < lunchStart, assumir que cruzou meia-noite e adicionar 24h
             if (lunchEnd < lunchStart) {
+              console.log(`⚠️  Almoço cruzou meia-noite! Adicionando 24h ao retorno.`);
               lunchEnd = new Date(lunchEnd.getTime() + 24 * 60 * 60 * 1000);
             }
             
@@ -12116,6 +12133,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
             const lunchHours = Math.floor(lunchMinutes / 60);
             const lunchMins = lunchMinutes % 60;
+            
+            console.log(`   Diferença (ms): ${lunchDiffMs}ms`);
+            console.log(`   Diferença (min): ${lunchMinutes} minutos`);
+            console.log(`   ✅ RESULTADO FINAL: ${lunchHours}h ${lunchMins}min (${lunchMinutes} minutos totais)`);
+            console.log(`🍽️ ===== FIM DO CÁLCULO DE ALMOÇO =====\n`);
             
             lunchBreak = {
               status: 'completed',
@@ -12611,16 +12633,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .filter(cp => new Date(cp.checkpointTime).getTime() > lunchActivationTime)
           .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
         
+        // DEBUG: Logs detalhados do cálculo de almoço
+        console.log(`\n🍽️ ===== CÁLCULO DE HORÁRIO DE ALMOÇO - ROTA ${route.sellerId} (${route.date}) =====`);
+        console.log(`⏰ Almoço ativado em: ${new Date(lunchActivationTime).toISOString()}`);
+        console.log(`📊 Checkouts ANTES do almoço (≤ ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkoutsBeforeLunch.length}`);
+        checkoutsBeforeLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
+        console.log(`✅ Check-ins DEPOIS do almoço (> ${new Date(lunchActivationTime).toLocaleTimeString('pt-BR')}): ${checkinsAfterLunch.length}`);
+        checkinsAfterLunch.forEach((cp, idx) => {
+          console.log(`   ${idx + 1}. ${new Date(cp.checkpointTime).toLocaleTimeString('pt-BR')} - Cliente: ${cp.customerId}`);
+        });
+        
         if (checkoutsBeforeLunch.length > 0 && checkinsAfterLunch.length > 0) {
           // Almoço completo: calcular duração medida
           let lunchStart = new Date(checkoutsBeforeLunch[0].checkpointTime);
           let lunchEnd = new Date(checkinsAfterLunch[0].checkpointTime);
+          
+          console.log(`\n🔢 CÁLCULO DO TEMPO DE ALMOÇO:`);
+          console.log(`   Saída (checkout): ${lunchStart.toLocaleTimeString('pt-BR')} (${lunchStart.toISOString()})`);
+          console.log(`   Retorno (checkin): ${lunchEnd.toLocaleTimeString('pt-BR')} (${lunchEnd.toISOString()})`);
           
           // Validar timestamps para evitar NaN
           if (!isNaN(lunchStart.getTime()) && !isNaN(lunchEnd.getTime())) {
             // Normalizar timestamps que cruzam a meia-noite
             // Se lunchEnd < lunchStart, assumir que cruzou meia-noite e adicionar 24h
             if (lunchEnd < lunchStart) {
+              console.log(`⚠️  Almoço cruzou meia-noite! Adicionando 24h ao retorno.`);
               lunchEnd = new Date(lunchEnd.getTime() + 24 * 60 * 60 * 1000);
             }
             
@@ -12628,6 +12667,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const lunchMinutes = Math.floor(lunchDiffMs / (1000 * 60));
             const lunchHours = Math.floor(lunchMinutes / 60);
             const lunchMins = lunchMinutes % 60;
+            
+            console.log(`   Diferença (ms): ${lunchDiffMs}ms`);
+            console.log(`   Diferença (min): ${lunchMinutes} minutos`);
+            console.log(`   ✅ RESULTADO FINAL: ${lunchHours}h ${lunchMins}min (${lunchMinutes} minutos totais)`);
+            console.log(`🍽️ ===== FIM DO CÁLCULO DE ALMOÇO =====\n`);
             
             lunchBreak = {
               status: 'completed',
