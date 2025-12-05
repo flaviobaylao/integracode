@@ -68,6 +68,8 @@ interface ActiveCustomerWithVisits {
     virtualService: boolean;
     weekdays?: string;
     visitPeriodicity?: string;
+    isPositivatedThisMonth?: boolean;
+    lastActivityDate?: string | null;
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
   nextThreeVisits: Array<{ date: string; status: string }>;
@@ -687,6 +689,8 @@ export default function ActiveCustomers() {
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
+                        <TableHead>Positivado</TableHead>
+                        <TableHead>Última Atividade</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                         <TableHead>Ações</TableHead>
                       </TableRow>
@@ -694,7 +698,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -761,6 +765,18 @@ export default function ActiveCustomers() {
                                   ac.customer.visitPeriodicity
                                 ) : "-"}
                               </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth ? 'text-green-600' : 'text-red-500'}`}>
+                                {ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO'}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm text-muted-foreground">
+                                {ac.customer?.lastActivityDate 
+                                  ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR })
+                                  : 'Nunca'}
+                              </span>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-2">
