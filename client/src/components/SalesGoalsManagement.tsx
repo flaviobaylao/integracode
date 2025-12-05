@@ -120,6 +120,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
       revenueGoal: formData.get('revenueGoal') ? parseFloat(formData.get('revenueGoal') as string) : null,
       overdueDebtGoal: formData.get('overdueDebtGoal') ? parseFloat(formData.get('overdueDebtGoal') as string) : null,
       serviceGoal: formData.get('serviceGoal') ? parseFloat(formData.get('serviceGoal') as string) : null,
+      newClientsGoal: formData.get('newClientsGoal') ? parseInt(formData.get('newClientsGoal') as string) : null,
+      newClientsResult: formData.get('newClientsResult') ? parseInt(formData.get('newClientsResult') as string) : null,
     };
 
     createGoalMutation.mutate(goalData);
@@ -271,20 +273,52 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           />
                         </div>
 
-                        <div>
-                          <Label htmlFor="overdueDebtGoal">Débito Vencido (%)</Label>
-                          <Input
-                            id="overdueDebtGoal"
-                            name="overdueDebtGoal"
-                            type="number"
-                            step="0.01"
-                            max="100"
-                            min="0"
-                            defaultValue={editingGoal?.overdueDebtGoal?.toString()}
-                            placeholder="5.00"
-                            data-testid="input-overdue-debt-goal"
-                          />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="overdueDebtGoal">Débito Vencido (%)</Label>
+                            <Input
+                              id="overdueDebtGoal"
+                              name="overdueDebtGoal"
+                              type="number"
+                              step="0.01"
+                              max="100"
+                              min="0"
+                              defaultValue={editingGoal?.overdueDebtGoal?.toString()}
+                              placeholder="5.00"
+                              data-testid="input-overdue-debt-goal"
+                            />
+                          </div>
+
+                          <div>
+                            <Label htmlFor="newClientsGoal">Clientes Novos (qtd)</Label>
+                            <Input
+                              id="newClientsGoal"
+                              name="newClientsGoal"
+                              type="number"
+                              step="1"
+                              min="0"
+                              defaultValue={editingGoal?.newClientsGoal?.toString()}
+                              placeholder="10"
+                              data-testid="input-new-clients-goal"
+                            />
+                          </div>
                         </div>
+
+                        {editingGoal && (
+                          <div>
+                            <Label htmlFor="newClientsResult">Clientes Novos Conquistados (resultado)</Label>
+                            <Input
+                              id="newClientsResult"
+                              name="newClientsResult"
+                              type="number"
+                              step="1"
+                              min="0"
+                              defaultValue={editingGoal?.newClientsResult?.toString()}
+                              placeholder="8"
+                              data-testid="input-new-clients-result"
+                            />
+                          </div>
+                        )}
 
                         <div className="flex justify-end space-x-2 pt-4">
                           <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
@@ -373,7 +407,23 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                               <Badge variant="outline">{goal.serviceGoal}%</Badge>
                             </div>
                           )}
-                          {!goal.positivationGoal && !goal.revenueGoal && !goal.overdueDebtGoal && !goal.serviceGoal && (
+                          {goal.newClientsGoal && (
+                            <div className="flex justify-between items-center">
+                              <Label className="text-sm text-gray-600">Clientes Novos:</Label>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline">Meta: {goal.newClientsGoal}</Badge>
+                                {goal.newClientsResult !== null && goal.newClientsResult !== undefined && (
+                                  <Badge 
+                                    variant={goal.newClientsResult >= goal.newClientsGoal ? "default" : "secondary"}
+                                    className={goal.newClientsResult >= goal.newClientsGoal ? "bg-green-500" : "bg-orange-500"}
+                                  >
+                                    Real: {goal.newClientsResult}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          {!goal.positivationGoal && !goal.revenueGoal && !goal.overdueDebtGoal && !goal.serviceGoal && !goal.newClientsGoal && (
                             <p className="text-gray-500 text-sm">Nenhuma meta definida</p>
                           )}
                         </CardContent>

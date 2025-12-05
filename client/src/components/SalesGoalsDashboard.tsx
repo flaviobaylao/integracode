@@ -305,6 +305,34 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                 />
               </div>
             )}
+
+            {/* Clientes Novos */}
+            {goal.newClientsGoal && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-sm font-medium text-gray-600">Clientes Novos</h4>
+                  <Badge className={getPerformanceStatus(
+                    goal.newClientsResult || 0,
+                    goal.newClientsGoal
+                  ).color}>
+                    {getPerformanceStatus(
+                      goal.newClientsResult || 0,
+                      goal.newClientsGoal
+                    ).label}
+                  </Badge>
+                </div>
+                <div className="text-2xl font-bold">
+                  {goal.newClientsResult || 0}
+                </div>
+                <div className="text-sm text-gray-500">
+                  Meta: {goal.newClientsGoal} clientes
+                </div>
+                <Progress
+                  value={Math.min(100, ((goal.newClientsResult || 0) / goal.newClientsGoal) * 100)}
+                  className="h-2"
+                />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
