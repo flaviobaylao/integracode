@@ -119,14 +119,6 @@ export default function RotaDoDia() {
 
   const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
     queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate],
-    queryFn: async () => {
-      if (!selectedSellerId || !selectedDate) throw new Error('Vendedor e data são obrigatórios');
-      const res = await fetch(`/api/daily-routes/${selectedSellerId}/date/${selectedDate}`, {
-        credentials: 'include'
-      });
-      if (!res.ok) throw new Error('Falha ao buscar rota');
-      return res.json();
-    },
     enabled: !!selectedSellerId && !!selectedDate,
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
   });

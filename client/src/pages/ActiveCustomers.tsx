@@ -68,7 +68,6 @@ interface ActiveCustomerWithVisits {
     virtualService: boolean;
     weekdays?: string;
     visitPeriodicity?: string;
-    isPositivatedThisMonth?: boolean;
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
   nextThreeVisits: Array<{ date: string; status: string }>;
@@ -688,7 +687,6 @@ export default function ActiveCustomers() {
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
-                        <TableHead>Positivação</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                         <TableHead>Ações</TableHead>
                       </TableRow>
@@ -696,7 +694,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -763,11 +761,6 @@ export default function ActiveCustomers() {
                                   ac.customer.visitPeriodicity
                                 ) : "-"}
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={ac.customer?.isPositivatedThisMonth ? "default" : "outline"} className={ac.customer?.isPositivatedThisMonth ? "bg-green-500" : ""}>
-                                {ac.customer?.isPositivatedThisMonth ? "Sim" : "Não"}
-                              </Badge>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-2">
