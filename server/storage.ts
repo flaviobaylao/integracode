@@ -5985,6 +5985,10 @@ export class DatabaseStorage implements IStorage {
       const today = new Date(todayStr);
       today.setHours(0, 0, 0, 0);
       
+      // Mapas para positivação e última atividade
+      let positivationMap = new Map<string, boolean>();
+      let lastActivityMap = new Map<string, Date>();
+      
       if (customerIds.length > 0) {
         try {
           // 1. Buscar TODOS os vendedores de uma vez
@@ -6008,6 +6012,83 @@ export class DatabaseStorage implements IStorage {
           for (const c of customersData) {
             const sellerName = c.sellerId ? sellerMap.get(c.sellerId) : undefined;
             customerMap.set(c.id, { ...c, sellerName });
+          }
+          
+          // 3. Buscar positivações do mês atual através dos faturamentos (billings)
+          const currentMonthStart = new Date();
+          currentMonthStart.setDate(1);
+          currentMonthStart.setHours(0, 0, 0, 0);
+          
+          const currentMonthEnd = new Date();
+          currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
+          currentMonthEnd.setDate(0);
+          currentMonthEnd.setHours(23, 59, 59, 999);
+          
+          // Buscar códigos Omie dos clientes
+          const customerOmieCodes = customersData
+            .map(c => c.omieClientCode)
+            .filter((code): code is string => !!code);
+          
+          if (customerOmieCodes.length > 0) {
+            // Buscar positivações
+            const positivations = await db
+              .select({
+                omieCustomerCode: billings.omieCustomerCode,
+                count: sql<number>`COUNT(*)`.mapWith(Number),
+              })
+              .from(billings)
+              .where(
+                and(
+                  inArray(billings.omieCustomerCode, customerOmieCodes),
+                  isNotNull(billings.invoiceDate),
+                  gte(billings.invoiceDate, currentMonthStart),
+                  sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
+                  eq(billings.isCancelled, false),
+                  sql`${billings.totalValue} > 0`
+                )
+              )
+              .groupBy(billings.omieCustomerCode);
+            
+            // Criar mapa: omieCustomerCode -> true/false
+            const omieCodePositivationMap = new Map(
+              positivations.map(p => [p.omieCustomerCode, p.count > 0])
+            );
+            
+            // Converter para customerId -> true/false
+            for (const c of customersData) {
+              if (c.omieClientCode) {
+                positivationMap.set(c.id, omieCodePositivationMap.get(c.omieClientCode) || false);
+              }
+            }
+            
+            // Buscar última atividade (última fatura)
+            const lastBillings = await db
+              .select()
+              .from(billings)
+              .where(
+                and(
+                  inArray(billings.omieCustomerCode, customerOmieCodes),
+                  isNotNull(billings.invoiceDate),
+                  eq(billings.isCancelled, false),
+                  sql`${billings.totalValue} > 0`
+                )
+              )
+              .orderBy(billings.omieCustomerCode, desc(billings.invoiceDate));
+            
+            // Agrupar por omieCustomerCode e pegar a primeira (mais recente)
+            const omieLastActivityMap = new Map<string, Date>();
+            for (const billing of lastBillings) {
+              if (billing.omieCustomerCode && billing.invoiceDate && !omieLastActivityMap.has(billing.omieCustomerCode)) {
+                omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate);
+              }
+            }
+            
+            // Converter de omieCustomerCode para customerId
+            for (const c of customersData) {
+              if (c.omieClientCode && omieLastActivityMap.has(c.omieClientCode)) {
+                lastActivityMap.set(c.id, omieLastActivityMap.get(c.omieClientCode)!);
+              }
+            }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
@@ -6072,6 +6153,10 @@ export class DatabaseStorage implements IStorage {
         const visits = ac.customerId ? (visitMap.get(ac.customerId) || []) : [];
         const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
         
+        // Adicionar dados de positivação e última atividade
+        const isPositivated = ac.customerId ? (positivationMap.get(ac.customerId) || false) : false;
+        const lastActivity = ac.customerId ? lastActivityMap.get(ac.customerId) : undefined;
+        
         // Debug TUTTO PANE final
         if (customer && (customer.fantasyName?.includes('TUTTO') || customer.name?.includes('TUTTO'))) {
           console.log(`🎯 TUTTO PANE final: ${visits.length} visitas, periodicity=${customer.visitPeriodicity}`);
@@ -6079,7 +6164,11 @@ export class DatabaseStorage implements IStorage {
         
         return {
           ...ac,
-          customer,
+          customer: customer ? {
+            ...customer,
+            isPositivatedThisMonth: isPositivated,
+            lastActivityDate: lastActivity?.toISOString() || null
+          } : undefined,
           lastTwoVisits: [],
           nextThreeVisits: visits
         };
