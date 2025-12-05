@@ -146,6 +146,7 @@ export default function ActiveCustomers() {
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
+  const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
@@ -410,7 +411,11 @@ export default function ActiveCustomers() {
     // Filtro de data - verificar se cliente tem visita agendada para aquele dia
     const matchesDate = !selectedDate || ac.nextThreeVisits.some(v => v.date === selectedDate);
     
-    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate;
+    // Filtro de positivação
+    const matchesPositivation = !selectedPositivation || 
+      (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
+    
+    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation;
   });
 
   const formatDocument = (doc: string, type: string) => {
@@ -629,6 +634,16 @@ export default function ActiveCustomers() {
                   ))}
                 </SelectContent>
               </Select>
+              
+              <Select value={selectedPositivation} onValueChange={setSelectedPositivation}>
+                <SelectTrigger className="w-[120px] h-9" data-testid="select-positivation-filter">
+                  <SelectValue placeholder="Positivação" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sim">Positivado</SelectItem>
+                  <SelectItem value="nao">Não Positivado</SelectItem>
+                </SelectContent>
+              </Select>
 
               <Input
                 type="date"
@@ -648,6 +663,7 @@ export default function ActiveCustomers() {
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
                   setSelectedDate("");
+                  setSelectedPositivation("");
                 }}
                 className="h-9"
                 data-testid="button-clear-all-filters"
@@ -660,7 +676,7 @@ export default function ActiveCustomers() {
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType) && (
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
