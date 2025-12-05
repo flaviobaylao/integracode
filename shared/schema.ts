@@ -966,6 +966,12 @@ export const salesGoals = pgTable("sales_goals", {
   // Meta de Atendimento (em percentual)
   serviceGoal: decimal("service_goal", { precision: 5, scale: 2 }), // Ex: 90.00%
   
+  // Meta de Clientes Novos (número inteiro)
+  newClientsGoal: integer("new_clients_goal"), // Ex: 10 clientes novos
+  
+  // Resultado real de Clientes Novos (inserido por admin/coordenador)
+  newClientsResult: integer("new_clients_result"), // Ex: 8 clientes conquistados
+  
   isActive: boolean("is_active").notNull().default(true),
   createdBy: varchar("created_by").notNull(), // ID do usuário que criou
   createdAt: timestamp("created_at").defaultNow(),
