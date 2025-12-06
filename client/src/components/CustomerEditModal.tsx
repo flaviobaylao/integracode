@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useMutation } from "@/lib/queryClient";
+import { useMutation, useQuery } from "@/lib/queryClient";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
 interface CustomerEditModalProps {
   isOpen: boolean;
@@ -35,6 +35,28 @@ export default function CustomerEditModal({
   customer,
 }: CustomerEditModalProps) {
   const { toast } = useToast();
+  const [isInActiveList, setIsInActiveList] = useState(false);
+
+  // Verificar se cliente está na lista de ativos
+  const { data: activeCustomer } = useQuery({
+    queryKey: ['/api/customers', customer?.id, 'active-status'],
+    queryFn: async () => {
+      if (!customer?.id) return null;
+      try {
+        const response = await fetch(`/api/active-customers/check/${customer.id}`);
+        if (!response.ok) return null;
+        return response.json();
+      } catch (error) {
+        return null;
+      }
+    },
+    enabled: !!customer?.id && isOpen,
+  });
+
+  useEffect(() => {
+    setIsInActiveList(!!activeCustomer);
+  }, [activeCustomer]);
+
   const [formData, setFormData] = useState({
     name: "",
     fantasyName: "",
@@ -80,6 +102,28 @@ export default function CustomerEditModal({
       toast({
         title: "Erro ao atualizar cliente",
         description: error.message || "Ocorreu um erro ao atualizar o cliente",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addToActiveMutation = useMutation({
+    mutationFn: async () => {
+      if (!customer?.id) throw new Error("Customer ID is required");
+      return await apiRequest("POST", `/api/active-customers/add/${customer.id}`, {});
+    },
+    onSuccess: () => {
+      setIsInActiveList(true);
+      toast({
+        title: "Sucesso!",
+        description: "Cliente adicionado à lista de clientes ativos.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers', customer?.id, 'active-status'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao adicionar cliente aos ativos",
         variant: "destructive",
       });
     },
@@ -537,26 +581,46 @@ export default function CustomerEditModal({
           </div>
 
           {/* Botões */}
-          <div className="flex justify-end space-x-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={updateCustomerMutation.isPending}
-              data-testid="button-cancel-edit"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={updateCustomerMutation.isPending}
-              data-testid="button-save-customer"
-            >
-              {updateCustomerMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <div className="flex justify-between">
+            <div>
+              {!isInActiveList && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => addToActiveMutation.mutate()}
+                  disabled={addToActiveMutation.isPending}
+                  className="border-green-600 text-green-600 hover:bg-green-50"
+                  data-testid="button-add-to-active"
+                >
+                  {addToActiveMutation.isPending && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar aos Clientes Ativos
+                </Button>
               )}
-              Salvar Alterações
-            </Button>
+            </div>
+            <div className="flex space-x-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={updateCustomerMutation.isPending || addToActiveMutation.isPending}
+                data-testid="button-cancel-edit"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={updateCustomerMutation.isPending || addToActiveMutation.isPending}
+                data-testid="button-save-customer"
+              >
+                {updateCustomerMutation.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Salvar Alterações
+              </Button>
+            </div>
           </div>
         </form>
       </DialogContent>

@@ -17053,6 +17053,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Erro ao verificar cliente' });
     }
   });
+
+  // Adicionar cliente à lista ativa
+  app.post('/api/active-customers/add/:customerId', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const customer = await storage.getCustomer(customerId);
+      
+      if (!customer) {
+        return res.status(404).json({ message: 'Cliente não encontrado' });
+      }
+
+      // Buscar documento (CPF ou CNPJ)
+      const document = customer.cpf?.replace(/\D/g, '') || customer.cnpj?.replace(/\D/g, '');
+      
+      if (!document) {
+        return res.status(400).json({ message: 'Cliente não possui CPF ou CNPJ cadastrado' });
+      }
+
+      // Verificar se já existe na lista ativa
+      const existing = await storage.getActiveCustomerByDocument(document);
+      
+      if (existing) {
+        // Se existe mas está inativo, ativar
+        if (!existing.isActive) {
+          await storage.updateActiveCustomer(existing.id, { isActive: true });
+        }
+        return res.json({ message: 'Cliente já estava na lista ativa', activeCustomer: existing });
+      }
+
+      // Criar novo registro na lista ativa
+      const activeCustomer = await storage.createActiveCustomer({
+        document,
+        documentType: customer.cpf ? 'cpf' : 'cnpj',
+        fantasyNameImported: customer.fantasyName || customer.name,
+        customerId,
+        uploadId: 'manual-add', // Marcador especial para adições manuais
+        matchStatus: 'matched',
+        latitude: customer.latitude ? parseFloat(customer.latitude.toString()) : undefined,
+        longitude: customer.longitude ? parseFloat(customer.longitude.toString()) : undefined,
+        isActive: true,
+      });
+
+      res.json({ message: 'Cliente adicionado à lista ativa com sucesso', activeCustomer });
+    } catch (error) {
+      console.error('Erro ao adicionar cliente aos ativos:', error);
+      res.status(500).json({ message: 'Erro ao adicionar cliente', error: String(error) });
+    }
+  });
   
   // Reconciliar clientes não vinculados (admin only)
   app.post('/api/active-customers/reconcile', authenticateUser, requireRole(['admin']), async (req: any, res) => {
