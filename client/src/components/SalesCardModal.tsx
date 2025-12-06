@@ -49,7 +49,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
   const queryClient = useQueryClient();
 
   const { data: customers } = useQuery<any[]>({
-    queryKey: ['/api/customers'],
+    queryKey: ['/api/customers/all-for-sales'],
     retry: false,
   });
 

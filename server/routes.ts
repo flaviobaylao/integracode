@@ -841,6 +841,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Listar TODOS os clientes cadastrados para criação de cards de vendas
+  // (inclui inativos, permite criar cards para qualquer cliente cadastrado)
+  app.get('/api/customers/all-for-sales', authenticateUser, async (req: any, res) => {
+    try {
+      const allCustomers = await storage.getAllCustomers();
+      
+      // Retornar com formato compatível com o SalesCardModal
+      const result = allCustomers.map(c => ({
+        id: c.id,
+        name: c.name,
+        fantasyName: c.fantasyName,
+        document: c.document,
+        phone: c.phone,
+        address: c.address,
+        neighborhood: c.neighborhood,
+        city: c.city,
+        state: c.state,
+        latitude: c.latitude,
+        longitude: c.longitude,
+        weekdays: c.weekdays,
+        omieStatus: c.omieStatus,
+        sellerId: c.sellerId,
+      }));
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching all customers for sales:", error);
+      res.status(500).json({ message: "Failed to fetch customers" });
+    }
+  });
+
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', async (req: any, res) => {
     try {
