@@ -1248,11 +1248,14 @@ export class DatabaseStorage implements IStorage {
     }
     
     const result = await query;
-    return result.map(row => ({
-      ...row.sales_cards,
-      customer: row.customers!,
-      seller: row.users!,
-    }));
+    // Filtrar cards com customer ou seller inválido para evitar erros
+    return result
+      .filter(row => row.customers !== null)
+      .map(row => ({
+        ...row.sales_cards,
+        customer: row.customers!,
+        seller: row.users || null,
+      }));
   }
 
   async getSalesCard(id: string): Promise<SalesCardWithRelations | undefined> {
@@ -1263,12 +1266,12 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(eq(salesCards.id, id));
     
-    if (!result) return undefined;
+    if (!result || !result.customers) return undefined;
     
     return {
       ...result.sales_cards,
-      customer: result.customers!,
-      seller: result.users!,
+      customer: result.customers,
+      seller: result.users || null,
     };
   }
 
@@ -2239,11 +2242,14 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
     
-    return result.map(row => ({
-      ...row.sales_cards,
-      customer: row.customers!,
-      seller: row.users!,
-    }));
+    // Filtrar cards com customer inválido para evitar erros
+    return result
+      .filter(row => row.customers !== null)
+      .map(row => ({
+        ...row.sales_cards,
+        customer: row.customers!,
+        seller: row.users || null,
+      }));
   }
 
   async getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
@@ -2273,11 +2279,14 @@ export class DatabaseStorage implements IStorage {
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
     
-    return result.map(row => ({
-      ...row.sales_cards,
-      customer: row.customers!,
-      seller: row.users!,
-    }));
+    // Filtrar cards com customer inválido para evitar erros
+    return result
+      .filter(row => row.customers !== null)
+      .map(row => ({
+        ...row.sales_cards,
+        customer: row.customers!,
+        seller: row.users || null,
+      }));
   }
 
   // Buscar cards criticamente atrasados (pending com mais de 3 dias de atraso)
@@ -2313,11 +2322,14 @@ export class DatabaseStorage implements IStorage {
       .where(whereConditions)
       .orderBy(salesCards.scheduledDate);
     
-    return result.map(row => ({
-      ...row.sales_cards,
-      customer: row.customers!,
-      seller: row.users!,
-    }));
+    // Filtrar cards com customer inválido para evitar erros
+    return result
+      .filter(row => row.customers !== null)
+      .map(row => ({
+        ...row.sales_cards,
+        customer: row.customers!,
+        seller: row.users || null,
+      }));
   }
 
   async duplicateSalesCard(id: string, newDate: Date): Promise<SalesCard> {
