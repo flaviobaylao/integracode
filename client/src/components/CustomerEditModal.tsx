@@ -41,19 +41,28 @@ export default function CustomerEditModal({
   useEffect(() => {
     const checkActiveStatus = async () => {
       if (!customer?.id || !isOpen) {
+        console.log('DEBUG: Skip check - customer?.id:', customer?.id, 'isOpen:', isOpen);
         setIsInActiveList(false);
         return;
       }
       try {
+        console.log('DEBUG: Checking active status for customer:', customer.id);
         const response = await fetch(`/api/active-customers/check/${customer.id}`);
+        console.log('DEBUG: Response status:', response.status, response.statusText);
+        
         if (!response.ok) {
+          console.log('DEBUG: Response not OK, setting to false');
           setIsInActiveList(false);
           return;
         }
+        
         const data = await response.json();
-        setIsInActiveList(data?.isActive === true);
+        console.log('DEBUG: Response data:', data);
+        const isActive = data?.isActive === true;
+        console.log('DEBUG: Setting isInActiveList to:', isActive);
+        setIsInActiveList(isActive);
       } catch (error) {
-        console.error('Erro ao verificar status ativo:', error);
+        console.error('DEBUG: Erro ao verificar status ativo:', error);
         setIsInActiveList(false);
       }
     };
