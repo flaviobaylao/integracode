@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: customers } = useQuery<any[]>({
     queryKey: ['/api/customers', 'all'],
@@ -149,19 +151,30 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     mutationFn: async (data: any) => {
       if (editingCard) {
         await apiRequest('PUT', `/api/sales-cards/${editingCard.id}`, data);
+        return { id: editingCard.id };
       } else {
-        await apiRequest('POST', '/api/sales-cards', data);
+        const response = await apiRequest('POST', '/api/sales-cards', data);
+        return response;
       }
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      onClose();
       toast({
         title: "Sucesso",
         description: editingCard 
           ? "Card atualizado com sucesso!" 
           : "Card criado com sucesso!",
       });
+      
+      // Se for novo card (não edição), navegar para a página de entrada de pedido
+      if (!editingCard && data?.id) {
+        onClose();
+        setTimeout(() => {
+          navigate(`/sales-card/${data.id}`);
+        }, 300);
+      } else {
+        onClose();
+      }
     },
     onError: (error: any) => {
       toast({

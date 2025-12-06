@@ -53,6 +53,7 @@ import ActiveCustomers from "@/pages/ActiveCustomers";
 import VirtualClientsToday from "@/pages/VirtualClientsToday";
 import ChatTest from "@/pages/ChatTest";
 import RoutesValidation from "@/pages/RoutesValidation";
+import SalesCardDetail from "@/pages/SalesCardDetail";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -192,6 +193,7 @@ function Router() {
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
+          <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
