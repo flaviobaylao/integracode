@@ -463,20 +463,32 @@ export class OmieService {
       let page = 1;
       let hasMore = true;
       const registrosPerPage = 100;
+      let totalPages = 1;
 
-      while (hasMore) {
-        console.log(`📄 Buscando página ${page} de vendedores...`);
+      while (hasMore && page <= totalPages) {
+        console.log(`📄 Buscando página ${page} de vendedores (total páginas: ${totalPages})...`);
         
         const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
           pagina: page,
           registros_por_pagina: registrosPerPage
         });
 
+        // Atualizar total de páginas com a resposta da API
+        totalPages = response.total_de_paginas || totalPages;
+        const totalRecords = response.total_de_registros || 0;
+        
+        console.log(`📊 Página ${page}/${totalPages} - Total registros: ${totalRecords}`);
+
         const vendors = response.cadastro ?? response.cadastros ?? [];
         
+        console.log(`📋 Vendedores na página ${page}: ${vendors.length}`);
+        
         if (vendors.length === 0) {
-          hasMore = false;
-          break;
+          console.log(`⚠️ Página ${page} vazia - verificando se há mais páginas...`);
+          if (page >= totalPages) {
+            hasMore = false;
+            break;
+          }
         }
 
         for (const vendor of vendors) {
@@ -551,15 +563,18 @@ export class OmieService {
           }
         }
 
-        // Verificar se há mais páginas
-        if (vendors.length < registrosPerPage) {
+        // Avançar para a próxima página
+        page++;
+        
+        // Verificar se há mais páginas usando o total de páginas da API
+        if (page > totalPages) {
+          console.log(`✅ Todas as ${totalPages} páginas de vendedores processadas`);
           hasMore = false;
-        } else {
-          page++;
         }
       }
 
       console.log('🎉 Sincronização de vendedores concluída:', results);
+      console.log(`📊 Total processado: ${results.totalProcessed}, Importados: ${results.imported}, Atualizados: ${results.updated}, Erros: ${results.errors.length}`);
       return results;
 
     } catch (error) {

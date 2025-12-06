@@ -7203,6 +7203,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota para buscar um vendedor específico pelo código do Omie
+  app.get('/api/omie/vendedores/:codigo', authenticateUser, async (req: any, res) => {
+    try {
+      const { codigo } = req.params;
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      const vendorData = await omieService.fetchSellerData(codigo);
+      if (!vendorData) {
+        return res.status(404).json({ 
+          message: `Vendedor com código ${codigo} não encontrado no Omie`,
+          codigo
+        });
+      }
+
+      res.json({
+        codigo,
+        nome: vendorData.name,
+        id: vendorData.id,
+        systemId: `omie-vendor-${codigo}`
+      });
+
+    } catch (error) {
+      console.error("Error fetching vendor from Omie:", error);
+      res.status(500).json({ 
+        message: "Erro ao buscar vendedor no Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
   // Rota para buscar cliente específico no Omie por CNPJ
   app.get('/api/omie/search-client', authenticateUser, async (req: any, res) => {
     try {
