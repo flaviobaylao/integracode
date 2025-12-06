@@ -17043,13 +17043,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Verificar se cliente está na lista ativa
-  app.get('/api/active-customers/check/:customerId', authenticateUser, async (req: any, res) => {
+  app.get('/api/active-customers/check/:customerId', async (req: any, res) => {
     try {
       const { customerId } = req.params;
+      console.log('📋 Verificando status ativo para cliente:', customerId);
       const isActive = await storage.isCustomerInActiveList(customerId);
+      console.log('✅ Cliente ativo:', isActive);
       res.json({ customerId, isActive });
     } catch (error) {
-      console.error('Erro ao verificar cliente ativo:', error);
+      console.error('❌ Erro ao verificar cliente ativo:', error);
       res.status(500).json({ message: 'Erro ao verificar cliente' });
     }
   });
