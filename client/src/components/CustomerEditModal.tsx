@@ -38,24 +38,27 @@ export default function CustomerEditModal({
   const [isInActiveList, setIsInActiveList] = useState(false);
 
   // Verificar se cliente está na lista de ativos
-  const { data: activeCustomer } = useQuery({
-    queryKey: ['/api/customers', customer?.id, 'active-status'],
-    queryFn: async () => {
-      if (!customer?.id) return null;
+  useEffect(() => {
+    const checkActiveStatus = async () => {
+      if (!customer?.id || !isOpen) {
+        setIsInActiveList(false);
+        return;
+      }
       try {
         const response = await fetch(`/api/active-customers/check/${customer.id}`);
-        if (!response.ok) return null;
-        return response.json();
+        if (!response.ok) {
+          setIsInActiveList(false);
+          return;
+        }
+        const data = await response.json();
+        setIsInActiveList(data?.isActive === true);
       } catch (error) {
-        return null;
+        console.error('Erro ao verificar status ativo:', error);
+        setIsInActiveList(false);
       }
-    },
-    enabled: !!customer?.id && isOpen,
-  });
-
-  useEffect(() => {
-    setIsInActiveList(activeCustomer?.isActive === true);
-  }, [activeCustomer]);
+    };
+    checkActiveStatus();
+  }, [customer?.id, isOpen]);
 
   const [formData, setFormData] = useState({
     name: "",
