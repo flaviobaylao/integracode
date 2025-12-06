@@ -54,7 +54,7 @@ export default function CustomerEditModal({
   });
 
   useEffect(() => {
-    setIsInActiveList(!!activeCustomer);
+    setIsInActiveList(activeCustomer?.isActive === true);
   }, [activeCustomer]);
 
   const [formData, setFormData] = useState({
