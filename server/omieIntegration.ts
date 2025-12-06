@@ -492,11 +492,11 @@ export class OmieService {
             // DEBUG: Log do valor do campo inativo
             console.log(`🔍 DEBUG Vendedor: ${vendor.nome} - inativo: "${vendor.inativo}" (tipo: ${typeof vendor.inativo})`);
 
-            // FILTRO: Pular vendedores inativos
+            // IMPORTANTE: Sincronizar TODOS os vendedores (ativos E inativos)
+            // Mesmo vendedores inativos podem ter clientes atribuídos
             const isInactive = vendor.inativo === 'S' || vendor.inativo === 'true' || vendor.inativo === true;
             if (isInactive) {
-              console.log(`⏭️ Pulando vendedor inativo: ${vendor.nome} (inativo: ${vendor.inativo})`);
-              continue;
+              console.log(`📋 Vendedor inativo será incluído: ${vendor.nome} (inativo: ${vendor.inativo})`);
             }
 
             // Parse o nome do vendedor
@@ -2607,6 +2607,12 @@ export class OmieService {
             console.log('📋 Campos disponíveis no cliente Omie:', Object.keys(client));
             console.log('📋 Situação do cliente:', client.situacao);
             console.log('📋 Inativo do cliente:', client.inativo);
+            console.log('📋 Recomendações do cliente (DEBUG):', JSON.stringify(client.recomendacoes));
+          }
+          
+          // DEBUG: Log vendedor para todos os clientes que tem recomendacoes
+          if (client.recomendacoes?.codigo_vendedor) {
+            console.log(`🔍 Cliente ${client.codigo_cliente_omie} (${client.razao_social || client.nome_fantasia}) tem vendedor: ${client.recomendacoes.codigo_vendedor}`);
           }
           
           // Garantir que todos os campos obrigatórios estão presentes

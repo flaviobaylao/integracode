@@ -6146,6 +6146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Processar sincronização em background
       (async () => {
         const results = {
+          vendors: null,
           clients: null,
           billings: null,
           overdueDebts: null,
@@ -6153,6 +6154,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startTime: new Date(),
           endTime: null
         };
+
+      // 0. PRIMEIRO: Sincronizar vendedores (necessário antes dos clientes)
+      try {
+        console.log('👥 Sincronizando vendedores do Omie...');
+        const vendorResult = await omieService.syncVendors();
+        results.vendors = {
+          totalProcessed: vendorResult.totalProcessed || 0,
+          imported: vendorResult.imported || 0,
+          updated: vendorResult.updated || 0,
+          errors: vendorResult.errors || []
+        };
+        console.log('✅ Vendedores sincronizados:', results.vendors);
+      } catch (error: any) {
+        console.error('❌ Erro na sincronização de vendedores:', error);
+        results.errors.push(`Vendedores: ${error.message}`);
+      }
 
       // 1. Sincronizar clientes ativos
       try {
@@ -6210,6 +6227,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🏁 Sincronização completa finalizada em ${duration}s`);
       console.log('📊 Resumo:', {
+        vendedores: results.vendors,
         clientes: results.clients,
         faturamentos: results.billings,
         debitos: results.overdueDebts,
@@ -6218,7 +6236,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Registrar timestamp da sincronização completa
       try {
-        const totalRecords = (results.clients?.totalProcessed || 0) + 
+        const totalRecords = (results.vendors?.totalProcessed || 0) +
+                            (results.clients?.totalProcessed || 0) + 
                             (results.billings?.totalProcessed || 0) + 
                             (results.overdueDebts?.debts || 0);
         
