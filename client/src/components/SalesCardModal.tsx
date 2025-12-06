@@ -49,8 +49,13 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
   const queryClient = useQueryClient();
 
   const { data: customers } = useQuery<any[]>({
-    queryKey: ['/api/customers/all-for-sales'],
+    queryKey: ['/api/customers', 'all'],
     retry: false,
+    queryFn: async () => {
+      const response = await fetch('/api/customers?allCustomers=true');
+      if (!response.ok) throw new Error('Failed to fetch customers');
+      return response.json();
+    },
   });
 
   // O Command component gerencia a busca automaticamente

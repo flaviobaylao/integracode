@@ -833,6 +833,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId = req.query.sellerId as string;
       }
       
+      // Se for para criação de cards de vendas, retornar TODOS os clientes (incluindo inativos)
+      if (req.query.allCustomers === 'true') {
+        const allCustomers = await storage.getAllCustomers();
+        // Retornar com formato compatível com o SalesCardModal
+        const result = allCustomers.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          fantasyName: c.fantasyName,
+          document: c.document,
+          cnpj: c.cnpj,
+          cpf: c.cpf,
+          phone: c.phone,
+          address: c.address,
+          neighborhood: c.neighborhood,
+          city: c.city,
+          state: c.state,
+          latitude: c.latitude,
+          longitude: c.longitude,
+          weekdays: c.weekdays,
+          omieStatus: c.omieStatus,
+          sellerId: c.sellerId,
+        }));
+        return res.json(result);
+      }
+      
       const customers = await storage.getCustomers(sellerId);
       res.json(customers);
     } catch (error) {
