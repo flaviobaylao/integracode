@@ -17047,7 +17047,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { customerId } = req.params;
       console.log('📋 Verificando status ativo para cliente:', customerId);
-      const isActive = await storage.isCustomerInActiveList(customerId);
+      
+      // Buscar o cliente para pegar seu documento
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        console.log('❌ Cliente não encontrado:', customerId);
+        return res.json({ customerId, isActive: false });
+      }
+      
+      // Normalizar documento
+      const document = customer.cpf?.replace(/\D/g, '') || customer.cnpj?.replace(/\D/g, '');
+      if (!document) {
+        console.log('⚠️ Cliente sem documento:', customerId);
+        return res.json({ customerId, isActive: false });
+      }
+      
+      // Verificar se existe na lista ativa
+      const activeCustomer = await storage.getActiveCustomerByDocument(document);
+      const isActive = activeCustomer?.isActive === true;
+      
       console.log('✅ Cliente ativo:', isActive);
       res.json({ customerId, isActive });
     } catch (error) {
