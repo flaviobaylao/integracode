@@ -1426,6 +1426,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Resincronizar cliente local para o Omie
+  app.post('/api/customers/:id/send-to-omie', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const customer = await storage.getCustomer(id);
+      
+      if (!customer) {
+        return res.status(404).json({ message: 'Cliente não encontrado' });
+      }
+      
+      if (!customer.cpf && !customer.cnpj) {
+        return res.status(400).json({ message: 'Cliente não possui CPF ou CNPJ' });
+      }
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Integração Omie não configurada' });
+      }
+      
+      console.log(`📤 Enviando cliente ${customer.name} (${customer.cnpj || customer.cpf}) para o Omie...`);
+      
+      const omieResult = await omieService.createClient({
+        cnpj: customer.cnpj,
+        cpf: customer.cpf,
+        name: customer.name,
+        fantasyName: customer.fantasyName,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        city: customer.city,
+        state: customer.state,
+        zipCode: customer.zipCode
+      });
+      
+      if (omieResult.success && omieResult.omieClientCode) {
+        // Atualizar cliente com código Omie
+        await storage.updateCustomer(id, {
+          omieClientCode: omieResult.omieClientCode.toString()
+        });
+        res.json({
+          success: true,
+          message: `✅ Cliente enviado para o Omie com sucesso (código: ${omieResult.omieClientCode})`,
+          omieClientCode: omieResult.omieClientCode
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: `⚠️ Erro ao enviar cliente: ${omieResult.message}`,
+          details: omieResult.message
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ Erro ao enviar cliente para Omie:', error);
+      res.status(500).json({
+        message: 'Erro ao enviar cliente para o Omie',
+        error: error.message || 'Erro desconhecido'
+      });
+    }
+  });
+
   app.put('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;

@@ -30,7 +30,8 @@ import {
   History,
   Plus,
   Truck,
-  Save
+  Save,
+  Share2
 } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 import WhatsAppButton from "./WhatsAppButton";
@@ -191,6 +192,32 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     addToActiveMutation.mutate();
   };
 
+  const sendToOmieMutation = useMutation({
+    mutationFn: async () => {
+      if (!customer?.id) throw new Error("Customer ID is required");
+      return await apiRequest("POST", `/api/customers/${customer.id}/send-to-omie`, {});
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Sucesso!",
+        description: data.message || "Cliente enviado para o Omie com sucesso.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers', customer?.id] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao enviar cliente para o Omie",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendToOmie = () => {
+    if (!customer?.id) return;
+    sendToOmieMutation.mutate();
+  };
+
   const openWaze = (latitude: string, longitude: string) => {
     if (!latitude || !longitude) return;
     const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;
@@ -291,6 +318,17 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
               <span>Detalhes do Cliente</span>
             </DialogTitle>
             <div className="flex gap-2">
+              <Button
+                onClick={handleSendToOmie}
+                disabled={sendToOmieMutation.isPending}
+                variant="outline"
+                className="border-purple-600 text-purple-600 hover:bg-purple-50"
+                title="Enviar/resincronizar este cliente para o Omie ERP"
+                data-testid="button-send-to-omie"
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                {sendToOmieMutation.isPending ? 'Enviando...' : 'Enviar ao Omie'}
+              </Button>
               <Button
                 onClick={handleAddToActive}
                 disabled={addToActiveMutation.isPending}
