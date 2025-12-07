@@ -205,10 +205,15 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
       queryClient.invalidateQueries({ queryKey: ['/api/customers', customer?.id] });
     },
     onError: (error: any) => {
+      const isRateLimit = error?.response?.status === 429 || error?.rateLimit === true;
+      const errorMessage = isRateLimit 
+        ? "A API Omie está temporariamente bloqueada. Tente novamente em alguns minutos."
+        : error?.response?.data?.message || error.message || "Erro ao enviar cliente para o Omie";
+      
       toast({
-        title: "Erro",
-        description: error.message || "Erro ao enviar cliente para o Omie",
-        variant: "destructive",
+        title: isRateLimit ? "Aguarde" : "Erro",
+        description: errorMessage,
+        variant: isRateLimit ? "default" : "destructive",
       });
     },
   });

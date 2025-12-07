@@ -1433,19 +1433,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = await storage.getCustomer(id);
       
       if (!customer) {
+        console.warn(`⚠️ Cliente não encontrado: ${id}`);
         return res.status(404).json({ message: 'Cliente não encontrado' });
       }
       
       if (!customer.cpf && !customer.cnpj) {
+        console.warn(`⚠️ Cliente ${id} sem CPF/CNPJ`);
         return res.status(400).json({ message: 'Cliente não possui CPF ou CNPJ' });
       }
       
       const omieService = getOmieService(storage);
       if (!omieService) {
+        console.error('❌ Omie service não está disponível');
         return res.status(503).json({ message: 'Integração Omie não configurada' });
       }
       
-      console.log(`📤 Enviando cliente ${customer.name} (${customer.cnpj || customer.cpf}) para o Omie...`);
+      console.log(`📤 [SEND-TO-OMIE] Enviando cliente ${customer.name} (${customer.cnpj || customer.cpf})...`);
       
       const omieResult = await omieService.createClient({
         cnpj: customer.cnpj,
@@ -1460,17 +1463,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         zipCode: customer.zipCode
       });
       
+      console.log(`📤 [SEND-TO-OMIE] Resultado:`, omieResult);
+      
       if (omieResult.success && omieResult.omieClientCode) {
         // Atualizar cliente com código Omie
         await storage.updateCustomer(id, {
           omieClientCode: omieResult.omieClientCode.toString()
         });
+        console.log(`✅ [SEND-TO-OMIE] Cliente ${customer.name} sincronizado com código ${omieResult.omieClientCode}`);
         res.json({
           success: true,
           message: `✅ Cliente enviado para o Omie com sucesso (código: ${omieResult.omieClientCode})`,
           omieClientCode: omieResult.omieClientCode
         });
       } else {
+        console.warn(`⚠️ [SEND-TO-OMIE] Falha ao criar cliente: ${omieResult.message}`);
+        // Verificar se é rate limit da Omie
+        if (omieResult.message && omieResult.message.includes('bloqueada por consumo indevido')) {
+          return res.status(429).json({
+            success: false,
+            message: '⚠️ API Omie temporariamente bloqueada por excesso de requisições. Tente novamente em alguns minutos.',
+            details: omieResult.message,
+            rateLimit: true
+          });
+        }
         res.status(400).json({
           success: false,
           message: `⚠️ Erro ao enviar cliente: ${omieResult.message}`,
@@ -1478,7 +1494,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     } catch (error: any) {
-      console.error('❌ Erro ao enviar cliente para Omie:', error);
+      console.error('❌ [SEND-TO-OMIE] Erro ao enviar cliente:', error);
+      // Verificar se é rate limit da Omie
+      if (error.message && error.message.includes('bloqueada por consumo indevido')) {
+        return res.status(429).json({
+          message: '⚠️ API Omie temporariamente bloqueada por excesso de requisições. Tente novamente em alguns minutos.',
+          error: error.message,
+          rateLimit: true
+        });
+      }
       res.status(500).json({
         message: 'Erro ao enviar cliente para o Omie',
         error: error.message || 'Erro desconhecido'
