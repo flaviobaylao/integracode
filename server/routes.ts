@@ -17038,6 +17038,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Converter lead para cliente
+  app.post('/api/leads/:id/convert-to-customer', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { name, customerType, cpf, cnpj, companyName, phone, email, address, city, state, zipCode, neighborhood, sellerId, weekdays, visitPeriodicity } = req.body;
+      
+      // Buscar lead
+      const lead = await storage.getLead(id);
+      if (!lead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+
+      // Validar dados obrigatórios
+      if (!name || !customerType || !phone || !address) {
+        return res.status(400).json({ 
+          message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios' 
+        });
+      }
+
+      // Criar cliente
+      const customer = await storage.createCustomer({
+        name,
+        customerType: customerType as 'pessoa_fisica' | 'pessoa_juridica',
+        cpf: cpf || null,
+        cnpj: cnpj || null,
+        companyName: companyName || null,
+        fantasyName: lead.fantasyName,
+        phone,
+        email: email || null,
+        address,
+        city: city || null,
+        state: state || null,
+        zipCode: zipCode || null,
+        neighborhood: neighborhood || null,
+        sellerId: sellerId || '',
+        weekdays: weekdays ? JSON.stringify(normalizeWeekdayInput(weekdays)) : JSON.stringify(['Seg']),
+        visitPeriodicity: visitPeriodicity || 'semanal',
+        latitude: lead.latitude.toString(),
+        longitude: lead.longitude.toString(),
+        isActive: true
+      });
+
+      // Atualizar lead como convertido
+      await storage.updateLead(id, {
+        status: 'converted',
+        assignedTo: sellerId || null
+      });
+
+      console.log(`✅ Lead ${lead.fantasyName} convertido em cliente ${customer.name}`);
+      res.json({
+        message: 'Lead convertido em cliente com sucesso',
+        customer
+      });
+    } catch (error: any) {
+      console.error('Erro ao converter lead:', error);
+      res.status(500).json({ message: 'Erro ao converter lead', error: error.message });
+    }
+  });
+
   // ============================================================================
   // ACTIVE CUSTOMERS ENDPOINTS - Gestão de Clientes Ativos
   // ============================================================================

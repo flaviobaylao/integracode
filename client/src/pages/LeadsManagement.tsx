@@ -352,6 +352,26 @@ export default function LeadsManagement() {
                   </Button>
                   <Button
                     size="sm"
+                    variant="default"
+                    className="bg-green-600 hover:bg-green-700"
+                    onClick={() => {
+                      setEditingLead(lead);
+                      setFormData({
+                        fantasyName: lead.fantasyName,
+                        latitude: lead.latitude,
+                        longitude: lead.longitude,
+                        contact: lead.contact || "",
+                        phone: lead.phone || "",
+                        observation: lead.observation || "",
+                        status: "converted"
+                      });
+                    }}
+                    data-testid={`button-convert-lead-${lead.id}`}
+                  >
+                    ✨ Converter para Cliente
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="destructive"
                     onClick={() => handleDelete(lead.id)}
                     data-testid={`button-delete-lead-${lead.id}`}

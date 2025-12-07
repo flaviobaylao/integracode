@@ -497,6 +497,15 @@ export default function ActiveCustomers() {
         <div className="flex gap-2">
           <Button 
             variant="outline" 
+            className="border-purple-600 text-purple-600 hover:bg-purple-50"
+            onClick={() => navigate('/leads')}
+            data-testid="button-new-lead"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Lead
+          </Button>
+          <Button 
+            variant="outline" 
             onClick={handleDownloadTemplate}
             data-testid="button-download-template"
           >
