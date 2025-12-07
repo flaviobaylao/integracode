@@ -32,7 +32,8 @@ import {
   Filter,
   X,
   Zap,
-  Pencil
+  Pencil,
+  Plus
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
