@@ -1606,9 +1606,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Check permissions for reassigning customers
+      // Apenas vendedores NÃO podem alterar sellerId
+      // Admin, Coordinator, Administrative podem fazer qualquer coisa
       if (data.sellerId && user?.role === 'vendedor') {
         return res.status(403).json({ message: "Vendedores cannot reassign customers" });
       }
+      // Se não for vendedor (admin, coordinator, administrative), permitir alterar sellerId
+      // Se for vendedor e tentar alterar sellerId, bloqueado acima
       
       // Check permissions for coordinates locking/unlocking
       if (data.coordinatesLocked !== undefined && data.coordinatesLocked !== currentCustomer.coordinatesLocked) {
