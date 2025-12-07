@@ -986,7 +986,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const customer = await storage.getCustomer(id);
+      let customer = await storage.getCustomer(id);
+      
+      // Se não encontrar localmente e for um ID do Omie, buscar do Omie
+      if (!customer && id.startsWith('omie-client-')) {
+        console.log(`🔍 Cliente ${id} não encontrado localmente, buscando no Omie...`);
+        try {
+          const omieService = getOmieService(storage);
+          if (omieService) {
+            const omieClientCode = id.replace('omie-client-', '');
+            const omieClient = await omieService.getClientByCode(parseInt(omieClientCode));
+            
+            if (omieClient) {
+              // Converter para formato do sistema
+              const converted = omieService.convertClientToSystemFormat(omieClient);
+              const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+              const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+              const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+              
+              customer = {
+                ...converted,
+                id: id, // Manter o ID do Omie
+                sellerId: converted.sellerId || '',
+                weekdays: JSON.stringify(normalizedWeekdays),
+                deliveryWeekdays: autoDeliveryDays,
+                isOmieClient: true // Flag para indicar que é um cliente do Omie (em memória)
+              } as any;
+              
+              console.log(`✅ Cliente sincronizado do Omie: ${customer.id}`);
+            }
+          }
+        } catch (error) {
+          console.error(`⚠️ Erro ao buscar cliente do Omie:`, error);
+        }
+      }
       
       if (!customer) {
         return res.status(404).json({ message: "Customer not found" });
@@ -995,7 +1028,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if vendedor can access this customer
       const user = req.currentUser;
       
-      if (user.role === 'vendedor' && customer.sellerId !== user.id) {
+      if (user.role === 'vendedor' && customer.sellerId && customer.sellerId !== user.id) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -17185,7 +17218,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/active-customers/add/:customerId', authenticateUser, async (req: any, res) => {
     try {
       const { customerId } = req.params;
-      const customer = await storage.getCustomer(customerId);
+      let customer = await storage.getCustomer(customerId);
+      
+      // Se não encontrar localmente e for um ID do Omie, buscar e sincronizar do Omie
+      if (!customer && customerId.startsWith('omie-client-')) {
+        console.log(`🔄 Cliente ${customerId} não encontrado localmente, buscando no Omie...`);
+        try {
+          const omieService = getOmieService(storage);
+          if (omieService) {
+            const omieClientCode = customerId.replace('omie-client-', '');
+            const omieClient = await omieService.getClientByCode(parseInt(omieClientCode));
+            
+            if (omieClient) {
+              // Converter e sincronizar
+              const converted = omieService.convertClientToSystemFormat(omieClient);
+              const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+              const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+              const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+              
+              const systemClient = {
+                ...converted,
+                sellerId: converted.sellerId || '',
+                weekdays: JSON.stringify(normalizedWeekdays),
+                deliveryWeekdays: autoDeliveryDays
+              };
+              
+              customer = await storage.createCustomer(systemClient);
+              console.log(`✅ Cliente sincronizado do Omie: ${customer.id}`);
+            }
+          }
+        } catch (error) {
+          console.error(`⚠️ Erro ao sincronizar cliente do Omie:`, error);
+        }
+      }
       
       if (!customer) {
         return res.status(404).json({ message: 'Cliente não encontrado' });
