@@ -87,6 +87,28 @@ export default function CustomerEditModal({
     deliverySaturdayTimeSlots: [] as string[],
   });
 
+  const createLeadMutation = useMutation({
+    mutationFn: async (data: typeof formData) => {
+      return await apiRequest("POST", `/api/customers`, { ...data, isLead: true });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Lead cadastrado com sucesso!",
+        description: "O novo lead foi criado e poderá ser incluído em rotas.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      onClose();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao criar lead",
+        description: error.message || "Ocorreu um erro ao criar o lead",
+        variant: "destructive",
+      });
+    },
+  });
+
   const updateCustomerMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       if (!customer?.id) throw new Error("Customer ID is required");
@@ -138,7 +160,13 @@ export default function CustomerEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateCustomerMutation.mutate(formData);
+    // Se é novo lead (isLead = true e customer = null), cria novo
+    if (isLead && !customer?.id) {
+      createLeadMutation.mutate(formData);
+    } else {
+      // Caso contrário atualiza existente
+      updateCustomerMutation.mutate(formData);
+    }
   };
 
   const handleChange = (
