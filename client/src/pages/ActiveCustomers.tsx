@@ -152,6 +152,7 @@ export default function ActiveCustomers() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false);
+  const [isLeadMode, setIsLeadMode] = useState(false);
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState<Customer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -229,7 +230,14 @@ export default function ActiveCustomers() {
   const handleCustomerEditClose = () => {
     setShowCustomerEditModal(false);
     setSelectedCustomerForEdit(null);
+    setIsLeadMode(false);
     queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
+  };
+
+  const handleNewLead = () => {
+    setSelectedCustomerForEdit(null);
+    setIsLeadMode(true);
+    setShowCustomerEditModal(true);
   };
 
 
@@ -499,7 +507,7 @@ export default function ActiveCustomers() {
           <Button 
             variant="outline" 
             className="border-purple-600 text-purple-600 hover:bg-purple-50"
-            onClick={() => navigate('/leads')}
+            onClick={handleNewLead}
             data-testid="button-new-lead"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -879,11 +887,12 @@ export default function ActiveCustomers() {
           />
         )}
 
-        {/* Modal de Edição de Cliente */}
+        {/* Modal de Edição de Cliente / Novo Lead */}
         <CustomerEditModal
           isOpen={showCustomerEditModal}
           onClose={handleCustomerEditClose}
           customer={selectedCustomerForEdit}
+          isLead={isLeadMode}
         />
 
         <TabsContent value="history" className="space-y-4">

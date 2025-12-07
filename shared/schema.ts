@@ -205,6 +205,9 @@ export const customers = pgTable("customers", {
   // Atendimento virtual (não conta para meta de atendimento)
   virtualService: boolean("virtual_service").notNull().default(false),
   
+  // Lead flag (se é um lead ou cliente)
+  isLead: boolean("is_lead").notNull().default(false),
+  
   // Data de início do fornecimento - só pode ser alterada por admins
   serviceStartDate: timestamp("service_start_date"),
   

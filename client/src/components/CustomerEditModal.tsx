@@ -27,20 +27,22 @@ interface CustomerEditModalProps {
   isOpen: boolean;
   onClose: () => void;
   customer: Customer | null;
+  isLead?: boolean;
 }
 
 export default function CustomerEditModal({
   isOpen,
   onClose,
   customer,
+  isLead = false,
 }: CustomerEditModalProps) {
   const { toast } = useToast();
   const [isInActiveList, setIsInActiveList] = useState(false);
 
-  // Verificar se cliente está na lista de ativos
+  // Verificar se cliente está na lista de ativos (não verificar para leads)
   useEffect(() => {
     const checkActiveStatus = async () => {
-      if (!customer?.id || !isOpen) {
+      if (isLead || !customer?.id || !isOpen) {
         setIsInActiveList(false);
         return;
       }
@@ -60,7 +62,7 @@ export default function CustomerEditModal({
       }
     };
     checkActiveStatus();
-  }, [customer?.id, isOpen]);
+  }, [customer?.id, isOpen, isLead]);
 
   const [formData, setFormData] = useState({
     name: "",
