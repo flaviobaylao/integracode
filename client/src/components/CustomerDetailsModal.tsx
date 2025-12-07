@@ -29,7 +29,8 @@ import {
   TrendingUp,
   History,
   Plus,
-  Truck
+  Truck,
+  Save
 } from "lucide-react";
 import { getVendorColor, getVendorInitials } from "@/lib/vendorColors";
 import WhatsAppButton from "./WhatsAppButton";
@@ -165,6 +166,31 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     createChatConversationMutation.mutate({ phone, customerName });
   };
 
+  const addToActiveMutation = useMutation({
+    mutationFn: async () => {
+      if (!customer?.id) throw new Error("Customer ID is required");
+      return await apiRequest("POST", `/api/active-customers/add/${customer.id}`, {});
+    },
+    onSuccess: () => {
+      toast({
+        title: "Sucesso!",
+        description: "Cliente adicionado à lista de clientes ativos.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao adicionar cliente aos ativos",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAddToActive = () => {
+    if (!customer?.id) return;
+    addToActiveMutation.mutate();
+  };
+
   const openWaze = (latitude: string, longitude: string) => {
     if (!latitude || !longitude) return;
     const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;
@@ -264,15 +290,27 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
               <User className="h-5 w-5 text-blue-600" />
               <span>Detalhes do Cliente</span>
             </DialogTitle>
-            <Button
-              onClick={handleCreateSalesCard}
-              disabled={createSalesCardMutation.isPending}
-              className="bg-green-600 hover:bg-green-700 text-white"
-              data-testid="button-create-sales-card"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              {createSalesCardMutation.isPending ? 'Criando...' : 'Criar Card de Venda'}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleAddToActive}
+                disabled={addToActiveMutation.isPending}
+                variant="outline"
+                className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                data-testid="button-add-to-active"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {addToActiveMutation.isPending ? 'Adicionando...' : 'Adicionar aos Ativos'}
+              </Button>
+              <Button
+                onClick={handleCreateSalesCard}
+                disabled={createSalesCardMutation.isPending}
+                className="bg-green-600 hover:bg-green-700 text-white"
+                data-testid="button-create-sales-card"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                {createSalesCardMutation.isPending ? 'Criando...' : 'Criar Card de Venda'}
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 
