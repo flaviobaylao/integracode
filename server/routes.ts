@@ -2706,7 +2706,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Buscar o cliente para derivar campos obrigatórios
-      const customer = await storage.getCustomer(processedData.customerId);
+      let customer = await storage.getCustomer(processedData.customerId);
+      
+      // Se cliente não existe localmente, tentar sincronizar do Omie
+      if (!customer) {
+        console.log(`🔄 Cliente ${processedData.customerId} não encontrado localmente, tentando sincronizar do Omie...`);
+        try {
+          const omieService = getOmieService(storage);
+          if (omieService && processedData.customerId.startsWith('omie-client-')) {
+            const omieClientCode = processedData.customerId.replace('omie-client-', '');
+            const omieClient = await omieService.getClientByCode(parseInt(omieClientCode));
+            
+            if (omieClient) {
+              // Converter e sincronizar
+              const converted = omieService.convertClientToSystemFormat(omieClient);
+              const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+              const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+              const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+              
+              const systemClient = {
+                ...converted,
+                sellerId: converted.sellerId || '',
+                weekdays: JSON.stringify(normalizedWeekdays),
+                deliveryWeekdays: autoDeliveryDays
+              };
+              
+              customer = await storage.createCustomer(systemClient);
+              console.log(`✅ Cliente sincronizado do Omie: ${customer.id}`);
+            }
+          }
+        } catch (error) {
+          console.error(`⚠️ Erro ao sincronizar cliente do Omie:`, error);
+        }
+      }
+      
       if (!customer) {
         return res.status(400).json({ 
           message: "Cliente não encontrado" 
@@ -4890,6 +4923,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error importing clients from Omie:", error);
       res.status(500).json({ 
         message: "Erro ao importar clientes do Omie",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // Rota para sincronizar um cliente específico do Omie por CNPJ/CPF
+  app.post('/api/omie/sync-client-by-document', authenticateUser, async (req: any, res) => {
+    try {
+      const { document } = req.body;
+      
+      if (!document) {
+        return res.status(400).json({ message: 'Documento (CNPJ/CPF) é obrigatório' });
+      }
+
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: 'Integração Omie não configurada' });
+      }
+
+      // Normalizar documento (remover símbolos)
+      const normalizedDoc = document.replace(/\D/g, '');
+      
+      // Tentar buscar no Omie por documento
+      const omieClients = await omieService.getAllClients(1, 100);
+      const omieClient = omieClients?.data?.find((client: any) => {
+        const omieDoc = (client.cpf_cnpj || '').replace(/\D/g, '');
+        return omieDoc === normalizedDoc;
+      });
+
+      if (!omieClient) {
+        return res.status(404).json({ message: 'Cliente não encontrado no Omie com esse documento' });
+      }
+
+      // Converter para formato do sistema
+      const converted = omieService.convertClientToSystemFormat(omieClient);
+      
+      // Normalizar weekdays
+      const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+      const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
+      const autoDeliveryDays = calculateDeliveryDaysFromMultipleRoutes(normalizedWeekdays);
+      
+      const systemClient = {
+        ...converted,
+        sellerId: converted.sellerId || '',
+        weekdays: JSON.stringify(normalizedWeekdays),
+        deliveryWeekdays: autoDeliveryDays
+      };
+
+      // Verificar se cliente já existe
+      const existingCustomers = await storage.getCustomers();
+      const existingCustomer = existingCustomers.find((customer: any) => 
+        (customer.cpf && customer.cpf.replace(/\D/g, '') === normalizedDoc) ||
+        (customer.cnpj && customer.cnpj.replace(/\D/g, '') === normalizedDoc)
+      );
+
+      if (existingCustomer) {
+        return res.json({ 
+          message: 'Cliente já existe no sistema',
+          customer: existingCustomer 
+        });
+      }
+
+      // Criar cliente no sistema
+      const newCustomer = await storage.createCustomer(systemClient);
+      
+      res.json({ 
+        message: 'Cliente sincronizado com sucesso',
+        customer: newCustomer 
+      });
+
+    } catch (error) {
+      console.error('❌ Erro ao sincronizar cliente:', error);
+      res.status(500).json({ 
+        message: 'Erro ao sincronizar cliente',
         error: error instanceof Error ? error.message : 'Erro desconhecido'
       });
     }
