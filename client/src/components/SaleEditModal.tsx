@@ -247,11 +247,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         newDate: today.toISOString().split('T')[0]
       });
     },
-    onSuccess: (duplicatedCard) => {
+    onSuccess: (duplicatedCard: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       toast({
         title: "Sucesso",
-        description: "Último pedido duplicado! Um novo card foi criado para o mesmo dia.",
+        description: "Último pedido duplicado! Abrindo novo card para edição...",
       });
       onClose();
     },

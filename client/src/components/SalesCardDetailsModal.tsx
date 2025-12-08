@@ -200,14 +200,20 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         newDate: today.toISOString().split('T')[0]
       });
     },
-    onSuccess: (duplicatedCard) => {
+    onSuccess: (duplicatedCard: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       toast({
         title: "Sucesso",
-        description: "Pedido duplicado! Um novo card foi criado para o mesmo dia.",
+        description: "Pedido duplicado! Abrindo para edição...",
       });
       onClose();
+      // Abrir o novo card para edição
+      if (onStartSale && duplicatedCard) {
+        setTimeout(() => {
+          onStartSale(duplicatedCard);
+        }, 300);
+      }
     },
     onError: (error) => {
       toast({
