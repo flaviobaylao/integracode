@@ -193,6 +193,32 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     },
   });
 
+  const duplicateCardMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
+        newDate: tomorrow.toISOString().split('T')[0]
+      });
+    },
+    onSuccess: (duplicatedCard) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
+      toast({
+        title: "Sucesso",
+        description: "Pedido duplicado! Um novo card foi criado para amanhã.",
+      });
+      onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao Duplicar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mutation para alternar tipo de atendimento
   const toggleServiceTypeMutation = useMutation({
     mutationFn: async ({ customerId, virtualService }: { customerId: string, virtualService: boolean }) => {
@@ -269,6 +295,20 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         variant: "destructive",
       });
     }
+  };
+
+  // Função para duplicar pedido
+  const handleDuplicateLastOrder = () => {
+    if (!card?.id) {
+      toast({
+        title: "Erro",
+        description: "Card não encontrado",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    duplicateCardMutation.mutate(card.id);
   };
 
   // 💬 Criar conversa no chat do Integra em vez de abrir WhatsApp
@@ -944,6 +984,14 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               >
                 <Ban className="h-4 w-4 mr-2" />
                 Não Venda
+              </Button>
+              <Button
+                onClick={handleDuplicateLastOrder}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                data-testid="button-duplicate-last-order"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Duplicar Pedido
               </Button>
             </div>
           </div>
