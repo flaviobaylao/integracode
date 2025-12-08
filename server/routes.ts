@@ -1420,7 +1420,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error creating customer:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+        console.error("❌ ZOD VALIDATION ERRORS:", JSON.stringify(error.errors, null, 2));
+        error.errors.forEach((err, idx) => {
+          console.error(`   Error ${idx+1}:`, err.path.join('.'), '-', err.message);
+        });
+        return res.status(400).json({ 
+          message: "Invalid data", 
+          errors: error.errors,
+          errorDetails: error.errors.map(e => `${e.path.join('.')}: ${e.message}`)
+        });
       }
       res.status(500).json({ message: "Failed to create customer" });
     }
