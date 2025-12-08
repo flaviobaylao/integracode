@@ -1290,6 +1290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Transformar strings vazias em null para campos numéricos
       const cleanedData = {
         ...req.body,
+        customerType: req.body.customerType || 'pessoa_fisica', // ✅ Default para pessoa física
         weekdays: normalizedWeekdays, // ✅ String JSON normalizada
         deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente (2 dias úteis após rota) - APENAS SINALIZAÇÃO
         receivingWeekdays: req.body.receivingWeekdays || [], // ✅ Dias de recebimento (configurado MANUALMENTE) - USADO PARA ROTEIRIZAÇÃO
