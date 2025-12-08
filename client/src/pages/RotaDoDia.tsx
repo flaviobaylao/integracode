@@ -82,7 +82,9 @@ export default function RotaDoDia() {
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [showLeadCheckInModal, setShowLeadCheckInModal] = useState(false);
   const [leadCheckInPhoto, setLeadCheckInPhoto] = useState<File | null>(null);
+  const [leadCheckInPhotoUrl, setLeadCheckInPhotoUrl] = useState<string | null>(null);
   const [checkInCoords, setCheckInCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [leadCheckInNotes, setLeadCheckInNotes] = useState('');
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -347,14 +349,17 @@ export default function RotaDoDia() {
       if (photo) {
         formData.append('photo', photo);
       }
+      if (leadCheckInNotes) {
+        formData.append('notes', leadCheckInNotes);
+      }
       const response = await fetch(`/api/leads/${leadId}/check-in`, {
         method: 'POST',
         body: formData,
         credentials: 'include'
       });
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Erro ao fazer check-in no lead');
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || 'Erro ao fazer check-in no lead');
       }
       return response.json();
     },
@@ -367,6 +372,7 @@ export default function RotaDoDia() {
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
     },
     onError: (error: any) => {
+      console.error('Check-in error:', error);
       toast({
         variant: "destructive",
         title: "Erro ao fazer check-in",
@@ -576,7 +582,9 @@ export default function RotaDoDia() {
     setShowLeadCheckInModal(false);
     setSelectedLead(null);
     setLeadCheckInPhoto(null);
+    setLeadCheckInPhotoUrl(null);
     setCheckInCoords(null);
+    setLeadCheckInNotes('');
   };
 
   return (
@@ -1374,59 +1382,145 @@ export default function RotaDoDia() {
               <DialogTitle>Check-in em {selectedLead.fantasyName}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
+              {/* Localização */}
+              <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium">📍 Localização</label>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (!navigator.geolocation) {
+                        toast({
+                          variant: "destructive",
+                          title: "Erro",
+                          description: "Seu dispositivo não suporta geolocalização"
+                        });
+                        return;
+                      }
+                      navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                          setCheckInCoords({
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude
+                          });
+                          toast({
+                            title: "Localização capturada",
+                            description: `Lat: ${position.coords.latitude.toFixed(6)}, Lng: ${position.coords.longitude.toFixed(6)}`
+                          });
+                        },
+                        () => {
+                          toast({
+                            variant: "destructive",
+                            title: "Erro",
+                            description: "Não foi possível obter sua localização"
+                          });
+                        }
+                      );
+                    }}
+                    data-testid="button-capture-location"
+                  >
+                    Capturar Localização
+                  </Button>
+                </div>
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  {checkInCoords ? (
+                    <div className="space-y-1">
+                      <p>✓ Lat: {checkInCoords.lat.toFixed(6)}</p>
+                      <p>✓ Lng: {checkInCoords.lng.toFixed(6)}</p>
+                    </div>
+                  ) : (
+                    <p className="text-red-600 dark:text-red-400">Não capturada</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Foto */}
               <div>
-                <label className="block text-sm font-medium mb-2">Foto (obrigatória)</label>
-                <Input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setLeadCheckInPhoto(e.target.files?.[0] || null)}
-                  data-testid="input-lead-checkin-photo"
+                <label className="block text-sm font-medium mb-2">📷 Foto (obrigatória)</label>
+                {leadCheckInPhotoUrl ? (
+                  <div className="relative">
+                    <img 
+                      src={leadCheckInPhotoUrl} 
+                      alt="Preview" 
+                      className="w-full h-32 object-cover rounded-lg mb-2"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setLeadCheckInPhoto(null);
+                        setLeadCheckInPhotoUrl(null);
+                      }}
+                      className="w-full"
+                    >
+                      Trocar Foto
+                    </Button>
+                  </div>
+                ) : (
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setLeadCheckInPhoto(file);
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          setLeadCheckInPhotoUrl(event.target?.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    data-testid="input-lead-checkin-photo"
+                  />
+                )}
+              </div>
+
+              {/* Observações */}
+              <div>
+                <label className="block text-sm font-medium mb-2">📝 Observações</label>
+                <textarea
+                  placeholder="Relatar o ocorrido na visita (opcional)"
+                  value={leadCheckInNotes}
+                  onChange={(e) => setLeadCheckInNotes(e.target.value)}
+                  className="w-full h-20 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
+                  data-testid="textarea-lead-notes"
                 />
               </div>
-              <div className="text-xs text-gray-500">
-                Latitude: {checkInCoords?.lat || '—'} | Longitude: {checkInCoords?.lng || '—'}
-              </div>
+
+              {/* Botão Submit */}
               <Button
                 onClick={() => {
+                  if (!checkInCoords) {
+                    toast({
+                      variant: "destructive",
+                      title: "Localização obrigatória",
+                      description: "Clique em 'Capturar Localização' primeiro"
+                    });
+                    return;
+                  }
                   if (!leadCheckInPhoto) {
                     toast({
                       variant: "destructive",
                       title: "Foto obrigatória",
-                      description: "Você precisa tirar uma foto para fazer check-in no lead"
+                      description: "Escolha uma foto para fazer check-in"
                     });
                     return;
                   }
-                  if (!navigator.geolocation) {
-                    toast({
-                      variant: "destructive",
-                      title: "Geolocalização não disponível",
-                      description: "Seu dispositivo não suporta geolocalização"
-                    });
-                    return;
-                  }
-                  navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                      leadCheckInMutation.mutate({
-                        leadId: selectedLead.id,
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude,
-                        photo: leadCheckInPhoto
-                      });
-                    },
-                    () => {
-                      toast({
-                        variant: "destructive",
-                        title: "Erro de localização",
-                        description: "Não foi possível obter sua localização"
-                      });
-                    }
-                  );
+                  leadCheckInMutation.mutate({
+                    leadId: selectedLead.id,
+                    latitude: checkInCoords.lat,
+                    longitude: checkInCoords.lng,
+                    photo: leadCheckInPhoto
+                  });
                 }}
-                disabled={leadCheckInMutation.isPending || !leadCheckInPhoto}
+                disabled={leadCheckInMutation.isPending || !checkInCoords || !leadCheckInPhoto}
                 className="w-full"
                 data-testid="button-lead-checkin-submit"
               >
-                {leadCheckInMutation.isPending ? 'Fazendo check-in...' : 'Fazer Check-in'}
+                {leadCheckInMutation.isPending ? 'Realizando check-in...' : '✓ Fazer Check-in'}
               </Button>
             </div>
           </DialogContent>
