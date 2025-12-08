@@ -184,10 +184,11 @@ export default function DeliveryManagement() {
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
   // Query para buscar pedidos aguardando rota
-  const { data: orders, isLoading: isLoadingOrders, error: ordersError } = useQuery<DeliveryOrder[]>({
+  const { data: orders, isLoading: isLoadingOrders, error: ordersError, refetch: refetchOrders } = useQuery<DeliveryOrder[]>({
     queryKey: ['/api/deliveries'],
-    queryFn: () => apiRequest('GET', '/api/deliveries'),
+    queryFn: () => apiRequest('GET', '/api/deliveries?v=' + Date.now()),
     refetchInterval: 30000,
+    staleTime: 0, // Sempre considerar dados como obsoletos para forçar refetch
   });
 
   // Query para buscar motoristas ativos
