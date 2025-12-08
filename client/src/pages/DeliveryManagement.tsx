@@ -144,6 +144,52 @@ export default function DeliveryManagement() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
   
+  // Função para limpar cache local e recarregar
+  const handleClearCache = async () => {
+    try {
+      // 1. Desregistrar Service Workers
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          await registration.unregister();
+        }
+      }
+      
+      // 2. Limpar localStorage e sessionStorage
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      // 3. Limpar Cache API
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+      }
+      
+      // 4. Limpar QueryClient cache
+      queryClient.clear();
+      
+      // 5. Chamar endpoint para garantir cache do servidor também limpo
+      await apiRequest('POST', '/api/clear-cache');
+      
+      toast({
+        title: "Cache limpo!",
+        description: "Recarregando página...",
+      });
+      
+      // 6. Recarregar página após 1 segundo
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      console.error('Erro ao limpar cache:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível limpar o cache",
+        variant: "destructive",
+      });
+    }
+  };
+  
   // Estados para configuração de veículos
   const [showVehicleConfig, setShowVehicleConfig] = useState(false);
   const [vehicles, setVehicles] = useState<VehicleConfig[]>([]);
@@ -718,6 +764,15 @@ export default function DeliveryManagement() {
                   Recarregar Pedidos
                 </Button>
               </div>
+              <Button 
+                variant="outline"
+                onClick={handleClearCache}
+                className="w-full"
+                data-testid="button-clear-cache"
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Limpar Cache do Navegador
+              </Button>
               <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
                 <Checkbox
                   id="select-all"

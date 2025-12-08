@@ -524,6 +524,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Auth routes
+  // Endpoint para o cliente limpar seu cache
+  app.post('/api/clear-cache', (req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.json({ success: true, message: 'Cache cleared on server side' });
+  });
+
   app.get('/api/auth/user', async (req: any, res) => {
     try {
       console.log('👤 GET /api/auth/user - Verificando autenticação...');
