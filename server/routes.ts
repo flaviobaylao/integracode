@@ -1373,6 +1373,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         salesCardMessage = ` ⚠️ Cliente criado, mas houve erro ao criar card de atendimento: ${cardError.message}`;
       }
       
+      // 🔵 CRIAR LEAD automaticamente (se isLead = true)
+      let leadMessage = '';
+      if (req.body.isLead && customer.latitude && customer.longitude) {
+        try {
+          console.log(`🔵 [CREATE CUSTOMER] Criando lead para cliente ${customer.name}...`);
+          const leadData = {
+            fantasyName: customer.fantasyName || customer.name,
+            latitude: customer.latitude,
+            longitude: customer.longitude,
+            contact: req.body.contact || '',
+            phone: customer.phone || '',
+            observation: req.body.observation || '',
+            createdBy: req.currentUser.id,
+            status: 'pending' as const,
+          };
+          
+          // Validar com o schema
+          const validatedLead = insertLeadSchema.parse(leadData);
+          const lead = await storage.createLead(validatedLead);
+          leadMessage = ` ✅ Lead criado (ID: ${lead.id})`;
+          console.log(`✅ [CREATE CUSTOMER] Lead criado com sucesso: ${lead.id}`);
+        } catch (leadError: any) {
+          console.error('❌ [CREATE CUSTOMER] Erro ao criar lead:', leadError);
+          leadMessage = ` ⚠️ Cliente criado, mas houve erro ao criar lead: ${leadError.message}`;
+        }
+      }
+      
       // 📤 CADASTRAR NO OMIE automaticamente (se tiver CPF/CNPJ)
       let omieMessage = '';
       if (customer.cpf || customer.cnpj) {
@@ -1417,7 +1444,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         ...customer,
         _omieMessage: omieMessage, // Mensagem informativa sobre o cadastro no Omie
-        _salesCardMessage: salesCardMessage // Mensagem informativa sobre o sales card
+        _salesCardMessage: salesCardMessage, // Mensagem informativa sobre o sales card
+        _leadMessage: leadMessage // Mensagem informativa sobre o lead
       });
     } catch (error) {
       console.error("Error creating customer:", error);
