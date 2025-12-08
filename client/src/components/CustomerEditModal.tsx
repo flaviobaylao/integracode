@@ -166,8 +166,18 @@ export default function CustomerEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
     // Se é novo lead (isLead = true e customer = null), cria novo
     if (isLead && !customer?.id) {
+      // Validar que sellerId foi selecionado
+      if (!formData.sellerId) {
+        toast({
+          title: "Campo obrigatório",
+          description: "Selecione um vendedor responsável",
+          variant: "destructive",
+        });
+        return;
+      }
       createLeadMutation.mutate(formData);
     } else {
       // Caso contrário atualiza existente
