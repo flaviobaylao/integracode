@@ -1133,11 +1133,29 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
     },
     { message: "Cliente deve ter entre 1 e 2 dias de rota por semana" }
   ).optional(),
+  // isLead é optional aqui mas será true para leads
+  isLead: z.boolean().optional().default(false),
+  // sellerId é obrigatório para leads
+  sellerId: z.string().optional(),
 }).refine(
-  (data) => data.cpf || data.cnpj,
+  (data) => {
+    // Leads podem não ter CPF/CNPJ, mas clientes normais precisam
+    if (data.isLead) return true; // Leads não precisam de CPF/CNPJ
+    return data.cpf || data.cnpj; // Clientes normais precisam de um deles
+  },
   {
-    message: "CPF ou CNPJ é obrigatório",
+    message: "CPF ou CNPJ é obrigatório para clientes",
     path: ["cpf"],
+  }
+).refine(
+  (data) => {
+    // Leads PRECISAM ter sellerId
+    if (data.isLead) return !!data.sellerId;
+    return true; // Clientes podem não ter sellerId (será atribuído depois)
+  },
+  {
+    message: "Vendedor responsável é obrigatório para leads",
+    path: ["sellerId"],
   }
 );
 
