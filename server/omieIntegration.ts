@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
 import { db } from './db';
 import { customers } from '@shared/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -3212,6 +3212,7 @@ export class OmieService {
       let updated = 0;
       let skipped = 0;
       const errors: any[] = [];
+      const nfsFromOmie = new Set<string>(); // Rastrear NFs que vêm do Omie
       
       let page = 1;
       let hasMorePages = true;
@@ -3313,6 +3314,7 @@ export class OmieService {
               
               console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/09/2025)`);
               pageHasValidData = true;
+              nfsFromOmie.add(invoiceNumber); // Rastrear NF que veio do Omie
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie || invoice.nfDestInt?.nCodCli;
@@ -3544,12 +3546,33 @@ export class OmieService {
         }
       }
       
+      // CLEANUP: Remover billings em "Aguardando Rota" que não estão mais no Omie
+      console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
+      try {
+        const result = await db.execute(sql`
+          DELETE FROM billings 
+          WHERE invoice_stage = 'Aguardando Rota' 
+            AND invoice_number IS NOT NULL
+            AND NOT (${sql.raw(`invoice_number IN (${Array.from(nfsFromOmie).map(nf => `'${nf}'`).join(',') || "'_NONE_'"})`)})
+          RETURNING invoice_number
+        `);
+        if (result.rows && result.rows.length > 0) {
+          const deletedNFs = result.rows.map(r => (r as any).invoice_number).join(', ');
+          console.log(`🗑️ ${result.rows.length} pedidos removidos de "Aguardando Rota": ${deletedNFs}`);
+        } else {
+          console.log(`✅ Nenhum pedido para remover.`);
+        }
+      } catch (cleanupError) {
+        console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
+      }
+      
       console.log(`✅ Sincronização de faturamentos concluída:`);
       console.log(`📊 Total processado: ${totalProcessed}`);
       console.log(`📥 Importados: ${imported}`);
       console.log(`🔄 Atualizados: ${updated}`);
       console.log(`⚠️ Rejeitados: ${skipped}`);
       console.log(`❌ Erros: ${errors.length}`);
+      console.log(`🧹 NFs rastreadas do Omie: ${nfsFromOmie.size}`);
       
       const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
       
