@@ -788,6 +788,20 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           )}
         </div>
 
+        {/* Botões para Pedidos Finalizados */}
+        {card.status === 'completed' && (
+          <div className="border-t pt-4 space-y-3">
+            <Button
+              onClick={handleDuplicateLastOrder}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              data-testid="button-duplicate-completed-order"
+            >
+              <Package className="h-4 w-4 mr-2" />
+              Duplicar Pedido
+            </Button>
+          </div>
+        )}
+
         {/* Botões de Ação */}
         {(card.status === 'open' || card.status === 'pending' || card.status === 'in_progress') && (
           <div className="border-t pt-4 space-y-4">
