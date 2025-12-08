@@ -1395,6 +1395,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const lead = await storage.createLead(validatedLead);
           leadMessage = ` ✅ Lead criado (ID: ${lead.id})`;
           console.log(`✅ [CREATE CUSTOMER] Lead criado com sucesso: ${lead.id}`);
+          
+          // 📋 ADICIONAR LEAD À LISTA DE CLIENTES ATIVOS
+          try {
+            console.log(`📋 [CREATE CUSTOMER] Adicionando lead à lista de clientes ativos...`);
+            // Usar o ID do cliente como documento (único para leads)
+            const activeCustomerData = {
+              document: customer.id, // Use customer ID as unique document for leads
+              documentType: 'cpf', // Default type (não importa pra leads)
+              fantasyNameImported: customer.fantasyName || customer.name,
+              customerId: customer.id,
+              uploadId: 'manual-lead-creation', // Marcador de que foi criado manualmente
+              matchStatus: 'matched' as const,
+              latitude: customer.latitude,
+              longitude: customer.longitude,
+              isActive: true,
+            };
+            
+            const activeCustomer = await storage.createActiveCustomer(activeCustomerData as any);
+            leadMessage += ` + Adicionado à lista de clientes ativos`;
+            console.log(`✅ [CREATE CUSTOMER] Lead adicionado à lista de clientes ativos: ${activeCustomer.id}`);
+          } catch (activeError: any) {
+            // Não falhar a requisição se não conseguir adicionar à lista de ativos
+            console.warn(`⚠️ [CREATE CUSTOMER] Erro ao adicionar lead aos clientes ativos:`, activeError);
+            leadMessage += ` (aviso: erro ao adicionar à lista de ativos)`;
+          }
         } catch (leadError: any) {
           console.error('❌ [CREATE CUSTOMER] Erro ao criar lead:', leadError);
           leadMessage = ` ⚠️ Cliente criado, mas houve erro ao criar lead: ${leadError.message}`;
