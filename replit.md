@@ -45,8 +45,20 @@
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
 - **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation utility with dry-run mode.
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, recognition/registration, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
-- **Leads Management**: Integrated lead tracking with route optimization, access control, mandatory photo enforcement for check-in/check-out, and updates within daily routes.
+- **Leads Management**: Integrated lead tracking with route optimization, full customer registration form with "isLead" flag. Leads support:
+  - Automatic creation in customers and leads tables
+  - Automatic addition to active customers list for routing
+  - Seller assignment and tracking
+  - Check-in/check-out with mandatory photo requirement
+  - Conversion to full customer workflow
+  - Updates within daily routes with photo enforcement
+- **Lead Check-in/Check-out**: Sellers can perform check-in and check-out on leads:
+  - POST `/api/leads/:id/check-in` - Requires photo, validates location, calculates distance
+  - POST `/api/leads/:id/check-out` - Requires prior check-in
+  - Tracks lastCheckInAt and lastCheckOutAt timestamps
+  - Updates lead status to "contacted" on successful check-in
 - **Automatic Data Backup**: Complete backup system protecting all order data with daily scheduled backups and manual trigger options. Stores historical snapshots in an `orders_backup` table.
+- **Sales Card Duplication**: Fixed endpoint to return duplicated card with all relations loaded (customer, seller) for immediate editing
 
 # External Dependencies
 

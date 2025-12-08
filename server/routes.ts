@@ -17108,6 +17108,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check-in em um lead (com foto obrigatória)
+  app.post('/api/leads/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+      const user = req.currentUser;
+      
+      // Foto é obrigatória para check-in em lead
+      if (!req.file) {
+        return res.status(400).json({
+          message: 'Foto é obrigatória para check-in em lead',
+          isLead: true,
+          requiresPhoto: true
+        });
+      }
+      
+      // Validar latitude/longitude
+      if (!latitude || !longitude) {
+        return res.status(400).json({ 
+          message: 'Latitude e longitude são obrigatórias' 
+        });
+      }
+      
+      // Buscar lead
+      const lead = await storage.getLead(id);
+      if (!lead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+      
+      // Apenas o vendedor atribuído ou admin pode fazer check-in
+      if (user.role === 'vendedor' && lead.assignedTo !== user.id) {
+        return res.status(403).json({ 
+          message: 'Você não está atribuído a este lead' 
+        });
+      }
+      
+      // Calcular distância até o lead usando Haversine
+      let checkInDistance = null;
+      const leadLat = parseFloat(lead.latitude.toString());
+      const leadLon = parseFloat(lead.longitude.toString());
+      const userLat = parseFloat(latitude);
+      const userLon = parseFloat(longitude);
+      
+      const R = 6371000; // Raio da Terra em metros
+      const dLat = (leadLat - userLat) * Math.PI / 180;
+      const dLon = (leadLon - userLon) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(userLat * Math.PI / 180) * Math.cos(leadLat * Math.PI / 180) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      checkInDistance = R * c;
+      
+      // Converter foto para base64
+      const base64Photo = req.file.buffer.toString('base64');
+      const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      
+      // Atualizar lead com check-in
+      const now = new Date();
+      await storage.updateLead(id, {
+        lastCheckInAt: now,
+        status: 'contacted' // Marcar como contatado
+      });
+      
+      console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
+      
+      res.json({
+        message: 'Check-in realizado com sucesso',
+        lead: {
+          id: lead.id,
+          fantasyName: lead.fantasyName,
+          lastCheckInAt: now,
+          status: 'contacted',
+          checkInDistance: Math.round(checkInDistance),
+          photoUrl: photoUrl
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao fazer check-in em lead:', error);
+      res.status(500).json({ message: 'Erro ao fazer check-in em lead' });
+    }
+  });
+  
+  // Check-out em um lead
+  app.post('/api/leads/:id/check-out', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+      const user = req.currentUser;
+      
+      // Validar latitude/longitude
+      if (!latitude || !longitude) {
+        return res.status(400).json({ 
+          message: 'Latitude e longitude são obrigatórias' 
+        });
+      }
+      
+      // Buscar lead
+      const lead = await storage.getLead(id);
+      if (!lead) {
+        return res.status(404).json({ message: 'Lead não encontrado' });
+      }
+      
+      // Apenas o vendedor atribuído ou admin pode fazer check-out
+      if (user.role === 'vendedor' && lead.assignedTo !== user.id) {
+        return res.status(403).json({ 
+          message: 'Você não está atribuído a este lead' 
+        });
+      }
+      
+      // Validar que houve check-in antes
+      if (!lead.lastCheckInAt) {
+        return res.status(400).json({
+          message: 'Lead não tem check-in registrado'
+        });
+      }
+      
+      // Atualizar lead com check-out
+      const now = new Date();
+      await storage.updateLead(id, {
+        lastCheckOutAt: now,
+        status: 'contacted' // Manter como contatado
+      });
+      
+      console.log(`✅ Check-out realizado em lead ${lead.fantasyName}`);
+      
+      res.json({
+        message: 'Check-out realizado com sucesso',
+        lead: {
+          id: lead.id,
+          fantasyName: lead.fantasyName,
+          lastCheckInAt: lead.lastCheckInAt,
+          lastCheckOutAt: now,
+          status: 'contacted'
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao fazer check-out em lead:', error);
+      res.status(500).json({ message: 'Erro ao fazer check-out em lead' });
+    }
+  });
+
   // Converter lead para cliente
   app.post('/api/leads/:id/convert-to-customer', authenticateUser, async (req: any, res) => {
     try {
