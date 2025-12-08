@@ -1297,6 +1297,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
         route: req.body.route || '', // Default vazio para route (campo deprecated)
+        phone: req.body.phone || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
+        address: req.body.address || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
         serviceStartDate: req.body.serviceStartDate 
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
           : undefined,

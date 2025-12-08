@@ -1132,6 +1132,9 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
     },
     { message: "Weekdays deve ser um JSON array com até 2 dias" }
   ),
+  // Para leads, permitir telefone e endereço vazios
+  phone: z.string().optional(),
+  address: z.string().optional(),
   // isLead é optional aqui mas será true para leads
   isLead: z.boolean().optional().default(false),
   // sellerId é obrigatório para leads
