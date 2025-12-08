@@ -3888,7 +3888,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const duplicatedCard = await storage.duplicateSalesCard(id, new Date(newDate));
-      res.json(duplicatedCard);
+      // Buscar o card com todas as relações carregadas
+      const cardWithRelations = await storage.getSalesCard(duplicatedCard.id);
+      res.json(cardWithRelations);
     } catch (error) {
       console.error("Error duplicating sales card:", error);
       res.status(500).json({ message: "Failed to duplicate sales card" });
