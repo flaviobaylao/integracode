@@ -242,17 +242,16 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   const duplicateCardMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      const today = new Date();
       return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
-        newDate: tomorrow.toISOString().split('T')[0]
+        newDate: today.toISOString().split('T')[0]
       });
     },
     onSuccess: (duplicatedCard) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       toast({
         title: "Sucesso",
-        description: "Último pedido duplicado! Um novo card foi criado para amanhã.",
+        description: "Último pedido duplicado! Um novo card foi criado para o mesmo dia.",
       });
       onClose();
     },

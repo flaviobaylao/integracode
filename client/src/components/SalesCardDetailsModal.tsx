@@ -195,10 +195,9 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   const duplicateCardMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      const today = new Date();
       return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
-        newDate: tomorrow.toISOString().split('T')[0]
+        newDate: today.toISOString().split('T')[0]
       });
     },
     onSuccess: (duplicatedCard) => {
@@ -206,7 +205,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       toast({
         title: "Sucesso",
-        description: "Pedido duplicado! Um novo card foi criado para amanhã.",
+        description: "Pedido duplicado! Um novo card foi criado para o mesmo dia.",
       });
       onClose();
     },
