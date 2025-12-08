@@ -8789,6 +8789,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Buscar pedidos aguardando alocação de rota (para Gestão de Entregas)
   app.get("/api/deliveries", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
+      // Sem cache - força refetch sempre
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      
       // Buscar sales_cards com status 'completed' ou 'invoiced' que ainda não têm rota
       const deliveryOrders = await storage.getPendingDeliveries();
       
