@@ -38,6 +38,11 @@ export default function CustomerEditModal({
 }: CustomerEditModalProps) {
   const { toast } = useToast();
   const [isInActiveList, setIsInActiveList] = useState(false);
+  
+  // Buscar usuários (vendedores)
+  const { data: users = [] } = useQuery({
+    queryKey: ['/api/users'],
+  });
 
   // Verificar se cliente está na lista de ativos (não verificar para leads)
   useEffect(() => {
@@ -78,6 +83,7 @@ export default function CustomerEditModal({
     zipCode: "",
     latitude: "",
     longitude: "",
+    sellerId: "",
     weekdays: [] as string[],
     visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
     exclusiveVehicle: false,
@@ -272,6 +278,7 @@ export default function CustomerEditModal({
         zipCode: customer.zipCode || "",
         latitude: customer.latitude || "",
         longitude: customer.longitude || "",
+        sellerId: customer.sellerId || "",
         weekdays: parsedWeekdays,
         visitPeriodicity: customer.visitPeriodicity || "semanal",
         exclusiveVehicle: customer.exclusiveVehicle || false,
@@ -470,6 +477,26 @@ export default function CustomerEditModal({
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Vendedor Responsável */}
+          <div>
+            <Label htmlFor="sellerId">Vendedor Responsável *</Label>
+            <Select
+              value={formData.sellerId}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, sellerId: value }))}
+            >
+              <SelectTrigger data-testid="select-seller">
+                <SelectValue placeholder="Selecione um vendedor" />
+              </SelectTrigger>
+              <SelectContent>
+                {users && Array.isArray(users) && users.map((user: any) => (
+                  <SelectItem key={user.id} value={user.id}>
+                    {user.firstName} {user.lastName} ({user.email})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Periodicidade de Visita */}
