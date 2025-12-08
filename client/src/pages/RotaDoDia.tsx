@@ -79,6 +79,10 @@ export default function RotaDoDia() {
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [addVisitTab, setAddVisitTab] = useState<'customer' | 'lead'>('customer');
   const [leadSearchQuery, setLeadSearchQuery] = useState('');
+  const [selectedLead, setSelectedLead] = useState<any>(null);
+  const [showLeadCheckInModal, setShowLeadCheckInModal] = useState(false);
+  const [leadCheckInPhoto, setLeadCheckInPhoto] = useState<File | null>(null);
+  const [checkInCoords, setCheckInCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -335,6 +339,42 @@ export default function RotaDoDia() {
     },
   });
 
+  const leadCheckInMutation = useMutation({
+    mutationFn: async ({ leadId, latitude, longitude, photo }: { leadId: string; latitude: number; longitude: number; photo?: File }) => {
+      const formData = new FormData();
+      formData.append('latitude', latitude.toString());
+      formData.append('longitude', longitude.toString());
+      if (photo) {
+        formData.append('photo', photo);
+      }
+      const response = await fetch(`/api/leads/${leadId}/check-in`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao fazer check-in no lead');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Check-in realizado",
+        description: "Check-in no lead realizado com sucesso",
+      });
+      closeModals();
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao fazer check-in",
+        description: error.message || "Ocorreu um erro ao fazer check-in no lead",
+      });
+    },
+  });
+
   const validateVisitMutation = useMutation({
     mutationFn: async (checkpointId: string) => {
       return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/validate`, {});
@@ -467,20 +507,37 @@ export default function RotaDoDia() {
     };
   }, [route]);
 
-  const handleVisitClick = async (entityId: string) => {
+  const handleVisitClick = async (entityId: string, isLead: boolean = false) => {
     try {
       setLoadingCardId(entityId);
-      const response = await fetch(`/api/customers/${entityId}/sales-card/${selectedDate}`, {
-        credentials: 'include'
-      });
       
-      if (!response.ok) {
-        throw new Error('Falha ao buscar card de vendas');
+      if (isLead) {
+        // Para leads, buscar dados do lead
+        const response = await fetch(`/api/leads/${entityId}`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Falha ao buscar lead');
+        }
+        
+        const lead = await response.json();
+        setSelectedLead(lead);
+        setShowLeadCheckInModal(true);
+      } else {
+        // Para clientes normais, buscar sales card
+        const response = await fetch(`/api/customers/${entityId}/sales-card/${selectedDate}`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Falha ao buscar card de vendas');
+        }
+        
+        const card = await response.json();
+        setSelectedCard(card);
+        setShowCardModal(true);
       }
-      
-      const card = await response.json();
-      setSelectedCard(card);
-      setShowCardModal(true);
     } catch (error) {
       console.error('Erro ao abrir card de vendas:', error);
       toast({
@@ -516,6 +573,10 @@ export default function RotaDoDia() {
     setIsEditModalOpen(false);
     setIsNoSaleModalOpen(false);
     setSelectedCard(null);
+    setShowLeadCheckInModal(false);
+    setSelectedLead(null);
+    setLeadCheckInPhoto(null);
+    setCheckInCoords(null);
   };
 
   return (
@@ -954,7 +1015,7 @@ export default function RotaDoDia() {
                       <div className="flex items-start justify-between gap-3">
                         <div 
                           className="flex items-start gap-3 flex-1 cursor-pointer"
-                          onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId))}
+                          onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
@@ -1305,6 +1366,72 @@ export default function RotaDoDia() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {showLeadCheckInModal && selectedLead && (
+        <Dialog open={showLeadCheckInModal} onOpenChange={closeModals}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Check-in em {selectedLead.fantasyName}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Foto (obrigatória)</label>
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setLeadCheckInPhoto(e.target.files?.[0] || null)}
+                  data-testid="input-lead-checkin-photo"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                Latitude: {checkInCoords?.lat || '—'} | Longitude: {checkInCoords?.lng || '—'}
+              </div>
+              <Button
+                onClick={() => {
+                  if (!leadCheckInPhoto) {
+                    toast({
+                      variant: "destructive",
+                      title: "Foto obrigatória",
+                      description: "Você precisa tirar uma foto para fazer check-in no lead"
+                    });
+                    return;
+                  }
+                  if (!navigator.geolocation) {
+                    toast({
+                      variant: "destructive",
+                      title: "Geolocalização não disponível",
+                      description: "Seu dispositivo não suporta geolocalização"
+                    });
+                    return;
+                  }
+                  navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                      leadCheckInMutation.mutate({
+                        leadId: selectedLead.id,
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        photo: leadCheckInPhoto
+                      });
+                    },
+                    () => {
+                      toast({
+                        variant: "destructive",
+                        title: "Erro de localização",
+                        description: "Não foi possível obter sua localização"
+                      });
+                    }
+                  );
+                }}
+                disabled={leadCheckInMutation.isPending || !leadCheckInPhoto}
+                className="w-full"
+                data-testid="button-lead-checkin-submit"
+              >
+                {leadCheckInMutation.isPending ? 'Fazendo check-in...' : 'Fazer Check-in'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <Dialog open={showAddVisitModal} onOpenChange={(open) => {
         setShowAddVisitModal(open);
