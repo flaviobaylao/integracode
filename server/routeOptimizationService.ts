@@ -339,8 +339,9 @@ export async function planDailyRoute(
     throw new Error('Vendedor não encontrado');
   }
 
+  // Se vendedor não tem coordenadas, avisar mas continuar com fallback
   if (!seller.homeLatitude || !seller.homeLongitude) {
-    throw new Error('Vendedor não possui coordenadas de residência cadastradas');
+    console.warn(`⚠️ Vendedor ${seller.firstName} ${seller.lastName || ''} não possui coordenadas de residência. Será usado fallback.`);
   }
 
   // Descobrir qual dia da semana é a data alvo
@@ -456,10 +457,25 @@ export async function planDailyRoute(
 
   console.log(`   🗺️  Otimizando rota com ${routePoints.length} pontos...`);
 
-  // Otimizar a rota
+  // Otimizar a rota - usar coordenadas do vendedor ou fallback para primeiro cliente
+  let startLat = parseFloat(seller.homeLatitude as any);
+  let startLon = parseFloat(seller.homeLongitude as any);
+  
+  // Se vendedor não tem coordenadas válidas, usar primeira coordenada do cliente como fallback
+  if (isNaN(startLat) || isNaN(startLon)) {
+    if (routePoints.length > 0) {
+      startLat = routePoints[0].latitude;
+      startLon = routePoints[0].longitude;
+      console.warn(`⚠️ Usando coordenadas do primeiro cliente como ponto de partida: ${startLat}, ${startLon}`);
+    } else {
+      // Se não há clientes também, retornar erro
+      throw new Error('Não é possível gerar rota sem coordenadas de vendedor ou clientes');
+    }
+  }
+  
   const optimizedRoute = await optimizeRoute(
-    parseFloat(seller.homeLatitude as any),
-    parseFloat(seller.homeLongitude as any),
+    startLat,
+    startLon,
     routePoints
   );
 
@@ -482,6 +498,8 @@ export async function planDailyRoute(
 
   const result = {
     sellerData: seller,
+    startLatitude: startLat, // Ponto de partida da rota (com fallback se necessário)
+    startLongitude: startLon, // Ponto de partida da rota (com fallback se necessário)
     optimizedOrder: optimizedRoute.orderedPoints.map(p => p.id),
     totalDistance: optimizedRoute.totalDistance,
     totalVisits: optimizedRoute.orderedPoints.length,
@@ -530,11 +548,12 @@ export async function generateDailyRoute(
   }
 
   // Salvar rota no banco de dados usando dados do plan
+  // Usar startLatitude/startLongitude do plan (que inclui fallback se vendedor não tem coordenadas)
   const routeData = {
     sellerId,
     routeDate: startOfDay,
-    startLatitude: plan.sellerData.homeLatitude.toString(),
-    startLongitude: plan.sellerData.homeLongitude.toString(),
+    startLatitude: (plan.startLatitude || plan.sellerData.homeLatitude || '0').toString(),
+    startLongitude: (plan.startLongitude || plan.sellerData.homeLongitude || '0').toString(),
     startAddress: `Casa do vendedor ${plan.sellerData.firstName} ${plan.sellerData.lastName || ''}`,
     optimizedOrder: plan.optimizedOrder, // IDs dos clientes
     totalEstimatedDistance: plan.totalDistance.toString(),
@@ -555,8 +574,8 @@ export async function generateDailyRoute(
     routeDate: startOfDay,
     virtualCustomers: plan.virtualCustomers || [],
     startLocation: {
-      latitude: parseFloat(plan.sellerData.homeLatitude as any),
-      longitude: parseFloat(plan.sellerData.homeLongitude as any),
+      latitude: plan.startLatitude || parseFloat(plan.sellerData.homeLatitude as any),
+      longitude: plan.startLongitude || parseFloat(plan.sellerData.homeLongitude as any),
       address: routeData.startAddress
     },
     optimizedRoute: {
