@@ -1120,19 +1120,18 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   cnpj: z.string().nullable().optional(),
   // Data de início do fornecimento como opcional (aceita string ISO ou Date)
   serviceStartDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
-  // Validação de weekdays: deve ser JSON array com 1 ou 2 dias (opcional)
-  weekdays: z.string().refine(
+  // Validação de weekdays: deve ser JSON array com 0-2 dias (opcional)
+  weekdays: z.string().optional().default('[]').refine(
     (val) => {
-      if (!val) return true; // Permitir vazio
       try {
         const days = JSON.parse(val);
-        return Array.isArray(days) && days.length >= 1 && days.length <= 2;
+        return Array.isArray(days) && days.length <= 2;
       } catch {
         return false;
       }
     },
-    { message: "Cliente deve ter entre 1 e 2 dias de rota por semana" }
-  ).optional(),
+    { message: "Weekdays deve ser um JSON array com até 2 dias" }
+  ),
   // isLead é optional aqui mas será true para leads
   isLead: z.boolean().optional().default(false),
   // sellerId é obrigatório para leads
