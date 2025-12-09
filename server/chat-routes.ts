@@ -794,7 +794,12 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // Extrair informações da mensagem
-      const phoneNumber = evolutionAPIService.extractPhoneNumber(data.key.remoteJid);
+      const rawRemoteJid = data.key.remoteJid;
+      console.log(`🔍 [PHONE-DEBUG] RemoteJid RAW do webhook: ${rawRemoteJid} (type: ${typeof rawRemoteJid}, length: ${String(rawRemoteJid).length})`);
+      
+      const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
+      console.log(`🔍 [PHONE-DEBUG] PhoneNumber após extract: ${phoneNumber} (length: ${phoneNumber.length})`);
+      
       const messageText = evolutionAPIService.extractMessageText(data.message);
       const isFromMe = data.key.fromMe === true; // Mensagem enviada PELO número WhatsApp (celular ou sistema)
       const messageId = data.key.id;
@@ -802,9 +807,10 @@ export function registerChatRoutes(app: Express): void {
       const pushName = data.pushName || '';
 
       console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`📱 [WEBHOOK-MIRROR] RemoteJid: ${data.key.remoteJid} | IsFromMe: ${isFromMe}`);
+      console.log(`📱 [WEBHOOK-MIRROR] RemoteJid RAW: ${rawRemoteJid}`);
+      console.log(`📱 [WEBHOOK-MIRROR] PhoneNumber após extract: ${phoneNumber}`);
+      console.log(`📱 [WEBHOOK-MIRROR] IsFromMe: ${isFromMe}`);
       console.log(`📱 [WEBHOOK-MIRROR] Direção: ${isFromMe ? '📤 ENVIADA (celular/sistema)' : '📥 RECEBIDA (cliente)'}`);
-      console.log(`📱 [WEBHOOK-MIRROR] Cliente (remoteJid): ${phoneNumber}`);
       console.log(`📱 [WEBHOOK-MIRROR] Texto: ${messageText?.substring(0, 100) || '(sem texto)'}`);
       console.log(`📱 [WEBHOOK-MIRROR] MessageId: ${messageId}`);
       console.log(`📱 [WEBHOOK-MIRROR] PushName: ${pushName}`);
@@ -815,8 +821,9 @@ export function registerChatRoutes(app: Express): void {
       if (phoneNumber) {
         try {
           // Normalizar telefone
+          console.log(`📞 [NORMALIZE-START] Input para normalização: ${phoneNumber} (length: ${phoneNumber.length})`);
           let normalizedPhone = normalizePhoneNumber(phoneNumber);
-          console.log(`📞 [WEBHOOK-MIRROR] Telefone normalizado: ${normalizedPhone}`);
+          console.log(`📞 [NORMALIZE-END] Telefone normalizado: ${normalizedPhone} (length: ${normalizedPhone.length})`);
 
           // Buscar ou criar cliente (o "outro lado" da conversa)
           let customer = await storage.getChatCustomerByPhone(normalizedPhone);
