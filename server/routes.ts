@@ -10072,17 +10072,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.update(deliveryRoutes)
         .set({ 
           totalDistance: totalDistanceKm.toFixed(2),
-          totalDuration: totalDurationMinutes
+          totalDuration: totalDurationMinutes,
+          totalDeliveries: stops.length
         })
         .where(eq(deliveryRoutes.id, routeId));
       
       console.log(`✅ [OPTIMIZE-ROUTE] Rota ${routeId} otimizada com sucesso`);
+      console.log(`📊 [OPTIMIZE-ROUTE] Resumo: ${stops.length} entregas, ${totalDistanceKm.toFixed(2)}km, ${totalDurationMinutes}min`);
       
       res.json({ 
         message: "Rota otimizada com sucesso",
         totalStops: stops.length,
-        newDistance: optimizedResult.totalDistance.toFixed(2),
-        newDuration: Math.round(optimizedResult.totalDuration),
+        newDistance: totalDistanceKm.toFixed(2),
+        newDuration: totalDurationMinutes,
         optimizedOrder: optimizedResult.locations.map(l => l.id)
       });
     } catch (error: any) {

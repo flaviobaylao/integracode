@@ -30,7 +30,7 @@ import {
   MessageCircle,
   RefreshCw
 } from "lucide-react";
-import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react-leaflet";
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -743,6 +743,27 @@ export default function RoutesSummary() {
                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         attribution='&copy; OpenStreetMap contributors'
                       />
+                      {/* Desenhar polyline da rota */}
+                      {(() => {
+                        const sortedStops = [...selectedRouteData.stops].sort((a, b) => a.stopOrder - b.stopOrder);
+                        const polylinePoints = sortedStops
+                          .map(stop => {
+                            const lat = parseFloat(stop.customerLatitude);
+                            const lng = parseFloat(stop.customerLongitude);
+                            return isNaN(lat) || isNaN(lng) ? null : [lat, lng] as [number, number];
+                          })
+                          .filter(p => p !== null) as [number, number][];
+                        
+                        return polylinePoints.length > 1 ? (
+                          <Polyline 
+                            positions={polylinePoints} 
+                            color="#3b82f6"
+                            weight={3}
+                            opacity={0.7}
+                            dashArray="5, 5"
+                          />
+                        ) : null;
+                      })()}
                       {selectedRouteData.stops.map((stop, idx) => {
                         const lat = parseFloat(stop.customerLatitude);
                         const lng = parseFloat(stop.customerLongitude);
@@ -979,6 +1000,32 @@ export default function RoutesSummary() {
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution='&copy; OpenStreetMap contributors'
                   />
+                  {/* Desenhar polylines de cada rota */}
+                  {routes.map((route) => {
+                    const driverColor = getDriverColor(route.driverId);
+                    const sortedStops = [...(route.stops || [])].sort((a, b) => a.stopOrder - b.stopOrder);
+                    const polylinePoints = sortedStops
+                      .map(stop => {
+                        const lat = parseFloat(stop.customerLatitude);
+                        const lng = parseFloat(stop.customerLongitude);
+                        return isNaN(lat) || isNaN(lng) ? null : [lat, lng] as [number, number];
+                      })
+                      .filter(p => p !== null) as [number, number][];
+                    
+                    return (
+                      <div key={route.id}>
+                        {polylinePoints.length > 1 && (
+                          <Polyline 
+                            positions={polylinePoints} 
+                            color={driverColor}
+                            weight={3}
+                            opacity={0.6}
+                            dashArray="5, 5"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                   {routes.map((route) => {
                     const driverColor = getDriverColor(route.driverId);
                     
