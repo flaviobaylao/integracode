@@ -127,16 +127,22 @@ export default function RoutesSummary() {
     '#f3f4f6'  // Branco (com borda escura)
   ];
   
+  // Criar mapa de cores para motoristas - garante cores únicas
+  const getDriverColorMap = (): Record<string, string> => {
+    const uniqueDrivers = Array.from(new Set(routes.map(r => r.driverId)))
+      .sort(); // Ordenar para consistência
+    
+    const colorMap: Record<string, string> = {};
+    uniqueDrivers.forEach((driverId, index) => {
+      colorMap[driverId] = colorPalette[index % colorPalette.length];
+    });
+    
+    return colorMap;
+  };
+  
   const getDriverColor = (driverId: string): string => {
-    // Hash consistente do driverId para sempre retornar a mesma cor
-    let hash = 0;
-    for (let i = 0; i < driverId.length; i++) {
-      const char = driverId.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    const colorIndex = Math.abs(hash) % colorPalette.length;
-    return colorPalette[colorIndex];
+    const colorMap = getDriverColorMap();
+    return colorMap[driverId] || colorPalette[0];
   };
 
   // Gerar ícone colorido para cada motorista com número da ordem
