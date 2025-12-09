@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { MessageCircle, BarChart3, Settings, FileText, Bot } from "lucide-react";
+import { MessageCircle, BarChart3, Settings, FileText, Bot, Send } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function TelemarketingHub() {
@@ -45,6 +45,14 @@ export default function TelemarketingHub() {
       href: "/telemarketing/ai-settings",
       color: "bg-cyan-100 text-cyan-700",
       testid: "card-ai-settings"
+    },
+    {
+      icon: Send,
+      title: "Disparo em Massa",
+      description: "Envie mensagens WhatsApp para múltiplos contatos",
+      href: "/telemarketing/disparo-em-massa",
+      color: "bg-green-100 text-green-700",
+      testid: "card-bulk-message"
     }
   ];
 
