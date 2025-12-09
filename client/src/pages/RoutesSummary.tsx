@@ -116,28 +116,15 @@ export default function RoutesSummary() {
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
-  // Gerar cores únicas por motorista - paleta expandida e consistente
+  // Gerar cores únicas por motorista - paleta simplificada
   const colorPalette = [
-    '#ef4444', // Vermelho brilhante
-    '#f97316', // Laranja
-    '#eab308', // Amarelo
-    '#22c55e', // Verde
-    '#06b6d4', // Ciano
-    '#0ea5e9', // Azul claro
     '#3b82f6', // Azul
-    '#6366f1', // Índigo
-    '#8b5cf6', // Violeta
-    '#d946ef', // Magenta
-    '#ec4899', // Rosa
-    '#f43f5e', // Rosa escuro
-    '#fb923c', // Laranja claro
-    '#fbbf24', // Âmbar
-    '#34d399', // Verde água
-    '#10b981', // Verde esmeralda
-    '#14b8a6', // Teal
-    '#0891b2', // Ciano escuro
-    '#2563eb', // Azul forte
-    '#7c3aed'  // Violeta brilhante
+    '#22c55e', // Verde
+    '#ef4444', // Vermelho
+    '#eab308', // Amarelo
+    '#8b5cf6', // Roxo
+    '#1f2937', // Preto
+    '#f3f4f6'  // Branco (com borda escura)
   ];
   
   const getDriverColor = (driverId: string): string => {
