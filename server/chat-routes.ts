@@ -1123,6 +1123,209 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // ============================================================
+  // DISPARO EM MASSA - BULK WHATSAPP MESSAGING
+  // ============================================================
+
+  // Upload spreadsheet and parse phone numbers
+  app.post("/api/chat/bulk-message/parse", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "Nenhum arquivo enviado" });
+      }
+
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { header: 1 });
+
+      // Find phone column (looking for common header names)
+      const headers = data[0] as string[];
+      const phoneColumnIndex = headers?.findIndex((h: string) => 
+        h && typeof h === 'string' && 
+        (h.toLowerCase().includes('telefone') || 
+         h.toLowerCase().includes('phone') || 
+         h.toLowerCase().includes('celular') || 
+         h.toLowerCase().includes('whatsapp') ||
+         h.toLowerCase().includes('numero') ||
+         h.toLowerCase().includes('número') ||
+         h.toLowerCase() === 'tel')
+      );
+
+      // Find name column if exists
+      const nameColumnIndex = headers?.findIndex((h: string) => 
+        h && typeof h === 'string' && 
+        (h.toLowerCase().includes('nome') || 
+         h.toLowerCase().includes('name') ||
+         h.toLowerCase().includes('cliente'))
+      );
+
+      if (phoneColumnIndex === -1) {
+        // If no header found, assume first column is phone
+        console.log(`⚠️ Coluna de telefone não encontrada pelo cabeçalho. Usando primeira coluna.`);
+      }
+
+      const colIndex = phoneColumnIndex !== -1 ? phoneColumnIndex : 0;
+      const nameColIndex = nameColumnIndex !== -1 ? nameColumnIndex : -1;
+
+      // Extract phone numbers (skip header row)
+      const contacts: Array<{ phone: string; name: string; valid: boolean }> = [];
+      const seen = new Set<string>();
+
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i] as any[];
+        if (!row || !row[colIndex]) continue;
+
+        const rawPhone = String(row[colIndex]).trim();
+        const name = nameColIndex !== -1 && row[nameColIndex] ? String(row[nameColIndex]).trim() : '';
+        
+        // Clean phone number
+        const digitsOnly = rawPhone.replace(/\D/g, '');
+        
+        if (digitsOnly.length >= 10 && digitsOnly.length <= 15) {
+          const normalized = normalizePhoneNumber(digitsOnly);
+          
+          if (!seen.has(normalized)) {
+            seen.add(normalized);
+            contacts.push({
+              phone: normalized,
+              name: name || `Contato ${i}`,
+              valid: digitsOnly.length >= 10
+            });
+          }
+        }
+      }
+
+      // Cleanup uploaded file
+      if (req.file.path) {
+        fs.unlink(req.file.path, () => {});
+      }
+
+      console.log(`📊 [BULK] Planilha processada: ${contacts.length} contatos válidos de ${data.length - 1} linhas`);
+
+      res.json({
+        success: true,
+        totalRows: data.length - 1,
+        validContacts: contacts.length,
+        contacts: contacts.slice(0, 500) // Limit to 500 for preview
+      });
+    } catch (error: any) {
+      console.error("[BULK] Parse error:", error);
+      res.status(500).json({ error: `Erro ao processar planilha: ${error.message}` });
+    }
+  });
+
+  // Send bulk messages
+  app.post("/api/chat/bulk-message/send", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), async (req, res) => {
+    try {
+      const { contacts, message, delaySeconds = 3 } = req.body;
+
+      if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
+        return res.status(400).json({ error: "Lista de contatos é obrigatória" });
+      }
+
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ error: "Mensagem é obrigatória" });
+      }
+
+      // Get Evolution API config
+      const config = evolutionAPIService.getConfig();
+      if (!config || !config.instanceName) {
+        return res.status(400).json({ error: "WhatsApp não está configurado. Configure a Evolution API primeiro." });
+      }
+
+      console.log(`📤 [BULK] Iniciando disparo em massa para ${contacts.length} contatos`);
+
+      // Process in background - don't block the response
+      const results: Array<{ phone: string; name: string; success: boolean; error?: string }> = [];
+      const delay = Math.max(1, Math.min(30, delaySeconds || 3)) * 1000; // 1-30 seconds delay
+
+      // Return immediately with job started
+      res.json({
+        success: true,
+        message: `Disparo iniciado para ${contacts.length} contatos`,
+        totalContacts: contacts.length,
+        estimatedTimeMinutes: Math.ceil((contacts.length * delay) / 60000)
+      });
+
+      // Process messages in background
+      (async () => {
+        for (let i = 0; i < contacts.length; i++) {
+          const contact = contacts[i];
+          
+          try {
+            // Personalize message with {{name}} placeholder
+            const personalizedMessage = message.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
+            
+            const result = await evolutionAPIService.sendTextMessage(
+              config.instanceName,
+              contact.phone,
+              personalizedMessage
+            );
+
+            results.push({
+              phone: contact.phone,
+              name: contact.name,
+              success: result.success,
+              error: result.error
+            });
+
+            console.log(`📤 [BULK] ${i + 1}/${contacts.length}: ${contact.phone} - ${result.success ? '✅' : '❌ ' + result.error}`);
+
+            // Delay between messages to avoid rate limiting
+            if (i < contacts.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          } catch (error: any) {
+            results.push({
+              phone: contact.phone,
+              name: contact.name,
+              success: false,
+              error: error.message
+            });
+            console.error(`❌ [BULK] Erro ao enviar para ${contact.phone}:`, error.message);
+          }
+        }
+
+        const successCount = results.filter(r => r.success).length;
+        console.log(`📊 [BULK] Disparo concluído: ${successCount}/${contacts.length} enviados com sucesso`);
+      })();
+
+    } catch (error: any) {
+      console.error("[BULK] Send error:", error);
+      res.status(500).json({ error: `Erro ao enviar mensagens: ${error.message}` });
+    }
+  });
+
+  // Download sample spreadsheet template
+  app.get("/api/chat/bulk-message/template", authenticateUser, async (req, res) => {
+    try {
+      const XLSX = await import("xlsx");
+      
+      // Create sample workbook
+      const sampleData = [
+        ["Nome", "Telefone"],
+        ["João Silva", "62999991111"],
+        ["Maria Santos", "62999992222"],
+        ["Pedro Oliveira", "(62) 99999-3333"]
+      ];
+      
+      const worksheet = XLSX.utils.aoa_to_sheet(sampleData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Contatos");
+      
+      const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+      
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", "attachment; filename=modelo_disparo_whatsapp.xlsx");
+      res.send(buffer);
+    } catch (error: any) {
+      console.error("[BULK] Template error:", error);
+      res.status(500).json({ error: "Erro ao gerar modelo" });
+    }
+  });
+
+  // ============================================================
   // TELEGRAM SETUP ROUTES
   // ============================================================
 
