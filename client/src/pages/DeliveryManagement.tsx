@@ -574,6 +574,8 @@ export default function DeliveryManagement() {
   const addVehicle = () => {
     setVehicles(prev => [...prev, {
       type: 'moto',
+      driverId: drivers.length > 0 ? drivers[0].id : undefined,
+      driverName: drivers.length > 0 ? drivers[0].name : undefined,
       startLatitude: -16.719458733340122,
       startLongitude: -49.29937095026935,
       startAddress: 'HONEST GOIANIA',
@@ -607,6 +609,17 @@ export default function DeliveryManagement() {
       toast({
         title: "Nenhum veículo configurado",
         description: "Configure ao menos um veículo",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validar que todos os veículos têm um motorista selecionado
+    const vehiclesWithoutDriver = vehicles.filter(v => !v.driverId || v.driverId.trim() === '');
+    if (vehiclesWithoutDriver.length > 0) {
+      toast({
+        title: "Motorista não selecionado",
+        description: `Selecione um motorista para todos os ${vehiclesWithoutDriver.length} veículo(s)`,
         variant: "destructive",
       });
       return;
