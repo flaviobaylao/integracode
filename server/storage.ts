@@ -706,35 +706,6 @@ export class DatabaseStorage implements IStorage {
     return customer;
   }
 
-  async getCustomerByDocument(document: string): Promise<Customer | undefined> {
-    // Busca tanto em CPF quanto em CNPJ
-    const [customer] = await db
-      .select()
-      .from(customers)
-      .where(
-        or(
-          eq(customers.cpf, document),
-          eq(customers.cnpj, document)
-        )
-      );
-    
-    return customer;
-  }
-
-  async getCustomerByPhone(phone: string): Promise<CustomerWithSeller | undefined> {
-    const [result] = await db
-      .select()
-      .from(customers)
-      .leftJoin(users, eq(customers.sellerId, users.id))
-      .where(eq(customers.phone, phone));
-    
-    if (!result) return undefined;
-    
-    return {
-      ...result.customers,
-      seller: result.users!,
-    };
-  }
 
   async createCustomer(customer: InsertCustomer): Promise<Customer> {
     const [newCustomer] = await db.insert(customers).values(customer as any).returning();
@@ -5549,15 +5520,6 @@ export class DatabaseStorage implements IStorage {
     return `55${digitsOnly.slice(-11)}`;
   }
 
-  async getCustomerByPhone(phone: string): Promise<Customer | undefined> {
-    const cleanPhone = phone.replace(/\D/g, '');
-    const [customer] = await db
-      .select()
-      .from(customers)
-      .where(sql`REGEXP_REPLACE(${customers.phone}, '\\D', '') = ${cleanPhone}`);
-    return customer;
-  }
-
   async getChatConversationByCustomerId(customerId: string): Promise<ChatConversation | undefined> {
     const [conversation] = await db
       .select()
@@ -6657,6 +6619,15 @@ export class DatabaseStorage implements IStorage {
     
     // Try CNPJ
     [customer] = await db.select().from(customers).where(eq(customers.cnpj, normalizedDoc));
+    return customer;
+  }
+  
+  async getCustomerByPhone(phone: string): Promise<Customer | undefined> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(sql`REGEXP_REPLACE(${customers.phone}, '\\D', '') = ${cleanPhone}`);
     return customer;
   }
   

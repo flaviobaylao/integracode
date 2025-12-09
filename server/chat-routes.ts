@@ -815,7 +815,7 @@ export function registerChatRoutes(app: Express): void {
       if (phoneNumber) {
         try {
           // Normalizar telefone
-          const normalizedPhone = normalizePhoneNumber(phoneNumber);
+          let normalizedPhone = normalizePhoneNumber(phoneNumber);
           console.log(`📞 [WEBHOOK-MIRROR] Telefone normalizado: ${normalizedPhone}`);
 
           // Buscar ou criar cliente (o "outro lado" da conversa)
