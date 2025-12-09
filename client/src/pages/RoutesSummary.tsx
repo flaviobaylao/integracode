@@ -27,7 +27,8 @@ import {
   Plus,
   FileText,
   Map,
-  MessageCircle
+  MessageCircle,
+  RefreshCw
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
 import L from 'leaflet';
@@ -255,6 +256,27 @@ export default function RoutesSummary() {
       toast({
         title: "Erro ao excluir rota",
         description: error.message || "Não foi possível excluir a rota.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para otimizar/reorganizar ordem das paradas
+  const optimizeRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/delivery-routes/${routeId}/optimize`);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Rota otimizada!",
+        description: `A ordem das ${data.totalStops} paradas foi reorganizada. Nova distância: ${data.newDistance} km`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao otimizar rota",
+        description: error.message || "Não foi possível otimizar a rota.",
         variant: "destructive",
       });
     }
@@ -619,6 +641,26 @@ export default function RoutesSummary() {
               >
                 <Plus className="h-4 w-4 mr-2" />
                 ➕ Adicionar Pedidos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => selectedRouteData && optimizeRouteMutation.mutate(selectedRouteData.id)}
+                disabled={optimizeRouteMutation.isPending || (selectedRouteData?.stops?.length || 0) < 2}
+                data-testid="button-optimize-route"
+                className="bg-blue-50 hover:bg-blue-100"
+              >
+                {optimizeRouteMutation.isPending ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Otimizando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    🔄 Reorganizar Rota
+                  </>
+                )}
               </Button>
               <Button
                 variant="outline"

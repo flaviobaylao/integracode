@@ -9948,6 +9948,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Otimizar/reorganizar ordem das paradas de uma rota existente
+  app.post("/api/delivery-routes/:routeId/optimize", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'motorista']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role;
+      
+      console.log(`🔄 [OPTIMIZE-ROUTE] Usuário ${userId} (${userRole}) otimizando rota ${routeId}`);
+      
+      // Buscar a rota
+      const routeResult = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, routeId));
+      if (routeResult.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      const route = routeResult[0];
+      
+      // Para motoristas, verificar se é a rota deles
+      if (userRole === 'motorista' && route.driverId !== userId) {
+        return res.status(403).json({ message: "Você só pode otimizar suas próprias rotas" });
+      }
+      
+      // Buscar todas as paradas da rota
+      const stops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, routeId))
+        .orderBy(deliveryRouteStops.stopOrder);
+      
+      if (stops.length < 2) {
+        return res.status(400).json({ message: "Rota precisa ter pelo menos 2 paradas para otimizar" });
+      }
+      
+      console.log(`📍 [OPTIMIZE-ROUTE] Encontradas ${stops.length} paradas`);
+      
+      // Preparar localizações para otimização
+      const destinations = stops.map(stop => ({
+        id: stop.id,
+        name: stop.customerName,
+        latitude: parseFloat(stop.customerLatitude),
+        longitude: parseFloat(stop.customerLongitude),
+        priority: stop.isPriority ? 1 : 0,
+        estimatedDuration: stop.estimatedDuration || 30,
+        timeWindowStart: stop.estimatedArrival ? new Date(stop.estimatedArrival).getHours() : undefined,
+        timeWindowEnd: undefined
+      }));
+      
+      // Usar ponto de início da rota ou primeira parada como referência
+      const startLocation = {
+        latitude: parseFloat(route.startLatitude) || destinations[0].latitude,
+        longitude: parseFloat(route.startLongitude) || destinations[0].longitude
+      };
+      
+      // Otimizar rota usando algoritmo existente
+      const optimizedResult = optimizeRouteAdvanced(startLocation, destinations);
+      
+      console.log(`🗺️ [OPTIMIZE-ROUTE] Rota otimizada: ${optimizedResult.totalDistance.toFixed(2)} km`);
+      
+      // Atualizar ordem das paradas no banco
+      const updatePromises = optimizedResult.locations.map((loc, index) => {
+        const newOrder = index + 1;
+        return db.update(deliveryRouteStops)
+          .set({ stopOrder: newOrder })
+          .where(eq(deliveryRouteStops.id, loc.id));
+      });
+      
+      await Promise.all(updatePromises);
+      
+      // Atualizar distância total e duração da rota
+      await db.update(deliveryRoutes)
+        .set({ 
+          totalDistance: optimizedResult.totalDistance.toFixed(2),
+          totalDuration: Math.round(optimizedResult.totalDuration)
+        })
+        .where(eq(deliveryRoutes.id, routeId));
+      
+      console.log(`✅ [OPTIMIZE-ROUTE] Rota ${routeId} otimizada com sucesso`);
+      
+      res.json({ 
+        message: "Rota otimizada com sucesso",
+        totalStops: stops.length,
+        newDistance: optimizedResult.totalDistance.toFixed(2),
+        newDuration: Math.round(optimizedResult.totalDuration),
+        optimizedOrder: optimizedResult.locations.map(l => l.id)
+      });
+    } catch (error: any) {
+      console.error("Error optimizing route:", error);
+      res.status(500).json({ message: "Falha ao otimizar rota", error: error.message });
+    }
+  });
+
   // Adicionar uma parada a uma rota existente
   app.post("/api/delivery-routes/:routeId/add-stop", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
