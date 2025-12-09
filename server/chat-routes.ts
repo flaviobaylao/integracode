@@ -117,7 +117,7 @@ async function consolidateDuplicateConversations(storage: any): Promise<{ consol
             content: msg.content,
             messageType: msg.messageType,
             mediaUrl: msg.mediaUrl,
-            timestamp: msg.timestamp
+            externalId: msg.externalId
           });
           mergedMessagesCount++;
         }
@@ -1100,7 +1100,7 @@ export function registerChatRoutes(app: Express): void {
           senderId: (req as any).user?.id || "system",
           senderType: "system",
           content: message,
-          messageType: "text"
+          messageType: "text",
         });
         console.log(`💬 [WHATSAPP-SEND] Mensagem salva`);
       } catch (err) {
@@ -1308,7 +1308,6 @@ export function registerChatRoutes(app: Express): void {
           message: {
             conversation: "Teste de resposta do webhook GET - " + new Date().toLocaleTimeString('pt-BR')
           },
-          messageTimestamp: Math.floor(Date.now() / 1000),
           pushName: "Teste WhatsApp"
         }
       };
@@ -1347,7 +1346,6 @@ export function registerChatRoutes(app: Express): void {
           message: {
             conversation: "Teste de resposta do webhook - " + new Date().toLocaleTimeString('pt-BR')
           },
-          messageTimestamp: Math.floor(Date.now() / 1000),
           pushName: "Teste WhatsApp"
         }
       };
@@ -1391,7 +1389,6 @@ export function registerChatRoutes(app: Express): void {
           message: {
             conversation: message + ` (${new Date().toLocaleTimeString('pt-BR')})`
           },
-          messageTimestamp: Math.floor(Date.now() / 1000),
           pushName: fromMe ? "Sistema" : "Cliente Teste"
         }
       };
@@ -1457,7 +1454,6 @@ export function registerChatRoutes(app: Express): void {
             message: {
               conversation: `Mensagem de teste #${i} - ${new Date().toLocaleTimeString('pt-BR')}`
             },
-            messageTimestamp: Math.floor(Date.now() / 1000),
             pushName: "Teste Batch"
           }
         };
@@ -1804,7 +1800,7 @@ export function registerChatRoutes(app: Express): void {
         senderType: "agent",
         content: content || mediaCaption || "Mídia enviada",
         messageType,
-        mediaUrl
+        mediaUrl,
       });
 
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
