@@ -38,6 +38,7 @@ import {
   knowledgeBase,
   activeCustomers,
   activeCustomerUploads,
+  phoneNumberMappings,
   type User,
   type UpsertUser,
   type Route,
@@ -5503,9 +5504,41 @@ export class DatabaseStorage implements IStorage {
 
   async getChatCustomerByPhone(phone: string): Promise<ChatCustomer | undefined> {
     // 🔧 Normalizar telefone na busca
-    const normalizedPhone = this.normalizePhoneForStorage(phone);
-    const [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, normalizedPhone));
-    return customer;
+    let normalizedPhone = this.normalizePhoneForStorage(phone);
+    console.log(`🔍 [getChatCustomerByPhone] Buscando cliente com número: ${normalizedPhone}`);
+    
+    // Buscar cliente direto pelo número normalizado
+    let [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, normalizedPhone));
+    if (customer) {
+      console.log(`✅ [getChatCustomerByPhone] Cliente encontrado direto: ${customer.id}`);
+      return customer;
+    }
+    
+    // Se não encontrou, buscar mapeamento de números alternativos
+    console.log(`🔄 [getChatCustomerByPhone] Cliente não encontrado. Buscando mapeamento de números alternativos...`);
+    try {
+      const [mapping] = await db.select().from(phoneNumberMappings)
+        .where(and(
+          eq(phoneNumberMappings.alternativePhone, normalizedPhone),
+          eq(phoneNumberMappings.isActive, true)
+        ));
+      
+      if (mapping) {
+        console.log(`📍 [getChatCustomerByPhone] Mapeamento encontrado: ${normalizedPhone} -> ${mapping.canonicalPhone}`);
+        normalizedPhone = mapping.canonicalPhone;
+        // Buscar com o número canônico
+        [customer] = await db.select().from(chatCustomers).where(eq(chatCustomers.phone, normalizedPhone));
+        if (customer) {
+          console.log(`✅ [getChatCustomerByPhone] Cliente encontrado via mapeamento: ${customer.id}`);
+          return customer;
+        }
+      }
+    } catch (err) {
+      console.warn(`⚠️ [getChatCustomerByPhone] Erro ao buscar mapeamento:`, err);
+    }
+    
+    console.log(`❌ [getChatCustomerByPhone] Cliente não encontrado para: ${normalizedPhone}`);
+    return undefined;
   }
   
   private normalizePhoneForStorage(phone: string): string {

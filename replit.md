@@ -57,6 +57,11 @@
   - POST `/api/leads/:id/check-out` - Requires prior check-in
   - Tracks lastCheckInAt and lastCheckOutAt timestamps
   - Updates lead status to "contacted" on successful check-in
+- **Phone Number Mapping**: Maps alternative phone numbers to canonical numbers to prevent conversation fragmentation
+  - Table `phone_number_mappings` stores alternative->canonical phone number relationships
+  - API endpoint POST `/api/chat/phone-mappings` (admin-only) to create new mappings
+  - Webhook automatically looks up phone mappings when receiving messages
+  - Example: 5504884295924 can be mapped to 5562949981841 to consolidate conversations from the same contact using different phone numbers
 - **Automatic Data Backup**: Complete backup system protecting all order data with daily scheduled backups and manual trigger options. Stores historical snapshots in an `orders_backup` table.
 - **Sales Card Duplication**: Fixed endpoint to return duplicated card with all relations loaded (customer, seller) for immediate editing
 

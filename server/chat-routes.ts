@@ -2450,5 +2450,32 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/phone-mappings - Criar mapeamento de números alternativos
+  app.post("/api/chat/phone-mappings", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const { canonicalPhone, alternativePhone, description } = req.body;
+      
+      if (!canonicalPhone || !alternativePhone) {
+        return res.status(400).json({ error: "canonicalPhone e alternativePhone são obrigatórios" });
+      }
+      
+      // Usar a função de normalização do webhook
+      const normalized55CanonicalPhone = `55${canonicalPhone.replace(/\D/g, '').slice(-11)}`;
+      const normalized55AlternativePhone = `55${alternativePhone.replace(/\D/g, '').slice(-11)}`;
+      
+      const [mapping] = await db.insert(phoneNumberMappings).values({
+        canonicalPhone: normalized55CanonicalPhone,
+        alternativePhone: normalized55AlternativePhone,
+        description: description || `Mapeamento criado em ${new Date().toISOString()}`
+      }).returning();
+      
+      console.log(`✅ [PHONE-MAPPING] Criado: ${normalized55AlternativePhone} -> ${normalized55CanonicalPhone}`);
+      res.json({ success: true, mapping });
+    } catch (error: any) {
+      console.error("[PHONE-MAPPING] Erro:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }

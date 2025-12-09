@@ -1565,6 +1565,22 @@ export const chatCustomers = pgTable("chat_customers", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Phone Number Mapping - mapeamento de números alternativos para o número canônico
+// Exemplo: 5504884295924 -> 5562949981841 (mesma pessoa/negócio, diferentes remetentes)
+export const phoneNumberMappings = pgTable("phone_number_mappings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  canonicalPhone: varchar("canonical_phone").notNull(), // Número principal/oficial
+  alternativePhone: varchar("alternative_phone").notNull(), // Número alternativo/variação
+  description: text("description"), // Ex: "Número pessoal" ou "Número anterior"
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  unique("unique_phone_mapping").on(table.canonicalPhone, table.alternativePhone),
+  index("idx_canonical_phone").on(table.canonicalPhone),
+  index("idx_alternative_phone").on(table.alternativePhone),
+]);
+
 // Chat Conversations status enum
 export const chatConversationStatusEnum = pgEnum('chat_conversation_status', ['new', 'assigned', 'in-progress', 'resolved']);
 export const chatPriorityEnum = pgEnum('chat_priority', ['normal', 'urgent']);
