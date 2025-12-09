@@ -17184,32 +17184,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Atualizar lead com check-in usando db.update direto (bypassa insertLeadSchema validation)
       const now = new Date();
-      const [updatedLead] = await db
-        .update(leads)
-        .set({
-          lastCheckInAt: now,
-          status: 'contacted' as any, // Marcar como contatado
-          updatedAt: now
-        })
-        .where(eq(leads.id, id))
-        .returning();
-      
-      console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
-      
-      res.json({
-        message: 'Check-in realizado com sucesso',
-        lead: {
-          id: lead.id,
-          fantasyName: lead.fantasyName,
-          lastCheckInAt: now,
-          status: 'contacted',
-          checkInDistance: Math.round(checkInDistance),
-          photoUrl: photoUrl
-        }
-      });
+      try {
+        await db
+          .update(leads)
+          .set({
+            lastCheckInAt: now,
+            status: 'contacted' as any, // Marcar como contatado
+            updatedAt: now
+          })
+          .where(eq(leads.id, id));
+        
+        console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
+        
+        res.json({
+          message: 'Check-in realizado com sucesso',
+          lead: {
+            id: lead.id,
+            fantasyName: lead.fantasyName,
+            lastCheckInAt: now,
+            status: 'contacted',
+            checkInDistance: Math.round(checkInDistance),
+            photoUrl: photoUrl
+          }
+        });
+      } catch (dbError) {
+        console.error('Erro ao atualizar lead no banco de dados:', dbError);
+        throw dbError;
+      }
     } catch (error) {
       console.error('Erro ao fazer check-in em lead:', error);
-      res.status(500).json({ message: 'Erro ao fazer check-in em lead' });
+      res.status(500).json({ message: 'Erro ao fazer check-in em lead', error: (error as any).message });
     }
   });
   
@@ -17249,31 +17253,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Atualizar lead com check-out usando db.update direto (bypassa insertLeadSchema validation)
       const now = new Date();
-      const [updatedLead] = await db
-        .update(leads)
-        .set({
-          lastCheckOutAt: now,
-          status: 'contacted' as any, // Manter como contatado
-          updatedAt: now
-        })
-        .where(eq(leads.id, id))
-        .returning();
-      
-      console.log(`✅ Check-out realizado em lead ${lead.fantasyName}`);
-      
-      res.json({
-        message: 'Check-out realizado com sucesso',
-        lead: {
-          id: lead.id,
-          fantasyName: lead.fantasyName,
-          lastCheckInAt: lead.lastCheckInAt,
-          lastCheckOutAt: now,
-          status: 'contacted'
-        }
-      });
+      try {
+        await db
+          .update(leads)
+          .set({
+            lastCheckOutAt: now,
+            status: 'contacted' as any, // Manter como contatado
+            updatedAt: now
+          })
+          .where(eq(leads.id, id));
+        
+        console.log(`✅ Check-out realizado em lead ${lead.fantasyName}`);
+        
+        res.json({
+          message: 'Check-out realizado com sucesso',
+          lead: {
+            id: lead.id,
+            fantasyName: lead.fantasyName,
+            lastCheckInAt: lead.lastCheckInAt,
+            lastCheckOutAt: now,
+            status: 'contacted'
+          }
+        });
+      } catch (dbError) {
+        console.error('Erro ao atualizar lead no banco de dados:', dbError);
+        throw dbError;
+      }
     } catch (error) {
       console.error('Erro ao fazer check-out em lead:', error);
-      res.status(500).json({ message: 'Erro ao fazer check-out em lead' });
+      res.status(500).json({ message: 'Erro ao fazer check-out em lead', error: (error as any).message });
     }
   });
 
