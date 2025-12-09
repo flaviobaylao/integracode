@@ -43,11 +43,38 @@ function normalizePhoneNumber(phone: string): string {
     digitsOnly = digitsOnly.slice(digitsOnly.length - 11); // Pega os 11 últimos sem perder dados críticos
   }
   
+  // Garante exatamente 11 dígitos - ADICIONA 9 SE FALTAR
+  // Formato: 55 + DDD(2) + 9 + número(8) = 55 + 11 dígitos
+  if (digitsOnly.length === 10) {
+    // DDD + número sem o 9 -> adicionar 9 após DDD
+    const ddd = digitsOnly.slice(0, 2);
+    const number = digitsOnly.slice(2);
+    digitsOnly = `${ddd}9${number}`;
+    console.log(`📞 [NORMALIZE] Telefone com 10 dígitos (sem 9). Adicionado 9: ${digitsOnly}`);
+  }
+  
   // Garante exatamente 11 dígitos
   const normalized = `55${digitsOnly}`;
   
   console.log(`📞 [NORMALIZE] Output: ${normalized} (length: ${normalized.length})`);
   return normalized;
+}
+
+// 🔧 FUNÇÃO PARA ENCONTRAR CONVERSA COM NÚMERO "SIMILAR" (COM/SEM 9)
+function getPhoneVariants(normalizedPhone: string): string[] {
+  // Retorna variações do telefone (com/sem o 9 obrigatório)
+  const variants = [normalizedPhone];
+  
+  // Se tem 13 dígitos (55 + 11): tentar remover o 9
+  if (normalizedPhone.length === 13 && normalizedPhone.startsWith('55')) {
+    const withoutNine = normalizedPhone.slice(0, 3) + normalizedPhone.slice(4); // Remove o 9
+    if (!variants.includes(withoutNine)) {
+      variants.push(withoutNine);
+      console.log(`📞 [VARIANTS] ${normalizedPhone} -> Variantes: [${variants.join(', ')}]`);
+    }
+  }
+  
+  return variants;
 }
 
 export function registerChatRoutes(app: Express): void {
@@ -742,9 +769,21 @@ export function registerChatRoutes(app: Express): void {
           
           if (!customer) {
             // ⚠️ Cliente não encontrado pelo normalizedPhone
-            // Se é uma mensagem recebida (isFromMe = false), verificar se há conversa recente
-            // onde enviamos mensagens (pode ser um número que evoluiu)
-            if (!isFromMe) {
+            // Tentar variantes (com/sem 9)
+            const phoneVariants = getPhoneVariants(normalizedPhone);
+            for (const variant of phoneVariants) {
+              if (variant !== normalizedPhone) {
+                console.log(`📞 [WEBHOOK-MIRROR] Tentando variante: ${variant}`);
+                customer = await storage.getChatCustomerByPhone(variant);
+                if (customer) {
+                  console.log(`✅ [WEBHOOK-MIRROR] Cliente encontrado com variante! ${variant}`);
+                  normalizedPhone = variant; // Usar a variante encontrada
+                  break;
+                }
+              }
+            }
+            
+            if (!customer && !isFromMe) {
               console.log(`⚠️  [WEBHOOK-MIRROR] Cliente ${normalizedPhone} não encontrado. Procurando conversa ativa com nossas mensagens...`);
               try {
                 const allConversations = await storage.getChatConversations();
@@ -756,15 +795,30 @@ export function registerChatRoutes(app: Express): void {
                 console.log(`📋 [WEBHOOK-MIRROR] Buscando entre ${sortedConvs.length} conversas...`);
                 
                 // Usar a conversa MAIS RECENTE onde enviamos mensagens
+                // Também verificar se o telefone é uma variante similar
                 for (const conv of sortedConvs) {
+                  const convPhone = conv.customerPhone;
+                  const convPhoneVariants = getPhoneVariants(convPhone);
+                  
+                  // Verificar se normalizedPhone é uma variante do telefone da conversa
+                  if (convPhoneVariants.includes(normalizedPhone)) {
+                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${convPhone} <- Variante: ${normalizedPhone}`);
+                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento fuzzy: ${normalizedPhone} → ${convPhone} (mesma pessoa)`);
+                    matchingConv = conv;
+                    customer = await storage.getChatCustomer(conv.customerId);
+                    normalizedPhone = convPhone; // Usar o número original da conversa
+                    break; // SEMPRE usar a primeira encontrada (mais recente)
+                  }
+                  
                   const convMessages = await storage.getChatMessages(conv.id);
                   const hasOurMessage = convMessages.some((m: any) => m.senderType === 'agent');
                   
                   if (hasOurMessage) {
-                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${conv.customerPhone} -> Novo número: ${normalizedPhone}`);
-                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento: ${normalizedPhone} → ${conv.customerPhone}`);
+                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${convPhone} -> Novo número: ${normalizedPhone}`);
+                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento: ${normalizedPhone} → ${convPhone}`);
                     matchingConv = conv;
                     customer = await storage.getChatCustomer(conv.customerId);
+                    normalizedPhone = convPhone; // Usar o número original da conversa
                     break; // SEMPRE usar a primeira encontrada (mais recente)
                   }
                 }
