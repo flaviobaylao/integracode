@@ -10213,11 +10213,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: nanoid(),
         routeId,
         billingId,
+        salesCardId: null, // Será nulo para paradas adicionadas via billing
+        customerId: billing.customerId || '',
+        customerName: billing.customerName,
+        customerAddress: billing.customerAddress,
         stopOrder: nextOrder,
         estimatedArrival: formatTime(arrivalTime),
         estimatedDeparture: formatTime(departureTime),
-        latitude: String(lat),
-        longitude: String(lng),
+        customerLatitude: billing.customerLatitude,
+        customerLongitude: billing.customerLongitude,
       });
 
       // Atualizar status do billing para "Em Rota"

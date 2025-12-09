@@ -542,7 +542,7 @@ export const deliveryRoutes = pgTable("delivery_routes", {
 export const deliveryRouteStops = pgTable("delivery_route_stops", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   routeId: varchar("route_id").notNull(),
-  salesCardId: varchar("sales_card_id").notNull(),
+  salesCardId: varchar("sales_card_id"), // Pode ser nulo quando adicionado via billing
   billingId: varchar("billing_id"), // ID do billing (nota fiscal) relacionado
   customerId: varchar("customer_id").notNull(),
   customerName: varchar("customer_name").notNull(),
