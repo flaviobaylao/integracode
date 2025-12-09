@@ -795,7 +795,9 @@ export function registerChatRoutes(app: Express): void {
 
       // Extrair informações da mensagem
       const rawRemoteJid = data.key.remoteJid;
-      console.log(`🔍 [PHONE-DEBUG] RemoteJid RAW do webhook: ${rawRemoteJid} (type: ${typeof rawRemoteJid}, length: ${String(rawRemoteJid).length})`);
+      console.log(`🔍🔍🔍 [PHONE-DEBUG-CRITICAL] RemoteJid RAW EXATO: "${rawRemoteJid}"`);
+      console.log(`🔍 [PHONE-DEBUG] RemoteJid tipo: ${typeof rawRemoteJid}, length: ${String(rawRemoteJid).length}`);
+      console.log(`🔍 [PHONE-DEBUG] RemoteJid completo JSON: ${JSON.stringify(data.key)}`);  
       
       const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
       console.log(`🔍 [PHONE-DEBUG] PhoneNumber após extract: ${phoneNumber} (length: ${phoneNumber.length})`);
