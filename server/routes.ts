@@ -13866,17 +13866,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Adicionar LEAD à rota (admin apenas)
+  // Adicionar LEAD à rota (admin ou vendedor na sua rota)
   app.post('/api/daily-routes/:routeId/leads', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
       const { routeId } = req.params;
       const { leadId } = req.body;
-      
-      // Apenas administradores podem adicionar leads
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem adicionar leads.' });
-      }
       
       if (!leadId) {
         return res.status(400).json({ message: 'leadId é obrigatório' });
@@ -13887,6 +13882,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!route) {
         return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      // Verificar acesso: admin/coordinator/administrative podem adicionar em qualquer rota
+      // Vendedores podem adicionar apenas na sua própria rota
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const isOwnRoute = user.role === 'vendedor' && route.sellerId === user.id;
+      
+      if (!isAdmin && !isOwnRoute) {
+        return res.status(403).json({ message: 'Acesso negado. Você pode adicionar leads apenas na sua própria rota.' });
       }
       
       // Buscar lead para validar
