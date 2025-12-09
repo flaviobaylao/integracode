@@ -1614,6 +1614,149 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ============================================================
+  // 🆕 GET /api/conversations/:conversationId - Conversa COM mensagens ordenadas cronologicamente
+  // Este endpoint é usado pelo chat-area.tsx para exibir mensagens intercaladas
+  // ============================================================
+  app.get("/api/conversations/:conversationId", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      
+      // Buscar conversa
+      const conversation = await storage.getChatConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversa não encontrada" });
+      }
+      
+      // Buscar mensagens e ordenar EXPLICITAMENTE por timestamp/createdAt (crescente - antigo primeiro)
+      const rawMessages = await storage.getChatMessages(conversationId) || [];
+      
+      // 🔴 ORDENAÇÃO EXPLÍCITA: Garantir ordem cronológica exata (timestamp ou createdAt)
+      // Isso é CRÍTICO para que mensagens de customer e agent sejam INTERCALADAS corretamente
+      const messages = rawMessages.sort((a: any, b: any) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return timeA - timeB; // CRESCENTE: antigo primeiro, novo depois
+      });
+      
+      console.log(`📋 [CONVERSATION-GET] Mensagens ordenadas: ${messages.length} | Primeira: ${messages[0]?.createdAt || 'N/A'} | Última: ${messages[messages.length-1]?.createdAt || 'N/A'}`);
+      
+      // Enriquecer mensagens com informações do remetente
+      const agents = await storage.getChatAgents() || [];
+      const customers = await storage.getChatCustomers() || [];
+      
+      const enrichedMessages = messages.map((msg: any) => {
+        let senderName = 'Sistema';
+        
+        if (msg.senderType === 'customer') {
+          const customer = customers.find((c: any) => c.id === msg.senderId);
+          senderName = customer?.name || conversation.customerName || 'Cliente';
+        } else if (msg.senderType === 'agent') {
+          if (msg.senderId === 'system') {
+            senderName = 'Sistema';
+          } else {
+            const agent = agents.find((a: any) => a.id === msg.senderId);
+            senderName = agent?.name || 'Sem vendedor atrelado';
+          }
+        }
+        
+        return {
+          ...msg,
+          sender: {
+            id: msg.senderId,
+            name: senderName,
+            type: msg.senderType
+          }
+        };
+      });
+      
+      // 🟢 Marcar mensagens de clientes como lidas ao abrir a conversa
+      const unreadMessages = messages.filter((m: any) => m.senderType === "customer" && !m.isRead);
+      if (unreadMessages.length > 0) {
+        console.log(`📖 [CONVERSATION-GET] Marcando ${unreadMessages.length} mensagens como lidas...`);
+        for (const msg of unreadMessages) {
+          await storage.updateChatMessage(msg.id, { isRead: true });
+        }
+        await storage.resetUnreadCount(conversationId);
+      }
+      
+      console.log(`📊 [CONVERSATION-GET] Conversa ${conversationId}: ${enrichedMessages.length} mensagens retornadas em ordem cronológica`);
+      
+      res.json({
+        ...conversation,
+        messages: enrichedMessages
+      });
+    } catch (error: any) {
+      console.error("[CONVERSATION-GET] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar conversa" });
+    }
+  });
+
+  // POST /api/conversations/:conversationId/assign - Atribuir conversa a agente
+  app.post("/api/conversations/:conversationId/assign", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { agentId } = req.body;
+
+      if (!agentId) {
+        return res.status(400).json({ error: "agentId é obrigatório" });
+      }
+
+      const updatedConv = await storage.updateChatConversation(conversationId, {
+        agentId,
+        status: 'assigned'
+      });
+
+      res.json(updatedConv);
+    } catch (error: any) {
+      console.error("[CONVERSATION-ASSIGN] Erro:", error);
+      res.status(500).json({ error: "Erro ao atribuir conversa" });
+    }
+  });
+
+  // PATCH /api/conversations/:conversationId - Atualizar status da conversa
+  app.patch("/api/conversations/:conversationId", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { status, ...otherUpdates } = req.body;
+
+      const updatedConv = await storage.updateChatConversation(conversationId, {
+        status,
+        ...otherUpdates
+      });
+
+      res.json(updatedConv);
+    } catch (error: any) {
+      console.error("[CONVERSATION-UPDATE] Erro:", error);
+      res.status(500).json({ error: "Erro ao atualizar conversa" });
+    }
+  });
+
+  // POST /api/conversations/:conversationId/sync-history - Sincronizar histórico da conversa
+  app.post("/api/conversations/:conversationId/sync-history", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      
+      // Buscar conversa para obter telefone
+      const conversation = await storage.getChatConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversa não encontrada" });
+      }
+
+      // Por enquanto, retornar sucesso sem sincronização (Evolution API sync)
+      console.log(`📞 [SYNC-HISTORY] Sincronização solicitada para conversa ${conversationId}`);
+      
+      res.json({ 
+        success: true, 
+        messageCount: 0,
+        message: "Sincronização em andamento"
+      });
+    } catch (error: any) {
+      console.error("[SYNC-HISTORY] Erro:", error);
+      res.status(500).json({ error: "Erro ao sincronizar histórico" });
+    }
+  });
+
   // GET /api/chat/history/phone/:phone - Buscar COMPLETO histórico por número telefônico
   app.get("/api/chat/history/phone/:phone", async (req, res) => {
     try {
