@@ -5706,11 +5706,18 @@ export class DatabaseStorage implements IStorage {
   
   // Chat Messages operations
   async getChatMessages(conversationId: string): Promise<ChatMessage[]> {
-    return await db
+    const messages = await db
       .select()
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conversationId))
-      .orderBy(chatMessages.createdAt); // Ordenar cronologicamente por data de criação
+      .orderBy(chatMessages.createdAt); // Ordenar cronologicamente por data de criação (crescente)
+    
+    // DEBUG: Verificar ordenação
+    if (messages.length > 0) {
+      console.log(`📊 [MESSAGES-ORDER] Conversa ${conversationId}: ${messages.length} mensagens | Primeira: ${messages[0].createdAt} | Última: ${messages[messages.length-1].createdAt}`);
+    }
+    
+    return messages;
   }
   
   async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
