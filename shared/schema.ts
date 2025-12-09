@@ -2078,6 +2078,9 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   // Modelo GPT a usar
   gptModel: varchar("gpt_model").notNull().default("gpt-4o-mini"),
   
+  // ID do Assistente OpenAI (ex: asst_4AM6M50fsOXKXlz5Ijc7IA9k)
+  assistantId: varchar("assistant_id"),
+  
   // Metadados
   updatedBy: varchar("updated_by"),
   createdAt: timestamp("created_at").defaultNow(),

@@ -34,6 +34,7 @@ interface ChatAiSettings {
   systemPrompt: string | null;
   companyContext: string | null;
   gptModel: string;
+  assistantId: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -76,6 +77,7 @@ export default function ChatAISettings() {
     systemPrompt: null,
     companyContext: null,
     gptModel: 'gpt-4o-mini',
+    assistantId: null,
     createdAt: null,
     updatedAt: null,
     updatedBy: null
@@ -319,7 +321,25 @@ export default function ChatAISettings() {
               </div>
 
               <div className="space-y-4 pt-4 border-t">
-                <Label>Modelo de IA</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="assistantId">ID do Assistente OpenAI</Label>
+                  <Input
+                    id="assistantId"
+                    placeholder="asst_4AM6M50fsOXKXlz5Ijc7IA9k"
+                    value={settings.assistantId || ''}
+                    onChange={(e) => setSettings({ ...settings, assistantId: e.target.value || null })}
+                    className="w-full max-w-md font-mono"
+                    data-testid="input-assistant-id"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Insira o ID do assistente criado no OpenAI Platform (ex: asst_xxxxx).
+                    O sistema usará este assistente para responder às mensagens dos clientes.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t">
+                <Label>Modelo de IA (fallback)</Label>
                 <Select
                   value={settings.gptModel}
                   onValueChange={(value) => setSettings({ ...settings, gptModel: value })}
@@ -336,6 +356,9 @@ export default function ChatAISettings() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-sm text-muted-foreground">
+                  Modelo usado caso nenhum assistente seja configurado
+                </p>
               </div>
 
               <div className="space-y-4 pt-4 border-t">
