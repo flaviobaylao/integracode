@@ -77,6 +77,61 @@ function getPhoneVariants(normalizedPhone: string): string[] {
   return variants;
 }
 
+// 🔧 FUNÇÃO PARA CONSOLIDAR CONVERSAS DUPLICADAS POR TELEFONE
+async function consolidateDuplicateConversations(storage: any): Promise<{ consolidated: number; merged: number }> {
+  const conversations = await storage.getChatConversations();
+  const phoneGroups: { [key: string]: any[] } = {};
+  
+  // Agrupar por telefone
+  for (const conv of conversations) {
+    const phone = conv.customerPhone;
+    if (!phoneGroups[phone]) {
+      phoneGroups[phone] = [];
+    }
+    phoneGroups[phone].push(conv);
+  }
+  
+  let consolidatedCount = 0;
+  let mergedMessagesCount = 0;
+  
+  // Processar grupos com múltiplas conversas
+  for (const [phone, convs] of Object.entries(phoneGroups)) {
+    if (convs.length > 1) {
+      console.log(`🔀 [CONSOLIDATE] Telefone ${phone} tem ${convs.length} conversas. Consolidando...`);
+      consolidatedCount++;
+      
+      // Ordenar por data (mais recente primeira)
+      convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      
+      const mainConv = convs[0]; // Conversa principal (mais recente)
+      const duplicateConvs = convs.slice(1); // Conversas para mesclar
+      
+      // Mover mensagens das duplicatas para a principal
+      for (const dupConv of duplicateConvs) {
+        const messages = await storage.getChatMessages(dupConv.id);
+        for (const msg of messages) {
+          await storage.createChatMessage({
+            conversationId: mainConv.id,
+            senderId: msg.senderId,
+            senderType: msg.senderType,
+            content: msg.content,
+            messageType: msg.messageType,
+            mediaUrl: msg.mediaUrl,
+            timestamp: msg.timestamp
+          });
+          mergedMessagesCount++;
+        }
+        
+        // Deletar conversa duplicada
+        await storage.deleteChatConversation(dupConv.id);
+        console.log(`✅ [CONSOLIDATE] Conversa ${dupConv.id} mesclada em ${mainConv.id} (${messages.length} mensagens)`);
+      }
+    }
+  }
+  
+  return { consolidated: consolidatedCount, merged: mergedMessagesCount };
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for file uploads
   const uploadDir = path.join(process.cwd(), "uploads", "chat");
@@ -2345,6 +2400,23 @@ export function registerChatRoutes(app: Express): void {
         error: error.message || "Erro ao sincronizar contatos", 
         success: false 
       });
+    }
+  });
+
+  // POST /api/chat/consolidate - Consolidar manualmente conversas por telefone
+  app.post("/api/chat/consolidate", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      console.log("🔀 [CONSOLIDATE] Iniciando consolidação de conversas duplicadas por telefone...");
+      const result = await consolidateDuplicateConversations(storage);
+      
+      res.json({
+        success: true,
+        message: `Consolidação concluída: ${result.consolidated} grupos unificados, ${result.merged} mensagens mescladas`,
+        ...result
+      });
+    } catch (error: any) {
+      console.error("[CHAT-CONSOLIDATE] Erro:", error);
+      res.status(500).json({ error: "Erro ao consolidar conversas", success: false });
     }
   });
 
