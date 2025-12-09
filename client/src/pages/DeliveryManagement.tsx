@@ -117,6 +117,7 @@ interface RouteStop {
 }
 
 interface VehicleRoute {
+  id?: string;
   vehicleType: string;
   driverId?: string;
   driverName?: string;
@@ -124,6 +125,7 @@ interface VehicleRoute {
   stops: RouteStop[];
   totalDistance: number;
   totalDuration: number;
+  status?: string;
 }
 
 interface RoutePlan {
@@ -531,9 +533,19 @@ export default function DeliveryManagement() {
 
   const handleAddPedido = (billingId: string) => {
     if (!selectedRoute) return;
-    // Use vehicleType como routeId (é único por rota)
+    
+    // Para rotas planejadas (sem ID), deve salvar primeiro
+    if (!selectedRoute.id) {
+      toast({
+        title: "⚠️ Rota não salva",
+        description: "Salve as rotas planejadas antes de adicionar novos pedidos. Use o botão 'Salvar Rotas'.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     addStopMutation.mutate({
-      routeId: selectedRoute.vehicleType,
+      routeId: selectedRoute.id,
       billingId,
     });
   };
@@ -1290,6 +1302,8 @@ export default function DeliveryManagement() {
                           variant="outline"
                           size="sm"
                           onClick={() => handleSelectRoute(route, idx)}
+                          disabled={!route.id}
+                          title={!route.id ? "Salve as rotas primeiro antes de adicionar novos pedidos" : "Adicionar pedidos a esta rota"}
                           data-testid={`button-add-orders-route-${idx}`}
                         >
                           ➕ Adicionar Pedidos
