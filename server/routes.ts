@@ -9959,7 +9959,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Buscar a rota
       const routeResult = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, routeId));
+      console.log(`🔍 [OPTIMIZE-ROUTE] Resultado da busca da rota:`, routeResult.length, "rotas encontradas");
+      
       if (routeResult.length === 0) {
+        console.log(`❌ [OPTIMIZE-ROUTE] Rota ${routeId} não encontrada`);
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       const route = routeResult[0];
@@ -9974,14 +9977,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRouteStops.routeId, routeId))
         .orderBy(deliveryRouteStops.stopOrder);
       
+      console.log(`📍 [OPTIMIZE-ROUTE] Buscando paradas para rota ${routeId}: ${stops.length} paradas encontradas`);
+      console.log(`📍 [OPTIMIZE-ROUTE] Paradas:`, stops.map(s => ({ id: s.id, name: s.customerName })));
+      
       if (stops.length < 2) {
-        return res.status(400).json({ message: "Rota precisa ter pelo menos 2 paradas para otimizar" });
+        console.log(`❌ [OPTIMIZE-ROUTE] Insuficientes paradas: ${stops.length} < 2`);
+        return res.status(400).json({ 
+          message: "Rota precisa ter pelo menos 2 paradas para otimizar",
+          foundStops: stops.length,
+          routeId: routeId
+        });
       }
       
-      console.log(`📍 [OPTIMIZE-ROUTE] Encontradas ${stops.length} paradas`);
+      console.log(`✅ [OPTIMIZE-ROUTE] Encontradas ${stops.length} paradas para otimização`);
       
       // Preparar localizações para otimização
-      const destinations = stops.map(stop => ({
+      const destinations = stops.filter(stop => {
+        const lat = parseFloat(stop.customerLatitude);
+        const lng = parseFloat(stop.customerLongitude);
+        return !isNaN(lat) && !isNaN(lng);
+      }).map(stop => ({
         id: stop.id,
         name: stop.customerName,
         latitude: parseFloat(stop.customerLatitude),
@@ -9992,20 +10007,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         timeWindowEnd: undefined
       }));
       
+      if (destinations.length < 2) {
+        console.log(`❌ [OPTIMIZE-ROUTE] Insuficientes paradas com coordenadas válidas: ${destinations.length}`);
+        return res.status(400).json({ 
+          message: "Rota precisa ter pelo menos 2 paradas com coordenadas válidas",
+          foundStops: stops.length,
+          validStops: destinations.length
+        });
+      }
+      
       // Usar ponto de início da rota ou primeira parada como referência
+      const startLatStr = route.startLatitude?.toString() || '';
+      const startLngStr = route.startLongitude?.toString() || '';
+      const startLat = parseFloat(startLatStr);
+      const startLng = parseFloat(startLngStr);
+      
       const startLocation = {
-        latitude: parseFloat(route.startLatitude) || destinations[0].latitude,
-        longitude: parseFloat(route.startLongitude) || destinations[0].longitude
+        latitude: (!isNaN(startLat) && startLat !== 0) ? startLat : destinations[0].latitude,
+        longitude: (!isNaN(startLng) && startLng !== 0) ? startLng : destinations[0].longitude
       };
+      
+      console.log(`🗺️ [OPTIMIZE-ROUTE] Ponto de início: ${startLocation.latitude}, ${startLocation.longitude}`);
+      console.log(`🗺️ [OPTIMIZE-ROUTE] Total de destinos a otimizar: ${destinations.length}`);
       
       // Otimizar rota usando algoritmo existente
       const optimizedResult = optimizeRouteAdvanced(startLocation, destinations);
       
-      console.log(`🗺️ [OPTIMIZE-ROUTE] Rota otimizada: ${optimizedResult.totalDistance.toFixed(2)} km`);
+      console.log(`✅ [OPTIMIZE-ROUTE] Rota otimizada: ${optimizedResult.totalDistance.toFixed(2)} km, ${Math.round(optimizedResult.totalDuration)} min`);
       
       // Atualizar ordem das paradas no banco
       const updatePromises = optimizedResult.locations.map((loc, index) => {
         const newOrder = index + 1;
+        console.log(`🔄 [OPTIMIZE-ROUTE] Atualizando parada ${loc.id} para posição ${newOrder}`);
         return db.update(deliveryRouteStops)
           .set({ stopOrder: newOrder })
           .where(eq(deliveryRouteStops.id, loc.id));
@@ -10031,7 +10064,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         optimizedOrder: optimizedResult.locations.map(l => l.id)
       });
     } catch (error: any) {
-      console.error("Error optimizing route:", error);
+      console.error("❌ Error optimizing route:", error);
+      console.error("❌ Stack:", error.stack);
       res.status(500).json({ message: "Falha ao otimizar rota", error: error.message });
     }
   });
