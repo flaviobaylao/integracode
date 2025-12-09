@@ -115,6 +115,9 @@ export default function RoutesSummary() {
   const [newDriverIdForTransfer, setNewDriverIdForTransfer] = useState<string>('');
   const [newPositionForReorder, setNewPositionForReorder] = useState<string>('');
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
+  const [editingRoute, setEditingRoute] = useState<string | null>(null);
+  const [editDriverId, setEditDriverId] = useState<string>('');
+  const [editVehicleType, setEditVehicleType] = useState<string>('');
   const { toast } = useToast();
 
   // Gerar cores únicas por motorista - paleta simplificada
@@ -338,6 +341,32 @@ export default function RoutesSummary() {
       toast({
         title: "Erro ao reordenar parada",
         description: error.message || "Não foi possível reordenar a entrega.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para atualizar rota (veículo e entregador)
+  const updateRouteMutation = useMutation({
+    mutationFn: async (data: { routeId: string; driverId: string; vehicleType: string; driverName: string }) => {
+      return await apiRequest('PATCH', `/api/delivery-routes/${data.routeId}`, {
+        driverId: data.driverId,
+        driverName: data.driverName,
+        vehicleType: data.vehicleType
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      setEditingRoute(null);
+      toast({
+        title: "Rota atualizada com sucesso!",
+        description: "Veículo e entregador foram alterados.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao atualizar rota",
+        description: error.message || "Não foi possível atualizar a rota.",
         variant: "destructive",
       });
     }
@@ -701,6 +730,18 @@ export default function RoutesSummary() {
               <CardTitle>Detalhes da Rota: {selectedRouteData.routeName}</CardTitle>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditingRoute(selectedRoute);
+                  setEditDriverId(selectedRouteData.driverId || '');
+                  setEditVehicleType(selectedRouteData.vehicleType || '');
+                }}
+                data-testid="button-edit-route"
+              >
+                ✏️ Editar Veículo/Entregador
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -1286,6 +1327,69 @@ export default function RoutesSummary() {
       </Dialog>
 
       {/* Modal para adicionar pedidos à rota */}
+      {/* Dialog para editar rota */}
+      <Dialog open={!!editingRoute} onOpenChange={(open) => { if (!open) setEditingRoute(null); }}>
+        <DialogContent data-testid="dialog-edit-route">
+          <DialogHeader>
+            <DialogTitle>Editar Veículo e Entregador</DialogTitle>
+            <DialogDescription>
+              Altere o veículo e entregador desta rota
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Selecionar Entregador</Label>
+              <Select value={editDriverId} onValueChange={setEditDriverId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o entregador" />
+                </SelectTrigger>
+                <SelectContent>
+                  {drivers.map(driver => (
+                    <SelectItem key={driver.id} value={driver.id}>
+                      {driver.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Tipo de Veículo</Label>
+              <Select value={editVehicleType} onValueChange={setEditVehicleType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o veículo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="moto">🏍️ Moto</SelectItem>
+                  <SelectItem value="carro">🚗 Carro</SelectItem>
+                  <SelectItem value="caminhao">🚛 Caminhão</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setEditingRoute(null)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={() => {
+                if (editingRoute && editDriverId) {
+                  const driver = drivers.find(d => d.id === editDriverId);
+                  updateRouteMutation.mutate({
+                    routeId: editingRoute,
+                    driverId: editDriverId,
+                    driverName: driver?.name || '',
+                    vehicleType: editVehicleType
+                  });
+                }
+              }}
+              disabled={updateRouteMutation.isPending || !editDriverId}
+            >
+              {updateRouteMutation.isPending ? 'Atualizando...' : 'Atualizar Rota'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showAddOrders} onOpenChange={setShowAddOrders}>
         <DialogContent className="max-w-md" data-testid="dialog-add-orders-route">
           <DialogHeader>

@@ -10,6 +10,7 @@ import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimi
 import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
+import OpenAI from 'openai';
 import {
   insertCustomerSchema,
   insertProductSchema,
@@ -35,6 +36,11 @@ import {
   activeCustomers,
   normalizeWeekdayInput,
   type WeekdayCode,
+  chatAiSettings,
+  chatAiLogs,
+  insertChatAiSettingsSchema,
+  type InsertChatAiSettings,
+  type ChatAiSettings,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -9451,6 +9457,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Atualizar rota (veículo e entregador)
+  app.patch("/api/delivery-routes/:routeId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const { driverId, driverName, vehicleType } = req.body;
+      
+      console.log(`✏️ [ROUTE-UPDATE] Atualizando rota ${routeId}: driverId=${driverId}, vehicleType=${vehicleType}`);
+      
+      // Validar que pelo menos um campo está sendo atualizado
+      if (!driverId && !vehicleType) {
+        return res.status(400).json({ message: "Pelo menos driverId ou vehicleType deve ser fornecido" });
+      }
+      
+      const updateData: any = { updatedAt: new Date() };
+      if (driverId) updateData.driverId = driverId;
+      if (driverName) updateData.driverName = driverName;
+      if (vehicleType) updateData.vehicleType = vehicleType;
+      
+      // Atualizar rota
+      const updatedRoute = await storage.updateDeliveryRoute(routeId, updateData);
+      
+      if (!updatedRoute) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      console.log(`✅ [ROUTE-UPDATE] Rota ${routeId} atualizada com sucesso`);
+      res.json({ message: "Rota atualizada com sucesso", route: updatedRoute });
+    } catch (error: any) {
+      console.error("Error updating route:", error);
+      res.status(500).json({ message: "Failed to update route", error: error.message });
+    }
+  });
+
   // Cancelar rota de entrega
   app.patch("/api/delivery-routes/:routeId/cancel", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
@@ -18064,6 +18103,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ ...result, timestamp: new Date() });
     } catch (error) {
       res.status(500).json({ message: 'Erro ao executar backup', error: String(error) });
+    }
+  });
+
+  // ============================================================================
+  // CHAT AI SETTINGS ENDPOINTS
+  // ============================================================================
+  
+  // GET /api/chat/ai-settings - Buscar configurações de AI
+  app.get('/api/chat/ai-settings', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const settings = await storage.getChatAiSettings();
+      res.json({ 
+        success: true, 
+        settings: settings || {
+          isEnabled: false,
+          mode: 'disabled',
+          businessHours: { weekdays: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'], startTime: '08:00', endTime: '18:00' },
+          timeoutMinutes: 5,
+          maxTurnsBeforeEscalation: 10,
+          handoffKeywords: [],
+          gptModel: 'gpt-4o-mini'
+        }
+      });
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar configurações de AI:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // PUT /api/chat/ai-settings - Atualizar configurações de AI
+  app.put('/api/chat/ai-settings', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const validated = insertChatAiSettingsSchema.partial().parse(req.body);
+      const userId = req.user?.id;
+      
+      console.log(`✏️ [AI-SETTINGS] Atualizando configurações por ${userId}`);
+      
+      const settings = await storage.updateChatAiSettings({
+        ...validated,
+        updatedAt: new Date(),
+        updatedBy: userId
+      });
+      
+      res.json({ success: true, settings });
+    } catch (error: any) {
+      console.error('❌ Erro ao atualizar configurações:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // POST /api/chat/ai-settings/toggle - Ativar/desativar AI
+  app.post('/api/chat/ai-settings/toggle', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const current = await storage.getChatAiSettings();
+      const newState = !current?.isEnabled;
+      
+      console.log(`🔄 [AI-SETTINGS] Alternando AI para ${newState ? 'ativado' : 'desativado'}`);
+      
+      const settings = await storage.updateChatAiSettings({
+        isEnabled: newState,
+        updatedAt: new Date(),
+        updatedBy: req.user?.id
+      });
+      
+      res.json({ success: true, isEnabled: newState, settings });
+    } catch (error: any) {
+      console.error('❌ Erro ao alternar AI:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // POST /api/chat/ai-settings/test - Testar resposta de AI
+  app.post('/api/chat/ai-settings/test', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const { testMessage } = req.body;
+      if (!testMessage) {
+        return res.status(400).json({ success: false, message: 'Mensagem de teste é obrigatória' });
+      }
+
+      const settings = await storage.getChatAiSettings();
+      if (!settings?.isEnabled || !process.env.OPENAI_API_KEY) {
+        return res.json({ 
+          success: false, 
+          message: 'AI não está configurada ou API key não encontrada',
+          shouldTransfer: true
+        });
+      }
+
+      const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const startTime = Date.now();
+      
+      const response = await client.messages.create({
+        model: settings.gptModel || 'gpt-4o-mini',
+        max_tokens: 1024,
+        system: settings.systemPrompt || 'Você é um atendente de suporte ao cliente profissional e prestativo.',
+        messages: [
+          { role: 'user', content: testMessage }
+        ]
+      });
+
+      const responseTime = Date.now() - startTime;
+      const aiResponse = response.content[0]?.type === 'text' ? response.content[0].text : '';
+      
+      // Verificar se deve transferir para humano
+      const keywords = settings.handoffKeywords || [];
+      const shouldTransfer = keywords.some(kw => aiResponse.toLowerCase().includes(kw.toLowerCase()));
+
+      res.json({
+        success: true,
+        response: aiResponse,
+        shouldTransfer,
+        tokensUsed: response.usage?.output_tokens || 0,
+        responseTimeMs: responseTime
+      });
+    } catch (error: any) {
+      console.error('❌ Erro ao testar AI:', error);
+      res.status(500).json({ success: false, message: error.message });
     }
   });
 
