@@ -34,6 +34,7 @@ interface Driver {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   vehicleType: string;
   licensePlate: string;
   isActive: boolean;
@@ -67,6 +68,7 @@ export default function DriverManagement() {
   const [driverForm, setDriverForm] = useState({
     name: "",
     phone: "",
+    email: "",
     vehicleType: "",
     licensePlate: "",
     isActive: true,
@@ -176,6 +178,7 @@ export default function DriverManagement() {
     setDriverForm({
       name: "",
       phone: "",
+      email: "",
       vehicleType: "",
       licensePlate: "",
       isActive: true,
@@ -199,6 +202,7 @@ export default function DriverManagement() {
     setDriverForm({
       name: driver.name,
       phone: driver.phone,
+      email: driver.email || "",
       vehicleType: driver.vehicleType,
       licensePlate: driver.licensePlate,
       isActive: driver.isActive,
@@ -265,6 +269,18 @@ export default function DriverManagement() {
                   onChange={(e) => setDriverForm({...driverForm, phone: e.target.value})}
                   placeholder="(11) 99999-9999"
                   data-testid="input-phone"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={driverForm.email}
+                  onChange={(e) => setDriverForm({...driverForm, email: e.target.value})}
+                  placeholder="motorista@example.com"
+                  data-testid="input-email"
                 />
               </div>
 

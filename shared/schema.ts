@@ -505,6 +505,7 @@ export const deliveryDrivers = pgTable("delivery_drivers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
   phone: varchar("phone").notNull(),
+  email: varchar("email"), // Email para vinculação com conta de usuário motorista
   vehicleType: varchar("vehicle_type"), // Tipo de veículo (moto, carro, etc)
   licensePlate: varchar("license_plate"),
   isActive: boolean("is_active").notNull().default(true),
