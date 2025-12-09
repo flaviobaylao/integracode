@@ -28,7 +28,8 @@ import {
   FileText,
   Map,
   MessageCircle,
-  RefreshCw
+  RefreshCw,
+  Save
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react-leaflet";
 import L from 'leaflet';
@@ -342,6 +343,58 @@ export default function RoutesSummary() {
     }
   });
 
+  // Mutation para salvar rotas planejadas
+  const saveRoutesMutation = useMutation({
+    mutationFn: async () => {
+      const plannedRoutes = routes.filter(r => r.status === 'planejada');
+      if (plannedRoutes.length === 0) {
+        throw new Error('Nenhuma rota planejada para salvar');
+      }
+
+      const routesToSave = plannedRoutes.map(route => ({
+        route: {
+          routeDate: route.routeDate,
+          driverId: route.driverId,
+          driverName: route.driverName,
+          vehicleType: route.vehicleType,
+          startLatitude: -16.719458733340122,
+          startLongitude: -49.29937095026935,
+          totalDistance: parseFloat(route.totalDistance),
+          totalDuration: route.totalDuration,
+          timeWindowStart: '08:00',
+          timeWindowEnd: '18:00',
+        },
+        stops: route.stops.map(stop => ({
+          salesCardId: stop.salesCardId,
+          billingId: stop.id || '',
+          customerId: stop.customerId,
+          customerName: stop.customerName,
+          customerAddress: stop.customerAddress,
+          latitude: parseFloat(stop.customerLatitude),
+          longitude: parseFloat(stop.customerLongitude),
+          stopOrder: stop.stopOrder,
+          isUrgent: stop.isPriority,
+        }))
+      }));
+
+      return await apiRequest('POST', '/api/delivery-routes/save', { routes: routesToSave });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Rotas salvas com sucesso! ✅",
+        description: `${data.routes.length} rotas foram salvas e estão prontas para execução`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao salvar rotas",
+        description: error.message || "Não foi possível salvar as rotas",
+        variant: "destructive",
+      });
+    }
+  });
+
   const activeDrivers = drivers.filter(d => d.isActive);
 
   const getStatusBadge = (status: string) => {
@@ -512,10 +565,32 @@ export default function RoutesSummary() {
       {/* Filtros */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center">
-            <Filter className="h-5 w-5 mr-2" />
-            Filtros
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center">
+              <Filter className="h-5 w-5 mr-2" />
+              Filtros
+            </CardTitle>
+            {routes.filter(r => r.status === 'planejada').length > 0 && (
+              <Button 
+                onClick={() => saveRoutesMutation.mutate()}
+                disabled={saveRoutesMutation.isPending}
+                className="bg-green-600 hover:bg-green-700"
+                data-testid="button-save-planned-routes"
+              >
+                {saveRoutesMutation.isPending ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    💾 Salvar {routes.filter(r => r.status === 'planejada').length} Rota(s)
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
