@@ -9407,17 +9407,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista ${userId} para ${date || 'hoje'}`);
       
       // Buscar rotas onde o driverId corresponde ao userId
-      const targetDate = date ? new Date(date) : new Date();
-      targetDate.setHours(0, 0, 0, 0);
+      let targetDateStr: string;
+      if (date) {
+        // Se uma data foi fornecida, usar como está
+        targetDateStr = date;
+      } else {
+        // Se não, usar hoje na timezone local (Brasil)
+        const today = new Date();
+        targetDateStr = today.toISOString().split('T')[0];
+      }
+      
+      console.log(`📅 [DRIVER-ROUTES] Data alvo para comparação: ${targetDateStr}`);
       
       const routes = await db.select().from(deliveryRoutes)
         .where(
           and(
             eq(deliveryRoutes.driverId, userId),
-            sql`DATE(${deliveryRoutes.routeDate}) = ${targetDate.toISOString().split('T')[0]}`
+            sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
+      
+      console.log(`📦 [DRIVER-ROUTES] Rotas encontradas: ${routes.length}`);
       
       // Para cada rota, buscar as paradas
       const routesWithStops = await Promise.all(
@@ -9426,6 +9437,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(eq(deliveryRouteStops.routeId, route.id))
             .orderBy(asc(deliveryRouteStops.stopOrder));
           
+          console.log(`📍 [DRIVER-ROUTES] Rota ${route.id}: ${stops.length} paradas`);
+          
           return {
             ...route,
             stops
@@ -9433,7 +9446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
       
-      console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas`);
+      console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas para o motorista`);
       res.json(routesWithStops);
     } catch (error: any) {
       console.error("Error fetching driver routes:", error);
