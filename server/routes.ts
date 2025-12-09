@@ -9521,7 +9521,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/delivery-routes/driver/my-routes", authenticateUser, async (req: any, res) => {
     try {
       const { date } = req.query;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
       
       if (!userId) {
         return res.status(401).json({ message: "Usuário não autenticado" });
@@ -9584,7 +9584,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/delivery-routes/:routeId/start", authenticateUser, async (req: any, res) => {
     try {
       const { routeId } = req.params;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
       
       console.log(`🚀 [DRIVER-START] Motorista ${userId} iniciando rota ${routeId}`);
       
@@ -9620,7 +9620,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { stopId } = req.params;
       const { latitude, longitude } = req.body;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
       
       console.log(`📍 [DRIVER-CHECKIN] Motorista ${userId} fazendo check-in na parada ${stopId}`);
       
@@ -9686,7 +9686,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { stopId } = req.params;
       const { latitude, longitude, notes } = req.body;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
       
       console.log(`✅ [DRIVER-CHECKOUT] Motorista ${userId} fazendo check-out da parada ${stopId}`);
       
@@ -9769,7 +9769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { stopId } = req.params;
       const { status } = req.body;
-      const userId = req.user?.id;
+      const userId = (req as any).currentUser?.id;
       
       // Validar status
       if (!['pendente', 'efetuada', 'em_pausa', 'devolvida'].includes(status)) {
@@ -10002,8 +10002,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/delivery-routes/stops/:stopId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { stopId } = req.params;
-      const userId = req.user?.id;
-      const userRole = req.user?.role;
+      const userId = (req as any).currentUser?.id;
+      const userRole = (req as any).currentUser?.role;
       
       console.log(`🗑️ [DELETE-STOP] Usuário ${userId} (${userRole}) excluindo parada ${stopId}`);
       
@@ -10045,8 +10045,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/delivery-routes/:routeId", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routeId } = req.params;
-      const userId = req.user?.id;
-      const userRole = req.user?.role;
+      const userId = (req as any).currentUser?.id;
+      const userRole = (req as any).currentUser?.role;
       
       console.log(`🗑️ [DELETE-ROUTE] Usuário ${userId} (${userRole}) excluindo rota ${routeId}`);
       
@@ -10091,8 +10091,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/delivery-routes/:routeId/optimize", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'motorista']), async (req: any, res) => {
     try {
       const { routeId } = req.params;
-      const userId = req.user?.id;
-      const userRole = req.user?.role;
+      const userId = (req as any).currentUser?.id;
+      const userRole = (req as any).currentUser?.role;
       
       console.log(`🔄 [OPTIMIZE-ROUTE] Usuário ${userId} (${userRole}) otimizando rota ${routeId}`);
       
