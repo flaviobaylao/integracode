@@ -223,6 +223,9 @@ export default function DeliveryManagement() {
   const [selectedRoute, setSelectedRoute] = useState<VehicleRoute | null>(null);
   const [showAddPedidos, setShowAddPedidos] = useState(false);
   const [removePedidoIds, setRemovePedidoIds] = useState<Set<string>>(new Set());
+  
+  // Estado para rastrear rotas selecionadas para salvar
+  const [selectedRoutesToSave, setSelectedRoutesToSave] = useState<Set<number>>(new Set());
 
   // Query para buscar usuário atual
   const { data: currentUser } = useQuery({
@@ -1284,20 +1287,40 @@ export default function DeliveryManagement() {
 
               {/* Routes */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Rotas Planejadas ({routePlan.routes.length})</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Rotas Planejadas ({routePlan.routes.length})</h3>
+                  <div className="text-sm text-muted-foreground">
+                    {selectedRoutesToSave.size > 0 ? `${selectedRoutesToSave.size} rota(s) selecionada(s)` : 'Selecione as rotas para salvar'}
+                  </div>
+                </div>
                 {routePlan.routes.map((route, idx) => (
-                  <Card key={idx} data-testid={`route-result-${idx}`}>
+                  <Card key={idx} data-testid={`route-result-${idx}`} className={selectedRoutesToSave.has(idx) ? 'border-blue-500 border-2' : ''}>
                     <CardHeader>
                       <div className="flex items-center justify-between">
-                        <CardTitle className="flex items-center">
-                          <Truck className="h-5 w-5 mr-2" />
-                          Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
-                          {route.driverName && (
-                            <Badge variant="secondary" className="ml-2">
-                              {route.driverName}
-                            </Badge>
-                          )}
-                        </CardTitle>
+                        <div className="flex items-center gap-3">
+                          <Checkbox
+                            checked={selectedRoutesToSave.has(idx)}
+                            onCheckedChange={(checked) => {
+                              const newSelected = new Set(selectedRoutesToSave);
+                              if (checked) {
+                                newSelected.add(idx);
+                              } else {
+                                newSelected.delete(idx);
+                              }
+                              setSelectedRoutesToSave(newSelected);
+                            }}
+                            data-testid={`checkbox-save-route-${idx}`}
+                          />
+                          <CardTitle className="flex items-center">
+                            <Truck className="h-5 w-5 mr-2" />
+                            Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                            {route.driverName && (
+                              <Badge variant="secondary" className="ml-2">
+                                {route.driverName}
+                              </Badge>
+                            )}
+                          </CardTitle>
+                        </div>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1522,7 +1545,8 @@ export default function DeliveryManagement() {
                     setShowResults(false);
                     setSelectedOrders(new Set());
                     setSelectAll(false);
-                    setPendingRouteConfig(null); // Limpar config ao fechar modal
+                    setPendingRouteConfig(null);
+                    setSelectedRoutesToSave(new Set());
                     queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
                   }} 
                   data-testid="button-close-results"
@@ -1531,37 +1555,51 @@ export default function DeliveryManagement() {
                 </Button>
                 <Button 
                   onClick={() => {
-                    console.log('🔍 [SAVE-ROUTES-FRONTEND] pendingRouteConfig:', pendingRouteConfig);
-                    console.log('🔍 [SAVE-ROUTES-FRONTEND] routeDate será:', pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0]);
+                    if (selectedRoutesToSave.size === 0) {
+                      toast({
+                        title: "Selecione as rotas",
+                        description: "Escolha pelo menos uma rota para salvar",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+
+                    console.log('🔍 [SAVE-ROUTES-FRONTEND] Rotas selecionadas:', Array.from(selectedRoutesToSave));
                     
-                    // Preparar dados para salvar
-                    const routesToSave = routePlan.routes.map((route: VehicleRoute) => ({
-                      route: {
-                        routeDate: pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0],
-                        driverId: route.driverId || '',
-                        driverName: route.driverName || 'Sem motorista',
-                        vehicleType: route.vehicleType,
-                        startLatitude: route.startLatitude,
-                        startLongitude: route.startLongitude,
-                        totalDistance: route.totalDistance,
-                        totalDuration: route.totalDuration,
-                        timeWindowStart: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowStart || '08:00',
-                        timeWindowEnd: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowEnd || '18:00',
-                      },
-                      stops: route.stops.map((stop: any) => ({
-                        ...stop,
-                        billingId: stop.salesCardId, // salesCardId é na verdade o billingId
-                        latitude: stop.latitude || stop.customerLatitude,
-                        longitude: stop.longitude || stop.customerLongitude,
-                      }))
-                    }));
+                    // Preparar dados apenas das rotas selecionadas
+                    const routesToSave = routePlan.routes
+                      .map((route: VehicleRoute, idx: number) => {
+                        if (!selectedRoutesToSave.has(idx)) return null;
+                        
+                        return {
+                          route: {
+                            routeDate: pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0],
+                            driverId: route.driverId || '',
+                            driverName: route.driverName || 'Sem motorista',
+                            vehicleType: route.vehicleType,
+                            startLatitude: route.startLatitude,
+                            startLongitude: route.startLongitude,
+                            totalDistance: route.totalDistance,
+                            totalDuration: route.totalDuration,
+                            timeWindowStart: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowStart || '08:00',
+                            timeWindowEnd: pendingRouteConfig?.vehicles.find((v: VehicleConfig) => v.type === route.vehicleType)?.timeWindowEnd || '18:00',
+                          },
+                          stops: route.stops.map((stop: any) => ({
+                            ...stop,
+                            billingId: stop.salesCardId,
+                            latitude: stop.latitude || stop.customerLatitude,
+                            longitude: stop.longitude || stop.customerLongitude,
+                          }))
+                        };
+                      })
+                      .filter((r: any) => r !== null);
                     
                     saveRoutesMutation.mutate({ routes: routesToSave });
                   }}
-                  disabled={saveRoutesMutation.isPending}
+                  disabled={saveRoutesMutation.isPending || selectedRoutesToSave.size === 0}
                   data-testid="button-save-routes"
                 >
-                  {saveRoutesMutation.isPending ? 'Salvando...' : 'Salvar Rotas'}
+                  {saveRoutesMutation.isPending ? 'Salvando...' : `Salvar ${selectedRoutesToSave.size} Rota${selectedRoutesToSave.size !== 1 ? 's' : ''}`}
                 </Button>
               </div>
             </div>

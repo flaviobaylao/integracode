@@ -9263,11 +9263,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}`);
         
-        // ✅ NOVO: Buscar rotas planejadas existentes para este motorista nesta data
+        // ✅ NOVO: Buscar rotas planejadas existentes para este motorista nesta data (comparação de string)
         const existingPlannedRoutes = await db.select().from(deliveryRoutes)
           .where(and(
             eq(deliveryRoutes.driverId, route.driverId),
-            eq(deliveryRoutes.routeDate, dateStr),
+            sql`${deliveryRoutes.routeDate}::text = ${dateStr}`,
             eq(deliveryRoutes.status, 'planejada')
           ));
         
