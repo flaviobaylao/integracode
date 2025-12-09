@@ -9250,7 +9250,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const routePlan of routes) {
         const { route, stops } = routePlan;
 
-        // Gerar nome da rota: ROTA-DATA-ENTREGADOR-NUMERO
         // Converter routeDate para Date se for string
         let routeDate: Date;
         if (typeof route.routeDate === 'string') {
@@ -9262,53 +9261,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const dateStr = routeDate.toISOString().split('T')[0]; // YYYY-MM-DD
         const driverName = route.driverName.toUpperCase().replace(/\s+/g, '-');
         
-        console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}, routeDate original: ${route.routeDate}`);
+        console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}`);
         
-        // Contar quantas rotas o motorista já tem nesta data
-        const existingCount = await storage.countRoutesForDriverOnDate(route.driverId, routeDate);
-        const routeNumber = existingCount + 1;
+        // ✅ NOVO: Buscar rotas planejadas existentes para este motorista nesta data
+        const existingPlannedRoutes = await db.select().from(deliveryRoutes)
+          .where(and(
+            eq(deliveryRoutes.driverId, route.driverId),
+            eq(deliveryRoutes.routeDate, dateStr),
+            eq(deliveryRoutes.status, 'planejada')
+          ));
         
-        const routeName = `ROTA-${dateStr}-${driverName}-${routeNumber}`;
+        console.log(`🔍 [SAVE-ROUTES] Encontradas ${existingPlannedRoutes.length} rotas planejadas para motorista ${route.driverId} em ${dateStr}`);
         
-        console.log(`📝 [SAVE-ROUTES] Gerando rota: ${routeName}`);
+        let savedRoute: any;
+        let savedStops: any[];
+        
+        if (existingPlannedRoutes.length > 0) {
+          // ✅ ATUALIZAR rota existente (usar a primeira)
+          const routeToUpdate = existingPlannedRoutes[0];
+          console.log(`♻️ [SAVE-ROUTES] Atualizando rota planejada existente: ${routeToUpdate.id} (${routeToUpdate.routeName})`);
+          
+          // Deletar paradas antigas
+          await db.delete(deliveryRouteStops)
+            .where(eq(deliveryRouteStops.routeId, routeToUpdate.id));
+          console.log(`🗑️ [SAVE-ROUTES] Paradas antigas removidas`);
+          
+          // Preparar dados das paradas novas
+          const stopsData = stops.map((stop: any, index: number) => ({
+            routeId: routeToUpdate.id,
+            salesCardId: stop.salesCardId,
+            billingId: stop.billingId || null,
+            customerId: stop.customerId,
+            customerName: stop.customerName,
+            customerAddress: stop.customerAddress,
+            customerLatitude: parseFloat(stop.latitude) || 0,
+            customerLongitude: parseFloat(stop.longitude) || 0,
+            stopOrder: index + 1,
+            estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
+            estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
+            estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
+            distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
+            isPriority: stop.isUrgent || false,
+            status: 'pendente'
+          }));
+          
+          // Inserir paradas novas
+          savedStops = await db.insert(deliveryRouteStops).values(stopsData).returning();
+          
+          // Atualizar apenas dados da rota
+          const [updatedRoute] = await db.update(deliveryRoutes)
+            .set({
+              totalDistance: parseFloat(route.totalDistance) || 0,
+              totalDeliveries: stops.length,
+              totalDuration: parseInt(route.totalDuration) || 0,
+              updatedAt: new Date()
+            })
+            .where(eq(deliveryRoutes.id, routeToUpdate.id))
+            .returning();
+          
+          savedRoute = updatedRoute;
+          console.log(`✅ [SAVE-ROUTES] Rota ${routeToUpdate.routeName} atualizada com ${savedStops.length} paradas`);
+        } else {
+          // ✅ CRIAR nova rota (primeira vez)
+          const routeNumber = 1;
+          const routeName = `ROTA-${dateStr}-${driverName}-${routeNumber}`;
+          
+          console.log(`🆕 [SAVE-ROUTES] Criando nova rota: ${routeName}`);
+          
+          const routeData = {
+            routeName,
+            routeDate: dateStr,
+            driverId: route.driverId,
+            driverName: route.driverName,
+            vehicleType: route.vehicleType,
+            startLatitude: parseFloat(route.startLatitude) || 0,
+            startLongitude: parseFloat(route.startLongitude) || 0,
+            totalDistance: parseFloat(route.totalDistance) || 0,
+            totalDeliveries: stops.length,
+            totalDuration: parseInt(route.totalDuration) || 0,
+            timeWindowStart: route.timeWindowStart || '08:00',
+            timeWindowEnd: route.timeWindowEnd || '18:00',
+            status: 'planejada'
+          };
 
-        // Preparar dados da rota (usar Date parseado)
-        const routeData = {
-          routeName,
-          routeDate: routeDate,
-          driverId: route.driverId,
-          driverName: route.driverName,
-          vehicleType: route.vehicleType,
-          startLatitude: parseFloat(route.startLatitude) || 0,
-          startLongitude: parseFloat(route.startLongitude) || 0,
-          totalDistance: parseFloat(route.totalDistance) || 0,
-          totalDeliveries: stops.length,
-          totalDuration: parseInt(route.totalDuration) || 0,
-          timeWindowStart: route.timeWindowStart || '08:00',
-          timeWindowEnd: route.timeWindowEnd || '18:00',
-          status: 'planejada'
-        };
+          const stopsData = stops.map((stop: any, index: number) => ({
+            salesCardId: stop.salesCardId,
+            billingId: stop.billingId || null,
+            customerId: stop.customerId,
+            customerName: stop.customerName,
+            customerAddress: stop.customerAddress,
+            customerLatitude: parseFloat(stop.latitude) || 0,
+            customerLongitude: parseFloat(stop.longitude) || 0,
+            stopOrder: index + 1,
+            estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
+            estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
+            estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
+            distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
+            isPriority: stop.isUrgent || false,
+            status: 'pendente'
+          }));
 
-        // Preparar dados das paradas (converter números corretamente)
-        const stopsData = stops.map((stop: any, index: number) => ({
-          salesCardId: stop.salesCardId,
-          billingId: stop.billingId || null,
-          customerId: stop.customerId,
-          customerName: stop.customerName,
-          customerAddress: stop.customerAddress,
-          customerLatitude: parseFloat(stop.latitude) || 0,
-          customerLongitude: parseFloat(stop.longitude) || 0,
-          stopOrder: index + 1,
-          estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
-          estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
-          estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
-          distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
-          isPriority: stop.isUrgent || false,
-          status: 'pending'
-        }));
-
-        // Salvar rota e paradas (usa transação internamente)
-        const { route: savedRoute, stops: savedStops } = await storage.saveRouteWithStops(routeData, stopsData);
+          const result = await storage.saveRouteWithStops(routeData, stopsData);
+          savedRoute = result.route;
+          savedStops = result.stops;
+          console.log(`✅ [SAVE-ROUTES] Rota ${routeName} criada com ${savedStops.length} paradas`);
+        }
         
         savedRoutes.push({
           ...savedRoute,
@@ -9321,8 +9378,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .filter((id: any) => id);
         
         allBillingIds.push(...billingIds);
-
-        console.log(`✅ [SAVE-ROUTES] Rota ${routeName} salva com ${savedStops.length} paradas`);
       }
 
       // Atualizar status dos billings para "Em Rota"
