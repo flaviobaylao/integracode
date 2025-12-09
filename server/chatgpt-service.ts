@@ -298,3 +298,310 @@ export class ChatGPTService {
 
 // Export singleton instance
 export const chatGPTService = new ChatGPTService();
+
+// ============================================================================
+// FUNÇÕES AUXILIARES PARA ATENDIMENTO AUTOMÁTICO
+// ============================================================================
+
+import pLimit from "p-limit";
+import pRetry from "p-retry";
+import { ChatAiSettings, BusinessHoursConfig } from "@shared/schema";
+
+// Rate limiter para evitar exceder limites da API
+const limit = pLimit(2);
+
+// Helper para verificar se é erro de rate limit
+function isRateLimitError(error: any): boolean {
+  const errorMsg = error?.message || String(error);
+  return (
+    errorMsg.includes("429") ||
+    errorMsg.includes("RATELIMIT_EXCEEDED") ||
+    errorMsg.toLowerCase().includes("quota") ||
+    errorMsg.toLowerCase().includes("rate limit")
+  );
+}
+
+// Interface para resposta estruturada do ChatGPT para atendimento automático
+export interface AutoChatResponse {
+  reply: string;
+  shouldTransfer: boolean;
+  transferReason?: string;
+}
+
+// Interface para contexto da conversa
+export interface ConversationContext {
+  customerName: string;
+  customerPhone: string;
+  recentMessages: Array<{
+    role: 'customer' | 'agent' | 'bot';
+    content: string;
+    timestamp: Date;
+  }>;
+  conversationId: string;
+}
+
+// Prompt padrão do sistema para atendimento automático
+const DEFAULT_SYSTEM_PROMPT = `Você é um assistente virtual da empresa Honest Sucos, especializada em sucos naturais e bebidas saudáveis.
+
+Seu objetivo é:
+1. Responder dúvidas sobre produtos, preços e entregas
+2. Auxiliar clientes com pedidos e informações
+3. Ser cordial, profissional e objetivo
+4. Identificar quando o cliente precisa falar com um atendente humano
+
+Regras importantes:
+- NUNCA invente informações sobre preços ou produtos específicos
+- Se não souber algo, diga que vai verificar com a equipe
+- Se o cliente pedir para falar com humano, atendente, gerente ou vendedor, SEMPRE transfira
+- Se detectar reclamação grave, problema financeiro ou situação complexa, transfira para humano
+- Mantenha respostas curtas e objetivas (máximo 3 parágrafos)
+- Use linguagem informal mas profissional
+
+Palavras-chave para transferir para humano:
+- "falar com atendente", "humano", "pessoa", "gerente", "vendedor"
+- "reclamação", "problema", "cancelar", "reembolso"
+- Assuntos financeiros complexos ou dívidas`;
+
+const DEFAULT_COMPANY_CONTEXT = `A Honest Sucos é uma empresa de sucos naturais localizada em Goiânia-GO.
+Horário de funcionamento: Segunda a Sexta das 8h às 18h, Sábado das 8h às 12h.
+Oferecemos entregas em toda região metropolitana.
+Principais produtos: sucos naturais, polpas de frutas, açaí, smoothies.`;
+
+// Gerar resposta automática usando configurações
+export async function generateAutoResponse(
+  context: ConversationContext,
+  settings: ChatAiSettings
+): Promise<{ response: AutoChatResponse; tokensUsed: number; responseTimeMs: number }> {
+  const startTime = Date.now();
+
+  const systemPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const companyContext = settings.companyContext || DEFAULT_COMPANY_CONTEXT;
+  const model = settings.gptModel || "gpt-4o-mini";
+
+  // Construir histórico de mensagens para contexto
+  const messageHistory = context.recentMessages.slice(-10).map(msg => ({
+    role: msg.role === 'customer' ? 'user' as const : 'assistant' as const,
+    content: msg.content
+  }));
+
+  // Verificar se deve transferir baseado em palavras-chave
+  const lastCustomerMessage = context.recentMessages
+    .filter(m => m.role === 'customer')
+    .pop()?.content || '';
+  
+  const handoffKeywords = settings.handoffKeywords || [
+    'atendente', 'humano', 'pessoa', 'gerente', 'vendedor',
+    'reclamação', 'problema grave', 'cancelar pedido', 'reembolso'
+  ];
+  
+  const shouldTransferByKeyword = handoffKeywords.some(keyword => 
+    lastCustomerMessage.toLowerCase().includes(keyword.toLowerCase())
+  );
+
+  if (shouldTransferByKeyword) {
+    return {
+      response: {
+        reply: "Entendo! Vou transferir você para um de nossos atendentes humanos que poderá ajudá-lo melhor. Aguarde um momento, por favor.",
+        shouldTransfer: true,
+        transferReason: "Cliente solicitou atendimento humano ou mencionou palavra-chave de escalonamento"
+      },
+      tokensUsed: 0,
+      responseTimeMs: Date.now() - startTime
+    };
+  }
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  try {
+    const result = await limit(() =>
+      pRetry(
+        async () => {
+          const response = await openai.chat.completions.create({
+            model,
+            messages: [
+              {
+                role: "system",
+                content: `${systemPrompt}
+
+CONTEXTO DA EMPRESA:
+${companyContext}
+
+INFORMAÇÕES DO CLIENTE:
+- Nome: ${context.customerName}
+- Telefone: ${context.customerPhone}
+
+INSTRUÇÕES DE RESPOSTA:
+Responda em JSON com o seguinte formato:
+{
+  "reply": "sua resposta ao cliente",
+  "shouldTransfer": false,
+  "transferReason": null
+}
+
+Se precisar transferir para humano, use:
+{
+  "reply": "mensagem de despedida antes da transferência",
+  "shouldTransfer": true,
+  "transferReason": "motivo da transferência"
+}`
+              },
+              ...messageHistory
+            ],
+            response_format: { type: "json_object" },
+            max_tokens: 500,
+            temperature: 0.7,
+          });
+
+          const content = response.choices[0]?.message?.content || '{}';
+          const parsed = JSON.parse(content) as AutoChatResponse;
+          
+          return {
+            response: {
+              reply: parsed.reply || "Desculpe, não consegui processar sua mensagem. Posso ajudar com algo mais?",
+              shouldTransfer: parsed.shouldTransfer || false,
+              transferReason: parsed.transferReason
+            },
+            tokensUsed: response.usage?.total_tokens || 0
+          };
+        },
+        {
+          retries: 3,
+          minTimeout: 1000,
+          maxTimeout: 10000,
+          factor: 2,
+          onFailedAttempt: (error) => {
+            if (!isRateLimitError(error)) {
+              throw new pRetry.AbortError(error as Error);
+            }
+            console.log(`🔄 [CHATGPT-AUTO] Retry attempt ${error.attemptNumber} devido a rate limit`);
+          }
+        }
+      )
+    );
+
+    return {
+      ...result,
+      responseTimeMs: Date.now() - startTime
+    };
+  } catch (error: any) {
+    console.error('❌ [CHATGPT-AUTO] Erro ao gerar resposta:', error.message);
+    
+    // Retornar resposta de fallback em caso de erro
+    return {
+      response: {
+        reply: "Desculpe, estou com dificuldades técnicas no momento. Um atendente humano irá ajudá-lo em breve.",
+        shouldTransfer: true,
+        transferReason: `Erro técnico: ${error.message}`
+      },
+      tokensUsed: 0,
+      responseTimeMs: Date.now() - startTime
+    };
+  }
+}
+
+// Verificar se ChatGPT deve responder baseado nas configurações
+export function shouldAutoRespond(
+  settings: ChatAiSettings,
+  hasHumanAgent: boolean,
+  lastHumanResponseTime: Date | null,
+  currentTime: Date = new Date()
+): { shouldRespond: boolean; reason: string } {
+  if (!settings.isEnabled) {
+    return { shouldRespond: false, reason: "ChatGPT está desabilitado" };
+  }
+
+  switch (settings.mode) {
+    case "disabled":
+      return { shouldRespond: false, reason: "Modo desabilitado" };
+
+    case "manual":
+      // Sempre responde quando habilitado manualmente
+      return { shouldRespond: true, reason: "Modo manual ativo" };
+
+    case "schedule":
+      // Verificar se está dentro do horário configurado
+      const isInSchedule = isWithinBusinessHours(settings.businessHours, currentTime);
+      return { 
+        shouldRespond: isInSchedule, 
+        reason: isInSchedule ? "Dentro do horário configurado" : "Fora do horário configurado"
+      };
+
+    case "timeout":
+      // Verificar se passou o tempo de timeout sem resposta humana
+      if (!lastHumanResponseTime) {
+        // Se nunca houve resposta humana, assumir conversa
+        return { shouldRespond: true, reason: "Sem resposta humana, assumindo conversa" };
+      }
+      
+      const timeoutMs = (settings.timeoutMinutes || 5) * 60 * 1000;
+      const timeSinceLastResponse = currentTime.getTime() - lastHumanResponseTime.getTime();
+      
+      if (timeSinceLastResponse >= timeoutMs) {
+        return { shouldRespond: true, reason: `Timeout de ${settings.timeoutMinutes} minutos atingido` };
+      }
+      
+      return { shouldRespond: false, reason: "Aguardando resposta humana (timeout não atingido)" };
+
+    default:
+      return { shouldRespond: false, reason: "Modo desconhecido" };
+  }
+}
+
+// Verificar se está dentro do horário de atendimento configurado
+function isWithinBusinessHours(
+  businessHours: any,
+  currentTime: Date = new Date()
+): boolean {
+  if (!businessHours) return false;
+
+  try {
+    const config = typeof businessHours === 'string' 
+      ? JSON.parse(businessHours) 
+      : businessHours;
+
+    if (!config.weekdays || !config.startTime || !config.endTime) {
+      return false;
+    }
+
+    // Mapear dia da semana para código
+    const dayMap: Record<number, string> = {
+      0: 'Dom', 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sab'
+    };
+    
+    const currentDay = dayMap[currentTime.getDay()];
+    
+    // Verificar se é um dia configurado
+    if (!config.weekdays.includes(currentDay)) {
+      return false;
+    }
+
+    // Verificar horário
+    const currentHour = currentTime.getHours();
+    const currentMinute = currentTime.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+
+    const [startHour, startMin] = config.startTime.split(':').map(Number);
+    const [endHour, endMin] = config.endTime.split(':').map(Number);
+    
+    const startTimeMinutes = startHour * 60 + startMin;
+    const endTimeMinutes = endHour * 60 + endMin;
+
+    // Se horário de fim é menor que início, significa que cruza a meia-noite
+    if (endTimeMinutes < startTimeMinutes) {
+      // Ex: 18:00 às 08:00 - ativo das 18h até meia-noite E de meia-noite até 8h
+      return currentTimeMinutes >= startTimeMinutes || currentTimeMinutes < endTimeMinutes;
+    } else {
+      return currentTimeMinutes >= startTimeMinutes && currentTimeMinutes < endTimeMinutes;
+    }
+  } catch (error) {
+    console.error('❌ [CHATGPT-AUTO] Erro ao verificar horário:', error);
+    return false;
+  }
+}
+
+// Verificar se OpenAI está configurada
+export function isOpenAIConfigured(): boolean {
+  return !!process.env.OPENAI_API_KEY;
+}
+
+console.log(`✅ [CHATGPT] Serviço inicializado | OpenAI configurada: ${isOpenAIConfigured()}`);

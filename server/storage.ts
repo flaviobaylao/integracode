@@ -39,6 +39,8 @@ import {
   activeCustomers,
   activeCustomerUploads,
   phoneNumberMappings,
+  chatAiSettings,
+  chatAiLogs,
   type User,
   type UpsertUser,
   type Route,
@@ -103,6 +105,10 @@ import {
   type ActiveCustomerUpload,
   type InsertActiveCustomerUpload,
   type ActiveCustomerWithVisits,
+  type ChatAiSettings,
+  type InsertChatAiSettings,
+  type ChatAiLog,
+  type InsertChatAiLog,
   insertSystemSettingSchema,
 } from "@shared/schema";
 import { db } from "./db";
@@ -6680,6 +6686,108 @@ export class DatabaseStorage implements IStorage {
         eq(activeCustomers.isActive, true)
       ));
     return !!ac;
+  }
+
+  // ============================================================================
+  // CHATGPT ATENDIMENTO AUTOMÁTICO - STORAGE
+  // ============================================================================
+
+  async getChatAiSettings(): Promise<ChatAiSettings | null> {
+    const [settings] = await db.select().from(chatAiSettings).limit(1);
+    return settings || null;
+  }
+
+  async upsertChatAiSettings(data: InsertChatAiSettings): Promise<ChatAiSettings> {
+    const existing = await this.getChatAiSettings();
+    
+    if (existing) {
+      const [updated] = await db
+        .update(chatAiSettings)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(chatAiSettings.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db
+        .insert(chatAiSettings)
+        .values(data)
+        .returning();
+      return created;
+    }
+  }
+
+  async createChatAiLog(logData: InsertChatAiLog): Promise<ChatAiLog> {
+    const [log] = await db
+      .insert(chatAiLogs)
+      .values(logData)
+      .returning();
+    return log;
+  }
+
+  async getChatAiLogs(conversationId?: string, limit: number = 50): Promise<ChatAiLog[]> {
+    if (conversationId) {
+      return await db
+        .select()
+        .from(chatAiLogs)
+        .where(eq(chatAiLogs.conversationId, conversationId))
+        .orderBy(desc(chatAiLogs.createdAt))
+        .limit(limit);
+    }
+    return await db
+      .select()
+      .from(chatAiLogs)
+      .orderBy(desc(chatAiLogs.createdAt))
+      .limit(limit);
+  }
+
+  async getConversationsAwaitingResponse(timeoutMinutes: number): Promise<ChatConversation[]> {
+    const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+    
+    const conversations = await db
+      .select()
+      .from(chatConversations)
+      .where(
+        and(
+          sql`${chatConversations.status} IN ('new', 'assigned', 'in-progress')`,
+          sql`${chatConversations.lastMessageTime} < ${cutoffTime}`
+        )
+      );
+    
+    return conversations;
+  }
+
+  async getLastHumanResponseTime(conversationId: string): Promise<Date | null> {
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.senderType, 'agent'),
+          sql`${chatMessages.senderId} != 'system'`,
+          sql`${chatMessages.senderId} != 'bot'`
+        )
+      )
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(1);
+    
+    return messages[0]?.createdAt || null;
+  }
+
+  async getLastBotResponseTime(conversationId: string): Promise<Date | null> {
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.conversationId, conversationId),
+          sql`${chatMessages.senderId} = 'bot'`
+        )
+      )
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(1);
+    
+    return messages[0]?.createdAt || null;
   }
 }
 

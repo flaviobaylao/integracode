@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
+import { db } from "./db";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -13,6 +14,7 @@ import {
   insertChatOrderSchema,
   insertChatDeliverySchema,
   insertWhatsappConversationAnalysisSchema,
+  phoneNumberMappings,
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -2616,5 +2618,150 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ============================================================================
+  // CHATGPT AUTO-ATTENDANCE SETTINGS ROUTES
+  // ============================================================================
+
+  // GET /api/chat/ai-settings - Obter configurações do ChatGPT automático
+  app.get("/api/chat/ai-settings", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const settings = await storage.getChatAiSettings();
+      res.json({ success: true, settings: settings || getDefaultAiSettings() });
+    } catch (error: any) {
+      console.error("[AI-SETTINGS] Erro ao obter configurações:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // PUT /api/chat/ai-settings - Atualizar configurações do ChatGPT automático
+  app.put("/api/chat/ai-settings", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const { isEnabled, mode, businessHours, timeoutMinutes, maxTurnsBeforeEscalation, 
+              handoffKeywords, systemPrompt, companyContext, gptModel } = req.body;
+      
+      const settings = await storage.upsertChatAiSettings({
+        isEnabled: isEnabled ?? false,
+        mode: mode || 'disabled',
+        businessHours: businessHours || null,
+        timeoutMinutes: timeoutMinutes ?? 5,
+        maxTurnsBeforeEscalation: maxTurnsBeforeEscalation ?? 10,
+        handoffKeywords: handoffKeywords || [],
+        systemPrompt: systemPrompt || null,
+        companyContext: companyContext || null,
+        gptModel: gptModel || 'gpt-4o-mini',
+        updatedBy: userId
+      });
+      
+      console.log(`✅ [AI-SETTINGS] Configurações atualizadas por usuário ${userId}:`, 
+                  { isEnabled, mode, timeoutMinutes });
+      
+      res.json({ success: true, settings });
+    } catch (error: any) {
+      console.error("[AI-SETTINGS] Erro ao atualizar configurações:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // POST /api/chat/ai-settings/toggle - Alternar estado ligado/desligado
+  app.post("/api/chat/ai-settings/toggle", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const currentSettings = await storage.getChatAiSettings();
+      const newEnabled = !(currentSettings?.isEnabled ?? false);
+      
+      const settings = await storage.upsertChatAiSettings({
+        ...currentSettings,
+        isEnabled: newEnabled,
+        updatedBy: userId
+      } as any);
+      
+      console.log(`✅ [AI-SETTINGS] ChatGPT ${newEnabled ? 'ATIVADO' : 'DESATIVADO'} por usuário ${userId}`);
+      res.json({ success: true, settings, enabled: newEnabled });
+    } catch (error: any) {
+      console.error("[AI-SETTINGS] Erro ao alternar:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // GET /api/chat/ai-logs - Obter logs de atendimento automático
+  app.get("/api/chat/ai-logs", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const { conversationId, limit } = req.query;
+      const logs = await storage.getChatAiLogs(
+        conversationId as string | undefined,
+        Math.min(parseInt(limit as string) || 50, 500)
+      );
+      res.json({ success: true, logs });
+    } catch (error: any) {
+      console.error("[AI-LOGS] Erro ao obter logs:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // POST /api/chat/test-ai-response - Testar resposta do ChatGPT
+  app.post("/api/chat/test-ai-response", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const { message, customerName, customerPhone } = req.body;
+      
+      if (!message) {
+        return res.status(400).json({ error: "Mensagem é obrigatória" });
+      }
+      
+      const settings = await storage.getChatAiSettings();
+      if (!settings) {
+        return res.status(400).json({ error: "Configurações de IA não encontradas" });
+      }
+      
+      const { generateAutoResponse } = await import("./chatgpt-service");
+      
+      const result = await generateAutoResponse({
+        customerName: customerName || "Cliente Teste",
+        customerPhone: customerPhone || "5562999999999",
+        conversationId: "test-" + Date.now(),
+        recentMessages: [{
+          role: 'customer',
+          content: message,
+          timestamp: new Date()
+        }]
+      }, settings);
+      
+      res.json({ 
+        success: true, 
+        response: result.response.reply,
+        shouldTransfer: result.response.shouldTransfer,
+        transferReason: result.response.transferReason,
+        tokensUsed: result.tokensUsed,
+        responseTimeMs: result.responseTimeMs
+      });
+    } catch (error: any) {
+      console.error("[AI-TEST] Erro ao testar resposta:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
+}
+
+// Helper para configurações padrão
+function getDefaultAiSettings() {
+  return {
+    id: null,
+    isEnabled: false,
+    mode: 'disabled' as const,
+    businessHours: {
+      weekdays: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'],
+      startTime: '08:00',
+      endTime: '18:00'
+    },
+    timeoutMinutes: 5,
+    maxTurnsBeforeEscalation: 10,
+    handoffKeywords: ['atendente', 'humano', 'gerente', 'vendedor', 'reclamação'],
+    systemPrompt: null,
+    companyContext: null,
+    gptModel: 'gpt-4o-mini',
+    createdAt: null,
+    updatedAt: null,
+    updatedBy: null
+  };
 }

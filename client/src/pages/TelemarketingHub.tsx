@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { MessageCircle, BarChart3, Settings, FileText } from "lucide-react";
+import { MessageCircle, BarChart3, Settings, FileText, Bot } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function TelemarketingHub() {
@@ -37,6 +37,14 @@ export default function TelemarketingHub() {
       href: "/telemarketing/analysis",
       color: "bg-orange-100 text-orange-700",
       testid: "card-analysis"
+    },
+    {
+      icon: Bot,
+      title: "Configurações do ChatGPT",
+      description: "Configure atendimento automático por IA",
+      href: "/telemarketing/ai-settings",
+      color: "bg-cyan-100 text-cyan-700",
+      testid: "card-ai-settings"
     }
   ];
 

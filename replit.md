@@ -64,6 +64,16 @@
   - Example: 5504884295924 can be mapped to 5562949981841 to consolidate conversations from the same contact using different phone numbers
 - **Automatic Data Backup**: Complete backup system protecting all order data with daily scheduled backups and manual trigger options. Stores historical snapshots in an `orders_backup` table.
 - **Sales Card Duplication**: Fixed endpoint to return duplicated card with all relations loaded (customer, seller) for immediate editing
+- **ChatGPT Auto-Attendance**: Configurable AI-powered automatic customer service system:
+  - Accessible at `/telemarketing/ai-settings`
+  - **Four operating modes**: disabled, manual (always active), schedule (outside business hours), timeout (after X minutes without human response)
+  - **Business hours configuration**: Define days and hours when human agents are available
+  - **Handoff keywords**: Automatic transfer to human when customer mentions specific words
+  - **Customizable prompts**: System prompt and company context for AI behavior
+  - **Model selection**: Choose between GPT-4o-mini, GPT-4o, or GPT-4 Turbo
+  - **Test interface**: Test AI responses before enabling
+  - **Audit logging**: Track all AI interactions in `chat_ai_logs` table
+  - **Settings stored in**: `chat_ai_settings` table
 
 # External Dependencies
 

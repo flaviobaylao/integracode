@@ -2036,3 +2036,103 @@ export interface ActiveCustomerWithVisits extends ActiveCustomer {
   nextThreeVisits: Array<{ date: string; status: string }>;
 }
 
+// ============================================================================
+// CHATGPT ATENDIMENTO AUTOMÁTICO - CONFIGURAÇÕES
+// ============================================================================
+
+// Enum para modo de ativação do ChatGPT
+export const chatGptModeEnum = pgEnum("chat_gpt_mode", [
+  "disabled",      // Desabilitado
+  "manual",        // Habilitado manualmente (sempre ativo quando ligado)
+  "schedule",      // Ativo apenas em horários configurados
+  "timeout"        // Assume após timeout sem resposta de atendente
+]);
+
+// Tabela de configurações do atendimento ChatGPT
+export const chatAiSettings = pgTable("chat_ai_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Configuração principal de ativação
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  mode: chatGptModeEnum("mode").notNull().default("disabled"),
+  
+  // Configuração de horário (para mode = "schedule")
+  // Formato: { "weekdays": ["Seg", "Ter", ...], "startTime": "18:00", "endTime": "08:00" }
+  businessHours: jsonb("business_hours"),
+  
+  // Configuração de timeout (para mode = "timeout")
+  timeoutMinutes: integer("timeout_minutes").notNull().default(5),
+  
+  // Limites de interação
+  maxTurnsBeforeEscalation: integer("max_turns_before_escalation").notNull().default(10),
+  
+  // Palavras-chave que forçam transferência para humano
+  handoffKeywords: text("handoff_keywords").array(),
+  
+  // Prompt do sistema para o ChatGPT
+  systemPrompt: text("system_prompt"),
+  
+  // Contexto da empresa para incluir no prompt
+  companyContext: text("company_context"),
+  
+  // Modelo GPT a usar
+  gptModel: varchar("gpt_model").notNull().default("gpt-4o-mini"),
+  
+  // Metadados
+  updatedBy: varchar("updated_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Schema e types para ChatAI Settings
+export const insertChatAiSettingsSchema = createInsertSchema(chatAiSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ChatAiSettings = typeof chatAiSettings.$inferSelect;
+export type InsertChatAiSettings = z.infer<typeof insertChatAiSettingsSchema>;
+
+// Interface para horário de funcionamento
+export interface BusinessHoursConfig {
+  weekdays: WeekdayCode[];
+  startTime: string; // Formato "HH:MM"
+  endTime: string;   // Formato "HH:MM"
+}
+
+// Tabela de log de interações do ChatGPT
+export const chatAiLogs = pgTable("chat_ai_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  messageId: varchar("message_id"), // Mensagem do cliente que gerou a resposta
+  responseMessageId: varchar("response_message_id"), // Mensagem de resposta do bot
+  
+  // Dados da interação
+  customerMessage: text("customer_message"),
+  botResponse: text("bot_response"),
+  shouldTransfer: boolean("should_transfer").notNull().default(false),
+  transferReason: text("transfer_reason"),
+  
+  // Métricas
+  tokensUsed: integer("tokens_used"),
+  responseTimeMs: integer("response_time_ms"),
+  
+  // Status
+  status: varchar("status").notNull().default("success"), // success, error, escalated
+  errorMessage: text("error_message"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_chat_ai_logs_conversation").on(table.conversationId),
+  index("idx_chat_ai_logs_created").on(table.createdAt),
+]);
+
+export const insertChatAiLogSchema = createInsertSchema(chatAiLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ChatAiLog = typeof chatAiLogs.$inferSelect;
+export type InsertChatAiLog = z.infer<typeof insertChatAiLogSchema>;
+

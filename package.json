@@ -79,6 +79,8 @@
     "node-telegram-bot-api": "^0.66.0",
     "openai": "^6.9.0",
     "openid-client": "^6.6.4",
+    "p-limit": "^7.2.0",
+    "p-retry": "^7.1.0",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "qrcode": "^1.5.4",
