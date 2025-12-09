@@ -17155,8 +17155,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar lead
       const lead = await storage.getLead(id);
       if (!lead) {
-        console.log(`❌ Lead ${id} não encontrado`);
-        return res.status(404).json({ message: 'Lead não encontrado' });
+        console.log(`❌ Lead ${id} não encontrado na tabela leads`);
+        return res.status(404).json({ 
+          message: 'Lead não encontrado. Este registro pode ter sido removido ou não é um lead válido.',
+          leadId: id
+        });
       }
       
       console.log(`✅ Lead encontrado: ${lead.fantasyName}, assignedTo: ${lead.assignedTo}, user.id: ${user.id}`);
