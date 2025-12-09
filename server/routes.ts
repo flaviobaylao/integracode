@@ -9203,12 +9203,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log(`💾 [SAVE-ROUTES] Salvando ${routes.length} rotas planejadas`);
+      console.log(`💾 [SAVE-ROUTES] Primeira rota routeDate recebido:`, routes[0]?.route?.routeDate);
 
       // Validar todos os driverIds ANTES do loop
       for (const routePlan of routes) {
         if (!routePlan.route?.driverId || routePlan.route.driverId.trim() === '') {
           console.error('❌ [SAVE-ROUTES] driverId é obrigatório para todas as rotas');
           return res.status(400).json({ message: "Driver ID is required for all routes" });
+        }
+        
+        if (!routePlan.route?.routeDate) {
+          console.error('❌ [SAVE-ROUTES] routeDate é obrigatório:', routePlan.route?.routeDate);
+          return res.status(400).json({ message: "Route date is required for all routes" });
         }
         
         // Validar campos numéricos obrigatórios
@@ -9245,9 +9251,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { route, stops } = routePlan;
 
         // Gerar nome da rota: ROTA-DATA-ENTREGADOR-NUMERO
-        const routeDate = new Date(route.routeDate);
+        // Converter routeDate para Date se for string
+        let routeDate: Date;
+        if (typeof route.routeDate === 'string') {
+          routeDate = new Date(route.routeDate + 'T00:00:00Z');
+        } else {
+          routeDate = new Date(route.routeDate);
+        }
+        
         const dateStr = routeDate.toISOString().split('T')[0]; // YYYY-MM-DD
         const driverName = route.driverName.toUpperCase().replace(/\s+/g, '-');
+        
+        console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}, routeDate original: ${route.routeDate}`);
         
         // Contar quantas rotas o motorista já tem nesta data
         const existingCount = await storage.countRoutesForDriverOnDate(route.driverId, routeDate);
@@ -9257,7 +9272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`📝 [SAVE-ROUTES] Gerando rota: ${routeName}`);
 
-        // Preparar dados da rota (converter números corretamente)
+        // Preparar dados da rota (usar Date parseado)
         const routeData = {
           routeName,
           routeDate: routeDate,
