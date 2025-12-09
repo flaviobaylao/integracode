@@ -9204,6 +9204,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`💾 [SAVE-ROUTES] Salvando ${routes.length} rotas planejadas`);
       console.log(`💾 [SAVE-ROUTES] Primeira rota routeDate recebido:`, routes[0]?.route?.routeDate);
+      console.log(`💾 [SAVE-ROUTES] Tipo do routeDate:`, typeof routes[0]?.route?.routeDate);
+      console.log(`💾 [SAVE-ROUTES] Request body completo:`, JSON.stringify(routes[0]?.route, null, 2));
 
       // Validar todos os driverIds ANTES do loop
       for (const routePlan of routes) {
@@ -9250,18 +9252,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const routePlan of routes) {
         const { route, stops } = routePlan;
 
-        // Converter routeDate para Date se for string
-        let routeDate: Date;
+        // Garantir que routeDate é sempre uma string YYYY-MM-DD
+        let dateStr: string;
         if (typeof route.routeDate === 'string') {
-          routeDate = new Date(route.routeDate + 'T00:00:00Z');
+          dateStr = route.routeDate;
+          // Validar formato YYYY-MM-DD
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            console.error(`❌ [SAVE-ROUTES] Formato de data inválido: ${dateStr}`);
+            const d = new Date(route.routeDate);
+            dateStr = d.toISOString().split('T')[0];
+          }
+        } else if (route.routeDate instanceof Date) {
+          dateStr = route.routeDate.toISOString().split('T')[0];
         } else {
-          routeDate = new Date(route.routeDate);
+          const d = new Date(route.routeDate);
+          dateStr = d.toISOString().split('T')[0];
         }
         
-        const dateStr = routeDate.toISOString().split('T')[0]; // YYYY-MM-DD
         const driverName = route.driverName.toUpperCase().replace(/\s+/g, '-');
         
-        console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}`);
+        console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}, data bruta: ${route.routeDate}`);
         
         // ✅ NOVO: Buscar rotas planejadas existentes para este motorista nesta data (comparação de string)
         const existingPlannedRoutes = await db.select().from(deliveryRoutes)
@@ -9314,6 +9324,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalDistance: parseFloat(route.totalDistance) || 0,
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
+              status: 'rota salva', // Mudado para 'rota salva'
               updatedAt: new Date()
             })
             .where(eq(deliveryRoutes.id, routeToUpdate.id))
@@ -9330,7 +9341,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const routeData = {
             routeName,
-            routeDate: dateStr,
+            routeDate: dateStr, // String YYYY-MM-DD
             driverId: route.driverId,
             driverName: route.driverName,
             vehicleType: route.vehicleType,
@@ -9341,7 +9352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalDuration: parseInt(route.totalDuration) || 0,
             timeWindowStart: route.timeWindowStart || '08:00',
             timeWindowEnd: route.timeWindowEnd || '18:00',
-            status: 'planejada'
+            status: 'rota salva' // Mudado para 'rota salva'
           };
 
           const stopsData = stops.map((stop: any, index: number) => ({
@@ -9385,6 +9396,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateBillingsStatus(allBillingIds, 'Em Rota');
         console.log(`📦 [SAVE-ROUTES] ${allBillingIds.length} billings atualizados para "Em Rota"`);
       }
+
+      console.log(`✅ [SAVE-ROUTES] ${savedRoutes.length} rotas salvas com sucesso`);
+      console.log(`✅ [SAVE-ROUTES] Rotas salvas:`, savedRoutes.map(r => ({ id: r.id, nome: r.routeName, data: r.routeDate, status: r.status })));
 
       res.json({
         success: true,
@@ -9499,6 +9513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .orderBy(asc(deliveryRoutes.createdAt));
       
       console.log(`📦 [DRIVER-ROUTES] Rotas encontradas: ${routes.length}`);
+      console.log(`📦 [DRIVER-ROUTES] Query: driverId=${userId}, routeDate::text=${targetDateStr}`);
       
       // Para cada rota, buscar as paradas
       const routesWithStops = await Promise.all(

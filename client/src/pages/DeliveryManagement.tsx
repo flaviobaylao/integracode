@@ -1565,6 +1565,14 @@ export default function DeliveryManagement() {
                     }
 
                     console.log('🔍 [SAVE-ROUTES-FRONTEND] Rotas selecionadas:', Array.from(selectedRoutesToSave));
+                    console.log('🔍 [SAVE-ROUTES-FRONTEND] pendingRouteConfig:', pendingRouteConfig);
+                    
+                    // Garantir que a data é sempre YYYY-MM-DD
+                    let finalRouteDate = pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0];
+                    if (finalRouteDate instanceof Date) {
+                      finalRouteDate = finalRouteDate.toISOString().split('T')[0];
+                    }
+                    console.log('🔍 [SAVE-ROUTES-FRONTEND] Data final:', finalRouteDate);
                     
                     // Preparar dados apenas das rotas selecionadas
                     const routesToSave = routePlan.routes
@@ -1573,7 +1581,7 @@ export default function DeliveryManagement() {
                         
                         return {
                           route: {
-                            routeDate: pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0],
+                            routeDate: finalRouteDate,
                             driverId: route.driverId || '',
                             driverName: route.driverName || 'Sem motorista',
                             vehicleType: route.vehicleType,
