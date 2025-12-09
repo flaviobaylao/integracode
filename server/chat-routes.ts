@@ -885,11 +885,17 @@ export function registerChatRoutes(app: Express): void {
             // Se ainda não encontrou conversa, criar novo cliente
             if (!matchingConv) {
               const customerName = !isFromMe && pushName ? pushName : `Cliente ${normalizedPhone}`;
-              customer = await storage.createChatCustomer({
-                phone: normalizedPhone,
-                name: customerName
-              });
-              console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
+              console.log(`👤 [WEBHOOK-MIRROR] Criando novo cliente: phone=${normalizedPhone}, name=${customerName}`);
+              try {
+                customer = await storage.createChatCustomer({
+                  phone: normalizedPhone,
+                  name: customerName
+                });
+                console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
+              } catch (createError: any) {
+                console.error(`❌ [WEBHOOK-MIRROR] ERRO ao criar cliente:`, createError.message);
+                throw createError;
+              }
             }
           } else if (!isFromMe && pushName && customer.name?.startsWith('Cliente ')) {
             // Atualizar nome do cliente se recebemos pushName e o nome atual é genérico
@@ -899,15 +905,23 @@ export function registerChatRoutes(app: Express): void {
 
           // Buscar ou criar conversa (com UPSERT para evitar duplicatas)
           if (!matchingConv) {
-            matchingConv = await storage.upsertChatConversation({
-              customerId: customer!.id,
-              customerName: customer!.name || `Cliente ${normalizedPhone}`,
-              customerPhone: normalizedPhone,
-              status: 'new' as const,
-              priority: 'normal' as const
-            });
+            console.log(`💭 [WEBHOOK-MIRROR] Criando conversa para cliente ${customer!.id}...`);
+            try {
+              matchingConv = await storage.upsertChatConversation({
+                customerId: customer!.id,
+                customerName: customer!.name || `Cliente ${normalizedPhone}`,
+                customerPhone: normalizedPhone,
+                status: 'new' as const,
+                priority: 'normal' as const
+              });
+              console.log(`✅ [WEBHOOK-MIRROR] Conversa criada/atualizada: ${matchingConv.id}`);
+            } catch (convError: any) {
+              console.error(`❌ [WEBHOOK-MIRROR] ERRO ao criar/atualizar conversa:`, convError.message);
+              throw convError;
+            }
+          } else {
+            console.log(`✅ [WEBHOOK-MIRROR] Conversa reutilizada: ${matchingConv.id}`);
           }
-          console.log(`✅ [WEBHOOK-MIRROR] Conversa: ${matchingConv.id}`);
 
           // Determinar tipo de mensagem e conteúdo
           let finalContent = messageText || '';
@@ -953,26 +967,33 @@ export function registerChatRoutes(app: Express): void {
             // Salvar mensagem com identificação correta do remetente
             // isFromMe = true: mensagem enviada pelo nosso número (via celular ou sistema)
             // isFromMe = false: mensagem recebida do cliente
-            const message = await storage.createChatMessage({
-              conversationId: matchingConv.id,
-              senderId: isFromMe ? 'system' : customer.id,
-              senderType: isFromMe ? 'agent' : 'customer',
-              content: finalContent,
-              messageType: finalMessageType,
-              mediaUrl: mediaUrl,
-              isRead: isFromMe, // Mensagens enviadas por nós já são "lidas"
-              externalId: messageId // Guardar ID externo para evitar duplicatas
-            });
-            console.log(`💬 [WEBHOOK-MIRROR] Mensagem salva: ${message.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
-            
-            // 🟢 Incrementar contador de unread APENAS para mensagens recebidas
-            if (!isFromMe) {
-              try {
-                await storage.incrementUnreadCount(matchingConv.id);
-                console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${matchingConv.id}`);
-              } catch (err) {
-                console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao incrementar unreadCount:`, err);
+            console.log(`📝 [WEBHOOK-MIRROR] Salvando mensagem: tipo=${finalMessageType}, conteúdo=${finalContent?.substring(0, 50)}`);
+            try {
+              const message = await storage.createChatMessage({
+                conversationId: matchingConv.id,
+                senderId: isFromMe ? 'system' : customer.id,
+                senderType: isFromMe ? 'agent' : 'customer',
+                content: finalContent,
+                messageType: finalMessageType,
+                mediaUrl: mediaUrl,
+                isRead: isFromMe, // Mensagens enviadas por nós já são "lidas"
+                externalId: messageId // Guardar ID externo para evitar duplicatas
+              });
+              console.log(`💬 [WEBHOOK-MIRROR] ✅ Mensagem salva: ${message.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
+              
+              // 🟢 Incrementar contador de unread APENAS para mensagens recebidas
+              if (!isFromMe) {
+                try {
+                  await storage.incrementUnreadCount(matchingConv.id);
+                  console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${matchingConv.id}`);
+                } catch (err) {
+                  console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao incrementar unreadCount:`, err);
+                }
               }
+            } catch (msgError: any) {
+              console.error(`❌ [WEBHOOK-MIRROR] ERRO ao salvar mensagem:`, msgError.message);
+              console.error(`❌ [WEBHOOK-MIRROR] Stack completo:`, msgError.stack);
+              throw msgError;
             }
           }
 
