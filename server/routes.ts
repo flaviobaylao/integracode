@@ -9546,7 +9546,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             eq(deliveryRoutes.driverId, userId),
-            sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`
+            sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`,
+            // Apenas rotas salvas, em andamento ou concluídas (não planejadas ou canceladas)
+            inArray(deliveryRoutes.status, ['rota salva', 'em_andamento', 'concluida'])
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
