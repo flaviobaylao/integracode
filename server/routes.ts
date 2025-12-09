@@ -10184,10 +10184,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(422).json({ message: "Coordenadas GPS ausentes para este cliente" });
       }
 
-      // Usar deliveryRouteService para calcular ETA
-      const { calculateEstimatedTimes } = await import('./deliveryRouteService.js');
-      const times = calculateEstimatedTimes(route.timeWindowStart, billing.averageDeliveryTime);
-
       // Buscar a ordem máxima de parada
       const maxOrderResult = await db.select({ maxOrder: sql`MAX(${deliveryRouteStops.stopOrder})` })
         .from(deliveryRouteStops)
@@ -10195,14 +10191,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const nextOrder = (maxOrderResult[0].maxOrder || 0) + 1;
 
+      // Calcular tempos estimados
+      const [hours, minutes] = route.timeWindowStart.split(':').map(Number);
+      const baseTime = new Date();
+      baseTime.setHours(hours, minutes, 0, 0);
+      
+      // Tempo de chegada = horário base + tempo de viagem (estimado em 15 min entre pontos)
+      const arrivalTime = new Date(baseTime.getTime() + (nextOrder - 1) * 15 * 60000);
+      // Tempo de saída = chegada + tempo de entrega
+      const departureTime = new Date(arrivalTime.getTime() + (billing.averageDeliveryTime || 30) * 60000);
+      
+      // Formatar para HH:mm
+      const formatTime = (date: Date) => {
+        const h = String(date.getHours()).padStart(2, '0');
+        const m = String(date.getMinutes()).padStart(2, '0');
+        return `${h}:${m}`;
+      };
+
       // Adicionar a nova parada
       await db.insert(deliveryRouteStops).values({
         id: nanoid(),
         routeId,
         billingId,
         stopOrder: nextOrder,
-        estimatedArrival: times.arrival,
-        estimatedDeparture: times.departure,
+        estimatedArrival: formatTime(arrivalTime),
+        estimatedDeparture: formatTime(departureTime),
         latitude: String(lat),
         longitude: String(lng),
       });
@@ -10219,8 +10232,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           stopOrder: nextOrder,
           customerName: billing.customerName,
           customerAddress: billing.customerAddress,
-          estimatedArrival: times.arrival,
-          estimatedDeparture: times.departure,
+          estimatedArrival: formatTime(arrivalTime),
+          estimatedDeparture: formatTime(departureTime),
         }
       });
     } catch (error: any) {
