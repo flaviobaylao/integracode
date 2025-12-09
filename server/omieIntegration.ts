@@ -3547,24 +3547,28 @@ export class OmieService {
       }
       
       // CLEANUP: Remover billings em "Aguardando Rota" que não estão mais no Omie
-      console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
-      try {
-        const result = await db.execute(sql`
-          DELETE FROM billings 
-          WHERE invoice_stage = 'Aguardando Rota' 
-            AND invoice_number IS NOT NULL
-            AND NOT (${sql.raw(`invoice_number IN (${Array.from(nfsFromOmie).map(nf => `'${nf}'`).join(',') || "'_NONE_'"})`)})
-          RETURNING invoice_number
-        `);
-        if (result.rows && result.rows.length > 0) {
-          const deletedNFs = result.rows.map(r => (r as any).invoice_number).join(', ');
-          console.log(`🗑️ ${result.rows.length} pedidos removidos de "Aguardando Rota": ${deletedNFs}`);
-        } else {
-          console.log(`✅ Nenhum pedido para remover.`);
-        }
-      } catch (cleanupError) {
-        console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
-      }
+      // ❌ DESABILITADO: Não deletar pedidos em "Aguardando Rota" - deixar para o usuário gerenciar
+      // Se um pedido saiu dessa fase no Omie, ele terá um novo stage
+      // Deletar causa perda de dados na Gestão de Entregas
+      // console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
+      // try {
+      //   const result = await db.execute(sql`
+      //     DELETE FROM billings 
+      //     WHERE invoice_stage = 'Aguardando Rota' 
+      //       AND invoice_number IS NOT NULL
+      //       AND NOT (${sql.raw(`invoice_number IN (${Array.from(nfsFromOmie).map(nf => `'${nf}'`).join(',') || "'_NONE_'"})`)})
+      //     RETURNING invoice_number
+      //   `);
+      //   if (result.rows && result.rows.length > 0) {
+      //     const deletedNFs = result.rows.map(r => (r as any).invoice_number).join(', ');
+      //     console.log(`🗑️ ${result.rows.length} pedidos removidos de "Aguardando Rota": ${deletedNFs}`);
+      //   } else {
+      //     console.log(`✅ Nenhum pedido para remover.`);
+      //   }
+      // } catch (cleanupError) {
+      //   console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
+      // }
+      console.log(`✅ Limpeza desabilitada: Pedidos em "Aguardando Rota" são preservados`);
       
       console.log(`✅ Sincronização de faturamentos concluída:`);
       console.log(`📊 Total processado: ${totalProcessed}`);
