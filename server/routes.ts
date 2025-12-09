@@ -17132,8 +17132,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { latitude, longitude } = req.body;
       const user = req.currentUser;
       
+      console.log(`📍 Check-in em lead ${id} - User: ${user.email}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude})`);
+      
       // Foto é obrigatória para check-in em lead
       if (!req.file) {
+        console.log(`❌ Foto não enviada`);
         return res.status(400).json({
           message: 'Foto é obrigatória para check-in em lead',
           isLead: true,
@@ -17143,6 +17146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Validar latitude/longitude
       if (!latitude || !longitude) {
+        console.log(`❌ Coords inválidas: ${latitude}, ${longitude}`);
         return res.status(400).json({ 
           message: 'Latitude e longitude são obrigatórias' 
         });
@@ -17151,11 +17155,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar lead
       const lead = await storage.getLead(id);
       if (!lead) {
+        console.log(`❌ Lead ${id} não encontrado`);
         return res.status(404).json({ message: 'Lead não encontrado' });
       }
       
+      console.log(`✅ Lead encontrado: ${lead.fantasyName}, assignedTo: ${lead.assignedTo}, user.id: ${user.id}`);
+      
       // Apenas o vendedor atribuído ou admin pode fazer check-in
       if (user.role === 'vendedor' && lead.assignedTo !== user.id) {
+        console.log(`❌ Acesso negado - não é o vendedor atribuído`);
         return res.status(403).json({ 
           message: 'Você não está atribuído a este lead' 
         });
@@ -17185,6 +17193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar lead com check-in usando db.update direto (bypassa insertLeadSchema validation)
       const now = new Date();
       try {
+        console.log(`🔄 Atualizando lead ${id} no banco de dados...`);
         await db
           .update(leads)
           .set({
@@ -17192,7 +17201,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             status: 'contacted' as any, // Marcar como contatado
             updatedAt: now
           })
-          .where(eq(leads.id, id));
+          .where(eq(leads.id, id))
+          .execute();
         
         console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
         
@@ -17208,11 +17218,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
       } catch (dbError) {
-        console.error('Erro ao atualizar lead no banco de dados:', dbError);
+        console.error('❌ Erro ao atualizar lead no banco de dados:', dbError);
         throw dbError;
       }
     } catch (error) {
-      console.error('Erro ao fazer check-in em lead:', error);
+      console.error('❌ Erro ao fazer check-in em lead:', error);
       res.status(500).json({ message: 'Erro ao fazer check-in em lead', error: (error as any).message });
     }
   });
