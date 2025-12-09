@@ -10033,24 +10033,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Otimizar rota usando algoritmo existente
       const optimizedResult = optimizeRouteAdvanced(startLocation, destinations);
       
-      console.log(`✅ [OPTIMIZE-ROUTE] Rota otimizada: ${optimizedResult.totalDistance.toFixed(2)} km, ${Math.round(optimizedResult.totalDuration)} min`);
+      console.log(`✅ [OPTIMIZE-ROUTE] Rota otimizada com sucesso`);
+      console.log(`📊 [OPTIMIZE-ROUTE] Distância: ${optimizedResult.totalDistance}m, Duração: ${optimizedResult.estimatedTotalTime}s`);
+      console.log(`📊 [OPTIMIZE-ROUTE] Locais otimizados: ${optimizedResult.locations.length}`);
       
       // Atualizar ordem das paradas no banco
-      const updatePromises = optimizedResult.locations.map((loc, index) => {
-        const newOrder = index + 1;
-        console.log(`🔄 [OPTIMIZE-ROUTE] Atualizando parada ${loc.id} para posição ${newOrder}`);
-        return db.update(deliveryRouteStops)
-          .set({ stopOrder: newOrder })
-          .where(eq(deliveryRouteStops.id, loc.id));
-      });
+      const { locations: optimizedLocations } = optimizedResult;
+      const updates: Promise<any>[] = [];
       
-      await Promise.all(updatePromises);
+      for (let i = 0; i < optimizedLocations.length; i++) {
+        const loc = optimizedLocations[i];
+        const newStopOrder = i + 1;
+        console.log(`🔄 [OPTIMIZE-ROUTE] Stop ${i}: ${loc.id} -> ordem ${newStopOrder}`);
+        
+        updates.push(
+          db.update(deliveryRouteStops)
+            .set({ stopOrder: newStopOrder })
+            .where(eq(deliveryRouteStops.id, loc.id))
+        );
+      }
       
-      // Atualizar distância total e duração da rota
+      await Promise.all(updates);
+      console.log(`✅ [OPTIMIZE-ROUTE] Todas as ${updates.length} paradas atualizadas`);
+      
+      // Atualizar distância total e duração da rota (converter de metros para km)
+      const totalDistanceKm = optimizedResult.totalDistance / 1000;
+      const totalDurationMinutes = Math.round(optimizedResult.estimatedTotalTime / 60);
+      
+      console.log(`📊 [OPTIMIZE-ROUTE] Atualizando rota: ${totalDistanceKm.toFixed(2)}km, ${totalDurationMinutes}min`);
+      
       await db.update(deliveryRoutes)
         .set({ 
-          totalDistance: optimizedResult.totalDistance.toFixed(2),
-          totalDuration: Math.round(optimizedResult.totalDuration)
+          totalDistance: totalDistanceKm.toFixed(2),
+          totalDuration: totalDurationMinutes
         })
         .where(eq(deliveryRoutes.id, routeId));
       
