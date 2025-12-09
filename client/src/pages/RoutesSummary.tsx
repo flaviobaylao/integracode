@@ -743,25 +743,30 @@ export default function RoutesSummary() {
                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         attribution='&copy; OpenStreetMap contributors'
                       />
-                      {selectedRouteData.stops.map((stop, idx) => (
-                        <Marker
-                          key={stop.id}
-                          position={[
-                            parseFloat(stop.customerLatitude),
-                            parseFloat(stop.customerLongitude)
-                          ]}
-                        >
-                          <Popup>
-                            <div className="text-xs font-medium max-w-xs">
-                              <div className="font-bold">{stop.stopOrder}. {stop.customerName}</div>
-                              <div className="text-gray-600 mt-1">{stop.customerAddress}</div>
-                              <div className="mt-2 flex items-center">
-                                {getDeliveryStatusBadge(stop.status)}
+                      {selectedRouteData.stops.map((stop, idx) => {
+                        const lat = parseFloat(stop.customerLatitude);
+                        const lng = parseFloat(stop.customerLongitude);
+                        
+                        if (isNaN(lat) || isNaN(lng)) return null;
+                        
+                        return (
+                          <Marker
+                            key={stop.id}
+                            position={[lat, lng]}
+                            icon={createColoredMarkerIcon('#3b82f6', stop.stopOrder)}
+                          >
+                            <Popup>
+                              <div className="text-xs font-medium max-w-xs">
+                                <div className="font-bold">{stop.stopOrder}. {stop.customerName}</div>
+                                <div className="text-gray-600 mt-1">{stop.customerAddress}</div>
+                                <div className="mt-2 flex items-center">
+                                  {getDeliveryStatusBadge(stop.status)}
+                                </div>
                               </div>
-                            </div>
-                          </Popup>
-                        </Marker>
-                      ))}
+                            </Popup>
+                          </Marker>
+                        );
+                      })}
                     </MapContainer>
                   </div>
                 </div>
