@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2 } from "lucide-react";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -298,6 +298,63 @@ export default function ChatCenter() {
   });
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
+
+  // Mutation para obter sugestão de resposta da IA (Grok/GPT)
+  const aiSuggestionMutation = useMutation({
+    mutationFn: async () => {
+      const chat = conversations.find((c: Conversation) => c.id === selectedConversation);
+      if (!selectedConversation || !chat) throw new Error("Nenhuma conversa selecionada");
+      if (messagesRaw.length === 0) throw new Error("Aguarde as mensagens carregarem");
+      
+      // Enviar todas as mensagens ordenadas cronologicamente para contexto completo
+      const orderedMessages = [...messagesRaw].sort((a, b) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      
+      const response = await fetch('/api/chat/ai-suggestion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: selectedConversation,
+          customerName: chat.customerName,
+          customerPhone: chat.customerPhone,
+          messages: orderedMessages.map(m => ({
+            senderType: m.senderType,
+            content: m.content,
+            createdAt: m.createdAt
+          }))
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Falha ao obter sugestão');
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.success && data.response) {
+        setMessageText(data.response);
+        toast({ 
+          title: `✨ ${data.provider === 'grok' ? 'Grok' : 'GPT'} Sugeriu`, 
+          description: "Revise a sugestão antes de enviar" 
+        });
+      } else {
+        toast({ 
+          title: "Erro", 
+          description: data.error || "Não foi possível gerar sugestão", 
+          variant: "destructive" 
+        });
+      }
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Erro", 
+        description: error.message || "Falha ao obter sugestão da IA", 
+        variant: "destructive" 
+      });
+    }
+  });
 
   // Fetch seller info for customer (after selectedChat is defined)
   const { data: sellerInfoData } = useQuery({
@@ -736,6 +793,21 @@ export default function ChatCenter() {
                               title="Enviar localização"
                             >
                               <MapPin className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              onClick={() => aiSuggestionMutation.mutate()}
+                              variant="outline"
+                              size="icon"
+                              disabled={aiSuggestionMutation.isPending || messagesLoading || messagesRaw.length === 0}
+                              data-testid="button-ai-suggestion"
+                              title={messagesLoading ? "Carregando mensagens..." : "IA Ajuda - Sugerir resposta"}
+                              className="bg-purple-50 hover:bg-purple-100 border-purple-300"
+                            >
+                              {aiSuggestionMutation.isPending || messagesLoading ? (
+                                <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                              ) : (
+                                <Sparkles className="w-4 h-4 text-purple-600" />
+                              )}
                             </Button>
                           </>
                         ) : (

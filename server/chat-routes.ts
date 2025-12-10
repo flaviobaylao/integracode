@@ -2902,6 +2902,53 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/ai-suggestion - Obter sugestão de resposta da IA para o atendente
+  app.post("/api/chat/ai-suggestion", authenticateUser, requireRole(['admin', 'coordinator', 'telemarketing']), async (req, res) => {
+    try {
+      const { conversationId, customerName, customerPhone, messages } = req.body;
+      
+      if (!conversationId || !messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: "conversationId e messages são obrigatórios" });
+      }
+      
+      const settings = await storage.getChatAiSettings();
+      if (!settings) {
+        return res.status(400).json({ error: "Configurações de IA não encontradas. Configure em /telemarketing/ai-settings" });
+      }
+      
+      // Converter mensagens para o formato esperado pelo generateAutoResponse
+      const recentMessages = messages.slice(-15).map((msg: any) => ({
+        role: (msg.senderType === 'customer' ? 'customer' : 'agent') as 'customer' | 'agent' | 'bot',
+        content: msg.content || '',
+        timestamp: new Date(msg.createdAt || msg.timestamp || Date.now())
+      }));
+      
+      const { generateAutoResponse } = await import("./chatgpt-service");
+      
+      const result = await generateAutoResponse({
+        customerName: customerName || "Cliente",
+        customerPhone: customerPhone || "",
+        conversationId: conversationId,
+        recentMessages
+      }, settings);
+      
+      console.log(`✨ [AI-SUGGESTION] Sugestão gerada para conversa ${conversationId} via ${settings.aiProvider || 'openai'}`);
+      
+      res.json({ 
+        success: true, 
+        response: result.response.reply,
+        shouldTransfer: result.response.shouldTransfer,
+        transferReason: result.response.transferReason,
+        tokensUsed: result.tokensUsed,
+        responseTimeMs: result.responseTimeMs,
+        provider: settings.aiProvider || 'openai'
+      });
+    } catch (error: any) {
+      console.error("[AI-SUGGESTION] Erro ao gerar sugestão:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
   // POST /api/chat/test-ai-response - Testar resposta do ChatGPT
   app.post("/api/chat/test-ai-response", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
