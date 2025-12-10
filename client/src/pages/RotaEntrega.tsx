@@ -62,7 +62,17 @@ const vehicleIcons: Record<string, string> = {
 export default function RotaEntrega() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Get today's date in Brazil timezone (not UTC)
+  const getTodayDateStr = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ type: 'checkin' | 'checkout', stopId: string, latitude: number, longitude: number } | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<File | null>(null);
