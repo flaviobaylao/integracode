@@ -4406,6 +4406,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDeliveryDriverByEmail(email: string): Promise<any | undefined> {
+    const normalizedEmail = email.toLowerCase().trim();
+    console.log(`🔍 [STORAGE] Buscando motorista por email: "${email}" -> normalizado: "${normalizedEmail}"`);
+    
     const result = await db.execute(sql`
       SELECT 
         id,
@@ -4421,9 +4424,15 @@ export class DatabaseStorage implements IStorage {
         created_at as "createdAt",
         updated_at as "updatedAt"
       FROM delivery_drivers
-      WHERE email = ${email}
+      WHERE LOWER(email) = ${normalizedEmail}
       LIMIT 1
     `);
+    
+    console.log(`🔍 [STORAGE] Resultado da busca: ${result.rows?.length || 0} motoristas encontrados`);
+    if (result.rows && result.rows.length > 0) {
+      console.log(`✅ [STORAGE] Motorista encontrado: id=${result.rows[0].id}, email=${result.rows[0].email}`);
+    }
+    
     return result.rows && result.rows.length > 0 ? result.rows[0] : undefined;
   }
 
