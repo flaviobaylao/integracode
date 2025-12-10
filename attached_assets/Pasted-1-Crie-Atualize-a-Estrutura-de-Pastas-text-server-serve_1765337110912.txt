@@ -1,0 +1,219 @@
+1. Crie/Atualize a Estrutura de Pastas
+text/server
+  └─ server.js              ← Backend principal
+  └─ grok.js                ← Função para API do Grok
+/public
+  └─ index.html             ← Central de Atendimento (layout principal)
+  └─ sdr.html               ← Página do SDR Digital
+  └─ css/style.css          ← (opcional, para estilos extra)
+  └─ js/chat.js             ← Lógica frontend (Grok e Socket.io)
+2. Arquivo server/grok.js (novo arquivo – cole inteiro)
+JavaScriptconst axios = require('axios');
+
+async function perguntarGrok(mensagens, apiKey) {
+  try {
+    const response = await axios.post('https://api.x.ai/v1/chat/completions', {
+      model: "grok-beta",
+      messages: mensagens,
+      temperature: 0.7,
+      max_tokens: 800
+    }, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+    return response.data.choices[0].message.content.trim();
+  } catch (err) {
+    console.error('Erro Grok:', err.response?.data || err.message);
+    return "Desculpe, o assistente Grok está temporariamente indisponível.";
+  }
+}
+
+module.exports = { perguntarGrok };
+3. Atualize server/server.js (adicione essas partes no final ou onde faz sentido)
+JavaScriptconst { perguntarGrok } = require('./grok');
+const axios = require('axios');
+const path = require('path');
+const io = require('socket.io')(server); // Assumindo que você já tem o 'server' do Express
+
+// Variáveis em memória (migre para Replit DB depois)
+let conversas = {}; // numero → { assignedTo, unread, nome }
+let atendentes = {}; // email → { activeChats: 0 }
+
+// Socket.io para tempo real
+io.on('connection', (socket) => {
+  socket.emit('update-atendentes', atendentes);
+  socket.emit('update-conversas', conversas);
+});
+
+// Distribuição automática no webhook da Evolution
+app.post('/webhook', (req, res) => {
+  const mensagem = req.body;
+  if (mensagem.event !== "messages.upsert") return res.sendStatus(200);
+  const msg = mensagem.data;
+  const numero = msg.key.remoteJid.split('@')[0];
+
+  if (!conversas[numero]) {
+    // Nova conversa → distribui automaticamente
+    let maisLivre = null;
+    let menorCarga = Infinity;
+    Object.keys(atendentes).forEach(email => {
+      if (atendentes[email].activeChats < menorCarga) {
+        menorCarga = atendentes[email].activeChats;
+        maisLivre = email;
+      }
+    });
+    conversas[numero] = {
+      assignedTo: maisLivre,
+      unread: 1,
+      nome: msg.pushName || "Cliente"
+    };
+    if (maisLivre) atendentes[maisLivre].activeChats++;
+    io.emit('nova-conversa', { numero, assignedTo: maisLivre, nome: msg.pushName });
+  } else if (!msg.key.fromMe) {
+    conversas[numero].unread++;
+    io.emit('nova-mensagem', { numero, msg });
+  }
+
+  res.sendStatus(200);
+});
+
+// Rota para Grok
+app.post('/grok', async (req, res) => {
+  const mensagens = [
+    { role: "system", content: "Você é atendente da BebaHonest (delivery de bebidas). Seja educado, rápido, use emojis. Confirme endereço e pagamento sempre." },
+    ...req.body.historico
+  ];
+  const resposta = await perguntarGrok(mensagens, process.env.GROK_API_KEY);
+  res.json({ texto: resposta });
+});
+
+// Rota para SDR Digital (busca leads)
+app.get('/api/buscar-leads', async (req, res) => {
+  const { regiao, perfil, atividade } = req.query;
+  const query = `${perfil} ${atividade || ''} em ${regiao}`;
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+  try {
+    const response = await axios.get('https://maps.googleapis.com/maps/api/place/textsearch/json', {
+      params: { query, key: apiKey, language: 'pt-BR' }
+    });
+    const leads = response.data.results.map(place => ({
+      nome: place.name,
+      endereco: place.formatted_address,
+      telefone: place.formatted_phone_number || 'N/A',
+      site: place.website || 'N/A',
+      rating: place.rating || 'N/A'
+    }));
+    res.json({ leads });
+  } catch (err) {
+    res.status(500).json({ erro: 'Falha na busca' });
+  }
+});
+
+// Rota para página SDR
+app.get('/sdr', (req, res) => res.sendFile(path.join(__dirname, '../public/sdr.html')));
+
+// Rota para login atendente (atualiza contadores)
+app.post('/login', (req, res) => {
+  const email = req.body.email;
+  if (!atendentes[email]) atendentes[email] = { activeChats: 0 };
+  io.emit('update-atendentes', atendentes);
+  res.json({ success: true });
+});
+4. Arquivo public/index.html (substitua o conteúdo – central de atendimento)
+HTML<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <title>Central de Atendimento WhatsApp - BebaHonest</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+  <header class="bg-green-600 text-white p-4 flex justify-between">
+    <h1>Central de Atendimento</h1>
+    <a href="/sdr" class="text-white">SDR Digital</a>
+  </header>
+  <div class="flex flex-1">
+    <!-- Coluna 1: Atendentes -->
+    <div class="w-1/4 bg-white border-r p-4 overflow-y-auto">
+      <h2 class="font-bold mb-4">Atendentes Online</h2>
+      <div id="atendentes-list"></div>
+    </div>
+    <!-- Coluna 2: Conversas -->
+    <div class="w-1/4 bg-gray-50 border-r p-4 overflow-y-auto">
+      <h2 class="font-bold mb-4">Conversas</h2>
+      <div id="conversas-list"></div>
+    </div>
+    <!-- Coluna 3: Chat -->
+    <div class="flex-1 flex flex-col">
+      <div class="bg-white p-4 border-b">Chat Ativo: <span id="chat-nome"></span></div>
+      <div id="mensagens" class="flex-1 p-4 overflow-y-auto"></div>
+      <div class="p-4 bg-white border-t flex gap-2">
+        <button id="grok-btn" class="bg-purple-600 text-white px-4 py-2 rounded">Grok Ajuda</button>
+        <input id="msg-input" type="text" class="flex-1 border p-2 rounded" placeholder="Digite...">
+        <button id="enviar-btn" class="bg-green-600 text-white px-4 py-2 rounded">Enviar</button>
+      </div>
+    </div>
+  </div>
+  <script src="/js/chat.js"></script>
+</body>
+</html>
+5. Arquivo public/js/chat.js (novo – lógica frontend)
+JavaScriptconst socket = io();
+
+// Atualiza listas
+socket.on('update-atendentes', (atendentes) => {
+  document.getElementById('atendentes-list').innerHTML = Object.keys(atendentes).map(email => `<p>${email} - Chats: ${atendentes[email].activeChats}</p>`).join('');
+});
+
+// Outros eventos similares para conversas e mensagens...
+
+// Botão Grok
+document.getElementById('grok-btn').addEventListener('click', async () => {
+  const historico = []; // Colete histórico real do chat aqui
+  const { data } = await axios.post('/grok', { historico });
+  document.getElementById('msg-input').value = data.texto;
+});
+6. Arquivo public/sdr.html (novo – SDR Digital)
+HTML<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <title>SDR Digital - BebaHonest</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="max-w-4xl mx-auto bg-white p-6 rounded shadow">
+    <h1 class="text-2xl font-bold mb-4">SDR Digital - Busca de Leads</h1>
+    <form id="busca-form" class="flex gap-4 mb-4">
+      <input id="regiao" type="text" placeholder="Região (ex: Goiânia)" class="flex-1 border p-2 rounded">
+      <input id="perfil" type="text" placeholder="Perfil (ex: bares)" class="flex-1 border p-2 rounded">
+      <input id="atividade" type="text" placeholder="Atividade (ex: bebidas)" class="flex-1 border p-2 rounded">
+      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">Buscar</button>
+    </form>
+    <div id="leads-list" class="space-y-4"></div>
+  </div>
+  <script>
+    document.getElementById('busca-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const regiao = document.getElementById('regiao').value;
+      const perfil = document.getElementById('perfil').value;
+      const atividade = document.getElementById('atividade').value;
+      const { data } = await axios.get(`/api/buscar-leads?regiao=${regiao}&perfil=${perfil}&atividade=${atividade}`);
+      document.getElementById('leads-list').innerHTML = data.leads.map(lead => `
+        <div class="border p-4 rounded">
+          <h3 class="font-bold">${lead.nome}</h3>
+          <p>Endereço: ${lead.endereco}</p>
+          <p>Telefone: ${lead.telefone}</p>
+          <button onclick="enviarApresentacao('${lead.telefone}')">Enviar Apresentação WhatsApp</button>
+        </div>
+      `).join('');
+    });
+
+    async function enviarApresentacao(telefone) {
+      // Integre com Evolution API (envie fetch para seu endpoint WhatsApp)
+      alert(`Apresentação enviada para ${telefone}!`);
+    }
+  </script>
+</body>
+</html>
