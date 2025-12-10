@@ -9536,16 +9536,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Buscar rotas do motorista autenticado por EMAIL + DATA
   app.get("/api/delivery-routes/driver/my-routes", authenticateUser, async (req: any, res) => {
     try {
+      console.log(`🚀🚀🚀 [DRIVER-ROUTES] ENDPOINT CHAMADO! 🚀🚀🚀`);
       const { date } = req.query;
       const currentUser = (req as any).currentUser;
-      const userEmail = currentUser?.email;
+      const userEmail = currentUser?.email || req.user?.email;
+      
+      console.log(`[DEBUG] currentUser:`, currentUser);
+      console.log(`[DEBUG] req.user:`, req.user);
+      console.log(`[DEBUG] userEmail:`, userEmail);
+      console.log(`[DEBUG] date param:`, date);
       
       if (!userEmail) {
-        console.log(`❌ [DRIVER-ROUTES] Email não encontrado:`, req.user, (req as any).currentUser);
+        console.log(`❌ [DRIVER-ROUTES] Email não encontrado - currentUser:`, currentUser, "req.user:", req.user);
         return res.status(401).json({ message: "Usuário não autenticado com email" });
       }
       
-      console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista ${userEmail} para ${date || 'hoje'}`);
+      console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista: "${userEmail}" para ${date || 'hoje'}`);
       
       // Construir data alvo
       let targetDateStr: string;
@@ -9559,7 +9565,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         targetDateStr = `${year}-${month}-${day}`;
       }
       
-      console.log(`📅 [DRIVER-ROUTES] Data alvo: ${targetDateStr}, Email: ${userEmail}`);
+      console.log(`📅 [DRIVER-ROUTES] Data alvo: "${targetDateStr}", Email normalizado: "${userEmail}"`);
+      
+      // Log da query SQL que será executada
+      console.log(`[DEBUG] Procurando rotas com: status IN ['rota_enviada', 'em_andamento', 'concluida'], email="${userEmail}", date="${targetDateStr}"`);
       
       // Buscar rotas diretamente por EMAIL + DATA (sem intermediários)
       const routes = await db.select().from(deliveryRoutes)
@@ -9572,7 +9581,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
         .orderBy(asc(deliveryRoutes.createdAt));
       
-      console.log(`📦 [DRIVER-ROUTES] Rotas encontradas: ${routes.length}`);
+      console.log(`📦 [DRIVER-ROUTES] Query retornou: ${routes.length} rotas`);
+      if (routes.length > 0) {
+        console.log(`[DEBUG] Primeira rota:`, routes[0]);
+      }
       
       // Buscar paradas para cada rota
       const routesWithStops = await Promise.all(
@@ -9593,6 +9605,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching driver routes:", error);
       res.status(500).json({ message: "Failed to fetch driver routes", error: error.message });
+    }
+  });
+
+  // DEBUG: Endpoint para testar se as rotas estão no banco
+  app.get("/api/debug/routes-for-date", async (req: any, res) => {
+    try {
+      const { date, email } = req.query;
+      if (!date || !email) {
+        return res.status(400).json({ message: "date e email são obrigatórios" });
+      }
+      
+      const routes = await db.select().from(deliveryRoutes)
+        .where(
+          and(
+            sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`,
+            sql`${deliveryRoutes.routeDate}::text = ${date}`,
+            inArray(deliveryRoutes.status, ['rota_enviada', 'em_andamento', 'concluida'])
+          )
+        );
+      
+      res.json({ count: routes.length, routes, queryParams: { date, email } });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
   
