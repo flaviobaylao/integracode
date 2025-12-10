@@ -524,6 +524,7 @@ export const deliveryRoutes = pgTable("delivery_routes", {
   vehicleType: varchar("vehicle_type").notNull(), // caminhao, carro, moto
   driverId: varchar("driver_id").notNull(), // ID do motorista
   driverName: varchar("driver_name").notNull(), // Nome do motorista
+  driverEmail: varchar("driver_email").notNull(), // Email do motorista (chave de busca)
   startLatitude: decimal("start_latitude", { precision: 10, scale: 8 }).notNull(),
   startLongitude: decimal("start_longitude", { precision: 11, scale: 8 }).notNull(),
   totalDistance: decimal("total_distance", { precision: 10, scale: 2 }).notNull(), // Distância total em km

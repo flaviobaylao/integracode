@@ -8,6 +8,7 @@
 - **Testing Credentials**: 
     - Admin: flavio@bebahonest.com.br / M@riafe1
     - Motorista: kaique@bebahonest.com.br / test123
+    - Motorista: marcelo@bebahonest.com.br / M@riafe1
     - Telemarketing: telemarketing@bebahonest.com.br / test123
 
 # System Architecture
@@ -38,6 +39,7 @@
     - **Delivery History**: Comprehensive tracking with API endpoint for registering completed deliveries and automatic duration calculation.
     - **Scheduling**: Hourly time slots, persistent delivery configurations in customer profiles, and synchronized across locations.
     - **Data Enrichment**: Complete data enrichment for pending delivery orders, including CPF/CNPJ, invoice dates, coordinates, address, receiving weekdays, time slots, vehicle requirements, and average delivery time.
+    - **Route Lookup System**: Routes are now linked directly to **driver email + date** (primary keys). When a driver logs in at `/rota-entrega`, the system searches for routes using their email and selected date, without intermediary lookups. Driver email is stored in `driver_email` column when routes are created/updated.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering, inactivation, and detailed delivery configuration displays. Implements a three-layer date system for visit days, calculated delivery days, and manually configured receiving weekdays.
 - **Mapa de Clientes**: Interactive Leaflet map (`/mapa-clientes`) displaying active customers with color-coded pins based on visit day, featuring clickable pins with popups, filtering, and in-map customer editing for administrative users.

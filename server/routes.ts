@@ -9325,9 +9325,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Inserir paradas novas
           savedStops = await db.insert(deliveryRouteStops).values(stopsData).returning();
           
+          // Buscar email do driver para atualizar
+          const driver = await db.select().from(deliveryDrivers)
+            .where(eq(deliveryDrivers.id, route.driverId))
+            .limit(1);
+          const driverEmail = driver.length > 0 ? driver[0].email : '';
+          
           // Atualizar apenas dados da rota
           const [updatedRoute] = await db.update(deliveryRoutes)
             .set({
+              driverEmail: driverEmail,
               totalDistance: parseFloat(route.totalDistance) || 0,
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
@@ -9346,11 +9353,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log(`🆕 [SAVE-ROUTES] Criando nova rota: ${routeName}`);
           
+          // Buscar email do driver
+          const driver = await db.select().from(deliveryDrivers)
+            .where(eq(deliveryDrivers.id, route.driverId))
+            .limit(1);
+          
+          const driverEmail = driver.length > 0 ? driver[0].email : '';
+          
           const routeData = {
             routeName,
             routeDate: dateStr, // String YYYY-MM-DD
             driverId: route.driverId,
             driverName: route.driverName,
+            driverEmail: driverEmail, // Email do driver (chave de busca)
             vehicleType: route.vehicleType,
             startLatitude: parseFloat(route.startLatitude) || 0,
             startLongitude: parseFloat(route.startLongitude) || 0,
@@ -9518,52 +9533,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ========== ENDPOINTS PARA MOTORISTAS ENTREGADORES ==========
   
-  // Buscar rotas do motorista autenticado
+  // Buscar rotas do motorista autenticado por EMAIL + DATA
   app.get("/api/delivery-routes/driver/my-routes", authenticateUser, async (req: any, res) => {
     try {
       const { date } = req.query;
       const currentUser = (req as any).currentUser;
-      console.log(`📦 [DRIVER-ROUTES-START] Iniciando busca de rotas para motorista`);
-      console.log(`📦 [DRIVER-ROUTES] currentUser: ${JSON.stringify(currentUser)}`);
-      console.log(`📦 [DRIVER-ROUTES] date param: ${date}`);
-      
-      // Usar email se disponível, senão usar ID como fallback
-      const userEmail = currentUser?.email || currentUser?.id;
+      const userEmail = currentUser?.email;
       
       if (!userEmail) {
-        console.log(`❌ [DRIVER-ROUTES] Nenhum identificador encontrado no usuário autenticado`);
-        return res.status(401).json({ message: "Usuário não autenticado" });
+        console.log(`❌ [DRIVER-ROUTES] Email não encontrado para usuário autenticado`);
+        return res.status(401).json({ message: "Usuário não autenticado com email" });
       }
       
       console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista ${userEmail} para ${date || 'hoje'}`);
       
-      // Buscar o motorista pelo email do usuário (via storage)
-      const driver = await storage.getDeliveryDriverByEmail(userEmail);
-      console.log(`📦 [DRIVER-ROUTES] Driver encontrado: ${driver ? JSON.stringify(driver) : 'NULL'}`);
-      
-      if (!driver) {
-        console.log(`⚠️ [DRIVER-ROUTES] Nenhum motorista encontrado para email ${userEmail}`);
-        // Tentar buscar diretamente do banco para debug
-        const dbDriver = await db.select().from(deliveryDrivers)
-          .where(sql`LOWER(${deliveryDrivers.email}) = LOWER(${userEmail})`)
-          .limit(1);
-        console.log(`📦 [DRIVER-ROUTES-DB] Busca direta no DB: ${dbDriver.length} registros`);
-        if (dbDriver.length > 0) {
-          console.log(`📦 [DRIVER-ROUTES-DB] Driver: ${JSON.stringify(dbDriver[0])}`);
-        }
-        return res.json([]); // Retorna lista vazia se não for motorista
-      }
-      
-      const driverId = driver.id;
-      console.log(`✓ [DRIVER-ROUTES] Motorista encontrado: ${driverId}`);
-      
-      // Buscar rotas onde o driverId corresponde ao motorista
+      // Construir data alvo
       let targetDateStr: string;
       if (date) {
-        // Se uma data foi fornecida, usar como está
         targetDateStr = date;
       } else {
-        // Se não, usar hoje na timezone local (Brasil)
         const today = new Date();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -9571,33 +9559,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         targetDateStr = `${year}-${month}-${day}`;
       }
       
-      console.log(`📅 [DRIVER-ROUTES] Data alvo para comparação: ${targetDateStr}`);
+      console.log(`📅 [DRIVER-ROUTES] Data alvo: ${targetDateStr}, Email: ${userEmail}`);
       
+      // Buscar rotas diretamente por EMAIL + DATA (sem intermediários)
       const routes = await db.select().from(deliveryRoutes)
         .where(
           and(
-            eq(deliveryRoutes.driverId, driverId),
+            sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${userEmail})`,
             sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`,
-            // Rotas enviadas, em andamento ou concluídas (motoristas veem após envio)
             inArray(deliveryRoutes.status, ['rota_enviada', 'em_andamento', 'concluida'])
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
       
       console.log(`📦 [DRIVER-ROUTES] Rotas encontradas: ${routes.length}`);
-      console.log(`📦 [DRIVER-ROUTES] Query: driverId=${driverId}, routeDate::text=${targetDateStr}`);
-      if (routes.length > 0) {
-        console.log(`📦 [DRIVER-ROUTES] Primeira rota: ${JSON.stringify(routes[0])}`);
-      }
       
-      // Para cada rota, buscar as paradas
+      // Buscar paradas para cada rota
       const routesWithStops = await Promise.all(
         routes.map(async (route) => {
           const stops = await db.select().from(deliveryRouteStops)
             .where(eq(deliveryRouteStops.routeId, route.id))
             .orderBy(asc(deliveryRouteStops.stopOrder));
-          
-          console.log(`📍 [DRIVER-ROUTES] Rota ${route.id}: ${stops.length} paradas`);
           
           return {
             ...route,
@@ -9606,11 +9588,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
       
-      console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas para o motorista`);
+      console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas para ${userEmail}`);
       res.json(routesWithStops);
     } catch (error: any) {
       console.error("Error fetching driver routes:", error);
-      console.error(`Error stack: ${error.stack}`);
       res.status(500).json({ message: "Failed to fetch driver routes", error: error.message });
     }
   });
