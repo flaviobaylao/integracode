@@ -10462,7 +10462,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const nextOrder = (maxOrderResult[0].maxOrder || 0) + 1;
 
       // Calcular tempos estimados
-      const [hours, minutes] = route.timeWindowStart.split(':').map(Number);
+      let hours = 8, minutes = 0; // Padrão: 08:00
+      
+      if (route.timeWindowStart) {
+        const parts = route.timeWindowStart.split(':').map(Number);
+        if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+          hours = parts[0];
+          minutes = parts[1];
+        }
+      }
+
       const baseTime = new Date();
       baseTime.setHours(hours, minutes, 0, 0);
       
