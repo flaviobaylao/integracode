@@ -18281,6 +18281,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerChatRoutes } = await import('./chat-routes.js');
   registerChatRoutes(app);
 
+  // Registrar rotas do SDR Digital
+  const { registerSdrRoutes } = await import('./sdr-routes.js');
+  registerSdrRoutes(app);
+
   const httpServer = createServer(app);
 
   return httpServer;

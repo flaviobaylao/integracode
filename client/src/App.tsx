@@ -56,6 +56,7 @@ import RoutesValidation from "@/pages/RoutesValidation";
 import SalesCardDetail from "@/pages/SalesCardDetail";
 import ChatAISettings from "@/pages/ChatAISettings";
 import BulkMessage from "@/pages/BulkMessage";
+import SDRDigital from "@/pages/SDRDigital";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -193,6 +194,7 @@ function Router() {
           <Route path="/telemarketing/templates" component={QuickTemplates} />
           <Route path="/telemarketing/test" component={ChatTest} />
           <Route path="/telemarketing/ai-settings" component={ChatAISettings} />
+          <Route path="/telemarketing/sdr-digital" component={SDRDigital} />
           <Route path="/telemarketing/disparo-em-massa" component={BulkMessage} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
