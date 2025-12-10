@@ -9541,7 +9541,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userEmail = currentUser?.email;
       
       if (!userEmail) {
-        console.log(`❌ [DRIVER-ROUTES] Email não encontrado para usuário autenticado`);
+        console.log(`❌ [DRIVER-ROUTES] Email não encontrado:`, req.user, (req as any).currentUser);
         return res.status(401).json({ message: "Usuário não autenticado com email" });
       }
       
