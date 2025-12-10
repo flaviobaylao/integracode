@@ -9523,8 +9523,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { date } = req.query;
       const currentUser = (req as any).currentUser;
-      console.log(`📦 [DRIVER-ROUTES] Iniciando busca...`);
-      console.log(`📦 [DRIVER-ROUTES] deliveryDrivers exists? ${typeof deliveryDrivers}`);
       console.log(`📦 [DRIVER-ROUTES] currentUser.id: ${currentUser?.id}, currentUser.email: ${currentUser?.email}`);
       
       // Usar email se disponível, senão usar ID como fallback
@@ -9537,17 +9535,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📦 [DRIVER-ROUTES] Buscando rotas do motorista ${userEmail} para ${date || 'hoje'}`);
       
-      // Buscar o motorista pelo email do usuário
-      const drivers = await db.select().from(deliveryDrivers)
-        .where(eq(deliveryDrivers.email, userEmail))
-        .limit(1);
+      // Buscar o motorista pelo email do usuário (via storage)
+      const driver = await storage.getDeliveryDriverByEmail(userEmail);
       
-      if (drivers.length === 0) {
+      if (!driver) {
         console.log(`⚠️ [DRIVER-ROUTES] Nenhum motorista encontrado para email ${userEmail}`);
         return res.json([]); // Retorna lista vazia se não for motorista
       }
       
-      const driverId = drivers[0].id;
+      const driverId = driver.id;
       console.log(`✓ [DRIVER-ROUTES] Motorista encontrado: ${driverId}`);
       
       // Buscar rotas onde o driverId corresponde ao motorista
@@ -9612,12 +9608,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🚀 [DRIVER-START] Motorista ${userEmail} iniciando rota ${routeId}`);
       
-      // Buscar o motorista pelo email
-      const drivers = await db.select().from(deliveryDrivers)
-        .where(eq(deliveryDrivers.email, userEmail))
-        .limit(1);
+      // Buscar o motorista pelo email (via storage)
+      const driver = await storage.getDeliveryDriverByEmail(userEmail);
       
-      if (drivers.length === 0) {
+      if (!driver) {
         return res.status(403).json({ message: "Motorista não encontrado" });
       }
       
@@ -9630,7 +9624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       
-      if (route[0].driverId !== drivers[0].id) {
+      if (route[0].driverId !== driver.id) {
         return res.status(403).json({ message: "Você não tem permissão para iniciar esta rota" });
       }
       
@@ -9657,12 +9651,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📍 [DRIVER-CHECKIN] Motorista ${userEmail} fazendo check-in na parada ${stopId}`);
       
-      // Buscar o motorista pelo email
-      const drivers = await db.select().from(deliveryDrivers)
-        .where(eq(deliveryDrivers.email, userEmail))
-        .limit(1);
+      // Buscar o motorista pelo email (via storage)
+      const driver = await storage.getDeliveryDriverByEmail(userEmail);
       
-      if (drivers.length === 0) {
+      if (!driver) {
         return res.status(403).json({ message: "Motorista não encontrado" });
       }
       
@@ -9685,7 +9677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== drivers[0].id) {
+      if (route.length === 0 || route[0].driverId !== driver.id) {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -9732,12 +9724,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`✅ [DRIVER-CHECKOUT] Motorista ${userEmail} fazendo check-out da parada ${stopId}`);
       
-      // Buscar o motorista pelo email
-      const drivers = await db.select().from(deliveryDrivers)
-        .where(eq(deliveryDrivers.email, userEmail))
-        .limit(1);
+      // Buscar o motorista pelo email (via storage)
+      const driver = await storage.getDeliveryDriverByEmail(userEmail);
       
-      if (drivers.length === 0) {
+      if (!driver) {
         return res.status(403).json({ message: "Motorista não encontrado" });
       }
       
@@ -9760,7 +9750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== drivers[0].id) {
+      if (route.length === 0 || route[0].driverId !== driver.id) {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -9829,12 +9819,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📊 [UPDATE-STOP-STATUS] Motorista ${userEmail} atualizando status de ${stopId} para ${status}`);
       
-      // Buscar o motorista pelo email
-      const drivers = await db.select().from(deliveryDrivers)
-        .where(eq(deliveryDrivers.email, userEmail))
-        .limit(1);
+      // Buscar o motorista pelo email (via storage)
+      const driver = await storage.getDeliveryDriverByEmail(userEmail);
       
-      if (drivers.length === 0) {
+      if (!driver) {
         return res.status(403).json({ message: "Motorista não encontrado" });
       }
       
@@ -9852,7 +9840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== drivers[0].id) {
+      if (route.length === 0 || route[0].driverId !== driver.id) {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -10168,11 +10156,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Para motoristas, verificar se é a rota deles
       if (userRole === 'motorista') {
-        const drivers = await db.select().from(deliveryDrivers)
-          .where(eq(deliveryDrivers.email, userEmail))
-          .limit(1);
+        const driver = await storage.getDeliveryDriverByEmail(userEmail);
         
-        if (drivers.length === 0 || route.driverId !== drivers[0].id) {
+        if (!driver || route.driverId !== driver.id) {
           return res.status(403).json({ message: "Você só pode otimizar suas próprias rotas" });
         }
       }
