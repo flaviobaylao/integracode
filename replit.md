@@ -8,7 +8,7 @@
 - **Testing Credentials**: 
     - Admin: flavio@bebahonest.com.br / M@riafe1
     - Motorista: kaique@bebahonest.com.br / test123
-    - Motorista: marcelo@bebahonest.com.br / M@riafe1
+    - Motorista: marcelo@bebahonest.com.br / Honest1*
     - Telemarketing: telemarketing@bebahonest.com.br / test123
 
 # System Architecture
