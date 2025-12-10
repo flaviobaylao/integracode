@@ -9281,8 +9281,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerLatitude: parseFloat(stop.latitude) || 0,
             customerLongitude: parseFloat(stop.longitude) || 0,
             stopOrder: index + 1,
-            estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
-            estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
+            estimatedArrival: stop.estimatedArrival || null,  // Keep as string or null - don't convert
+            estimatedDeparture: stop.estimatedDeparture || null, // Keep as string or null - don't convert
             estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
             distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
             isPriority: stop.isUrgent || false,
@@ -9353,8 +9353,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerLatitude: parseFloat(stop.latitude) || 0,
             customerLongitude: parseFloat(stop.longitude) || 0,
             stopOrder: index + 1,
-            estimatedArrival: stop.estimatedArrival ? new Date(stop.estimatedArrival) : null,
-            estimatedDeparture: stop.estimatedDeparture ? new Date(stop.estimatedDeparture) : null,
+            estimatedArrival: stop.estimatedArrival || null,  // Keep as string or null - don't convert
+            estimatedDeparture: stop.estimatedDeparture || null, // Keep as string or null - don't convert
             estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
             distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
             isPriority: stop.isUrgent || false,
