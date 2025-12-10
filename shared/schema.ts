@@ -532,7 +532,8 @@ export const deliveryRoutes = pgTable("delivery_routes", {
   estimatedReturnTime: timestamp("estimated_return_time"), // Horário estimado de retorno
   timeWindowStart: varchar("time_window_start"), // Início da janela de horário (ex: "08:00")
   timeWindowEnd: varchar("time_window_end"), // Fim da janela de horário (ex: "12:00")
-  status: varchar("status").notNull().default('planejada'), // planejada, em_andamento, concluida, cancelada
+  status: varchar("status").notNull().default('planejada'), // planejada, rota salva, rota_enviada, em_andamento, concluida, cancelada
+  sentToDriverAt: timestamp("sent_to_driver_at"), // Quando a rota foi enviada para o motorista
   startTime: timestamp("start_time"), // Quando o entregador iniciou a rota
   endTime: timestamp("end_time"), // Quando o entregador finalizou a rota
   createdAt: timestamp("created_at").defaultNow(),

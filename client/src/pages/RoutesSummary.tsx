@@ -29,7 +29,8 @@ import {
   Map,
   MessageCircle,
   RefreshCw,
-  Save
+  Save,
+  Send
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react-leaflet";
 import L from 'leaflet';
@@ -424,18 +425,65 @@ export default function RoutesSummary() {
     }
   });
 
+  // Mutation para enviar rota individual para o motorista
+  const sendRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/delivery-routes/${routeId}/send-to-driver`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Rota enviada com sucesso! 📤",
+        description: "O motorista agora pode ver a rota no app.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao enviar rota",
+        description: error.message || "Não foi possível enviar a rota",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation para enviar todas as rotas do dia para os motoristas
+  const sendAllRoutesMutation = useMutation({
+    mutationFn: async (date: string) => {
+      return await apiRequest('POST', '/api/delivery-routes/send-all-to-drivers', { date });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Rotas enviadas com sucesso! 📤",
+        description: data.message || "Todas as rotas foram enviadas aos motoristas.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao enviar rotas",
+        description: error.message || "Não foi possível enviar as rotas",
+        variant: "destructive",
+      });
+    }
+  });
+
   const activeDrivers = drivers.filter(d => d.isActive);
 
+  // Contar rotas pendentes de envio (status 'rota salva')
+  const pendingSendRoutes = routes.filter(r => r.status === 'rota salva');
+
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: any; label: string }> = {
+    const variants: Record<string, { variant: any; label: string; className?: string }> = {
+      'rota salva': { variant: 'secondary', label: 'Salva (Não Enviada)', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
+      'rota_enviada': { variant: 'default', label: 'Enviada', className: 'bg-blue-500 text-white' },
       planejada: { variant: 'secondary', label: 'Planejada' },
-      em_andamento: { variant: 'default', label: 'Em Andamento' },
-      concluida: { variant: 'outline', label: 'Concluída' },
+      em_andamento: { variant: 'default', label: 'Em Andamento', className: 'bg-green-500 text-white' },
+      concluida: { variant: 'outline', label: 'Concluída', className: 'bg-gray-200 text-gray-700' },
       cancelada: { variant: 'destructive', label: 'Cancelada' },
     };
 
     const config = variants[status] || { variant: 'secondary', label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    return <Badge variant={config.variant} className={config.className}>{config.label}</Badge>;
   };
 
   const getDeliveryStatusBadge = (status: string) => {
@@ -599,26 +647,48 @@ export default function RoutesSummary() {
               <Filter className="h-5 w-5 mr-2" />
               Filtros
             </CardTitle>
-            {routes.filter(r => r.status === 'planejada').length > 0 && (
-              <Button 
-                onClick={() => saveRoutesMutation.mutate()}
-                disabled={saveRoutesMutation.isPending}
-                className="bg-green-600 hover:bg-green-700"
-                data-testid="button-save-planned-routes"
-              >
-                {saveRoutesMutation.isPending ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Salvando...
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    💾 Salvar {routes.filter(r => r.status === 'planejada').length} Rota(s)
-                  </>
-                )}
-              </Button>
-            )}
+            <div className="flex gap-2">
+              {routes.filter(r => r.status === 'planejada').length > 0 && (
+                <Button 
+                  onClick={() => saveRoutesMutation.mutate()}
+                  disabled={saveRoutesMutation.isPending}
+                  className="bg-green-600 hover:bg-green-700"
+                  data-testid="button-save-planned-routes"
+                >
+                  {saveRoutesMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Salvando...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      💾 Salvar {routes.filter(r => r.status === 'planejada').length} Rota(s)
+                    </>
+                  )}
+                </Button>
+              )}
+              {pendingSendRoutes.length > 0 && (
+                <Button 
+                  onClick={() => sendAllRoutesMutation.mutate(selectedDate)}
+                  disabled={sendAllRoutesMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700"
+                  data-testid="button-send-all-routes"
+                >
+                  {sendAllRoutesMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      📤 Enviar {pendingSendRoutes.length} Rota(s) para Motoristas
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -781,6 +851,31 @@ export default function RoutesSummary() {
                 <FileText className="h-4 w-4 mr-2" />
                 📄 Gerar PDF
               </Button>
+              {selectedRouteData.status === 'rota salva' && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    sendRouteMutation.mutate(selectedRouteData.id);
+                  }}
+                  disabled={sendRouteMutation.isPending}
+                  data-testid="button-send-route"
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {sendRouteMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      📤 Enviar para Motorista
+                    </>
+                  )}
+                </Button>
+              )}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button 

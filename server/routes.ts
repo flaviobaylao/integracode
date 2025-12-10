@@ -9567,8 +9567,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(
             eq(deliveryRoutes.driverId, driverId),
             sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`,
-            // Apenas rotas salvas, em andamento ou concluídas (não pending ou planejada)
-            inArray(deliveryRoutes.status, ['rota salva', 'em_andamento', 'concluida'])
+            // Rotas enviadas, em andamento ou concluídas (motoristas veem após envio)
+            inArray(deliveryRoutes.status, ['rota_enviada', 'em_andamento', 'concluida'])
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
@@ -9600,6 +9600,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Enviar rota para o motorista (muda status de 'rota salva' para 'rota_enviada')
+  app.post("/api/delivery-routes/:routeId/send-to-driver", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      
+      console.log(`📤 [SEND-ROUTE] Enviando rota ${routeId} para o motorista`);
+      
+      // Buscar a rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, routeId))
+        .limit(1);
+      
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      // Atualizar status da rota para 'rota_enviada'
+      const updatedRoute = await db.update(deliveryRoutes)
+        .set({ 
+          status: 'rota_enviada', 
+          sentToDriverAt: new Date(),
+          updatedAt: new Date() 
+        })
+        .where(eq(deliveryRoutes.id, routeId))
+        .returning();
+      
+      console.log(`✅ [SEND-ROUTE] Rota ${routeId} enviada para o motorista`);
+      res.json({ message: "Rota enviada para o motorista com sucesso", route: updatedRoute[0] });
+    } catch (error: any) {
+      console.error("Error sending route to driver:", error);
+      res.status(500).json({ message: "Failed to send route to driver", error: error.message });
+    }
+  });
+
+  // Enviar todas as rotas do dia para os motoristas
+  app.post("/api/delivery-routes/send-all-to-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { date } = req.body;
+      const targetDate = date || new Date().toISOString().split('T')[0];
+      
+      console.log(`📤 [SEND-ALL-ROUTES] Enviando todas as rotas de ${targetDate} para os motoristas`);
+      
+      // Buscar todas as rotas com status 'rota salva' para a data
+      const routesToSend = await db.select().from(deliveryRoutes)
+        .where(
+          and(
+            sql`${deliveryRoutes.routeDate}::text = ${targetDate}`,
+            eq(deliveryRoutes.status, 'rota salva')
+          )
+        );
+      
+      if (routesToSend.length === 0) {
+        return res.json({ message: "Nenhuma rota para enviar", sent: 0 });
+      }
+      
+      // Atualizar todas para 'rota_enviada'
+      const routeIds = routesToSend.map(r => r.id);
+      await db.update(deliveryRoutes)
+        .set({ 
+          status: 'rota_enviada', 
+          sentToDriverAt: new Date(),
+          updatedAt: new Date() 
+        })
+        .where(inArray(deliveryRoutes.id, routeIds));
+      
+      console.log(`✅ [SEND-ALL-ROUTES] ${routesToSend.length} rotas enviadas`);
+      res.json({ 
+        message: `${routesToSend.length} rotas enviadas para os motoristas`,
+        sent: routesToSend.length 
+      });
+    } catch (error: any) {
+      console.error("Error sending all routes:", error);
+      res.status(500).json({ message: "Failed to send routes", error: error.message });
+    }
+  });
+
   // Iniciar rota de entrega
   app.post("/api/delivery-routes/:routeId/start", authenticateUser, async (req: any, res) => {
     try {
