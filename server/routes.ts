@@ -9166,39 +9166,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Buscar rotas salvas com filtros
-  app.get("/api/delivery-routes", authenticateUser, async (req: any, res) => {
-    try {
-      const { routeDate, driverId, savedOnly } = req.query;
-      
-      console.log(`🔍 [GET-ROUTES] Filtrando rotas: date=${routeDate}, driver=${driverId}, savedOnly=${savedOnly}`);
-      
-      // Preparar filtros
-      const filters: any = {};
-      
-      if (routeDate) {
-        filters.routeDate = new Date(routeDate as string);
-      }
-      
-      if (driverId && driverId !== 'all') {
-        filters.driverId = driverId;
-      }
-      
-      if (savedOnly === 'true') {
-        filters.savedOnly = true;
-      }
-      
-      // Buscar rotas com filtros
-      const routes = await storage.getDeliveryRoutes(filters);
-      
-      console.log(`✅ [GET-ROUTES] Retornando ${routes.length} rotas`);
-      
-      res.json(routes);
-    } catch (error: any) {
-      console.error("❌ [GET-ROUTES] Error fetching delivery routes:", error);
-      res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });
-    }
-  });
 
   // Salvar rotas planejadas
   app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
@@ -9433,7 +9400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Buscar rotas de entrega
+  // Buscar rotas de entrega com motorista e paradas
   app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { status, routeDate, driverId, savedOnly } = req.query;
@@ -9442,19 +9409,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (status) filters.status = status;
       if (routeDate) filters.routeDate = new Date(routeDate);
       if (driverId) filters.driverId = driverId;
-      if (savedOnly === 'true') filters.savedOnly = true; // Filtrar apenas rotas salvas (com routeName)
+      if (savedOnly === 'true') filters.savedOnly = true;
       
+      // storage.getDeliveryRoutes já retorna as paradas, não precisa buscar novamente
       const routes = await storage.getDeliveryRoutes(filters);
       
-      // Para cada rota, buscar as paradas
-      const routesWithStops = await Promise.all(
-        routes.map(async (route) => {
-          const stops = await storage.getDeliveryRouteStops(route.id);
-          return { ...route, stops };
-        })
-      );
-      
-      res.json(routesWithStops);
+      res.json(routes);
     } catch (error: any) {
       console.error("Error fetching delivery routes:", error);
       res.status(500).json({ message: "Failed to fetch delivery routes", error: error.message });
