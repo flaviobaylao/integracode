@@ -78,10 +78,11 @@ export default function RotaEntrega() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: routes = [], isLoading, refetch, error: routesError } = useQuery<DeliveryRoute[]>({
-    queryKey: ['/api/delivery-routes/driver/my-routes', selectedDate],
-    queryFn: async () => {
-      console.log(`🚗 [FRONTEND] Buscando rotas para data: ${selectedDate}, user email: ${user?.email}`);
-      const res = await fetch(`/api/delivery-routes/driver/my-routes?date=${selectedDate}`, {
+    queryKey: ['', 'api', 'delivery-routes', 'driver', 'my-routes', selectedDate],
+    queryFn: async ({ queryKey }) => {
+      const url = `/api/delivery-routes/driver/my-routes?date=${selectedDate}`;
+      console.log(`🚗 [FRONTEND] Buscando rotas para data: ${selectedDate}`);
+      const res = await fetch(url, {
         credentials: 'include',
       });
       console.log(`🚗 [FRONTEND] Resposta: ${res.status}`, res.ok);
@@ -94,7 +95,7 @@ export default function RotaEntrega() {
       console.log(`🚗 [FRONTEND] Rotas recebidas:`, data?.length || 0, data);
       return data || [];
     },
-    refetchInterval: 30000, // Atualiza a cada 30 segundos
+    refetchInterval: 30000,
   });
 
   // Agrupar todas as entregas de todas as rotas em uma lista única
