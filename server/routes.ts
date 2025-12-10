@@ -9523,7 +9523,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { date } = req.query;
       const currentUser = (req as any).currentUser;
-      console.log(`📦 [DRIVER-ROUTES] currentUser.id: ${currentUser?.id}, currentUser.email: ${currentUser?.email}`);
+      console.log(`📦 [DRIVER-ROUTES-START] Iniciando busca de rotas para motorista`);
+      console.log(`📦 [DRIVER-ROUTES] currentUser: ${JSON.stringify(currentUser)}`);
+      console.log(`📦 [DRIVER-ROUTES] date param: ${date}`);
       
       // Usar email se disponível, senão usar ID como fallback
       const userEmail = currentUser?.email || currentUser?.id;
@@ -9537,9 +9539,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Buscar o motorista pelo email do usuário (via storage)
       const driver = await storage.getDeliveryDriverByEmail(userEmail);
+      console.log(`📦 [DRIVER-ROUTES] Driver encontrado: ${driver ? JSON.stringify(driver) : 'NULL'}`);
       
       if (!driver) {
         console.log(`⚠️ [DRIVER-ROUTES] Nenhum motorista encontrado para email ${userEmail}`);
+        // Tentar buscar diretamente do banco para debug
+        const dbDriver = await db.select().from(deliveryDrivers)
+          .where(sql`LOWER(${deliveryDrivers.email}) = LOWER(${userEmail})`)
+          .limit(1);
+        console.log(`📦 [DRIVER-ROUTES-DB] Busca direta no DB: ${dbDriver.length} registros`);
+        if (dbDriver.length > 0) {
+          console.log(`📦 [DRIVER-ROUTES-DB] Driver: ${JSON.stringify(dbDriver[0])}`);
+        }
         return res.json([]); // Retorna lista vazia se não for motorista
       }
       
@@ -9575,6 +9586,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📦 [DRIVER-ROUTES] Rotas encontradas: ${routes.length}`);
       console.log(`📦 [DRIVER-ROUTES] Query: driverId=${driverId}, routeDate::text=${targetDateStr}`);
+      if (routes.length > 0) {
+        console.log(`📦 [DRIVER-ROUTES] Primeira rota: ${JSON.stringify(routes[0])}`);
+      }
       
       // Para cada rota, buscar as paradas
       const routesWithStops = await Promise.all(
@@ -9596,6 +9610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(routesWithStops);
     } catch (error: any) {
       console.error("Error fetching driver routes:", error);
+      console.error(`Error stack: ${error.stack}`);
       res.status(500).json({ message: "Failed to fetch driver routes", error: error.message });
     }
   });
