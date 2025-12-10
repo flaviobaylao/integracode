@@ -8,7 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, toZonedTime } from "date-fns-tz";
+import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -63,13 +64,10 @@ export default function RotaEntrega() {
   const { user } = useAuth();
   const { toast } = useToast();
   
-  // Get today's date in Brazil timezone (not UTC)
+  // Get today's date in Brazil timezone (São Paulo)
   const getTodayDateStr = () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    const now = toZonedTime(new Date(), 'America/Sao_Paulo');
+    return format(now, 'yyyy-MM-dd');
   };
   
   const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
@@ -79,7 +77,7 @@ export default function RotaEntrega() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: routes = [], isLoading, refetch } = useQuery<DeliveryRoute[]>({
+  const { data: routes = [], isLoading, refetch, error: routesError } = useQuery<DeliveryRoute[]>({
     queryKey: ['/api/delivery-routes/driver/my-routes', selectedDate],
     queryFn: async () => {
       console.log(`🚗 [FRONTEND] Buscando rotas para data: ${selectedDate}, user email: ${user?.email}`);
@@ -90,11 +88,11 @@ export default function RotaEntrega() {
       if (!res.ok) {
         const error = await res.text();
         console.error(`🚗 [FRONTEND] Erro: ${error}`);
-        throw new Error('Failed to fetch routes');
+        throw new Error(`Failed to fetch routes: ${res.status} - ${error}`);
       }
       const data = await res.json();
-      console.log(`🚗 [FRONTEND] Rotas recebidas:`, data.length);
-      return data;
+      console.log(`🚗 [FRONTEND] Rotas recebidas:`, data?.length || 0, data);
+      return data || [];
     },
     refetchInterval: 30000, // Atualiza a cada 30 segundos
   });
@@ -392,6 +390,18 @@ export default function RotaEntrega() {
           </CardContent>
         </Card>
 
+        {/* Error State */}
+        {routesError && (
+          <Card className="border-red-300 bg-red-50 dark:bg-red-950">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-2 text-red-600">
+                <AlertCircle className="h-5 w-5" />
+                <p>Erro ao carregar rotas: {routesError.message}</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Loading State */}
         {isLoading && (
           <Card>
@@ -403,7 +413,7 @@ export default function RotaEntrega() {
         )}
 
         {/* Empty State */}
-        {!isLoading && allDeliveries.length === 0 && (
+        {!isLoading && allDeliveries.length === 0 && !routesError && (
           <Card>
             <CardContent className="py-12 text-center">
               <Package className="h-16 w-16 mx-auto text-gray-400 mb-4" />
@@ -505,7 +515,7 @@ export default function RotaEntrega() {
                         </Button>
 
                         {/* Check-in/Check-out Buttons */}
-                        {delivery.routeStatus === 'em_andamento' && (
+                        {(delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && (
                           <>
                             {isPending && (
                               <Button
