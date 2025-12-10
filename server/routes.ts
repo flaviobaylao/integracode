@@ -9522,9 +9522,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { date } = req.query;
       const currentUser = (req as any).currentUser;
-      const userEmail = currentUser?.email;
+      console.log(`📦 [DRIVER-ROUTES] currentUser.id: ${currentUser?.id}, currentUser.email: ${currentUser?.email}`);
+      
+      // Usar email se disponível, senão usar ID como fallback
+      const userEmail = currentUser?.email || currentUser?.id;
       
       if (!userEmail) {
+        console.log(`❌ [DRIVER-ROUTES] Nenhum identificador encontrado no usuário autenticado`);
         return res.status(401).json({ message: "Usuário não autenticado" });
       }
       

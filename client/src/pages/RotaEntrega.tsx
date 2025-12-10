@@ -82,11 +82,19 @@ export default function RotaEntrega() {
   const { data: routes = [], isLoading, refetch } = useQuery<DeliveryRoute[]>({
     queryKey: ['/api/delivery-routes/driver/my-routes', selectedDate],
     queryFn: async () => {
+      console.log(`🚗 [FRONTEND] Buscando rotas para data: ${selectedDate}, user email: ${user?.email}`);
       const res = await fetch(`/api/delivery-routes/driver/my-routes?date=${selectedDate}`, {
         credentials: 'include',
       });
-      if (!res.ok) throw new Error('Failed to fetch routes');
-      return res.json();
+      console.log(`🚗 [FRONTEND] Resposta: ${res.status}`, res.ok);
+      if (!res.ok) {
+        const error = await res.text();
+        console.error(`🚗 [FRONTEND] Erro: ${error}`);
+        throw new Error('Failed to fetch routes');
+      }
+      const data = await res.json();
+      console.log(`🚗 [FRONTEND] Rotas recebidas:`, data.length);
+      return data;
     },
     refetchInterval: 30000, // Atualiza a cada 30 segundos
   });
