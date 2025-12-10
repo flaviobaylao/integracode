@@ -9536,7 +9536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${userEmail})`,
             sql`${deliveryRoutes.routeDate}::text = ${targetDateStr}`,
-            inArray(deliveryRoutes.status, ['rota_enviada', 'em_andamento', 'concluida'])
+            inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
