@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { MessageWithSender } from "@shared/schema";
+import type { ChatMessageWithSender } from "@shared/schema";
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
@@ -22,7 +22,7 @@ export class GrokService {
 
   async generateResponse(
     customerMessage: string,
-    conversationHistory: MessageWithSender[],
+    conversationHistory: ChatMessageWithSender[],
     customer: { name: string; phone: string },
     systemPrompt: string,
     companyContext: string

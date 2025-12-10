@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ConversationWithCustomer, MessageWithSender } from "@shared/schema";
 import { storage } from "./storage";
 import { whatsappAnalysisService } from "./whatsapp-analysis-service";
+import { grokService } from "./grok";
 
 // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
 
@@ -410,6 +411,65 @@ export async function generateAutoResponse(
     };
   }
 
+  // Verificar provedor de IA configurado
+  const aiProvider = (settings as any).aiProvider || 'openai';
+  
+  // Se o provedor for Grok, usar o serviço do Grok
+  if (aiProvider === 'grok') {
+    console.log(`🔮 [GROK-AUTO] Usando Grok para responder`);
+    
+    try {
+      if (!grokService.isAvailable()) {
+        console.error('❌ [GROK-AUTO] Grok não está disponível');
+        return {
+          response: {
+            reply: "O assistente Grok não está configurado. Um atendente humano irá ajudá-lo em breve.",
+            shouldTransfer: true,
+            transferReason: "Grok não configurado"
+          },
+          tokensUsed: 0,
+          responseTimeMs: Date.now() - startTime
+        };
+      }
+
+      const grokMessages = context.recentMessages.slice(-10).map(msg => ({
+        senderType: msg.role === 'customer' ? 'customer' : 'agent',
+        content: msg.content
+      })) as any[];
+
+      const grokResult = await grokService.generateResponse(
+        lastCustomerMessage,
+        grokMessages,
+        { name: context.customerName, phone: context.customerPhone },
+        systemPrompt,
+        companyContext
+      );
+
+      return {
+        response: {
+          reply: grokResult.response,
+          shouldTransfer: grokResult.shouldTransferToHuman,
+          transferReason: grokResult.shouldTransferToHuman ? "Transferência solicitada pelo Grok" : undefined
+        },
+        tokensUsed: 0,
+        responseTimeMs: Date.now() - startTime
+      };
+    } catch (error: any) {
+      console.error('❌ [GROK-AUTO] Erro ao gerar resposta:', error.message);
+      return {
+        response: {
+          reply: "Desculpe, estou com dificuldades técnicas no momento. Um atendente humano irá ajudá-lo em breve.",
+          shouldTransfer: true,
+          transferReason: `Erro técnico Grok: ${error.message}`
+        },
+        tokensUsed: 0,
+        responseTimeMs: Date.now() - startTime
+      };
+    }
+  }
+
+  // Usar OpenAI como padrão
+  console.log(`🤖 [OPENAI-AUTO] Usando OpenAI para responder`);
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   try {
