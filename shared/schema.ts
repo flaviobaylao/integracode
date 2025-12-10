@@ -2049,6 +2049,12 @@ export const chatGptModeEnum = pgEnum("chat_gpt_mode", [
   "timeout"        // Assume após timeout sem resposta de atendente
 ]);
 
+// Enum para provedor de IA
+export const aiProviderEnum = pgEnum("ai_provider", [
+  "openai",        // OpenAI (GPT-4, GPT-4o, etc.)
+  "grok"           // xAI Grok
+]);
+
 // Tabela de configurações do atendimento ChatGPT
 export const chatAiSettings = pgTable("chat_ai_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2056,6 +2062,9 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   // Configuração principal de ativação
   isEnabled: boolean("is_enabled").notNull().default(false),
   mode: chatGptModeEnum("mode").notNull().default("disabled"),
+  
+  // Provedor de IA (openai ou grok)
+  aiProvider: aiProviderEnum("ai_provider").notNull().default("openai"),
   
   // Configuração de horário (para mode = "schedule")
   // Formato: { "weekdays": ["Seg", "Ter", ...], "startTime": "18:00", "endTime": "08:00" }

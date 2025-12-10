@@ -23,6 +23,7 @@ interface ChatAiSettings {
   id: string | null;
   isEnabled: boolean;
   mode: 'disabled' | 'manual' | 'schedule' | 'timeout';
+  aiProvider: 'openai' | 'grok';
   businessHours: {
     weekdays: string[];
     startTime: string;
@@ -56,6 +57,17 @@ const GPT_MODELS = [
   { value: 'gpt-4-turbo', label: 'GPT-4 Turbo (Alta performance)' },
 ];
 
+const GROK_MODELS = [
+  { value: 'grok-2-1212', label: 'Grok-2 (Mais inteligente - 131k tokens)' },
+  { value: 'grok-beta', label: 'Grok Beta (Versão beta)' },
+  { value: 'grok-2-vision-1212', label: 'Grok-2 Vision (Com imagens - 8k tokens)' },
+];
+
+const AI_PROVIDERS = [
+  { value: 'openai', label: 'OpenAI (GPT-4)', icon: '🤖' },
+  { value: 'grok', label: 'xAI Grok', icon: '🔮' },
+];
+
 export default function ChatAISettings() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -66,6 +78,7 @@ export default function ChatAISettings() {
     id: null,
     isEnabled: false,
     mode: 'disabled',
+    aiProvider: 'openai',
     businessHours: {
       weekdays: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'],
       startTime: '08:00',
@@ -321,25 +334,56 @@ export default function ChatAISettings() {
               </div>
 
               <div className="space-y-4 pt-4 border-t">
-                <div className="space-y-2">
-                  <Label htmlFor="assistantId">ID do Assistente OpenAI</Label>
-                  <Input
-                    id="assistantId"
-                    placeholder="asst_4AM6M50fsOXKXlz5Ijc7IA9k"
-                    value={settings.assistantId || ''}
-                    onChange={(e) => setSettings({ ...settings, assistantId: e.target.value || null })}
-                    className="w-full max-w-md font-mono"
-                    data-testid="input-assistant-id"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Insira o ID do assistente criado no OpenAI Platform (ex: asst_xxxxx).
-                    O sistema usará este assistente para responder às mensagens dos clientes.
-                  </p>
-                </div>
+                <Label>Provedor de IA</Label>
+                <Select
+                  value={settings.aiProvider}
+                  onValueChange={(value: 'openai' | 'grok') => {
+                    const defaultModel = value === 'grok' ? 'grok-2-1212' : 'gpt-4o-mini';
+                    setSettings({ ...settings, aiProvider: value, gptModel: defaultModel });
+                  }}
+                  data-testid="select-provider"
+                >
+                  <SelectTrigger className="w-80">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AI_PROVIDERS.map(provider => (
+                      <SelectItem key={provider.value} value={provider.value}>
+                        <span className="flex items-center gap-2">
+                          <span>{provider.icon}</span>
+                          {provider.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  Escolha entre OpenAI (GPT-4) ou xAI Grok para responder às mensagens
+                </p>
               </div>
 
+              {settings.aiProvider === 'openai' && (
+                <div className="space-y-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <Label htmlFor="assistantId">ID do Assistente OpenAI (opcional)</Label>
+                    <Input
+                      id="assistantId"
+                      placeholder="asst_4AM6M50fsOXKXlz5Ijc7IA9k"
+                      value={settings.assistantId || ''}
+                      onChange={(e) => setSettings({ ...settings, assistantId: e.target.value || null })}
+                      className="w-full max-w-md font-mono"
+                      data-testid="input-assistant-id"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Insira o ID do assistente criado no OpenAI Platform (ex: asst_xxxxx).
+                      O sistema usará este assistente para responder às mensagens dos clientes.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-4 pt-4 border-t">
-                <Label>Modelo de IA (fallback)</Label>
+                <Label>Modelo de IA</Label>
                 <Select
                   value={settings.gptModel}
                   onValueChange={(value) => setSettings({ ...settings, gptModel: value })}
@@ -349,7 +393,7 @@ export default function ChatAISettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {GPT_MODELS.map(model => (
+                    {(settings.aiProvider === 'grok' ? GROK_MODELS : GPT_MODELS).map(model => (
                       <SelectItem key={model.value} value={model.value}>
                         {model.label}
                       </SelectItem>
@@ -357,7 +401,9 @@ export default function ChatAISettings() {
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">
-                  Modelo usado caso nenhum assistente seja configurado
+                  {settings.aiProvider === 'grok' 
+                    ? 'Modelo Grok usado para responder às mensagens' 
+                    : 'Modelo usado caso nenhum assistente seja configurado'}
                 </p>
               </div>
 
