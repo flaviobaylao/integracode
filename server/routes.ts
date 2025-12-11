@@ -5553,63 +5553,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sync orders by step/stage
-  app.post('/api/omie/orders/:step/sync', authenticateUser, async (req: any, res) => {
-    try {
-      const { step } = req.params;
-      
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ 
-          message: "Integração Omie não configurada" 
-        });
-      }
-
-      // Primeiro buscar etapas disponíveis para mapear corretamente
-      const availableStages = await omieService.getAvailableStages();
-      
-      // Mapear step para etapa do Omie baseado nas etapas disponíveis
-      const stageMapping: Record<string, string> = {};
-      
-      // Criar mapeamento dinâmico baseado nas etapas disponíveis
-      availableStages.forEach((stage: any, index: number) => {
-        const stageCode = stage.cCodigo || stage.codigo;
-        if (index === 0) stageMapping['sale'] = stageCode;
-        else if (index === 1) stageMapping['billing'] = stageCode;
-        else if (index === 2) stageMapping['billed'] = stageCode;
-        else if (index === 3) stageMapping['awaiting-route'] = stageCode;
-        else if (index === 4) stageMapping['in-route'] = stageCode;
-      });
-      
-      const omieStage = stageMapping[step];
-      if (!omieStage) {
-        return res.status(400).json({ 
-          message: 'Etapa não disponível nesta conta',
-          availableStages: availableStages.map((s: any) => ({ 
-            codigo: s.cCodigo || s.codigo, 
-            descricao: s.cDescricao || s.descricao 
-          }))
-        });
-      }
-
-      const result = await omieService.getOrdersByStage(omieStage);
-      
-      res.json({
-        success: true,
-        count: result.totalRecords,
-        message: `${result.totalRecords} pedidos sincronizados da etapa ${step}`,
-        omieStage,
-        availableStages
-      });
-    } catch (error) {
-      console.error('Erro ao sincronizar pedidos por etapa:', error);
-      res.status(500).json({ 
-        message: 'Erro ao sincronizar pedidos', 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      });
-    }
-  });
-
   // Rota específica para sincronizar pedidos em "Aguardando Rota"
   app.post('/api/omie/orders/awaiting-route/sync', authenticateUser, async (req: any, res) => {
     try {
