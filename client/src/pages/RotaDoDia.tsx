@@ -72,7 +72,7 @@ export default function RotaDoDia() {
   const isVendedor = user?.role === 'vendedor';
   
   // Bloquear motoristas de acessar Rota do Dia
-  if (user && user.role === 'motorista') {
+  if (user && (user.role as string) === 'motorista') {
     return (
       <div className="p-6 text-center">
         <h1 className="text-2xl font-bold mb-4">Acesso Negado</h1>
