@@ -17728,10 +17728,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .set({
             lastCheckInAt: now,
             status: 'visited', // Marcar como visitado
+            photo: photoUrl, // Salvar foto no lead
             updatedAt: now
           })
           .where(eq(leads.id, id))
           .execute();
+        
+        console.log(`✅ Lead atualizado no banco de dados`);
+        
+        // Registrar checkpoint na rota diária (para aparecer na listagem)
+        let routeProgress = null;
+        try {
+          const sellerId = lead.assignedTo || user.id;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+          
+          if (dailyRoute) {
+            // Buscar o visitId correspondente ao lead na rota
+            const visits = dailyRoute.visits || [];
+            const leadVisit = visits.find((v: any) => 
+              v.visitType === 'lead' && (v.entityId === id || v.leadId === id || v.customerId === id)
+            );
+            
+            if (leadVisit) {
+              console.log(`📍 Registrando checkpoint de check-in para lead ${id} na rota ${dailyRoute.id}, visitId: ${leadVisit.id}`);
+              const { registerCheckpoint } = await import('./routeOptimizationService');
+              routeProgress = await registerCheckpoint(
+                storage,
+                dailyRoute.id,
+                leadVisit.id,  // visitId da rota
+                id,            // customerId = lead ID
+                sellerId,
+                'check_in',
+                userLat,
+                userLon,
+                photoUrl       // Passar URL da foto
+              );
+              console.log(`✅ Checkpoint de check-in registrado para lead`);
+            } else {
+              console.log(`⚠️ Lead ${id} não encontrado na rota diária do vendedor`);
+            }
+          } else {
+            console.log(`⚠️ Nenhuma rota diária encontrada para o vendedor ${sellerId}`);
+          }
+        } catch (checkpointError: any) {
+          console.error('❌ Erro ao registrar checkpoint de check-in:', checkpointError);
+          // Não falhar o check-in se checkpoint falhar
+        }
         
         console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
         
@@ -17744,7 +17788,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             status: 'visited',
             checkInDistance: Math.round(checkInDistance),
             photoUrl: photoUrl
-          }
+          },
+          routeProgress
         });
       } catch (dbError) {
         console.error('❌ Erro ao atualizar lead no banco de dados:', dbError);
@@ -17800,10 +17845,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .update(leads)
           .set({
             lastCheckOutAt: now,
-            status: 'contacted' as any, // Manter como contatado
+            status: 'visited', // Manter como visitado (valor válido no enum)
             updatedAt: now
           })
           .where(eq(leads.id, id));
+        
+        console.log(`✅ Lead atualizado com check-out`);
+        
+        // Registrar checkpoint de check-out na rota diária
+        let routeProgress = null;
+        try {
+          const sellerId = lead.assignedTo || user.id;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+          
+          if (dailyRoute) {
+            const visits = dailyRoute.visits || [];
+            const leadVisit = visits.find((v: any) => 
+              v.visitType === 'lead' && (v.entityId === id || v.leadId === id || v.customerId === id)
+            );
+            
+            if (leadVisit) {
+              console.log(`📍 Registrando checkpoint de check-out para lead ${id} na rota ${dailyRoute.id}`);
+              const { registerCheckpoint } = await import('./routeOptimizationService');
+              routeProgress = await registerCheckpoint(
+                storage,
+                dailyRoute.id,
+                leadVisit.id,
+                id,
+                sellerId,
+                'check_out',
+                parseFloat(latitude),
+                parseFloat(longitude)
+              );
+              console.log(`✅ Checkpoint de check-out registrado para lead`);
+            }
+          }
+        } catch (checkpointError: any) {
+          console.error('❌ Erro ao registrar checkpoint de check-out:', checkpointError);
+        }
         
         console.log(`✅ Check-out realizado em lead ${lead.fantasyName}`);
         
@@ -17814,8 +17895,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             fantasyName: lead.fantasyName,
             lastCheckInAt: lead.lastCheckInAt,
             lastCheckOutAt: now,
-            status: 'contacted'
-          }
+            status: 'visited'
+          },
+          routeProgress
         });
       } catch (dbError) {
         console.error('Erro ao atualizar lead no banco de dados:', dbError);
