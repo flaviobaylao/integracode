@@ -12,11 +12,18 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     let userId: string | null = null;
     let userEmail: string | null = null;
     
-    console.log(`🔐 [AUTH] ${req.method} ${req.path}`);
-    console.log(`🔐 [AUTH] Session exists: ${!!req.session}`);
-    console.log(`🔐 [AUTH] Session userId: ${(req.session as any)?.userId}`);
-    console.log(`🔐 [AUTH] Session user: ${!!(req.session as any)?.user}`);
-    console.log(`🔐 [AUTH] isAuthenticated: ${req.isAuthenticated?.()}`);
+    if (req.path.includes('check-in')) {
+      console.log(`\n🔍 [AUTH-CHECK-IN] Verificando autenticação para: ${req.method} ${req.path}`);
+      console.log(`🔍 [AUTH-CHECK-IN] Session cookie: ${req.get('cookie')}`);
+      console.log(`🔍 [AUTH-CHECK-IN] Session exists: ${!!req.session}`);
+      if (req.session) {
+        console.log(`🔍 [AUTH-CHECK-IN] Session ID: ${(req.session as any).id}`);
+        console.log(`🔍 [AUTH-CHECK-IN] Session userId: ${(req.session as any)?.userId}`);
+        console.log(`🔍 [AUTH-CHECK-IN] Session user: ${JSON.stringify((req.session as any)?.user)}`);
+      }
+      console.log(`🔍 [AUTH-CHECK-IN] isAuthenticated: ${req.isAuthenticated?.()}`);
+      console.log(`🔍 [AUTH-CHECK-IN] req.user: ${JSON.stringify((req as any).user)}\n`);
+    }
     
     // Verificar userId armazenado diretamente na sessão (forma mais comum)
     if ((req.session as any)?.userId) {
@@ -38,7 +45,7 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
     }
     
     if (!userId) {
-      console.log(`❌ [AUTH] No userId found`);
+      console.log(`❌ [AUTH] No userId found for ${req.path}`);
       return res.status(401).json({ message: "Unauthorized" });
     }
     
