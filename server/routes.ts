@@ -9205,17 +9205,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: "Invalid total duration" });
         }
         
-        // Validar paradas
-        if (!Array.isArray(routePlan.stops) || routePlan.stops.length === 0) {
-          return res.status(400).json({ message: "Routes must have at least one stop" });
-        }
-        
-        for (const stop of routePlan.stops) {
-          if (isNaN(parseFloat(stop.latitude)) || isNaN(parseFloat(stop.longitude))) {
-            return res.status(400).json({ message: `Invalid coordinates for stop: ${stop.customerName}` });
-          }
-          if (!stop.billingId) {
-            console.warn(`⚠️ [SAVE-ROUTES] Stop ${stop.customerName} missing billingId`);
+        // Validar paradas (se houver)
+        if (Array.isArray(routePlan.stops) && routePlan.stops.length > 0) {
+          for (const stop of routePlan.stops) {
+            if (isNaN(parseFloat(stop.latitude)) || isNaN(parseFloat(stop.longitude))) {
+              return res.status(400).json({ message: `Invalid coordinates for stop: ${stop.customerName}` });
+            }
+            if (!stop.billingId) {
+              console.warn(`⚠️ [SAVE-ROUTES] Stop ${stop.customerName} missing billingId`);
+            }
           }
         }
       }

@@ -4772,13 +4772,15 @@ export class DatabaseStorage implements IStorage {
       // Salvar a rota
       const [savedRoute] = await tx.insert(deliveryRoutes).values(route).returning();
       
-      // Salvar as paradas com routeId
+      // Salvar as paradas com routeId (se houver)
       const stopsWithRouteId = stops.map(stop => ({
         ...stop,
         routeId: savedRoute.id
       }));
       
-      const savedStops = await tx.insert(deliveryRouteStops).values(stopsWithRouteId).returning();
+      const savedStops = stopsWithRouteId.length > 0 
+        ? await tx.insert(deliveryRouteStops).values(stopsWithRouteId).returning()
+        : [];
       
       return { route: savedRoute, stops: savedStops };
     });
