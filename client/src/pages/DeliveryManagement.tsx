@@ -388,6 +388,27 @@ export default function DeliveryManagement() {
     },
   });
 
+  // Mutation para sincronizar pedidos com Omie
+  const syncOmieMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('POST', '/api/omie/orders/awaiting-route/sync');
+    },
+    onSuccess: (data) => {
+      refetchOrders();
+      toast({
+        title: "Sincronização concluída!",
+        description: data.message || "Pedidos sincronizados com Omie com sucesso.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro na sincronização",
+        description: error.message || "Erro ao sincronizar com Omie",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Funções de seleção
   const handleSelectAll = () => {
     if (selectAll) {
@@ -820,12 +841,34 @@ export default function DeliveryManagement() {
       {/* Orders List */}
       <Card data-testid="orders-list-card">
         <CardHeader>
-          <CardTitle>
-            Pedidos Aguardando Rota ({filteredOrders.length})
-            {selectedOrders.size > 0 && (
-              <Badge variant="secondary" className="ml-2">{selectedOrders.size} selecionados</Badge>
-            )}
-          </CardTitle>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle>
+              Pedidos Aguardando Rota ({filteredOrders.length})
+              {selectedOrders.size > 0 && (
+                <Badge variant="secondary" className="ml-2">{selectedOrders.size} selecionados</Badge>
+              )}
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={() => syncOmieMutation.mutate()}
+              disabled={syncOmieMutation.isPending}
+              className="bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-800"
+              data-testid="button-sync-omie"
+            >
+              {syncOmieMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Sincronizar com Omie
+                </>
+              )}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoadingOrders ? (
