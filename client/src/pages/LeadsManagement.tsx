@@ -215,6 +215,7 @@ export default function LeadsManagement() {
   };
 
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+  const isVendedor = currentUser?.role === 'vendedor';
 
   const statusLabels: Record<string, string> = {
     pending: "Pendente",
@@ -294,7 +295,7 @@ export default function LeadsManagement() {
         </div>
         <div className="flex items-center gap-2">
           <BackToDashboardButton />
-          {isAdmin && (
+          {(isAdmin || isVendedor) && (
             <Button
               onClick={() => setIsCreating(true)}
               data-testid="button-create-lead"
