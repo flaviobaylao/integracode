@@ -17521,15 +17521,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Criar novo lead (apenas admin, coordinator, administrative)
+  // Criar novo lead (admin, coordinator, administrative, vendedor)
   app.post('/api/leads', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
       
-      // Verificar permissão (apenas admin/coordinator/administrative podem criar)
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      // Verificar permissão (admin/coordinator/administrative/vendedor podem criar)
+      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
         return res.status(403).json({ 
-          message: 'Acesso negado. Apenas usuários administrativos podem criar leads.' 
+          message: 'Acesso negado. Apenas usuários administrativos e vendedores podem criar leads.' 
         });
       }
       
