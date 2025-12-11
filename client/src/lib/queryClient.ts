@@ -94,6 +94,11 @@ export async function apiRequestMultipart(
   
   try {
     console.log('🌐 API Multipart Request:', method, url);
+    console.log('📦 FormData entries:');
+    for (const [key, value] of formData.entries()) {
+      console.log(`  - ${key}: ${value instanceof File ? `File(${value.name}, ${value.size} bytes)` : value}`);
+    }
+    
     const res = await fetch(url, {
       method,
       body: formData,
@@ -102,8 +107,12 @@ export async function apiRequestMultipart(
     });
 
     console.log('📡 API Response:', res.status, res.statusText);
+    console.log('📝 Response headers:', res.headers);
     await throwIfResNotOk(res);
     return await res.json();
+  } catch (error) {
+    console.error('❌ Multipart request error:', error);
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }

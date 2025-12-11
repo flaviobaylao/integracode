@@ -17615,11 +17615,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Check-in em um lead (com foto obrigatória)
-  app.post('/api/leads/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
+  app.post('/api/leads/:id/check-in', upload.single('photo'), async (req: any, res) => {
+    console.log(`🚀 [CHECK-IN] POST /api/leads/${req.params.id}/check-in`);
+    console.log(`🚀 [CHECK-IN] Headers:`, req.headers);
+    console.log(`🚀 [CHECK-IN] Session:`, !!req.session);
+    
     try {
+      // Autenticar manualmente dentro do handler
+      let userId: string | null = null;
+      let userEmail: string | null = null;
+      
+      if ((req.session as any)?.userId) {
+        userId = (req.session as any).userId;
+        userEmail = (req.session as any)?.userEmail;
+        console.log(`✅ [CHECK-IN] Autenticado via session userId: ${userEmail}`);
+      } else if ((req.session as any)?.user?.claims?.sub) {
+        userId = (req.session as any).user.claims.sub;
+        userEmail = (req.session as any).user.claims.email;
+        console.log(`✅ [CHECK-IN] Autenticado via claims: ${userEmail}`);
+      } else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
+        userId = (req.user as any).claims.sub;
+        userEmail = (req.user as any).claims.email;
+        console.log(`✅ [CHECK-IN] Autenticado via Passport: ${userEmail}`);
+      }
+      
+      if (!userId) {
+        console.log(`❌ [CHECK-IN] Não autenticado`);
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Buscar usuário
+      let user = await storage.getUser(userId);
+      if (!user && userEmail) {
+        user = await storage.getUserByEmail(userEmail);
+      }
+      
+      if (!user || !user.isActive) {
+        console.log(`❌ [CHECK-IN] User not found or inactive`);
+        return res.status(401).json({ message: "User not found or inactive" });
+      }
+      
       const { id } = req.params;
       const { latitude, longitude } = req.body;
-      const user = req.currentUser;
       
       console.log(`📍 Check-in em lead ${id} - User: ${user?.email || 'UNKNOWN'}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude})`);
       
