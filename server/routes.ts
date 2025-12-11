@@ -5619,6 +5619,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota de DEBUG para etapas do Omie
+  app.get('/api/omie/debug-stages', authenticateUser, async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      // Chamar a API Omie diretamente para debug
+      const stages = await (omieService as any).makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
+      
+      res.json({
+        rawResponse: stages,
+        keys: Object.keys(stages),
+        properties: stages.etapas ? stages.etapas.map((s: any) => Object.keys(s)) : 'N/A'
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
   // Rota para debug de uma NF específica
   app.get('/api/omie/debug-invoice/:invoiceNumber', authenticateUser, async (req, res) => {
     try {
