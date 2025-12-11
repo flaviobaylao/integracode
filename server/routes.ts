@@ -5610,6 +5610,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rota específica para sincronizar pedidos em "Aguardando Rota"
+  app.post('/api/omie/orders/awaiting-route/sync', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      // Buscar etapas disponíveis
+      const availableStages = await omieService.getAvailableStages();
+      
+      // Procurar pela etapa "Aguardando Rota" (case-insensitive)
+      const awaitingRouteStage = availableStages.find((stage: any) => {
+        const description = (stage.cDescricao || stage.descricao || '').toLowerCase();
+        return description.includes('aguardando') && description.includes('rota');
+      });
+
+      if (!awaitingRouteStage) {
+        return res.status(400).json({ 
+          message: 'Etapa "Aguardando Rota" não encontrada nas etapas disponíveis da conta',
+          availableStages: availableStages.map((s: any) => ({ 
+            codigo: s.cCodigo || s.codigo, 
+            descricao: s.cDescricao || s.descricao 
+          }))
+        });
+      }
+
+      // Sincronizar pedidos da etapa "Aguardando Rota"
+      const stageCode = awaitingRouteStage.cCodigo || awaitingRouteStage.codigo;
+      const result = await omieService.getOrdersByStage(stageCode);
+      
+      console.log(`✅ Pedidos sincronizados de "Aguardando Rota": ${result.totalRecords} registros`);
+      
+      res.json({
+        success: true,
+        count: result.totalRecords,
+        message: `${result.totalRecords} pedidos sincronizados da etapa "Aguardando Rota"`,
+        stageCode,
+        stageName: awaitingRouteStage.cDescricao || awaitingRouteStage.descricao
+      });
+    } catch (error) {
+      console.error('Erro ao sincronizar pedidos de "Aguardando Rota":', error);
+      res.status(500).json({ 
+        message: 'Erro ao sincronizar pedidos', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   // Rota para debug de uma NF específica
   app.get('/api/omie/debug-invoice/:invoiceNumber', authenticateUser, async (req, res) => {
     try {
