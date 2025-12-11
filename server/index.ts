@@ -20,8 +20,25 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Middleware condicional para JSON - NÃO processar requisições multipart/form-data
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    // Deixar o multer processar essas requisições
+    return next();
+  }
+  express.json()(req, res, next);
+});
+
+// Middleware condicional para urlencoded - NÃO processar requisições multipart/form-data
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    // Deixar o multer processar essas requisições
+    return next();
+  }
+  express.urlencoded({ extended: false })(req, res, next);
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
