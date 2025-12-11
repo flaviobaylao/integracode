@@ -9583,11 +9583,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`,
             sql`${deliveryRoutes.routeDate}::text = ${date}`,
-            inArray(deliveryRoutes.status, ['rota_enviada', 'em_andamento', 'concluida'])
+            inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         );
       
       res.json({ count: routes.length, routes, queryParams: { date, email } });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DEBUG: Endpoint para ver TODAS as rotas em uma data (admin only)
+  app.get("/api/debug/all-routes-for-date", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { date } = req.query;
+      if (!date) {
+        return res.status(400).json({ message: "date é obrigatório" });
+      }
+      
+      const routes = await db.select().from(deliveryRoutes)
+        .where(sql`${deliveryRoutes.routeDate}::text = ${date}`)
+        .orderBy(asc(deliveryRoutes.driverEmail));
+      
+      return res.json({ 
+        count: routes.length, 
+        date,
+        routes: routes.map(r => ({
+          id: r.id,
+          routeName: r.routeName,
+          driverName: r.driverName,
+          driverEmail: r.driverEmail,
+          status: r.status,
+          totalDeliveries: r.totalDeliveries
+        }))
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
