@@ -65,7 +65,26 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useLocation()[1];
+  
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  const isVendedor = user?.role === 'vendedor';
+  
+  // Bloquear motoristas de acessar Rota do Dia
+  if (user && user.role === 'motorista') {
+    return (
+      <div className="p-6 text-center">
+        <h1 className="text-2xl font-bold mb-4">Acesso Negado</h1>
+        <p className="text-gray-600 mb-4">Motoristas devem usar a "Rota de Entrega"</p>
+        <button 
+          onClick={() => navigate('/rota-entrega')}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+        >
+          Ir para Rota de Entrega
+        </button>
+      </div>
+    );
+  }
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
   const [selectedCard, setSelectedCard] = useState<any>(null);

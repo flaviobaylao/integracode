@@ -17653,12 +17653,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`✅ Lead encontrado: ${lead.fantasyName}, assignedTo: ${lead.assignedTo}, user.id: ${user.id}`);
       
-      // Apenas o vendedor/motorista atribuído ou admin pode fazer check-in
-      const isAdmin = user.role === 'admin' || user.role === 'coordinator' || user.role === 'administrative';
-      const isSeller = user.role === 'vendedor' || user.role === 'motorista';
-      
-      if (!isAdmin && isSeller && lead.assignedTo !== user.id) {
-        console.log(`❌ Acesso negado - não é o vendedor/motorista atribuído`);
+      // Apenas o vendedor atribuído ou admin pode fazer check-in
+      if (user.role === 'vendedor' && lead.assignedTo !== user.id) {
+        console.log(`❌ Acesso negado - não é o vendedor atribuído`);
         return res.status(403).json({ 
           message: 'Você não está atribuído a este lead' 
         });
@@ -17742,11 +17739,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Lead não encontrado' });
       }
       
-      // Apenas o vendedor/motorista atribuído ou admin pode fazer check-out
-      const isAdmin = user.role === 'admin' || user.role === 'coordinator' || user.role === 'administrative';
-      const isSeller = user.role === 'vendedor' || user.role === 'motorista';
-      
-      if (!isAdmin && isSeller && lead.assignedTo !== user.id) {
+      // Apenas o vendedor atribuído ou admin pode fazer check-out
+      if (user.role === 'vendedor' && lead.assignedTo !== user.id) {
         return res.status(403).json({ 
           message: 'Você não está atribuído a este lead' 
         });
