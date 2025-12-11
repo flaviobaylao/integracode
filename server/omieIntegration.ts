@@ -3701,13 +3701,29 @@ export class OmieService {
     try {
       const response = await this.makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
       
-      // A resposta vem com propriedade 'etapas'
-      const stages = response.etapas || [];
-      console.log('Etapas de faturamento disponíveis:', JSON.stringify(stages, null, 2));
+      // Debug: Log a resposta completa
+      console.log('📦 Resposta completa de etapas:', JSON.stringify(response, null, 2));
       
-      return stages.filter((stage: any) => stage.cInativo !== 'S'); // Apenas etapas ativas
+      // A resposta pode vir em diferentes formatos
+      let stages = response.etapas || response.lista_etapas || response.stage || [];
+      
+      // Se não encontrou etapas e a resposta tem outras propriedades, tentar extrair
+      if (!stages || stages.length === 0) {
+        console.log('❌ Etapas não encontradas em formatos esperados. Propriedades da resposta:', Object.keys(response));
+        stages = [];
+      }
+      
+      console.log(`✅ Etapas de faturamento disponíveis (${stages.length} encontradas):`, 
+        stages.map((s: any) => ({
+          codigo: s.cCodigo || s.codigo,
+          descricao: s.cDescricao || s.descricao,
+          inativo: s.cInativo || s.inativo
+        }))
+      );
+      
+      return stages.filter((stage: any) => (stage.cInativo || stage.inativo) !== 'S'); // Apenas etapas ativas
     } catch (error) {
-      console.error('Erro ao buscar etapas de faturamento:', error);
+      console.error('❌ Erro ao buscar etapas de faturamento:', error);
       return [];
     }
   }

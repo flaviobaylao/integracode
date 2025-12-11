@@ -5563,16 +5563,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      console.log('🔄 Iniciando sincronização de pedidos "Aguardando Rota"...');
+
       // Buscar etapas disponíveis
       const availableStages = await omieService.getAvailableStages();
+      console.log(`📋 Etapas disponíveis: ${availableStages.length} encontradas`);
       
+      if (!availableStages || availableStages.length === 0) {
+        return res.status(400).json({ 
+          message: 'Nenhuma etapa encontrada na conta Omie',
+          debug: 'Verifique se a autenticação do Omie está configurada corretamente'
+        });
+      }
+
       // Procurar pela etapa "Aguardando Rota" (case-insensitive)
       const awaitingRouteStage = availableStages.find((stage: any) => {
         const description = (stage.cDescricao || stage.descricao || '').toLowerCase();
+        console.log(`  🔍 Verificando etapa: "${description}"`);
         return description.includes('aguardando') && description.includes('rota');
       });
 
       if (!awaitingRouteStage) {
+        console.log('❌ Etapa "Aguardando Rota" não encontrada');
         return res.status(400).json({ 
           message: 'Etapa "Aguardando Rota" não encontrada nas etapas disponíveis da conta',
           availableStages: availableStages.map((s: any) => ({ 
@@ -5582,8 +5594,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      console.log(`✅ Etapa "Aguardando Rota" encontrada: ${awaitingRouteStage.cDescricao || awaitingRouteStage.descricao}`);
+
       // Sincronizar pedidos da etapa "Aguardando Rota"
       const stageCode = awaitingRouteStage.cCodigo || awaitingRouteStage.codigo;
+      console.log(`📦 Buscando pedidos da etapa: ${stageCode}`);
       const result = await omieService.getOrdersByStage(stageCode);
       
       console.log(`✅ Pedidos sincronizados de "Aguardando Rota": ${result.totalRecords} registros`);
@@ -5596,7 +5611,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stageName: awaitingRouteStage.cDescricao || awaitingRouteStage.descricao
       });
     } catch (error) {
-      console.error('Erro ao sincronizar pedidos de "Aguardando Rota":', error);
+      console.error('❌ Erro ao sincronizar pedidos de "Aguardando Rota":', error);
       res.status(500).json({ 
         message: 'Erro ao sincronizar pedidos', 
         error: error instanceof Error ? error.message : 'Unknown error' 
