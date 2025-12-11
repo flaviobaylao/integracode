@@ -124,7 +124,7 @@ export default function RotaDoDia() {
       if (!res.ok) throw new Error('Failed to fetch customers');
       return res.json();
     },
-    enabled: isAdmin && showAddVisitModal && addVisitTab === 'customer' && !!selectedSellerId,
+    enabled: (isAdmin || isVendedor) && showAddVisitModal && addVisitTab === 'customer' && !!selectedSellerId,
   });
 
   const { data: leads } = useQuery<any[]>({
@@ -140,7 +140,7 @@ export default function RotaDoDia() {
       if (!res.ok) throw new Error('Failed to fetch leads');
       return res.json();
     },
-    enabled: isAdmin && showAddVisitModal && addVisitTab === 'lead' && !!selectedSellerId,
+    enabled: (isAdmin || isVendedor) && showAddVisitModal && addVisitTab === 'lead' && !!selectedSellerId,
   });
 
   const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
@@ -928,7 +928,7 @@ export default function RotaDoDia() {
           )}
 
           {/* Empty Route State - Show Button to Add Visits */}
-          {route.visits?.length === 0 && isAdmin && (
+          {route.visits?.length === 0 && (isAdmin || isVendedor) && (
             <Card className="mb-6 border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/20">
               <CardContent className="py-8 text-center">
                 <div className="flex flex-col items-center gap-4">
@@ -957,7 +957,7 @@ export default function RotaDoDia() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Visitas Presenciais ({(route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual').length})</CardTitle>
-                {isAdmin && route.id && (
+                {(isAdmin || isVendedor) && route.id && (
                   <div className="flex gap-2">
                     <Button
                       size="sm"
@@ -1192,8 +1192,8 @@ export default function RotaDoDia() {
                             </Button>
                           )}
                           
-                          {/* Botão Deletar (apenas admin) */}
-                          {isAdmin && route.id && (
+                          {/* Botão Deletar (admin e vendedor) */}
+                          {(isAdmin || isVendedor) && route.id && (
                             <Button
                               size="icon"
                               variant="ghost"
