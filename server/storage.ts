@@ -5022,9 +5022,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(routeCheckpoints.dailyRouteId, dailyRouteId))
       .orderBy(routeCheckpoints.sequenceNumber);
     
-    // Drizzle retorna campos em camelCase automaticamente, adicionar customerName, photoUrl e coordenadas cadastradas
+    // Retornar com coordenadas do checkpoint (capturadas durante check-in/check-out)
     return results.map(row => ({
       ...row.route_checkpoints,
+      latitude: row.route_checkpoints.checkpointLatitude ? parseFloat(row.route_checkpoints.checkpointLatitude.toString()) : null,
+      longitude: row.route_checkpoints.checkpointLongitude ? parseFloat(row.route_checkpoints.checkpointLongitude.toString()) : null,
       customerName: row.customers?.fantasyName || row.customers?.name || null,
       photoUrl: row.sales_cards?.checkInPhotoUrl || null,
       customerRegisteredLatitude: row.customers?.latitude || null,
