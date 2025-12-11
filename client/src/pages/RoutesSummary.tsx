@@ -111,6 +111,7 @@ export default function RoutesSummary() {
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
+  const [showAddVisits, setShowAddVisits] = useState(false);
   const [showAllRoutesMap, setShowAllRoutesMap] = useState(false);
   const [selectedStopForTransfer, setSelectedStopForTransfer] = useState<StopForTransfer | null>(null);
   const [newDriverIdForTransfer, setNewDriverIdForTransfer] = useState<string>('');
@@ -1012,6 +1013,7 @@ export default function RoutesSummary() {
                   const deliveryDuration = calculateDeliveryDuration(stop.checkInTime, stop.checkOutTime);
                   
                   return (
+                    
                     <Card key={stop.id} className={stop.isPriority ? 'border-red-300 bg-red-50' : ''}>
                       <CardContent className="pt-6">
                         <div className="flex items-start space-x-4">
@@ -1133,8 +1135,18 @@ export default function RoutesSummary() {
                   );
                 })
                 ) : (
-                  <div className="text-center text-muted-foreground py-8">
-                    Nenhuma parada cadastrada para esta rota
+                  <div className="text-center py-8">
+                    <div className="text-muted-foreground mb-4">
+                      Nenhuma parada cadastrada para esta rota
+                    </div>
+                    <Button
+                      onClick={() => setShowAddVisits(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                      data-testid="button-add-visits-empty-route"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Adicionar Visitas à Rota
+                    </Button>
                   </div>
                 )}
               </div>
@@ -1513,6 +1525,49 @@ export default function RoutesSummary() {
                         });
                       }
                     }}
+                  >
+                    <div className="font-medium text-sm">{order.customerName}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
+                    <div className="text-xs text-blue-600 mt-2">
+                      R$ {(Number(order.saleValue) || 0).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAddVisits} onOpenChange={setShowAddVisits}>
+        <DialogContent className="max-w-md" data-testid="dialog-add-visits-empty-route">
+          <DialogHeader>
+            <DialogTitle>Adicionar Visitas à Rota Vazia</DialogTitle>
+            <DialogDescription>
+              Selecione um pedido para adicionar à rota
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {orders.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                Não há pedidos disponíveis para adicionar
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {orders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition"
+                    onClick={() => {
+                      if (selectedRoute) {
+                        addStopMutation.mutate({
+                          routeId: selectedRoute,
+                          billingId: order.id,
+                        });
+                      }
+                    }}
+                    data-testid={`order-item-${order.id}`}
                   >
                     <div className="font-medium text-sm">{order.customerName}</div>
                     <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
