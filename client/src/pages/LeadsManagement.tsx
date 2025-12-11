@@ -33,6 +33,7 @@ export default function LeadsManagement() {
     phone: "",
     observation: "",
     status: "pending" as const,
+    assignedTo: "",
   });
 
   // Filtros
@@ -137,6 +138,7 @@ export default function LeadsManagement() {
       phone: "",
       observation: "",
       status: "pending",
+      assignedTo: "",
     });
   };
 
@@ -202,6 +204,7 @@ export default function LeadsManagement() {
       phone: lead.phone || "",
       observation: lead.observation || "",
       status: lead.status as any,
+      assignedTo: lead.assignedTo || "",
     });
   };
 
@@ -621,6 +624,26 @@ export default function LeadsManagement() {
                   <SelectItem value="visited">Visitado</SelectItem>
                   <SelectItem value="converted">Convertido</SelectItem>
                   <SelectItem value="discarded">Descartado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="assignedTo">Vendedor Responsável</Label>
+              <Select
+                value={formData.assignedTo || "all"}
+                onValueChange={(value) => setFormData({ ...formData, assignedTo: value === "all" ? "" : value })}
+              >
+                <SelectTrigger data-testid="select-seller">
+                  <SelectValue placeholder="Selecione um vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Nenhum</SelectItem>
+                  {sellers.map(seller => (
+                    <SelectItem key={seller.id} value={seller.id} data-testid={`option-seller-${seller.id}`}>
+                      {seller.firstName} {seller.lastName}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
