@@ -9305,7 +9305,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalDistance: parseFloat(route.totalDistance) || 0,
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
-              status: 'rota salva', // Mudado para 'rota salva'
+              status: 'rota_enviada', // Enviada automaticamente para o motorista
+              sentToDriverAt: new Date(),
               updatedAt: new Date()
             })
             .where(eq(deliveryRoutes.id, routeToUpdate.id))
@@ -9341,7 +9342,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalDuration: parseInt(route.totalDuration) || 0,
             timeWindowStart: route.timeWindowStart || '08:00',
             timeWindowEnd: route.timeWindowEnd || '18:00',
-            status: 'rota salva' // Mudado para 'rota salva'
+            status: 'rota_enviada', // Enviada automaticamente para o motorista
+            sentToDriverAt: new Date()
           };
 
           const stopsData = stops.map((stop: any, index: number) => ({
