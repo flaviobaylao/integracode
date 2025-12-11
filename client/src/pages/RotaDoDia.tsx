@@ -687,7 +687,7 @@ export default function RotaDoDia() {
             <p className="text-gray-600 dark:text-gray-400">Carregando rota...</p>
           </CardContent>
         </Card>
-      ) : !route || route.visits?.length === 0 ? (
+      ) : !route ? (
         <Card>
           <CardContent className="py-12 text-center">
             <AlertCircle className="h-16 w-16 mx-auto text-yellow-500 mb-4" />
@@ -923,6 +923,32 @@ export default function RotaDoDia() {
                   optimizedOrder={route.optimizedOrder || []}
                   checkpoints={route.checkpoints || []}
                 />
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Empty Route State - Show Button to Add Visits */}
+          {route.visits?.length === 0 && isAdmin && (
+            <Card className="mb-6 border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/20">
+              <CardContent className="py-8 text-center">
+                <div className="flex flex-col items-center gap-4">
+                  <Target className="h-12 w-12 text-blue-600 dark:text-blue-400" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-1">Rota Vazia</h3>
+                    <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
+                      Clique no botão abaixo para adicionar clientes/leads a esta rota
+                    </p>
+                  </div>
+                  <Button
+                    variant="default"
+                    onClick={() => setShowAddVisitModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800"
+                    data-testid="button-add-visits-to-empty-route"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Adicionar Visitas à Rota
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
