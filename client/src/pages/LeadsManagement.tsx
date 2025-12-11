@@ -244,6 +244,7 @@ export default function LeadsManagement() {
 
       // Filtro por data de criação
       if (filterDateFrom || filterDateTo) {
+        if (!lead.createdAt) return false;
         const createdDate = new Date(lead.createdAt);
         if (filterDateFrom) {
           const fromDate = new Date(filterDateFrom);
@@ -472,7 +473,7 @@ export default function LeadsManagement() {
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-xs">
-                        {formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                        {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
                       </td>
                       {isAdmin && (
                         <td className="py-3 px-4">
