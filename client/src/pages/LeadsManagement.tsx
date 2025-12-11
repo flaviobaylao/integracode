@@ -1,19 +1,16 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Select,
   SelectContent,
@@ -21,7 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { type Lead, type InsertLead, insertLeadSchema } from "@shared/schema";
+import { type Lead } from "@shared/schema";
+import { formatInTimeZone } from "date-fns-tz";
+import { ptBR } from "date-fns/locale";
 
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
@@ -33,7 +32,7 @@ export default function LeadsManagement() {
     contact: string;
     phone: string;
     observation: string;
-    status: "pending" | "contacted" | "converted" | "cancelled";
+    status: "pending" | "scheduled" | "visited" | "converted" | "discarded";
   }>({
     fantasyName: "",
     latitude: "",
@@ -43,11 +42,22 @@ export default function LeadsManagement() {
     observation: "",
     status: "pending"
   });
+
+  // Filtros
+  const [filterName, setFilterName] = useState("");
+  const [filterSellerId, setFilterSellerId] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: leads = [], isLoading } = useQuery<Lead[]>({
     queryKey: ['/api/leads'],
+  });
+
+  const { data: sellers = [] } = useQuery<any[]>({
+    queryKey: ['/api/users?role=vendedor'],
   });
   
   const { data: currentUser } = useQuery<any>({
@@ -191,12 +201,12 @@ export default function LeadsManagement() {
     setEditingLead(lead);
     setFormData({
       fantasyName: lead.fantasyName,
-      latitude: lead.latitude,
-      longitude: lead.longitude,
+      latitude: lead.latitude.toString(),
+      longitude: lead.longitude.toString(),
       contact: lead.contact || "",
       phone: lead.phone || "",
       observation: lead.observation || "",
-      status: lead.status
+      status: lead.status as any
     });
   };
 
@@ -208,18 +218,59 @@ export default function LeadsManagement() {
 
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
 
-  const statusLabels = {
+  const statusLabels: Record<string, string> = {
     pending: "Pendente",
-    contacted: "Contatado",
+    scheduled: "Agendado",
+    visited: "Visitado",
     converted: "Convertido",
-    cancelled: "Cancelado"
+    discarded: "Descartado"
   };
 
-  const statusColors = {
-    pending: "bg-yellow-100 text-yellow-800",
-    contacted: "bg-blue-100 text-blue-800",
-    converted: "bg-green-100 text-green-800",
-    cancelled: "bg-gray-100 text-gray-800"
+  const statusColors: Record<string, string> = {
+    pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    scheduled: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+    visited: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+    converted: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+    discarded: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+  };
+
+  // Filtrar leads
+  const filteredLeads = useMemo(() => {
+    return leads.filter(lead => {
+      // Filtro por nome
+      if (filterName && !lead.fantasyName.toLowerCase().includes(filterName.toLowerCase())) {
+        return false;
+      }
+
+      // Filtro por vendedor
+      if (filterSellerId && lead.assignedTo !== filterSellerId) {
+        return false;
+      }
+
+      // Filtro por data de criação
+      if (filterDateFrom || filterDateTo) {
+        const createdDate = new Date(lead.createdAt);
+        if (filterDateFrom) {
+          const fromDate = new Date(filterDateFrom);
+          if (createdDate < fromDate) return false;
+        }
+        if (filterDateTo) {
+          const toDate = new Date(filterDateTo);
+          toDate.setHours(23, 59, 59, 999);
+          if (createdDate > toDate) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo]);
+
+  const stats = {
+    total: leads.length,
+    pending: leads.filter(l => l.status === 'pending').length,
+    scheduled: leads.filter(l => l.status === 'scheduled').length,
+    visited: leads.filter(l => l.status === 'visited').length,
+    converted: leads.filter(l => l.status === 'converted').length,
   };
 
   if (isLoading) {
@@ -257,14 +308,14 @@ export default function LeadsManagement() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total de Leads</CardTitle>
+            <CardTitle className="text-sm font-medium">Total</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-honest-blue">{leads.length}</div>
+            <div className="text-2xl font-bold text-honest-blue">{stats.total}</div>
           </CardContent>
         </Card>
 
@@ -273,20 +324,25 @@ export default function LeadsManagement() {
             <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">
-              {leads.filter(l => l.status === 'pending').length}
-            </div>
+            <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Contatados</CardTitle>
+            <CardTitle className="text-sm font-medium">Agendados</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {leads.filter(l => l.status === 'contacted').length}
-            </div>
+            <div className="text-2xl font-bold text-blue-600">{stats.scheduled}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Visitados</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-purple-600">{stats.visited}</div>
           </CardContent>
         </Card>
 
@@ -295,95 +351,169 @@ export default function LeadsManagement() {
             <CardTitle className="text-sm font-medium">Convertidos</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              {leads.filter(l => l.status === 'converted').length}
-            </div>
+            <div className="text-2xl font-bold text-green-600">{stats.converted}</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Leads List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {leads.map((lead) => (
-          <Card key={lead.id} data-testid={`lead-card-${lead.id}`}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{lead.fantasyName}</CardTitle>
-                <Badge className={statusColors[lead.status]}>
-                  {statusLabels[lead.status]}
-                </Badge>
-              </div>
-              <CardDescription>
-                {lead.contact && (
-                  <div className="flex items-center gap-1 text-sm">
-                    <Users className="h-3 w-3" />
-                    {lead.contact}
-                  </div>
-                )}
-                {lead.phone && (
-                  <div className="flex items-center gap-1 text-sm">
-                    <Phone className="h-3 w-3" />
-                    {lead.phone}
-                  </div>
-                )}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <MapPin className="h-4 w-4" />
-                <span>{lead.latitude}, {lead.longitude}</span>
-              </div>
-              
-              {lead.observation && (
-                <p className="text-sm text-muted-foreground">
-                  {lead.observation}
-                </p>
-              )}
+      {/* Filtros */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Filtros</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <Label htmlFor="filter-name">Nome</Label>
+              <Input
+                id="filter-name"
+                placeholder="Buscar por nome..."
+                value={filterName}
+                onChange={(e) => setFilterName(e.target.value)}
+                data-testid="input-filter-name"
+              />
+            </div>
 
-              {isAdmin && (
-                <div className="flex gap-2 mt-4">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleEdit(lead)}
-                    data-testid={`button-edit-lead-${lead.id}`}
-                  >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="bg-green-600 hover:bg-green-700"
-                    onClick={() => {
-                      setEditingLead(lead);
-                      setFormData({
-                        fantasyName: lead.fantasyName,
-                        latitude: lead.latitude,
-                        longitude: lead.longitude,
-                        contact: lead.contact || "",
-                        phone: lead.phone || "",
-                        observation: lead.observation || "",
-                        status: "converted"
-                      });
-                    }}
-                    data-testid={`button-convert-lead-${lead.id}`}
-                  >
-                    ✨ Converter para Cliente
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => handleDelete(lead.id)}
-                    data-testid={`button-delete-lead-${lead.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            <div>
+              <Label htmlFor="filter-seller">Vendedor</Label>
+              <Select value={filterSellerId} onValueChange={setFilterSellerId}>
+                <SelectTrigger data-testid="select-filter-seller">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos</SelectItem>
+                  {sellers?.map(seller => (
+                    <SelectItem key={seller.id} value={seller.id}>
+                      {seller.firstName} {seller.lastName || ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="filter-date-from">Data De</Label>
+              <Input
+                id="filter-date-from"
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                data-testid="input-filter-date-from"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="filter-date-to">Data Até</Label>
+              <Input
+                id="filter-date-to"
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                data-testid="input-filter-date-to"
+              />
+            </div>
+          </div>
+          {(filterName || filterSellerId || filterDateFrom || filterDateTo) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => {
+                setFilterName("");
+                setFilterSellerId("");
+                setFilterDateFrom("");
+                setFilterDateTo("");
+              }}
+              data-testid="button-clear-filters"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Limpar Filtros
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Leads List Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Leads ({filteredLeads.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left py-3 px-4 font-semibold">Nome</th>
+                  <th className="text-left py-3 px-4 font-semibold">Vendedor</th>
+                  <th className="text-left py-3 px-4 font-semibold">Contato</th>
+                  <th className="text-left py-3 px-4 font-semibold">Telefone</th>
+                  <th className="text-left py-3 px-4 font-semibold">Coordenadas</th>
+                  <th className="text-left py-3 px-4 font-semibold">Status</th>
+                  <th className="text-left py-3 px-4 font-semibold">Criado em</th>
+                  {isAdmin && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLeads.length === 0 ? (
+                  <tr>
+                    <td colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-gray-500">
+                      Nenhum lead encontrado com os filtros aplicados
+                    </td>
+                  </tr>
+                ) : (
+                  filteredLeads.map((lead) => {
+                    const seller = sellers?.find(s => s.id === lead.assignedTo);
+                    return (
+                      <tr key={lead.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`lead-row-${lead.id}`}>
+                        <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
+                        <td className="py-3 px-4">{seller ? `${seller.firstName} ${seller.lastName || ''}` : '—'}</td>
+                        <td className="py-3 px-4">{lead.contact || '—'}</td>
+                        <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a> : '—'}</td>
+                        <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
+                          <div className="flex flex-col gap-1">
+                            <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
+                            <div>Lon: {parseFloat(lead.longitude.toString()).toFixed(6)}</div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge className={statusColors[lead.status]}>
+                            {statusLabels[lead.status]}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-4 text-xs">
+                          {formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                        </td>
+                        {isAdmin && (
+                          <td className="py-3 px-4">
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleEdit(lead)}
+                                data-testid={`button-edit-lead-${lead.id}`}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => handleDelete(lead.id)}
+                                data-testid={`button-delete-lead-${lead.id}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Create/Edit Dialog */}
       <Dialog open={isCreating || !!editingLead} onOpenChange={(open) => {
@@ -496,9 +626,10 @@ export default function LeadsManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pending">Pendente</SelectItem>
-                  <SelectItem value="contacted">Contatado</SelectItem>
+                  <SelectItem value="scheduled">Agendado</SelectItem>
+                  <SelectItem value="visited">Visitado</SelectItem>
                   <SelectItem value="converted">Convertido</SelectItem>
-                  <SelectItem value="cancelled">Cancelado</SelectItem>
+                  <SelectItem value="discarded">Descartado</SelectItem>
                 </SelectContent>
               </Select>
             </div>
