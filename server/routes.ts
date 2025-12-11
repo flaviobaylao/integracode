@@ -17727,7 +17727,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .update(leads)
           .set({
             lastCheckInAt: now,
-            status: 'contacted' as any, // Marcar como contatado
+            status: 'visited', // Marcar como visitado
             updatedAt: now
           })
           .where(eq(leads.id, id))
@@ -17741,7 +17741,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: lead.id,
             fantasyName: lead.fantasyName,
             lastCheckInAt: now,
-            status: 'contacted',
+            status: 'visited',
             checkInDistance: Math.round(checkInDistance),
             photoUrl: photoUrl
           }

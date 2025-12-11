@@ -1470,7 +1470,7 @@ export type SyncStatus = typeof syncStatus.$inferSelect;
 export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
 
 // Lead status enum
-export const leadStatusEnum = pgEnum('lead_status', ['pending', 'contacted', 'converted', 'cancelled']);
+export const leadStatusEnum = pgEnum('lead_status', ['pending', 'scheduled', 'visited', 'converted', 'discarded']);
 
 // Leads table - prospective customers to be contacted by sellers
 export const leads = pgTable("leads", {
