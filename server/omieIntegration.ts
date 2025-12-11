@@ -3742,7 +3742,7 @@ export class OmieService {
       
       while (hasMorePages) {
         try {
-          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidosVenda', {
+          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
             pagina: currentPage,
             registros_por_pagina: pageSize,
             etapa: stage, // Filtrar por etapa específica
