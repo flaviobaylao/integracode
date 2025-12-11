@@ -3699,11 +3699,11 @@ export class OmieService {
   // Listar etapas de faturamento disponíveis
   async getAvailableStages(): Promise<any[]> {
     try {
-      const response = await this.makeRequest('/produtos/pedido/', 'ListarEtapasFaturamento', {});
+      const response = await this.makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
       
-      // A resposta pode vir em diferentes formatos dependendo da versão
-      const stages = response.etapas || response.lista_etapas || [];
-      console.log('Etapas de faturamento disponíveis:', stages);
+      // A resposta vem com propriedade 'etapas'
+      const stages = response.etapas || [];
+      console.log('Etapas de faturamento disponíveis:', JSON.stringify(stages, null, 2));
       
       return stages.filter((stage: any) => stage.cInativo !== 'S'); // Apenas etapas ativas
     } catch (error) {
