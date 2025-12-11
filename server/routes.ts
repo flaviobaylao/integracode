@@ -9578,6 +9578,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "date e email são obrigatórios" });
       }
       
+      console.log(`[DEBUG-ROUTES] Procurando: email="${email}", date="${date}"`);
+      
+      // Tenta diferentes variações de query
+      const simpleQuery = await db.select().from(deliveryRoutes)
+        .where(sql`${deliveryRoutes.routeDate}::text = ${date}`);
+      
+      console.log(`[DEBUG-ROUTES] Total de rotas em ${date}: ${simpleQuery.length}`);
+      
+      const withEmail = await db.select().from(deliveryRoutes)
+        .where(
+          and(
+            sql`${deliveryRoutes.routeDate}::text = ${date}`,
+            sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`
+          )
+        );
+      
+      console.log(`[DEBUG-ROUTES] Rotas com email LOWER=${email}: ${withEmail.length}`);
+      if (withEmail.length > 0) {
+        console.log(`[DEBUG-ROUTES] Email encontrado:`, withEmail[0].driverEmail);
+      }
+      
       const routes = await db.select().from(deliveryRoutes)
         .where(
           and(
@@ -9587,7 +9608,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           )
         );
       
-      res.json({ count: routes.length, routes, queryParams: { date, email } });
+      res.json({ 
+        count: routes.length, 
+        routes,
+        debug: {
+          totalForDate: simpleQuery.length,
+          withEmailMatch: withEmail.length,
+          withStatus: routes.length,
+          queryParams: { date, email }
+        }
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
