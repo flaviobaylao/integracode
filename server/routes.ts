@@ -5565,40 +5565,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('🔄 Iniciando sincronização de pedidos "Aguardando Rota"...');
 
-      // Buscar etapas disponíveis
-      const availableStages = await omieService.getAvailableStages();
-      console.log(`📋 Etapas disponíveis: ${availableStages.length} encontradas`);
+      // Usar o código de etapa conhecida: 80 = "Aguardando Rota"
+      const stageCode = '80';
+      console.log(`📦 Buscando pedidos da etapa 80 (Aguardando Rota)...`);
       
-      if (!availableStages || availableStages.length === 0) {
-        return res.status(400).json({ 
-          message: 'Nenhuma etapa encontrada na conta Omie',
-          debug: 'Verifique se a autenticação do Omie está configurada corretamente'
-        });
-      }
-
-      // Procurar pela etapa "Aguardando Rota" (case-insensitive)
-      const awaitingRouteStage = availableStages.find((stage: any) => {
-        const description = (stage.cDescricao || stage.descricao || '').toLowerCase();
-        console.log(`  🔍 Verificando etapa: "${description}"`);
-        return description.includes('aguardando') && description.includes('rota');
-      });
-
-      if (!awaitingRouteStage) {
-        console.log('❌ Etapa "Aguardando Rota" não encontrada');
-        return res.status(400).json({ 
-          message: 'Etapa "Aguardando Rota" não encontrada nas etapas disponíveis da conta',
-          availableStages: availableStages.map((s: any) => ({ 
-            codigo: s.cCodigo || s.codigo, 
-            descricao: s.cDescricao || s.descricao 
-          }))
-        });
-      }
-
-      console.log(`✅ Etapa "Aguardando Rota" encontrada: ${awaitingRouteStage.cDescricao || awaitingRouteStage.descricao}`);
-
-      // Sincronizar pedidos da etapa "Aguardando Rota"
-      const stageCode = awaitingRouteStage.cCodigo || awaitingRouteStage.codigo;
-      console.log(`📦 Buscando pedidos da etapa: ${stageCode}`);
       const result = await omieService.getOrdersByStage(stageCode);
       
       console.log(`✅ Pedidos sincronizados de "Aguardando Rota": ${result.totalRecords} registros`);
@@ -5607,8 +5577,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         count: result.totalRecords,
         message: `${result.totalRecords} pedidos sincronizados da etapa "Aguardando Rota"`,
-        stageCode,
-        stageName: awaitingRouteStage.cDescricao || awaitingRouteStage.descricao
+        stageCode: '80',
+        stageName: 'Aguardando Rota'
       });
     } catch (error) {
       console.error('❌ Erro ao sincronizar pedidos de "Aguardando Rota":', error);
@@ -5629,17 +5599,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Chamar a API Omie diretamente para debug
-      const stages = await (omieService as any).makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
+      console.log('🔍 DEBUG-STAGES: Iniciando busca de etapas...');
+      
+      // Tentar chamar direto
+      let response: any;
+      try {
+        response = await (omieService as any).makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
+        console.log('✅ DEBUG-STAGES: Resposta recebida:', JSON.stringify(response, null, 2));
+      } catch (apiError) {
+        console.log('❌ DEBUG-STAGES: Erro na API:', apiError);
+        response = { error: apiError, message: String(apiError) };
+      }
       
       res.json({
-        rawResponse: stages,
-        keys: Object.keys(stages),
-        properties: stages.etapas ? stages.etapas.map((s: any) => Object.keys(s)) : 'N/A'
+        timestamp: new Date().toISOString(),
+        rawResponse: response,
+        keys: Object.keys(response),
+        hasEtapas: 'etapas' in response,
+        stagesCount: response.etapas ? response.etapas.length : 0,
+        firstStageProperties: response.etapas && response.etapas.length > 0 ? Object.keys(response.etapas[0]) : []
       });
     } catch (error) {
+      console.error('❌ DEBUG-STAGES: Erro geral:', error);
       res.status(500).json({ 
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
       });
     }
   });
