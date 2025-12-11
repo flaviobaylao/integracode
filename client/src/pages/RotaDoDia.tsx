@@ -22,7 +22,7 @@ import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -373,17 +373,7 @@ export default function RotaDoDia() {
         formData.append('notes', leadCheckInNotes);
       }
 
-      const response = await fetch(`/api/leads/${leadId}/check-in`, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || `Erro ao fazer check-in`);
-      }
-      return data;
+      return await apiRequestMultipart('POST', `/api/leads/${leadId}/check-in`, formData);
     },
     onSuccess: () => {
       setLeadCheckInPhoto(null);

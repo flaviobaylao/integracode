@@ -81,6 +81,34 @@ export async function apiRequest(
   }
 }
 
+export async function apiRequestMultipart(
+  method: string,
+  url: string,
+  formData: FormData,
+  options?: { timeout?: number }
+): Promise<any> {
+  const controller = new AbortController();
+  const timeoutMs = options?.timeout || 120000; // 2 minutos padrão
+  
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    console.log('🌐 API Multipart Request:', method, url);
+    const res = await fetch(url, {
+      method,
+      body: formData,
+      credentials: "include",
+      signal: controller.signal,
+    });
+
+    console.log('📡 API Response:', res.status, res.statusText);
+    await throwIfResNotOk(res);
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
