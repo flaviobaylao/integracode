@@ -17615,13 +17615,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Check-in em um lead (com foto obrigatória)
-  app.post('/api/leads/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
+  app.post('/api/leads/:id/check-in', (req: any, res, next) => {
+    console.log('🔍 [LEAD-CHECKIN] ANTES de authenticateUser - Session:', !!req.session, 'User:', !!req.currentUser, 'Multipart:', req.is('multipart/form-data'));
+    next();
+  }, authenticateUser, upload.single('photo'), async (req: any, res) => {
+    console.log('🔍 [LEAD-CHECKIN] APÓS authenticateUser e upload');
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
       const user = req.currentUser;
       
-      console.log(`📍 Check-in em lead ${id} - User: ${user.email}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude})`);
+      console.log(`🔍 [LEAD-CHECKIN] ID: ${id}, Auth: ${!!user}, Email: ${user?.email}, File: ${req.file ? 'Sim' : 'Não'}`);
+      console.log(`📍 Check-in em lead ${id} - User: ${user?.email || 'UNKNOWN'}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude})`);
       
       // Foto é obrigatória para check-in em lead
       if (!req.file) {
@@ -17714,7 +17719,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw dbError;
       }
     } catch (error) {
-      console.error('❌ Erro ao fazer check-in em lead:', error);
+      console.error('❌ [LEAD-CHECKIN] Erro ao fazer check-in em lead:', error);
+      console.error('❌ [LEAD-CHECKIN] Stack:', (error as any)?.stack);
       res.status(500).json({ message: 'Erro ao fazer check-in em lead', error: (error as any).message });
     }
   });

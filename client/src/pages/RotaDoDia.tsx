@@ -362,42 +362,27 @@ export default function RotaDoDia() {
 
   const leadCheckInMutation = useMutation({
     mutationFn: async ({ leadId, latitude, longitude, photo }: { leadId: string; latitude: number; longitude: number; photo?: File }) => {
-      try {
-        const formData = new FormData();
-        formData.append('latitude', latitude.toString());
-        formData.append('longitude', longitude.toString());
-        if (photo) {
-          formData.append('photo', photo);
-        }
-        if (leadCheckInNotes) {
-          formData.append('notes', leadCheckInNotes);
-        }
-        
-        const response = await fetch(`/api/leads/${leadId}/check-in`, {
-          method: 'POST',
-          body: formData,
-          credentials: 'include'
-        });
-        
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        if (!response.ok) {
-          throw new Error(errorData.message || errorData.error || `Erro ${response.status}: ${response.statusText}`);
-        }
-        return errorData;
-      } catch (error: any) {
-        console.error('❌ Mutation error details:', {
-          message: error.message,
-          status: error.status,
-          stack: error.stack
-        });
-        throw error;
+      const formData = new FormData();
+      formData.append('latitude', latitude.toString());
+      formData.append('longitude', longitude.toString());
+      if (photo) {
+        formData.append('photo', photo);
       }
+      if (leadCheckInNotes) {
+        formData.append('notes', leadCheckInNotes);
+      }
+
+      const response = await fetch(`/api/leads/${leadId}/check-in`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Erro ao fazer check-in`);
+      }
+      return data;
     },
     onSuccess: () => {
       setLeadCheckInPhoto(null);
