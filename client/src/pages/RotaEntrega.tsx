@@ -485,7 +485,7 @@ export default function RotaEntrega() {
                           {delivery.estimatedArrival && (
                             <p className="text-xs text-blue-600 flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              Previsto: {formatInTimeZone(new Date(delivery.estimatedArrival), 'America/Sao_Paulo', 'HH:mm')}
+                              Previsto: {delivery.estimatedArrival}
                             </p>
                           )}
                           {delivery.completedAt && (
