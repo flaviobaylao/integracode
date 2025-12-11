@@ -372,12 +372,12 @@ export default function LeadsManagement() {
 
             <div>
               <Label htmlFor="filter-seller">Vendedor</Label>
-              <Select value={filterSellerId} onValueChange={setFilterSellerId}>
+              <Select value={filterSellerId || "all"} onValueChange={(val) => setFilterSellerId(val === "all" ? "" : val)}>
                 <SelectTrigger data-testid="select-filter-seller">
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="all">Todos</SelectItem>
                   {sellers.map(seller => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName || ''}
