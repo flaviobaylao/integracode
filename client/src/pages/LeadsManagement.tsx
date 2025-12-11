@@ -58,7 +58,7 @@ export default function LeadsManagement() {
 
   // Filter vendors from users
   const sellers = useMemo(() => {
-    return (allUsers || []).filter((u: any) => u.role === 'vendedor');
+    return (allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive);
   }, [allUsers]);
 
   const createLeadMutation = useMutation({

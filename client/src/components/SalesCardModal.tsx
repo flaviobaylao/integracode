@@ -423,7 +423,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   {['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role) && allSellers ? (
                     // Mostrar todos os usuários que podem fazer vendas para administrativos
                     allSellers
-                      .filter((seller: any) => ['vendedor', 'coordinator', 'administrative', 'admin'].includes(seller.role))
+                      .filter((seller: any) => ['vendedor', 'coordinator', 'administrative', 'admin'].includes(seller.role) && seller.isActive)
                       .map((seller: any) => (
                         <SelectItem key={seller.id} value={seller.id} data-testid={`option-seller-${seller.id}`}>
                           {seller.firstName} {seller.lastName} ({seller.email})

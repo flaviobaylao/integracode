@@ -52,7 +52,7 @@ export default function CheckInAudit() {
     enabled: isAdmin
   });
 
-  const sellers = sellersData?.users?.filter((u: any) => u.role === 'vendedor') || [];
+  const sellers = sellersData?.users?.filter((u: any) => u.role === 'vendedor' && u.isActive) || [];
 
   // Buscar auditoria de check-ins
   const { data, isLoading, refetch } = useQuery<{ checkIns: CheckInRecord[], stats: any }>({

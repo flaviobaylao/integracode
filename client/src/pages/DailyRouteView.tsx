@@ -120,7 +120,7 @@ export default function DailyRouteView() {
     enabled: isAdmin
   });
 
-  const sellers = sellersData?.filter((u: any) => u.role === 'vendedor') || [];
+  const sellers = sellersData?.filter((u: any) => u.role === 'vendedor' && u.isActive) || [];
 
   // DEBUG: Log sellers data
   useEffect(() => {

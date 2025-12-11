@@ -218,7 +218,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                               <SelectValue placeholder="Selecione o vendedor" />
                             </SelectTrigger>
                             <SelectContent>
-                              {sellers.filter((seller: User) => seller.role === 'vendedor').map((seller: User) => (
+                              {sellers.filter((seller: User) => seller.role === 'vendedor' && seller.isActive).map((seller: User) => (
                                 <SelectItem key={seller.id} value={seller.id}>
                                   {seller.firstName} {seller.lastName}
                                 </SelectItem>

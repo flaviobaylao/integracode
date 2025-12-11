@@ -388,7 +388,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os vendedores</SelectItem>
-                {sellers.filter((seller: User) => seller.role === 'vendedor').map((seller: User) => (
+                {sellers.filter((seller: User) => seller.role === 'vendedor' && seller.isActive).map((seller: User) => (
                   <SelectItem key={seller.id} value={seller.id}>
                     {seller.firstName} {seller.lastName}
                   </SelectItem>

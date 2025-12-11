@@ -35,7 +35,7 @@ export default function CheckInPhotos() {
     enabled: isAdmin
   });
 
-  const sellers: any[] = (sellersData || []).filter((u: any) => u.role === 'vendedor');
+  const sellers: any[] = (sellersData || []).filter((u: any) => u.role === 'vendedor' && u.isActive);
 
   // Buscar fotos de check-in
   const { data: photosData, isLoading } = useQuery({
