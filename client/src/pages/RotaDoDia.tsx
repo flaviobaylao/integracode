@@ -1086,46 +1086,58 @@ export default function RotaDoDia() {
                                 <div>
                                   <span className="text-gray-500">Check-in: </span>
                                   {checkInCheckpoint ? (
-                                    <span className={`font-medium ${checkInOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkin-time-${visit.customerId}`}>
-                                      {formatInTimeZone(checkInCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
-                                      {checkInOffsite && ` ⚠️ ${formatDistance(checkInDistance!)}`}
-                                    </span>
-                                  ) : (
-                                    <span className="text-gray-400">—</span>
-                                  )}
-                                  {checkInCheckpoint && checkInCheckpoint.latitude && checkInCheckpoint.longitude && (
-                                    <div className="text-gray-400 text-xs mt-1">
-                                      <div>Lat: {checkInCheckpoint.latitude.toFixed(6)}</div>
-                                      <div>Lon: {checkInCheckpoint.longitude.toFixed(6)}</div>
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Check-out: </span>
-                                  {checkOutCheckpoint ? (
-                                    <div className="inline-flex items-center gap-2">
-                                      <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
-                                        {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
-                                        {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
+                                    <div>
+                                      <span className={`font-medium ${checkInOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkin-time-${visit.customerId}`}>
+                                        {formatInTimeZone(checkInCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                        {checkInOffsite && ` ⚠️ ${formatDistance(checkInDistance!)}`}
                                       </span>
-                                      {visit.isAutoCheckout && (
-                                        <Badge variant="secondary" className="text-xs" data-testid={`badge-auto-checkout-${visit.customerId}`}>
-                                          <Clock className="h-3 w-3 mr-1" />
-                                          Check-out automático
-                                        </Badge>
+                                      {checkInCheckpoint.latitude && checkInCheckpoint.longitude && (
+                                        <div className="text-gray-400 text-xs mt-1">
+                                          <div>Lat: {parseFloat(checkInCheckpoint.latitude.toString()).toFixed(6)}</div>
+                                          <div>Lon: {parseFloat(checkInCheckpoint.longitude.toString()).toFixed(6)}</div>
+                                        </div>
                                       )}
                                     </div>
                                   ) : (
                                     <span className="text-gray-400">—</span>
                                   )}
-                                  {checkOutCheckpoint && checkOutCheckpoint.latitude && checkOutCheckpoint.longitude && (
-                                    <div className="text-gray-400 text-xs mt-1">
-                                      <div>Lat: {checkOutCheckpoint.latitude.toFixed(6)}</div>
-                                      <div>Lon: {checkOutCheckpoint.longitude.toFixed(6)}</div>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Check-out: </span>
+                                  {checkOutCheckpoint ? (
+                                    <div>
+                                      <div className="inline-flex items-center gap-2">
+                                        <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
+                                          {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                          {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
+                                        </span>
+                                        {visit.isAutoCheckout && (
+                                          <Badge variant="secondary" className="text-xs" data-testid={`badge-auto-checkout-${visit.customerId}`}>
+                                            <Clock className="h-3 w-3 mr-1" />
+                                            Check-out automático
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      {checkOutCheckpoint.latitude && checkOutCheckpoint.longitude && (
+                                        <div className="text-gray-400 text-xs mt-1">
+                                          <div>Lat: {parseFloat(checkOutCheckpoint.latitude.toString()).toFixed(6)}</div>
+                                          <div>Lon: {parseFloat(checkOutCheckpoint.longitude.toString()).toFixed(6)}</div>
+                                        </div>
+                                      )}
                                     </div>
+                                  ) : (
+                                    <span className="text-gray-400">—</span>
                                   )}
                                 </div>
                               </div>
+
+                              {/* Observação/Comentário do Lead */}
+                              {isLead && (visit as any).observation && (
+                                <div className="border-l-2 border-purple-400 pl-2 py-1 text-xs text-gray-600 dark:text-gray-400 bg-purple-50 dark:bg-purple-950/20 rounded px-2">
+                                  <span className="font-semibold text-purple-700 dark:text-purple-300">Comentário: </span>
+                                  {(visit as any).observation}
+                                </div>
+                              )}
                             </div>
 
                             {hasOffsite && (
