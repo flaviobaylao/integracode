@@ -343,40 +343,61 @@ export default function RotaDoDia() {
 
   const leadCheckInMutation = useMutation({
     mutationFn: async ({ leadId, latitude, longitude, photo }: { leadId: string; latitude: number; longitude: number; photo?: File }) => {
-      const formData = new FormData();
-      formData.append('latitude', latitude.toString());
-      formData.append('longitude', longitude.toString());
-      if (photo) {
-        formData.append('photo', photo);
+      try {
+        const formData = new FormData();
+        formData.append('latitude', latitude.toString());
+        formData.append('longitude', longitude.toString());
+        if (photo) {
+          formData.append('photo', photo);
+        }
+        if (leadCheckInNotes) {
+          formData.append('notes', leadCheckInNotes);
+        }
+        
+        const response = await fetch(`/api/leads/${leadId}/check-in`, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include'
+        });
+        
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        if (!response.ok) {
+          throw new Error(errorData.message || errorData.error || `Erro ${response.status}: ${response.statusText}`);
+        }
+        return errorData;
+      } catch (error: any) {
+        console.error('❌ Mutation error details:', {
+          message: error.message,
+          status: error.status,
+          stack: error.stack
+        });
+        throw error;
       }
-      if (leadCheckInNotes) {
-        formData.append('notes', leadCheckInNotes);
-      }
-      const response = await fetch(`/api/leads/${leadId}/check-in`, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || errorData.error || 'Erro ao fazer check-in no lead');
-      }
-      return response.json();
     },
     onSuccess: () => {
+      setLeadCheckInPhoto(null);
+      setLeadCheckInPhotoUrl(null);
+      setCheckInCoords(null);
+      setLeadCheckInNotes('');
       toast({
-        title: "Check-in realizado",
+        title: "✓ Check-in realizado",
         description: "Check-in no lead realizado com sucesso",
       });
       closeModals();
       queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
     },
     onError: (error: any) => {
-      console.error('Check-in error:', error);
+      console.error('❌ Check-in error:', error);
       toast({
         variant: "destructive",
         title: "Erro ao fazer check-in",
-        description: error.message || "Ocorreu um erro ao fazer check-in no lead",
+        description: error.message || "Ocorreu um erro ao fazer check-in no lead. Tente novamente.",
       });
     },
   });

@@ -56,11 +56,12 @@
   - Check-in/check-out with mandatory photo requirement
   - Conversion to full customer workflow
   - Updates within daily routes with photo enforcement
-- **Lead Check-in/Check-out**: Sellers can perform check-in and check-out on leads:
+- **Lead Check-in/Check-out**: Sellers can perform check-in and check-out on leads with improved error handling:
   - POST `/api/leads/:id/check-in` - Requires photo, validates location, calculates distance
   - POST `/api/leads/:id/check-out` - Requires prior check-in
   - Tracks lastCheckInAt and lastCheckOutAt timestamps
   - Updates lead status to "contacted" on successful check-in
+  - **Error Handling**: Enhanced error messages and logging for troubleshooting
 - **Phone Number Mapping**: Maps alternative phone numbers to canonical numbers to prevent conversation fragmentation
   - Table `phone_number_mappings` stores alternative->canonical phone number relationships
   - API endpoint POST `/api/chat/phone-mappings` (admin-only) to create new mappings
