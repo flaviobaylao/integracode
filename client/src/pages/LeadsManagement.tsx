@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,22 +25,14 @@ import { ptBR } from "date-fns/locale";
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
-  const [formData, setFormData] = useState<{
-    fantasyName: string;
-    latitude: string;
-    longitude: string;
-    contact: string;
-    phone: string;
-    observation: string;
-    status: "pending" | "scheduled" | "visited" | "converted" | "discarded";
-  }>({
+  const [formData, setFormData] = useState({
     fantasyName: "",
     latitude: "",
     longitude: "",
     contact: "",
     phone: "",
     observation: "",
-    status: "pending"
+    status: "pending" as const,
   });
 
   // Filtros
@@ -56,17 +48,25 @@ export default function LeadsManagement() {
     queryKey: ['/api/leads'],
   });
 
-  const { data: sellers = [] } = useQuery<any[]>({
-    queryKey: ['/api/users?role=vendedor'],
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ['/api/users'],
   });
-  
+
   const { data: currentUser } = useQuery<any>({
     queryKey: ['/api/auth/user'],
   });
 
+  // Filter vendors from users
+  const sellers = useMemo(() => {
+    return (allUsers || []).filter((u: any) => u.role === 'vendedor');
+  }, [allUsers]);
+
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
-      return await apiRequest('POST', '/api/leads', data);
+      return await apiRequest('POST', '/api/leads', {
+        ...data,
+        createdBy: currentUser?.id || 'system',
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
@@ -136,7 +136,7 @@ export default function LeadsManagement() {
       contact: "",
       phone: "",
       observation: "",
-      status: "pending"
+      status: "pending",
     });
   };
 
@@ -150,11 +150,6 @@ export default function LeadsManagement() {
       return;
     }
 
-    toast({
-      title: "Capturando localização",
-      description: "Aguarde...",
-    });
-
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setFormData({
@@ -167,7 +162,7 @@ export default function LeadsManagement() {
           description: "Localização capturada!",
         });
       },
-      (error) => {
+      () => {
         toast({
           title: "Erro",
           description: "Não foi possível capturar a localização",
@@ -206,7 +201,7 @@ export default function LeadsManagement() {
       contact: lead.contact || "",
       phone: lead.phone || "",
       observation: lead.observation || "",
-      status: lead.status as any
+      status: lead.status as any,
     });
   };
 
@@ -308,7 +303,7 @@ export default function LeadsManagement() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total</CardTitle>
@@ -382,7 +377,7 @@ export default function LeadsManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="">Todos</SelectItem>
-                  {sellers?.map(seller => (
+                  {sellers.map(seller => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName || ''}
                     </SelectItem>
@@ -444,7 +439,6 @@ export default function LeadsManagement() {
               <thead>
                 <tr className="border-b">
                   <th className="text-left py-3 px-4 font-semibold">Nome</th>
-                  <th className="text-left py-3 px-4 font-semibold">Vendedor</th>
                   <th className="text-left py-3 px-4 font-semibold">Contato</th>
                   <th className="text-left py-3 px-4 font-semibold">Telefone</th>
                   <th className="text-left py-3 px-4 font-semibold">Coordenadas</th>
@@ -456,58 +450,54 @@ export default function LeadsManagement() {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-gray-500">
+                    <td colSpan={isAdmin ? 7 : 6} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
                 ) : (
-                  filteredLeads.map((lead) => {
-                    const seller = sellers?.find(s => s.id === lead.assignedTo);
-                    return (
-                      <tr key={lead.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`lead-row-${lead.id}`}>
-                        <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
-                        <td className="py-3 px-4">{seller ? `${seller.firstName} ${seller.lastName || ''}` : '—'}</td>
-                        <td className="py-3 px-4">{lead.contact || '—'}</td>
-                        <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a> : '—'}</td>
-                        <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
-                          <div className="flex flex-col gap-1">
-                            <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
-                            <div>Lon: {parseFloat(lead.longitude.toString()).toFixed(6)}</div>
+                  filteredLeads.map((lead) => (
+                    <tr key={lead.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`lead-row-${lead.id}`}>
+                      <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
+                      <td className="py-3 px-4">{lead.contact || '—'}</td>
+                      <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a> : '—'}</td>
+                      <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
+                        <div className="flex flex-col gap-1">
+                          <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
+                          <div>Lon: {parseFloat(lead.longitude.toString()).toFixed(6)}</div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <Badge className={statusColors[lead.status]}>
+                          {statusLabels[lead.status]}
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                      </td>
+                      {isAdmin && (
+                        <td className="py-3 px-4">
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEdit(lead)}
+                              data-testid={`button-edit-lead-${lead.id}`}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDelete(lead.id)}
+                              data-testid={`button-delete-lead-${lead.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </td>
-                        <td className="py-3 px-4">
-                          <Badge className={statusColors[lead.status]}>
-                            {statusLabels[lead.status]}
-                          </Badge>
-                        </td>
-                        <td className="py-3 px-4 text-xs">
-                          {formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
-                        </td>
-                        {isAdmin && (
-                          <td className="py-3 px-4">
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleEdit(lead)}
-                                data-testid={`button-edit-lead-${lead.id}`}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => handleDelete(lead.id)}
-                                data-testid={`button-delete-lead-${lead.id}`}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })
+                      )}
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -622,7 +612,7 @@ export default function LeadsManagement() {
                 onValueChange={(value: any) => setFormData({ ...formData, status: value })}
               >
                 <SelectTrigger data-testid="select-status">
-                  <SelectValue placeholder="Selecione o status" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pending">Pendente</SelectItem>
