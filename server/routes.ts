@@ -17615,11 +17615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Check-in em um lead (com foto obrigatória)
-  app.post('/api/leads/:id/check-in', (req: any, res, next) => {
-    console.log(`🚨 [DEBUG] Requisição chegou ao endpoint check-in: ${req.method} ${req.path}`);
-    console.log(`🚨 [DEBUG] Content-Type: ${req.headers['content-type']}`);
-    next();
-  }, authenticateUser, upload.single('photo'), async (req: any, res) => {
+  app.post('/api/leads/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
