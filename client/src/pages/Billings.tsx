@@ -97,10 +97,11 @@ export default function Billings() {
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  // Query para buscar faturamentos (sem filtros - tudo client-side)
+  // Query para buscar faturamentos (últimos 90 dias por padrão - agiliza integração)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
-    queryKey: ['/api/billings'],
-    queryFn: () => fetch(`/api/billings`).then(res => res.json())
+    queryKey: ['/api/billings', { days: 90 }],
+    queryFn: () => fetch(`/api/billings?days=90`).then(res => res.json()),
+    staleTime: 60000 // Cache por 1 minuto
   });
 
   // Implementar filtros, ordenação, paginação e stats client-side

@@ -8627,11 +8627,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota para buscar faturamentos
+  // Rota para buscar faturamentos (com filtro de 90 dias por padrão)
   app.get('/api/billings', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
-      const billings = await storage.getBillings(sellerId);
+      const { days = '90' } = req.query; // Padrão: últimos 90 dias
+      
+      let billings = await storage.getBillings(sellerId);
+      
+      // Filtrar por data (últimos X dias)
+      if (days) {
+        const daysNum = parseInt(days as string, 10);
+        if (daysNum > 0) {
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - daysNum);
+          cutoffDate.setHours(0, 0, 0, 0);
+          
+          billings = billings.filter(billing => {
+            try {
+              const billingDate = new Date(billing.invoiceDate || billing.createdAt || '');
+              return billingDate >= cutoffDate;
+            } catch {
+              return true; // Incluir se data for inválida
+            }
+          });
+          
+          console.log(`📊 [/api/billings] Filtrados para últimos ${daysNum} dias: ${billings.length} notas`);
+        }
+      }
+      
       res.json(billings);
     } catch (error) {
       console.error('Erro ao buscar faturamentos:', error);
