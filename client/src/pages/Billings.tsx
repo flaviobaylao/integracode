@@ -96,11 +96,12 @@ export default function Billings() {
   });
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [showAllData, setShowAllData] = useState(false); // Toggle para ver TODOS os dados
 
   // Query para buscar faturamentos (últimos 90 dias por padrão - agiliza integração)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
-    queryKey: ['/api/billings', { days: 90 }],
-    queryFn: () => fetch(`/api/billings?days=90`).then(res => res.json()),
+    queryKey: ['/api/billings', { days: showAllData ? undefined : 90 }],
+    queryFn: () => fetch(showAllData ? `/api/billings?days=0` : `/api/billings?days=90`).then(res => res.json()),
     staleTime: 60000 // Cache por 1 minuto
   });
 
@@ -395,8 +396,18 @@ export default function Billings() {
         <div>
           <h1 className="text-3xl font-bold" data-testid="page-title">Faturamentos</h1>
           <p className="text-muted-foreground">
-            Sincronize e visualize notas fiscais do Omie ERP
+            {showAllData ? 'Mostrando TODOS os dados' : 'Mostrando últimos 90 dias (mais rápido)'}
           </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAllData(!showAllData)}
+            className="mt-2"
+            data-testid="button-toggle-all-data"
+            title={showAllData ? "Mostrar apenas últimos 90 dias" : "Mostrar todos os dados"}
+          >
+            {showAllData ? '📊 Mostrar apenas 90 dias' : '📊 Ver todos os dados'}
+          </Button>
         </div>
         
         <div className="flex gap-2">
