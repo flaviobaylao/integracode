@@ -15286,15 +15286,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 90 dias atrás (aumentado para garantir captura de todas as notas)
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      // Calcular data de 30 dias atrás (NFes em "Aguardando Rota" não são mais antigas que isso)
+      const today = new Date();
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      // Formatar datas para API do Omie (DD/MM/YYYY)
+      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
+      
+      console.log(`📅 Filtro de período: ${dataDe} até ${dataAte} (últimos 30 dias)`);
 
       const allBillings: any[] = [];
       let page = 1;
       let hasMorePages = true;
 
-      // Buscar notas fiscais dos últimos 90 dias
+      // Buscar notas fiscais dos últimos 30 dias COM FILTRO DE DATA NA API
       while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
@@ -15303,7 +15310,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           registros_por_pagina: 50,
           apenas_importado_api: 'N',
           ordenar_por: 'DATA',
-          ordem_decrescente: 'S'
+          ordem_decrescente: 'S',
+          filtrar_por_data_de: dataDe,
+          filtrar_por_data_ate: dataAte
         });
 
         const invoices = response.nfCadastro || [];
@@ -15314,15 +15323,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!invoiceDate) {
             console.log(`⚠️ Nota sem data - pulando`);
             continue;
-          }
-
-          const [dia, mes, ano] = invoiceDate.split('/');
-          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
-          
-          // Filtrar últimos 90 dias - PULAR nota antiga mas CONTINUAR buscando páginas
-          if (invoiceDateObj < ninetyDaysAgo) {
-            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 90 dias (${invoiceDate}) - pulando`);
-            continue; // Pular essa nota mas continuar processando outras
           }
 
           // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
