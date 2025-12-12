@@ -3750,7 +3750,13 @@ export class OmieService {
           });
 
           const orders = response.pedido_venda_produto || [];
-          console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos na etapa ${stage}`);
+          console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos (filtro etapa=${stage})`);
+          
+          // DEBUG: Verificar se os pedidos realmente são da etapa solicitada
+          if (orders.length > 0) {
+            const stagesInResponse = [...new Set(orders.map((o: any) => o.cabecalho?.etapa))];
+            console.log(`  ⚠️ ETAPAS RETORNADAS: ${stagesInResponse.join(', ')} (esperado: ${stage})`);
+          }
           
           allOrders = allOrders.concat(orders);
           
@@ -3781,6 +3787,21 @@ export class OmieService {
       }
       
       console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
+      
+      // DEBUG: Verificar as etapas dos pedidos retornados
+      if (allOrders.length > 0) {
+        const stageDistribution = allOrders.reduce((acc: any, order: any) => {
+          const stageCode = order.cabecalho?.etapa || 'UNKNOWN';
+          acc[stageCode] = (acc[stageCode] || 0) + 1;
+          return acc;
+        }, {});
+        console.log(`📊 Distribuição de etapas nos ${allOrders.length} pedidos:`, stageDistribution);
+        console.log(`🔍 Exemplos de primeiros 3 pedidos:`, allOrders.slice(0, 3).map((o: any) => ({
+          numero: o.cabecalho?.numero_pedido,
+          etapa: o.cabecalho?.etapa,
+          cliente: o.cabecalho?.codigo_cliente
+        })));
+      }
       
       // Mapear e enriquecer os pedidos com dados dos clientes
       const enrichedOrders = await Promise.all(
