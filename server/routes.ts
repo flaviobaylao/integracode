@@ -15122,7 +15122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie para banco de dados
-  app.post('/api/omie/sync-billings', async (req: any, res) => {
+  app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
     try {
       console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
 
@@ -15164,11 +15164,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
 
         for (const invoice of invoices) {
-          const invoiceDate = invoice.ide?.dEmi;
-          if (!invoiceDate) {
+          const invoiceDateStr = invoice.ide?.dEmi;
+          if (!invoiceDateStr) {
             console.log(`⚠️ Nota sem data - pulando`);
             continue;
           }
+
+          // Parsear data do Omie (DD/MM/YYYY) para Date object
+          const [day, month, year] = invoiceDateStr.split('/');
+          const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
 
           // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
           const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
