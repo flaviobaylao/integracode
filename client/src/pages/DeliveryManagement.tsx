@@ -145,6 +145,7 @@ export default function DeliveryManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
+  const [selectedCities, setSelectedCities] = useState<Set<string>>(new Set());
   
   // Função para limpar cache local e recarregar
   const handleClearCache = async () => {
@@ -556,6 +557,18 @@ export default function DeliveryManagement() {
   // Pedidos disponíveis (aguardando rota)
   const availableOrders = orders?.filter(o => !routePlan?.routes.some(r => r.stops.some((s: any) => s.salesCardId === o.id))) || [];
 
+  // Extrair cidades únicas da lista de pedidos
+  const uniqueCities = useMemo(() => {
+    if (!orders) return [];
+    const cities = new Set<string>();
+    orders.forEach(order => {
+      if (order.customerCity) {
+        cities.add(order.customerCity);
+      }
+    });
+    return Array.from(cities).sort();
+  }, [orders]);
+
   // Filtrar pedidos
   const filteredOrders = useMemo(() => {
     if (!orders) return [];
@@ -565,10 +578,13 @@ export default function DeliveryManagement() {
         (order.customerName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
         (order.customerAddress?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
         (order.id?.toLowerCase() || '').includes(searchTerm.toLowerCase());
+      
+      // Se nenhuma cidade selecionada, mostrar todas; caso contrário, filtrar
+      const matchesCity = selectedCities.size === 0 || (order.customerCity && selectedCities.has(order.customerCity));
 
-      return matchesSearch;
+      return matchesSearch && matchesCity;
     });
-  }, [orders, searchTerm]);
+  }, [orders, searchTerm, selectedCities]);
 
   // Funções de veículos
   const addVehicle = () => {
@@ -730,7 +746,7 @@ export default function DeliveryManagement() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label htmlFor="search">Buscar</Label>
               <div className="relative">
@@ -758,23 +774,57 @@ export default function DeliveryManagement() {
               />
               <p className="text-xs text-muted-foreground">
                 <Calendar className="h-3 w-3 inline mr-1" />
-                Selecione a data de execução da rota
+                Data da rota
               </p>
             </div>
 
             <div className="space-y-2">
+              <Label>Cidades {selectedCities.size > 0 && `(${selectedCities.size})`}</Label>
+              {uniqueCities.length > 0 ? (
+                <div className="border rounded-md p-3 bg-white max-h-48 overflow-y-auto space-y-2">
+                  {uniqueCities.map(city => (
+                    <div key={city} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`city-${city}`}
+                        checked={selectedCities.has(city)}
+                        onCheckedChange={() => {
+                          const newSet = new Set(selectedCities);
+                          if (newSet.has(city)) {
+                            newSet.delete(city);
+                          } else {
+                            newSet.add(city);
+                          }
+                          setSelectedCities(newSet);
+                        }}
+                        data-testid={`checkbox-city-${city}`}
+                      />
+                      <Label htmlFor={`city-${city}`} className="cursor-pointer text-sm font-normal">
+                        {city}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground p-2">
+                  Nenhuma cidade disponível
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <Label>&nbsp;</Label>
-              <div className="flex space-x-2">
+              <div className="flex flex-col space-y-2">
                 <Button 
                   variant="outline" 
                   onClick={() => {
                     setSearchTerm("");
+                    setSelectedCities(new Set());
                   }}
-                  className="flex-1"
+                  className="w-full"
                   data-testid="button-clear-filters"
                 >
                   <RotateCcw className="h-4 w-4 mr-2" />
-                  Limpar
+                  Limpar Filtros
                 </Button>
                 <Button 
                   variant="default" 
@@ -785,22 +835,13 @@ export default function DeliveryManagement() {
                       description: "A lista de pedidos foi recarregada",
                     });
                   }}
-                  className="flex-1"
+                  size="sm"
                   data-testid="button-refresh-orders"
                 >
                   <RefreshCw className="h-4 w-4 mr-2" />
-                  Recarregar Pedidos
+                  Recarregar
                 </Button>
               </div>
-              <Button 
-                variant="outline"
-                onClick={handleClearCache}
-                className="w-full"
-                data-testid="button-clear-cache"
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Limpar Cache do Navegador
-              </Button>
               <div className="flex items-center space-x-2 border rounded-md px-3 py-2">
                 <Checkbox
                   id="select-all"
