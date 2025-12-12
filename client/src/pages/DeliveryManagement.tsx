@@ -388,16 +388,16 @@ export default function DeliveryManagement() {
     },
   });
 
-  // Mutation para sincronizar pedidos com Omie
+  // Mutation para sincronizar notas fiscais com Omie
   const syncOmieMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest('POST', '/api/omie/orders/awaiting-route/sync');
+      return await apiRequest('POST', '/api/omie/sync-billings');
     },
     onSuccess: (data) => {
       refetchOrders();
       toast({
         title: "Sincronização concluída!",
-        description: data.message || "Pedidos sincronizados com Omie com sucesso.",
+        description: `${data.savedCount || 0} notas fiscais sincronizadas com sucesso`,
       });
     },
     onError: (error: any) => {
