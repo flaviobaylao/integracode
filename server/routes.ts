@@ -5581,27 +5581,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Salvar pedidos como billings no banco de dados
+      // Filtrar apenas pedidos com invoice_number (número de nota fiscal) válido
+      const validOrders = result.orders.filter((order: any) => {
+        const hasInvoiceNumber = order.numero_nota_fiscal || order.invoiceNumber || order.numero_pedido;
+        const hasCustomerName = order.cliente?.nome_fantasia && order.cliente.nome_fantasia !== 'Cliente não encontrado';
+        const isValidInvoice = hasInvoiceNumber && hasCustomerName;
+        
+        if (!isValidInvoice) {
+          console.warn(`⚠️ Pedido inválido descartado: ${order.numero_pedido} (sem NF ou cliente)`);
+        }
+        return isValidInvoice;
+      });
+
+      console.log(`📊 Filtrados ${validOrders.length} pedidos válidos de ${result.orders.length} retornados`);
+
+      // Salvar apenas pedidos válidos
       let savedCount = 0;
       const errors: any[] = [];
 
-      for (const order of result.orders) {
+      for (const order of validOrders) {
         try {
+          // Usar numero_nota_fiscal do Omie ou numero_pedido como fallback
+          const invoiceNum = order.numero_nota_fiscal || order.numero_pedido;
+          
           const billing = {
             omieOrderId: String(order.codigo_pedido),
             orderNumber: String(order.numero_pedido),
             omieInvoiceId: order.omieInvoiceId || undefined,
-            invoiceNumber: order.invoiceNumber || undefined,
+            invoiceNumber: String(invoiceNum),
             customerFantasyName: order.cliente?.nome_fantasia || 'Desconhecido',
             customerDocument: order.cliente?.cnpj_cpf || undefined,
             invoiceDate: order.invoiceDate ? new Date(order.invoiceDate) : undefined,
-            orderDate: new Date(),
-            totalValue: String(order.totalValue || 0),
+            orderDate: new Date(order.data_pedido || new Date()),
+            totalValue: String(order.valor_total_pedido || 0),
             dueDate: order.dueDate ? new Date(order.dueDate) : undefined,
             paymentMethod: order.paymentMethod || 'a_vista',
-            sellerName: order.sellerName || undefined,
+            sellerName: order.vendedor || undefined,
             omieCustomerCode: String(order.codigo_cliente || ''),
-            vendorCode: String(order.vendorCode || ''),
+            vendorCode: String(order.codigo_vendedor || ''),
             billingType: 'venda' as const,
             invoiceStatus: order.invoiceStatus || undefined,
             invoiceStage: 'Aguardando Rota',
@@ -5613,7 +5630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           await storage.createBilling(billing as any);
           savedCount++;
-          console.log(`✅ Billing salvo: Pedido ${order.numero_pedido}`);
+          console.log(`✅ Billing salvo: Pedido ${order.numero_pedido} - NF ${invoiceNum}`);
         } catch (error) {
           console.warn(`⚠️ Erro ao salvar billing do pedido ${order.numero_pedido}:`, error);
           errors.push({ order: order.numero_pedido, error: String(error) });
