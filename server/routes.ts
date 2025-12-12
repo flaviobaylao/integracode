@@ -5581,40 +5581,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Filtrar apenas pedidos com numero_pedido válido
-      // Nota: Alguns pedidos podem ter cliente como "Cliente não encontrado" devido a erro de API
-      // Mas o numero_pedido é suficiente para criar a entrega
+      // Usar numero_nota_fiscal como CHAVE PRIMÁRIA de sincronismo
+      // Filtrar pedidos com NF válida e deduplica por NF
+      const seenInvoices = new Set<string>();
       const validOrders = result.orders.filter((order: any) => {
-        const hasOrderNumber = order.numero_pedido;
+        const invoiceNum = String(order.numero_nota_fiscal || order.numero_pedido);
         
-        if (!hasOrderNumber) {
-          console.warn(`⚠️ Pedido inválido descartado: sem numero_pedido`);
+        if (!invoiceNum) {
+          console.warn(`⚠️ Pedido inválido descartado: sem numero_nota_fiscal nem numero_pedido`);
           return false;
         }
         
+        if (seenInvoices.has(invoiceNum)) {
+          console.warn(`⚠️ Duplicata descartada: NF ${invoiceNum} já processada`);
+          return false;
+        }
+        
+        seenInvoices.add(invoiceNum);
         return true;
       });
 
-      console.log(`📊 Filtrados ${validOrders.length} pedidos válidos de ${result.orders.length} retornados`);
+      console.log(`📊 Filtrados ${validOrders.length} NFs únicas de ${result.orders.length} retornados`);
 
-      // Salvar apenas pedidos válidos
+      // Verificar quais NFs já existem no banco para evitar duplicatas
+      let skippedCount = 0;
       let savedCount = 0;
       const errors: any[] = [];
 
       for (const order of validOrders) {
         try {
-          // Usar numero_nota_fiscal do Omie ou numero_pedido como fallback
-          const invoiceNum = order.numero_nota_fiscal || order.numero_pedido;
+          const invoiceNum = String(order.numero_nota_fiscal || order.numero_pedido);
+          
+          // Verificar se esta NF já foi sincronizada
+          const existingBilling = await storage.getBillingByInvoiceNumber(invoiceNum);
+          if (existingBilling) {
+            console.log(`ℹ️ NF ${invoiceNum} já existe no banco - pulando`);
+            skippedCount++;
+            continue;
+          }
           
           const billing = {
             omieOrderId: String(order.codigo_pedido),
             orderNumber: String(order.numero_pedido),
             omieInvoiceId: order.omieInvoiceId || undefined,
-            invoiceNumber: String(invoiceNum),
+            invoiceNumber: invoiceNum,
             customerFantasyName: order.cliente?.nome_fantasia || 'Desconhecido',
             customerDocument: order.cliente?.cnpj_cpf || undefined,
             invoiceDate: order.invoiceDate ? new Date(order.invoiceDate) : undefined,
-            orderDate: new Date(order.data_pedido || new Date()),
+            orderDate: order.data_pedido ? new Date(order.data_pedido) : new Date(),
             totalValue: String(order.valor_total_pedido || 0),
             dueDate: order.dueDate ? new Date(order.dueDate) : undefined,
             paymentMethod: order.paymentMethod || 'a_vista',
@@ -5632,14 +5646,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           await storage.createBilling(billing as any);
           savedCount++;
-          console.log(`✅ Billing salvo: Pedido ${order.numero_pedido} - NF ${invoiceNum}`);
+          console.log(`✅ Billing salvo: NF ${invoiceNum} (Pedido ${order.numero_pedido})`);
         } catch (error) {
-          console.warn(`⚠️ Erro ao salvar billing do pedido ${order.numero_pedido}:`, error);
-          errors.push({ order: order.numero_pedido, error: String(error) });
+          console.warn(`⚠️ Erro ao salvar billing NF ${String(order.numero_nota_fiscal || order.numero_pedido)}:`, error);
+          errors.push({ invoice: String(order.numero_nota_fiscal || order.numero_pedido), error: String(error) });
         }
       }
 
-      console.log(`✅ Sincronização concluída: ${savedCount} billings salvos de ${result.orders.length} pedidos`);
+      console.log(`✅ Sincronização concluída: ${savedCount} NFs novas sincronizadas, ${skippedCount} já existentes`);
       
       res.json({
         success: true,
