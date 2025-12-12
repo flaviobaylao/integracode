@@ -15170,6 +15170,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const invoice of invoices) {
           const invoiceNumber = invoice.ide?.nNF || '';
           
+          // ✅ FILTRO CRÍTICO: APENAS NOTAS FISCAIS COM NÚMERO VÁLIDO
+          // Pedidos sem NFe (apenas pedidos) NÃO devem ser incluídos
+          if (!invoiceNumber || invoiceNumber.trim() === '') {
+            console.log(`⏭️ Pedido SEM NOTA FISCAL (apenas pedido) - pulando`);
+            continue;
+          }
+          
           // ✅ VERIFICAR DUPLICATA: Omie retorna a mesma NF 2x (uma por NF, outra por PEDIDO)
           if (processedInvoiceNumbers.has(invoiceNumber)) {
             console.log(`🔄 Nota ${invoiceNumber} JÁ PROCESSADA (duplicata) - pulando`);
