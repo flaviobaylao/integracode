@@ -15143,8 +15143,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📅 Filtro de período: ${dataDe} até ${dataAte} (últimos 30 dias)`);
 
       const allBillings: any[] = [];
+      const processedInvoiceNumbers = new Set<string>(); // ✅ REMOVER DUPLICATAS: rastrear NFs já processadas
       let page = 1;
       let hasMorePages = true;
+      let duplicatesFound = 0;
 
       // Buscar notas fiscais dos últimos 30 dias COM FILTRO DE DATA NA API
       while (hasMorePages && page <= 50) {
@@ -15164,6 +15166,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
 
         for (const invoice of invoices) {
+          const invoiceNumber = invoice.ide?.nNF || '';
+          
+          // ✅ VERIFICAR DUPLICATA: Omie retorna a mesma NF 2x (uma por NF, outra por PEDIDO)
+          if (processedInvoiceNumbers.has(invoiceNumber)) {
+            console.log(`🔄 Nota ${invoiceNumber} JÁ PROCESSADA (duplicata) - pulando`);
+            duplicatesFound++;
+            continue;
+          }
+          processedInvoiceNumbers.add(invoiceNumber);
+
           const invoiceDateStr = invoice.ide?.dEmi;
           if (!invoiceDateStr) {
             console.log(`⚠️ Nota sem data - pulando`);
@@ -15279,7 +15291,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
-      console.log(`🔄 Atualizados: ${updatedCount}\n`);
+      console.log(`🔄 Atualizados: ${updatedCount}`);
+      console.log(`🔄 Duplicatas removidas: ${duplicatesFound}\n`);
 
       res.json({ 
         success: true,
@@ -15428,21 +15441,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const stagesCount: Record<string, number> = {};
       const invoicesByStage: Record<string, any[]> = {};
+      const sampleInvoices: any[] = [];
 
       let page = 1;
-      const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-        pagina: page,
-        registros_por_pagina: 50,
-        apenas_importado_api: 'N',
-        ordenar_por: 'DATA',
-        ordem_decrescente: 'S',
-        filtrar_por_data_de: dataDe,
-        filtrar_por_data_ate: dataAte
-      });
+      let allInvoices = [];
+      let hasMore = true;
 
-      const invoices = response.nfCadastro || [];
+      // Pegar TODAS as páginas para análise completa
+      while (hasMore && page <= 50) {
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S',
+          filtrar_por_data_de: dataDe,
+          filtrar_por_data_ate: dataAte
+        });
 
-      for (const invoice of invoices) {
+        const invoices = response.nfCadastro || [];
+        if (invoices.length === 0) break;
+        
+        allInvoices = allInvoices.concat(invoices);
+        if (invoices.length < 50) hasMore = false;
+        page++;
+      }
+
+      for (const invoice of allInvoices) {
+        // Debugar: Mostrar TODOS os campos potenciais de etapa
+        if (sampleInvoices.length < 3) {
+          sampleInvoices.push({
+            nNF: invoice.ide?.nNF,
+            allFields: {
+              nfProdServStatus: invoice.nfProdServStatus,
+              cabecalho: invoice.cabecalho,
+              pedido: invoice.pedido,
+              compl: invoice.compl
+            }
+          });
+        }
+
         const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || 'NENHUMA';
         const stageName = stageMap[nfStageCode] || (nfStageCode === 'NENHUMA' ? 'SEM ETAPA' : `Etapa ${nfStageCode}`);
         
@@ -15457,15 +15495,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           cliente: invoice.nfDestInt?.cRazao,
           valor: invoice.total?.ICMSTot?.vNF,
           dEmi: invoice.ide?.dEmi,
-          stageCode: nfStageCode
+          stageCode: nfStageCode,
+          nfProdServStatus_cEtapa: invoice.nfProdServStatus?.cEtapa,
+          cabecalho_etapa: invoice.cabecalho?.etapa
         });
       }
 
       res.json({
         periodo: `${dataDe} até ${dataAte}`,
-        totalNotas: invoices.length,
+        totalNotas: allInvoices.length,
         resumoPorEtapa: stagesCount,
-        notasPorEtapa: invoicesByStage
+        notasPorEtapa: Object.keys(invoicesByStage).reduce((acc: any, stage) => {
+          acc[stage] = invoicesByStage[stage].slice(0, 5); // Apenas 5 primeiras por etapa
+          return acc;
+        }, {}),
+        sampleInvoices: sampleInvoices
       });
 
     } catch (error: any) {
