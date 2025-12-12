@@ -15131,16 +15131,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 30 dias atrás (NFes em "Aguardando Rota" não são mais antigas que isso)
+      // Calcular data de 7 dias atrás (apenas notas RECENTES em "Aguardando Rota")
+      // Nota: mudou de 30 para 7 dias conforme feedback do usuário
       const today = new Date();
-      const thirtyDaysAgo = new Date(today);
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       
       // Formatar datas para API do Omie (DD/MM/YYYY)
       const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
+      const dataDe = `${String(sevenDaysAgo.getDate()).padStart(2, '0')}/${String(sevenDaysAgo.getMonth() + 1).padStart(2, '0')}/${sevenDaysAgo.getFullYear()}`;
       
-      console.log(`📅 Filtro de período: ${dataDe} até ${dataAte} (últimos 30 dias)`);
+      console.log(`📅 Filtro de período: ${dataDe} até ${dataAte} (últimos 7 dias)`);
 
       const allBillings: any[] = [];
       const processedInvoiceNumbers = new Set<string>(); // ✅ REMOVER DUPLICATAS: rastrear NFs já processadas
