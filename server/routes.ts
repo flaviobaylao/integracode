@@ -5581,16 +5581,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Filtrar apenas pedidos com invoice_number (número de nota fiscal) válido
+      // Filtrar apenas pedidos com numero_pedido válido
+      // Nota: Alguns pedidos podem ter cliente como "Cliente não encontrado" devido a erro de API
+      // Mas o numero_pedido é suficiente para criar a entrega
       const validOrders = result.orders.filter((order: any) => {
-        const hasInvoiceNumber = order.numero_nota_fiscal || order.invoiceNumber || order.numero_pedido;
-        const hasCustomerName = order.cliente?.nome_fantasia && order.cliente.nome_fantasia !== 'Cliente não encontrado';
-        const isValidInvoice = hasInvoiceNumber && hasCustomerName;
+        const hasOrderNumber = order.numero_pedido;
         
-        if (!isValidInvoice) {
-          console.warn(`⚠️ Pedido inválido descartado: ${order.numero_pedido} (sem NF ou cliente)`);
+        if (!hasOrderNumber) {
+          console.warn(`⚠️ Pedido inválido descartado: sem numero_pedido`);
+          return false;
         }
-        return isValidInvoice;
+        
+        return true;
       });
 
       console.log(`📊 Filtrados ${validOrders.length} pedidos válidos de ${result.orders.length} retornados`);
