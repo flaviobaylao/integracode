@@ -15184,10 +15184,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
           const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
-          let stageName = '';
           
-          if (nfStageCode) {
-            // Mapear código de etapa para nome
+          // ⚠️ FILTRO CRÍTICO: APENAS notas em "Aguardando Rota" (etapa 80)
+          if (nfStageCode !== '80') {
             const stageMap: Record<string, string> = {
               '10': 'Pedido de Venda',
               '20': 'Em Rota',
@@ -15196,11 +15195,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               '70': 'Entregue',
               '80': 'Aguardando Rota'
             };
-            stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
-            console.log(`📋 Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (código: ${nfStageCode})`);
-          } else {
-            console.log(`⚠️ Nota ${invoice.ide?.nNF} - SEM ETAPA encontrada (nfProdServStatus?.cEtapa: ${invoice.nfProdServStatus?.cEtapa}, cabecalho?.etapa: ${invoice.cabecalho?.etapa})`);
+            const stageName = stageMap[nfStageCode] || (nfStageCode ? `Etapa ${nfStageCode}` : 'SEM ETAPA');
+            console.log(`⏭️ Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (${nfStageCode}) - NÃO É AGUARDANDO ROTA, pulando`);
+            continue; // Pular notas que não estão em "Aguardando Rota"
           }
+
+          console.log(`✅ Nota ${invoice.ide?.nNF} - Etapa: Aguardando Rota (código: 80) - SINCRONIZANDO`);
 
           // Buscar nome do vendedor pelo código
           const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
@@ -15216,7 +15216,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
 
-          // Adicionar à lista de faturamentos
+          // Adicionar à lista de faturamentos (APENAS NOTAS EM "AGUARDANDO ROTA")
           const pedidoId = invoice.compl?.nIdPedido;
           
           allBillings.push({
@@ -15227,7 +15227,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             invoiceDate: invoiceDateObj,
             vendorCode: vendorCode,
             sellerName: vendorName,
-            stageName: stageName,
+            stageName: 'Aguardando Rota',
             cfop: invoice.det?.[0]?.prod?.CFOP || '',
             isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
             omieOrderId: pedidoId?.toString() || '',
