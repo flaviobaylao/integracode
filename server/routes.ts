@@ -15143,31 +15143,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📄 Buscando página ${page}...`);
         
         try {
+          // ✅ CORRIGIDO: Usar apenas parâmetros válidos do ListarPedidos
           const response = await omieService.makeRequest('/produtos/pedido/', 'ListarPedidos', {
-            nPagina: page,
-            nRegPorPagina: 50,
-            filtrarPorEtapa: '80', // ✅ CRÍTICO: Apenas pedidos ATUALMENTE em "Aguardando Rota"
-            ordem_decrescente: 'S'
+            pagina: page,
+            registros_por_pagina: 50,
+            etapa: '80' // ✅ CRÍTICO: Apenas pedidos ATUALMENTE em "Aguardando Rota"
           });
 
-          // Omie retorna a lista de pedidos em diferentes formatos possíveis
-          const pedidos = response.pedidos || response.pedido || response.lista_pedidos || [];
+          // Omie retorna pedido_venda_produto[] ou similar
+          const pedidos = response.pedido_venda_produto || response.pedidos || response.pedido || response.lista_pedidos || [];
           console.log(`✅ Página ${page}: ${pedidos.length} pedidos encontrados em etapa 80`);
-          console.log(`📊 Estrutura da resposta: ${Object.keys(response).slice(0, 5).join(', ')}...`);
+          console.log(`📊 Estrutura da resposta: ${Object.keys(response).join(', ')}`);
+
+          // DEBUG: Logar estrutura do primeiro pedido
+          if (pedidos.length > 0 && page === 1) {
+            const primeiro = pedidos[0];
+            console.log(`🔍 DEBUG - Estrutura do primeiro pedido:`);
+            console.log(`   Chaves raiz: ${Object.keys(primeiro).join(', ')}`);
+            if (primeiro.cabecalho) {
+              console.log(`   Chaves cabecalho: ${Object.keys(primeiro.cabecalho).join(', ')}`);
+              console.log(`   cabecalho.numero_pedido: "${primeiro.cabecalho?.numero_pedido}"`);
+              console.log(`   cabecalho.etapa: "${primeiro.cabecalho?.etapa}"`);
+            }
+            if (primeiro.nf) {
+              console.log(`   Chaves nf: ${Object.keys(primeiro.nf).join(', ')}`);
+              console.log(`   nf.numero_nf: "${primeiro.nf?.numero_nf}"`);
+            }
+            // Campos diretos (estrutura plana)
+            console.log(`   numero: "${primeiro.numero}", nNF: "${primeiro.nNF}"`);
+          }
 
           for (const pedido of pedidos) {
-            const nfNumber = pedido.numero || pedido.nNF || '';
-            const pedidoNumber = pedido.numero || '';
+            // ✅ ESTRUTURA CORRETA DO OMIE (verificada em logs):
+            // - pedido.cabecalho.numero_pedido = número do pedido (31092, 31094...)
+            // - pedido.cabecalho.codigo_cliente = código do cliente (precisa buscar nome)
+            // - pedido.total_pedido.valor_total_pedido = valor total
+            // - pedido.informacoes_adicionais.codVend = código do vendedor
+            // - NF só existe após faturamento - buscar via infoCadastro.faturado
             
-            if (!nfNumber || nfNumber.trim() === '') continue;
+            const cabecalho = pedido.cabecalho || pedido;
+            const infoCad = pedido.infoCadastro || {};
+            const infAdicional = pedido.informacoes_adicionais || {};
+            const totalPedido = pedido.total_pedido || {};
             
-            const dataEmissaoStr = pedido.data || pedido.dEmi;
+            // Número do PEDIDO (31092, 31094, etc)
+            const pedidoNumber = String(cabecalho.numero_pedido || cabecalho.numero || pedido.numero_pedido || '').trim();
+            
+            // Se não tem número de pedido, pular
+            if (!pedidoNumber) continue;
+            
+            // Data do pedido
+            const dataEmissaoStr = cabecalho.data_previsao || infoCad.dInc || cabecalho.data || pedido.data || pedido.dEmi;
             if (!dataEmissaoStr) continue;
 
             const [day, month, year] = dataEmissaoStr.split('/');
             const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
 
-            const vendorCode = pedido.codigo_vendedor?.toString() || '';
+            // Vendedor - está em informacoes_adicionais.codVend
+            const vendorCode = String(infAdicional.codVend || cabecalho.codigo_vendedor || pedido.codigo_vendedor || '');
             let vendorName = vendorCode;
             
             if (vendorCode) {
@@ -15179,11 +15212,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
             }
 
+            // Cliente - precisa buscar pelo codigo_cliente
+            const codigoCliente = cabecalho.codigo_cliente;
+            let customerName = 'Cliente';
+            
+            if (codigoCliente) {
+              // Tentar buscar na tabela local de clientes primeiro
+              try {
+                const localCustomer = await db.select()
+                  .from(customersTable)
+                  .where(eq(customersTable.omieId, String(codigoCliente)))
+                  .limit(1);
+                
+                if (localCustomer.length > 0) {
+                  customerName = localCustomer[0].fantasyName || localCustomer[0].companyName || 'Cliente';
+                }
+              } catch (error) {
+                // Fallback: manter "Cliente" se não encontrar
+              }
+            }
+            
+            // Valor total - está em total_pedido.valor_total_pedido
+            const totalValue = parseFloat(String(totalPedido.valor_total_pedido || totalPedido.valor_mercadorias || cabecalho.total_pedido || 0));
+            
+            // Número da NF - pedidos em "Aguardando Rota" geralmente ainda não têm NF emitida
+            const nfNumber = '';
+
+            console.log(`✅ Pedido ${pedidoNumber} | Valor: R$${totalValue.toFixed(2)} | Cliente: ${customerName}`);
+
             allBillings.push({
-              omieInvoiceId: nfNumber,
-              invoiceNumber: nfNumber,
-              customerFantasyName: pedido.nome_fantasia || pedido.razao_social || 'Cliente',
-              totalValue: parseFloat(pedido.total_pedido?.toString() || '0'),
+              omieInvoiceId: nfNumber || pedidoNumber, // Fallback para número do pedido se não tem NF
+              invoiceNumber: nfNumber || '', // NF separado
+              customerFantasyName: customerName,
+              totalValue: totalValue,
               invoiceDate: invoiceDateObj,
               vendorCode: vendorCode,
               sellerName: vendorName,
@@ -15191,8 +15252,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stageName: 'Aguardando Rota (80)',
               cfop: '',
               isCancelled: false,
-              omieOrderId: pedido.codigo?.toString() || '',
-              orderNumber: pedidoNumber,
+              omieOrderId: String(cabecalho.codigo_pedido || pedido.codigo || ''),
+              orderNumber: pedidoNumber, // Número do PEDIDO (diferente da NF!)
               orderDate: invoiceDateObj,
               billingType: 'venda' as const
             });
@@ -15205,6 +15266,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           page++;
         } catch (pageError: any) {
           console.log(`⚠️ Erro ao buscar página ${page}:`, pageError.message);
+          
+          // Se for erro de rate limit (425), parar imediatamente
+          if (pageError.message?.includes('425') || pageError.message?.includes('bloqueada')) {
+            console.log(`🛑 API bloqueada por rate limit - parando sincronização`);
+            hasMorePages = false;
+            break;
+          }
+          
           console.log(`⏭️ Pulando página ${page} e tentando próxima`);
           page++;
           continue;
@@ -15219,10 +15288,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const billing of allBillings) {
         try {
-          // Verificar se já existe
+          // ✅ CORRIGIDO: Usar orderNumber como chave única (não invoiceNumber que está vazio)
           const existing = await db.select()
             .from(billingsTable)
-            .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber))
+            .where(eq(billingsTable.orderNumber, billing.orderNumber))
             .limit(1);
 
           if (existing.length > 0) {
@@ -15232,7 +15301,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...billing,
                 updatedAt: new Date()
               })
-              .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
+              .where(eq(billingsTable.orderNumber, billing.orderNumber));
             updatedCount++;
           } else {
             // Inserir
@@ -15240,7 +15309,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             insertedCount++;
           }
         } catch (error) {
-          console.error(`Erro ao processar faturamento ${billing.invoiceNumber}:`, error);
+          console.error(`Erro ao processar faturamento ${billing.orderNumber}:`, error);
         }
       }
 
