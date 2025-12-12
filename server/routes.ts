@@ -5554,6 +5554,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota específica para sincronizar pedidos em "Aguardando Rota"
+  // DEBUG: Inspecionar estrutura completa de um pedido específico
+  app.get('/api/debug/omie-order/:orderNumber', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ message: "Integração Omie não configurada" });
+      }
+      
+      const { orderNumber } = req.params;
+      console.log(`🔍 DEBUG: Consultando pedido ${orderNumber} no Omie...`);
+      
+      const result = await omieService.makeRequest('/geral/pedidos/', 'ConsultarPedido', {
+        numero_pedido: parseInt(orderNumber)
+      });
+      
+      console.log(`✅ PEDIDO ${orderNumber}:`, JSON.stringify(result, null, 2));
+      res.json({
+        success: true,
+        orderNumber: orderNumber,
+        data: result
+      });
+    } catch (error) {
+      console.error(`❌ Erro ao consultar pedido:`, error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
   app.post('/api/omie/orders/awaiting-route/sync', authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
