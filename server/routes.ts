@@ -17768,7 +17768,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 'check_in',
                 userLat,
                 userLon,
-                photoUrl       // Passar URL da foto
+                photoUrl,      // Passar URL da foto
+                req.body.comment  // Passar comentário se houver
               );
               console.log(`✅ Checkpoint de check-in registrado para lead`);
             } else {
@@ -17882,7 +17883,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 sellerId,
                 'check_out',
                 parseFloat(latitude),
-                parseFloat(longitude)
+                parseFloat(longitude),
+                undefined,     // sem foto no check-out
+                req.body.comment // Passar comentário se houver
               );
               console.log(`✅ Checkpoint de check-out registrado para lead`);
             }

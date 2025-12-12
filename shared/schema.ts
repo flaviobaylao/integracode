@@ -910,6 +910,10 @@ export const routeCheckpoints = pgTable("route_checkpoints", {
   // Sequência na rota
   sequenceNumber: integer("sequence_number").notNull(),
   
+  // Foto e comentário capturados no check-in/check-out
+  photoUrl: text("photo_url"), // URL da foto capturada no check-in
+  comment: text("comment"), // Comentário deixado no check-in/check-out
+  
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_route_checkpoints_route").on(table.dailyRouteId),

@@ -603,7 +603,9 @@ export async function registerCheckpoint(
   sellerId: string,
   checkpointType: 'check_in' | 'check_out',
   latitude: number,
-  longitude: number
+  longitude: number,
+  photoUrl?: string,
+  comment?: string
 ): Promise<{ distanceFromPrevious: number; totalDistanceSoFar: number; completedVisits: number; isOffRoute: boolean }> {
   // Buscar a rota para verificar se é visita off-route
   const route = await storage.getDailyRoute(dailyRouteId);
@@ -674,7 +676,9 @@ export async function registerCheckpoint(
     distanceFromPrevious: distanceFromPrevious.toString(),
     previousLatitude: previousLat?.toString() || null,
     previousLongitude: previousLon?.toString() || null,
-    sequenceNumber
+    sequenceNumber,
+    photoUrl: photoUrl || null,
+    comment: comment || null
   });
 
   console.log(`✅ Checkpoint ${checkpointType} salvo para visita ${visitId}`);
