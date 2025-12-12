@@ -5571,14 +5571,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const result = await omieService.getOrdersByStage(stageCode);
       
-      console.log(`✅ Pedidos sincronizados de "Aguardando Rota": ${result.totalRecords} registros`);
+      if (!result.orders || result.orders.length === 0) {
+        console.log(`ℹ️ Nenhum pedido encontrado na etapa "Aguardando Rota"`);
+        return res.json({
+          success: true,
+          count: 0,
+          savedCount: 0,
+          message: 'Nenhum pedido encontrado na etapa "Aguardando Rota"'
+        });
+      }
+
+      // Salvar pedidos como billings no banco de dados
+      let savedCount = 0;
+      const errors: any[] = [];
+
+      for (const order of result.orders) {
+        try {
+          const billing = {
+            omieOrderId: String(order.codigo_pedido),
+            orderNumber: String(order.numero_pedido),
+            omieInvoiceId: order.omieInvoiceId || undefined,
+            invoiceNumber: order.invoiceNumber || undefined,
+            customerFantasyName: order.cliente?.nome_fantasia || 'Desconhecido',
+            customerDocument: order.cliente?.cnpj_cpf || undefined,
+            invoiceDate: order.invoiceDate ? new Date(order.invoiceDate) : undefined,
+            orderDate: new Date(),
+            totalValue: String(order.totalValue || 0),
+            dueDate: order.dueDate ? new Date(order.dueDate) : undefined,
+            paymentMethod: order.paymentMethod || 'a_vista',
+            sellerName: order.sellerName || undefined,
+            omieCustomerCode: String(order.codigo_cliente || ''),
+            vendorCode: String(order.vendorCode || ''),
+            billingType: 'venda' as const,
+            invoiceStatus: order.invoiceStatus || undefined,
+            invoiceStage: 'Aguardando Rota',
+            stageName: 'Aguardando Rota',
+            isCancelled: false,
+            isUrgent: false,
+            products: order.items || []
+          };
+
+          await storage.createBilling(billing as any);
+          savedCount++;
+          console.log(`✅ Billing salvo: Pedido ${order.numero_pedido}`);
+        } catch (error) {
+          console.warn(`⚠️ Erro ao salvar billing do pedido ${order.numero_pedido}:`, error);
+          errors.push({ order: order.numero_pedido, error: String(error) });
+        }
+      }
+
+      console.log(`✅ Sincronização concluída: ${savedCount} billings salvos de ${result.orders.length} pedidos`);
       
       res.json({
         success: true,
-        count: result.totalRecords,
-        message: `${result.totalRecords} pedidos sincronizados da etapa "Aguardando Rota"`,
-        stageCode: '80',
-        stageName: 'Aguardando Rota'
+        count: result.orders.length,
+        savedCount,
+        message: `${savedCount} pedidos sincronizados com sucesso da etapa "Aguardando Rota"`,
+        errors: errors.length > 0 ? errors : undefined
       });
     } catch (error) {
       console.error('❌ Erro ao sincronizar pedidos de "Aguardando Rota":', error);
