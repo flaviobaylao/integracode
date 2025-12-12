@@ -15149,21 +15149,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let duplicatesFound = 0;
 
       // Buscar notas fiscais dos últimos 30 dias COM FILTRO DE DATA NA API
-      while (hasMorePages && page <= 50) {
+      // ⚠️ Nota: Omie retorna erro após página 1, limitando a apenas primeira página por agora
+      while (hasMorePages && page <= 1) {
         console.log(`📄 Buscando página ${page}...`);
         
-        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-          pagina: page,
-          registros_por_pagina: 50,
-          apenas_importado_api: 'N',
-          ordenar_por: 'DATA',
-          ordem_decrescente: 'S',
-          filtrar_por_data_de: dataDe,
-          filtrar_por_data_ate: dataAte
-        });
+        try {
+          const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+            pagina: page,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N',
+            ordenar_por: 'DATA',
+            ordem_decrescente: 'S',
+            filtrar_por_data_de: dataDe,
+            filtrar_por_data_ate: dataAte
+          });
 
-        const invoices = response.nfCadastro || [];
-        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+          const invoices = response.nfCadastro || [];
+          console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
 
         for (const invoice of invoices) {
           const invoiceNumber = invoice.ide?.nNF || '';
@@ -15197,8 +15199,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
           const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
           
-          // ⚠️ FILTRO CRÍTICO: APENAS notas em "Aguardando Rota" (etapa 80)
-          if (nfStageCode !== '80') {
+          // ⚠️ FILTRO CRÍTICO: APENAS notas em "Aguardando Rota" (etapa 80) OU sem etapa definida
+          // Nota: Omie frequentemente retorna "SEM ETAPA" para notas em "Aguardando Rota"
+          const isAwaitingRoute = nfStageCode === '80' || !nfStageCode;
+          
+          if (!isAwaitingRoute) {
             const stageMap: Record<string, string> = {
               '10': 'Pedido de Venda',
               '20': 'Em Rota',
@@ -15207,12 +15212,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               '70': 'Entregue',
               '80': 'Aguardando Rota'
             };
-            const stageName = stageMap[nfStageCode] || (nfStageCode ? `Etapa ${nfStageCode}` : 'SEM ETAPA');
+            const stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
             console.log(`⏭️ Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (${nfStageCode}) - NÃO É AGUARDANDO ROTA, pulando`);
             continue; // Pular notas que não estão em "Aguardando Rota"
           }
 
-          console.log(`✅ Nota ${invoice.ide?.nNF} - Etapa: Aguardando Rota (código: 80) - SINCRONIZANDO`);
+          const stageName = nfStageCode === '80' ? 'Aguardando Rota (80)' : 'Aguardando Rota (SEM ETAPA)';
+          console.log(`✅ Nota ${invoice.ide?.nNF} - Etapa: ${stageName} - SINCRONIZANDO`);
 
           // Buscar nome do vendedor pelo código
           const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
@@ -15254,6 +15260,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         page++;
+        } catch (pageError: any) {
+          console.log(`⚠️ Erro ao buscar página ${page}:`, pageError.message);
+          console.log(`✅ Parando sincronização (Omie retornou erro)`);
+          hasMorePages = false;
+        }
       }
 
       console.log(`\n✅ Total de faturamentos coletados: ${allBillings.length}\n`);
