@@ -15150,21 +15150,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ordem_decrescente: 'S'
           });
 
-          const pedidos = response.pedido || [];
+          // Omie retorna a lista de pedidos em diferentes formatos possíveis
+          const pedidos = response.pedidos || response.pedido || response.lista_pedidos || [];
           console.log(`✅ Página ${page}: ${pedidos.length} pedidos encontrados em etapa 80`);
+          console.log(`📊 Estrutura da resposta: ${Object.keys(response).slice(0, 5).join(', ')}...`);
 
           for (const pedido of pedidos) {
-            // Campos do Omie para pedidos em ListarPedidos
-            const nfNumber = pedido.numero || pedido.nNF || '';
-            const pedidoNumber = pedido.numero || '';
+            // Campos corretos do Omie para pedidos em ListarPedidos
+            // CRÍTICO: numero_nota_fiscal vs numero_pedido são CAMPOS DIFERENTES!
+            const nfNumber = String(pedido.numero_nota_fiscal || pedido.nNF || pedido.numero_nf || '').trim();
+            const pedidoNumber = String(pedido.numero_pedido || pedido.id || pedido.numero || '').trim();
             
-            // ✅ FILTRO: Apenas pedidos com NF (notas fiscais)
-            if (!nfNumber || nfNumber.trim() === '') {
+            // ✅ FILTRO: Apenas pedidos com NF (notas fiscais) E número do pedido
+            if (!nfNumber) {
               console.log(`⏭️ Pedido SEM NOTA FISCAL - pulando`);
               continue;
             }
             
-            const dataEmissaoStr = pedido.data || pedido.dEmi;
+            if (!pedidoNumber) {
+              console.log(`⏭️ Pedido SEM NÚMERO DE PEDIDO - pulando`);
+              continue;
+            }
+            
+            // Validar que não são o mesmo número
+            if (nfNumber === pedidoNumber) {
+              console.log(`⚠️ Alerta: NF (${nfNumber}) e número de pedido (${pedidoNumber}) são idênticos - pode estar usando campo errado`);
+            }
+            
+            const dataEmissaoStr = pedido.data_emissao || pedido.data || pedido.dEmi;
             if (!dataEmissaoStr) {
               console.log(`⚠️ Pedido ${nfNumber} sem data - pulando`);
               continue;
