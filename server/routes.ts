@@ -15245,6 +15245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             invoiceDate: invoiceDateObj,
             vendorCode: vendorCode,
             sellerName: vendorName,
+            invoiceStage: 'Aguardando Rota', // ✅ CAMPO CRÍTICO para getPendingDeliveries()
             stageName: 'Aguardando Rota',
             cfop: invoice.det?.[0]?.prod?.CFOP || '',
             isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
