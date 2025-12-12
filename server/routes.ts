@@ -5565,7 +5565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { orderNumber } = req.params;
       console.log(`🔍 DEBUG: Consultando pedido ${orderNumber} no Omie...`);
       
-      const result = await omieService.makeRequest('/geral/pedidos/', 'ConsultarPedido', {
+      const result = await omieService.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
         numero_pedido: parseInt(orderNumber)
       });
       
