@@ -2821,8 +2821,8 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
         b.customer_document as "customerDocument",
         b.omie_customer_code,
-        b.invoice_date as "scheduledDate",
-        b.invoice_date as "invoiceDate",
+        COALESCE(b.invoice_date, b.order_date) as "scheduledDate",
+        COALESCE(b.invoice_date, b.order_date) as "invoiceDate",
         b.total_value as "saleValue",
         b.products,
         b.payment_method as "paymentMethod",
@@ -2850,13 +2850,12 @@ export class DatabaseStorage implements IStorage {
         OR b.omie_customer_code::text = c.cnpj
       )
       WHERE b.invoice_stage = 'Aguardando Rota'
-        AND b.invoice_number IS NOT NULL
-        AND b.invoice_date IS NOT NULL
+        AND b.order_date IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
           WHERE drs.billing_id = b.id
         )
-      ORDER BY b.invoice_date DESC, b.customer_fantasy_name
+      ORDER BY COALESCE(b.invoice_date, b.order_date) DESC, b.customer_fantasy_name
     `);
     
     // Mapear billings para deliveries com customerId genérico
