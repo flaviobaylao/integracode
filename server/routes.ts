@@ -15156,54 +15156,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`📊 Estrutura da resposta: ${Object.keys(response).slice(0, 5).join(', ')}...`);
 
           for (const pedido of pedidos) {
-            // Campos corretos do Omie para pedidos em ListarPedidos
-            // CRÍTICO: numero_nota_fiscal vs numero_pedido são CAMPOS DIFERENTES!
-            const nfNumber = String(pedido.numero_nota_fiscal || pedido.nNF || pedido.numero_nf || '').trim();
-            const pedidoNumber = String(pedido.numero_pedido || pedido.id || pedido.numero || '').trim();
+            const nfNumber = pedido.numero || pedido.nNF || '';
+            const pedidoNumber = pedido.numero || '';
             
-            // ✅ FILTRO: Apenas pedidos com NF (notas fiscais) E número do pedido
-            if (!nfNumber) {
-              console.log(`⏭️ Pedido SEM NOTA FISCAL - pulando`);
-              continue;
-            }
+            if (!nfNumber || nfNumber.trim() === '') continue;
             
-            if (!pedidoNumber) {
-              console.log(`⏭️ Pedido SEM NÚMERO DE PEDIDO - pulando`);
-              continue;
-            }
-            
-            // Validar que não são o mesmo número
-            if (nfNumber === pedidoNumber) {
-              console.log(`⚠️ Alerta: NF (${nfNumber}) e número de pedido (${pedidoNumber}) são idênticos - pode estar usando campo errado`);
-            }
-            
-            const dataEmissaoStr = pedido.data_emissao || pedido.data || pedido.dEmi;
-            if (!dataEmissaoStr) {
-              console.log(`⚠️ Pedido ${nfNumber} sem data - pulando`);
-              continue;
-            }
+            const dataEmissaoStr = pedido.data || pedido.dEmi;
+            if (!dataEmissaoStr) continue;
 
-            // Parsear data do Omie (DD/MM/YYYY) para Date object
             const [day, month, year] = dataEmissaoStr.split('/');
             const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
 
-            console.log(`✅ Pedido ${pedidoNumber} com NF ${nfNumber} - Etapa: Aguardando Rota (80) - SINCRONIZANDO`);
-
-            // Buscar nome do vendedor pelo código
             const vendorCode = pedido.codigo_vendedor?.toString() || '';
-            let vendorName = '';
+            let vendorName = vendorCode;
             
             if (vendorCode) {
               try {
                 const vendorData = await omieService.fetchVendorData(vendorCode);
                 vendorName = vendorData?.nome || vendorCode;
               } catch (error) {
-                console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
                 vendorName = vendorCode;
               }
             }
 
-            // Adicionar à lista de faturamentos
             allBillings.push({
               omieInvoiceId: nfNumber,
               invoiceNumber: nfNumber,
