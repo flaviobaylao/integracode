@@ -3798,9 +3798,13 @@ export class OmieService {
         console.log(`📊 Distribuição de etapas nos ${allOrders.length} pedidos:`, stageDistribution);
         console.log(`🔍 Exemplos de primeiros 3 pedidos:`, allOrders.slice(0, 3).map((o: any) => ({
           numero: o.cabecalho?.numero_pedido,
+          numero_nf_field: o.cabecalho?.numero_nota_fiscal,
+          nfe_numero: o.cabecalho?.nfe_numero,
           etapa: o.cabecalho?.etapa,
           cliente: o.cabecalho?.codigo_cliente
         })));
+        // DEBUG: Mostrar estrutura completa do primeiro pedido
+        console.log(`🔍 ESTRUTURA COMPLETA DO PRIMEIRO PEDIDO:`, JSON.stringify(allOrders[0]?.cabecalho, null, 2));
       }
       
       // Mapear e enriquecer os pedidos com dados dos clientes

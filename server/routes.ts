@@ -5582,13 +5582,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Usar numero_nota_fiscal como CHAVE PRIMÁRIA de sincronismo
-      // Filtrar pedidos com NF válida e deduplica por NF
+      // IMPORTANTE: Usar o campo numero_nota_fiscal do Omie (não usar numero_pedido como fallback!)
       const seenInvoices = new Set<string>();
       const validOrders = result.orders.filter((order: any) => {
-        const invoiceNum = String(order.numero_nota_fiscal || order.numero_pedido);
+        // Usar APENAS numero_nota_fiscal - é a chave correta para sincronismo
+        const invoiceNum = String(order.numero_nota_fiscal || '').trim();
         
-        if (!invoiceNum) {
-          console.warn(`⚠️ Pedido inválido descartado: sem numero_nota_fiscal nem numero_pedido`);
+        if (!invoiceNum || invoiceNum === '') {
+          console.warn(`⚠️ Pedido ${order.numero_pedido} SEM numero_nota_fiscal - descartado`);
           return false;
         }
         
@@ -5601,7 +5602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return true;
       });
 
-      console.log(`📊 Filtrados ${validOrders.length} NFs únicas de ${result.orders.length} retornados`);
+      console.log(`📊 Filtrados ${validOrders.length} NFs únicas com numero_nota_fiscal válido de ${result.orders.length} retornados`);
 
       // Verificar quais NFs já existem no banco para evitar duplicatas
       let skippedCount = 0;
@@ -5610,7 +5611,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const order of validOrders) {
         try {
-          const invoiceNum = String(order.numero_nota_fiscal || order.numero_pedido);
+          const invoiceNum = String(order.numero_nota_fiscal || '').trim();
+          
+          if (!invoiceNum) {
+            console.warn(`⚠️ Pulando pedido ${order.numero_pedido}: numero_nota_fiscal vazio`);
+            continue;
+          }
           
           // Verificar se esta NF já foi sincronizada
           const existingBilling = await storage.getBillingByInvoiceNumber(invoiceNum);
