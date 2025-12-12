@@ -18539,6 +18539,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint para deletar billings com dados inválidos (datas 01/01/1970 ou valores zerados)
+  app.post('/api/admin/cleanup-invalid-billings', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log('🧹 Iniciando limpeza de faturamentos com dados inválidos...');
+      
+      // Buscar todos os billings
+      const allBillings = await db.select().from(billingsTable);
+      const epoch = new Date(1970, 0, 1);
+      
+      let deletedCount = 0;
+      const toDelete: string[] = [];
+      
+      for (const billing of allBillings) {
+        // Verificar se tem data inválida (01/01/1970) ou valor zero
+        const isEpochDate = billing.invoiceDate && new Date(billing.invoiceDate).getTime() === epoch.getTime();
+        const isZeroValue = billing.totalValue === '0.00' || billing.totalValue === 0;
+        const isInvalidClient = billing.customerFantasyName?.includes('não encontrado') || billing.customerFantasyName?.includes('não identificado');
+        
+        if ((isEpochDate || isZeroValue) && isInvalidClient) {
+          toDelete.push(billing.id);
+          deletedCount++;
+        }
+      }
+      
+      // Deletar em lotes
+      if (toDelete.length > 0) {
+        for (let i = 0; i < toDelete.length; i += 100) {
+          const batch = toDelete.slice(i, i + 100);
+          await db.delete(billingsTable).where(inArray(billingsTable.id, batch));
+        }
+        console.log(`✅ ${deletedCount} faturamentos inválidos deletados`);
+      }
+      
+      res.json({ 
+        success: true, 
+        deletedCount,
+        message: `${deletedCount} faturamentos com dados inválidos foram removidos. Por favor, sincronize novamente.`
+      });
+    } catch (error: any) {
+      console.error('❌ Erro ao limpar billings:', error);
+      res.status(500).json({ message: 'Erro ao limpar faturamentos', error: error.message });
+    }
+  });
+
   // Importar e registrar rotas do Chat Honest ANTES de criar o servidor HTTP
   const { registerChatRoutes } = await import('./chat-routes.js');
   registerChatRoutes(app);
