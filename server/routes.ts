@@ -5553,73 +5553,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota específica para sincronizar pedidos em "Aguardando Rota"
-  // DEBUG: Inspecionar estrutura completa de um pedido específico
-  app.get('/api/debug/omie-order/:orderNumber', authenticateUser, async (req: any, res) => {
+  // Sync orders by step/stage
+  app.post('/api/omie/orders/:step/sync', authenticateUser, async (req: any, res) => {
     try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ message: "Integração Omie não configurada" });
-      }
+      const { step } = req.params;
       
-      const { orderNumber } = req.params;
-      console.log(`🔍 DEBUG: Consultando pedido ${orderNumber} no Omie...`);
-      
-      const result = await omieService.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
-        numero_pedido: parseInt(orderNumber)
-      });
-      
-      console.log(`✅ PEDIDO ${orderNumber}:`, JSON.stringify(result, null, 2));
-      res.json({
-        success: true,
-        orderNumber: orderNumber,
-        data: result
-      });
-    } catch (error) {
-      console.error(`❌ Erro ao consultar pedido:`, error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  });
-
-  // DEBUG: Inspecionar estrutura das NFes do Omie
-  app.get('/api/debug/omie-invoices', authenticateUser, async (req: any, res) => {
-    try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ message: "Integração Omie não configurada" });
-      }
-      
-      console.log(`🔍 DEBUG: Buscando NFes do Omie...`);
-      
-      const result = await omieService.listInvoices(1, 10);
-      
-      // Mostrar estrutura da primeira NF
-      if (result.invoices.length > 0) {
-        console.log(`✅ ESTRUTURA NFe:`, JSON.stringify(result.invoices[0], null, 2));
-      }
-      
-      res.json({
-        success: true,
-        totalInvoices: result.totalRecords,
-        sampleInvoices: result.invoices.slice(0, 5),
-        allFields: result.invoices.length > 0 ? Object.keys(result.invoices[0]) : []
-      });
-    } catch (error) {
-      console.error(`❌ Erro ao buscar NFes:`, error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  });
-
-
-  // Rota de DEBUG para etapas do Omie
-  app.get('/api/omie/debug-stages', authenticateUser, async (req, res) => {
-    try {
       const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(503).json({ 
@@ -5627,31 +5565,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log('🔍 DEBUG-STAGES: Iniciando busca de etapas...');
+      // Primeiro buscar etapas disponíveis para mapear corretamente
+      const availableStages = await omieService.getAvailableStages();
       
-      // Tentar chamar direto
-      let response: any;
-      try {
-        response = await (omieService as any).makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
-        console.log('✅ DEBUG-STAGES: Resposta recebida:', JSON.stringify(response, null, 2));
-      } catch (apiError) {
-        console.log('❌ DEBUG-STAGES: Erro na API:', apiError);
-        response = { error: apiError, message: String(apiError) };
+      // Mapear step para etapa do Omie baseado nas etapas disponíveis
+      const stageMapping: Record<string, string> = {};
+      
+      // Criar mapeamento dinâmico baseado nas etapas disponíveis
+      availableStages.forEach((stage: any, index: number) => {
+        const stageCode = stage.cCodigo || stage.codigo;
+        if (index === 0) stageMapping['sale'] = stageCode;
+        else if (index === 1) stageMapping['billing'] = stageCode;
+        else if (index === 2) stageMapping['billed'] = stageCode;
+        else if (index === 3) stageMapping['awaiting-route'] = stageCode;
+        else if (index === 4) stageMapping['in-route'] = stageCode;
+      });
+      
+      const omieStage = stageMapping[step];
+      if (!omieStage) {
+        return res.status(400).json({ 
+          message: 'Etapa não disponível nesta conta',
+          availableStages: availableStages.map((s: any) => ({ 
+            codigo: s.cCodigo || s.codigo, 
+            descricao: s.cDescricao || s.descricao 
+          }))
+        });
       }
+
+      const result = await omieService.getOrdersByStage(omieStage);
       
       res.json({
-        timestamp: new Date().toISOString(),
-        rawResponse: response,
-        keys: Object.keys(response),
-        hasEtapas: 'etapas' in response,
-        stagesCount: response.etapas ? response.etapas.length : 0,
-        firstStageProperties: response.etapas && response.etapas.length > 0 ? Object.keys(response.etapas[0]) : []
+        success: true,
+        count: result.totalRecords,
+        message: `${result.totalRecords} pedidos sincronizados da etapa ${step}`,
+        omieStage,
+        availableStages
       });
     } catch (error) {
-      console.error('❌ DEBUG-STAGES: Erro geral:', error);
+      console.error('Erro ao sincronizar pedidos por etapa:', error);
       res.status(500).json({ 
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
+        message: 'Erro ao sincronizar pedidos', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
       });
     }
   });
@@ -15122,162 +15076,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie para banco de dados
-  app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
-      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (PEDIDOS EM "AGUARDANDO ROTA")...\n');
+      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
 
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
+      // Calcular data de 90 dias atrás (aumentado para garantir captura de todas as notas)
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
       const allBillings: any[] = [];
       let page = 1;
       let hasMorePages = true;
 
-      // ⚠️ CRÍTICO: Buscar PEDIDOS (não NFEs) filtrados por ETAPA ATUAL = 80 ("Aguardando Rota")
-      // Isso sincroniza apenas pedidos que estão ATUALMENTE nessa etapa, não os que já passaram por ela
-      console.log(`🔎 Buscando pedidos que estão ATUALMENTE na etapa 80 (Aguardando Rota)...`);
-
+      // Buscar notas fiscais dos últimos 90 dias
       while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
-        try {
-          // ✅ CORRIGIDO: Usar apenas parâmetros válidos do ListarPedidos
-          const response = await omieService.makeRequest('/produtos/pedido/', 'ListarPedidos', {
-            pagina: page,
-            registros_por_pagina: 50,
-            etapa: '80' // ✅ CRÍTICO: Apenas pedidos ATUALMENTE em "Aguardando Rota"
+        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: 50,
+          apenas_importado_api: 'N',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        const invoices = response.nfCadastro || [];
+        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+
+        for (const invoice of invoices) {
+          const invoiceDate = invoice.ide?.dEmi;
+          if (!invoiceDate) {
+            console.log(`⚠️ Nota sem data - pulando`);
+            continue;
+          }
+
+          const [dia, mes, ano] = invoiceDate.split('/');
+          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
+          
+          // Filtrar últimos 90 dias - PULAR nota antiga mas CONTINUAR buscando páginas
+          if (invoiceDateObj < ninetyDaysAgo) {
+            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 90 dias (${invoiceDate}) - pulando`);
+            continue; // Pular essa nota mas continuar processando outras
+          }
+
+          // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
+          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
+          
+          if (notaCancelada) {
+            console.log(`❌ Nota ${invoice.ide?.nNF} CANCELADA - pulando`);
+            continue;
+          }
+
+          // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
+          const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
+          let stageName = '';
+          
+          if (nfStageCode) {
+            // Mapear código de etapa para nome
+            const stageMap: Record<string, string> = {
+              '10': 'Pedido de Venda',
+              '20': 'Em Rota',
+              '50': 'Faturado',
+              '60': 'Faturado',
+              '70': 'Entregue',
+              '80': 'Aguardando Rota'
+            };
+            stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
+            console.log(`📋 Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (código: ${nfStageCode})`);
+          } else {
+            console.log(`⚠️ Nota ${invoice.ide?.nNF} - SEM ETAPA encontrada (nfProdServStatus?.cEtapa: ${invoice.nfProdServStatus?.cEtapa}, cabecalho?.etapa: ${invoice.cabecalho?.etapa})`);
+          }
+
+          // Buscar nome do vendedor pelo código
+          const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
+          let vendorName = '';
+          
+          if (vendorCode) {
+            try {
+              const vendorData = await omieService.fetchVendorData(vendorCode);
+              vendorName = vendorData?.nome || vendorCode;
+            } catch (error) {
+              console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
+              vendorName = vendorCode; // Usar código se não encontrar nome
+            }
+          }
+
+          // Adicionar à lista de faturamentos
+          const pedidoId = invoice.compl?.nIdPedido;
+          
+          allBillings.push({
+            omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
+            invoiceNumber: invoice.ide?.nNF || '',
+            customerFantasyName: invoice.nfDestInt?.cRazao || '',
+            totalValue: invoice.total?.ICMSTot?.vNF || 0,
+            invoiceDate: invoiceDateObj,
+            vendorCode: vendorCode,
+            sellerName: vendorName,
+            stageName: stageName,
+            cfop: invoice.det?.[0]?.prod?.CFOP || '',
+            isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
+            omieOrderId: pedidoId?.toString() || '',
+            orderNumber: invoice.compl?.nPed || invoice.ide?.nNF || '',
+            orderDate: invoiceDateObj,
+            billingType: 'venda' as const
           });
-
-          // Omie retorna pedido_venda_produto[] ou similar
-          const pedidos = response.pedido_venda_produto || response.pedidos || response.pedido || response.lista_pedidos || [];
-          console.log(`✅ Página ${page}: ${pedidos.length} pedidos encontrados em etapa 80`);
-          console.log(`📊 Estrutura da resposta: ${Object.keys(response).join(', ')}`);
-
-          // DEBUG: Logar estrutura do primeiro pedido
-          if (pedidos.length > 0 && page === 1) {
-            const primeiro = pedidos[0];
-            console.log(`🔍 DEBUG - Estrutura do primeiro pedido:`);
-            console.log(`   Chaves raiz: ${Object.keys(primeiro).join(', ')}`);
-            if (primeiro.cabecalho) {
-              console.log(`   Chaves cabecalho: ${Object.keys(primeiro.cabecalho).join(', ')}`);
-              console.log(`   cabecalho.numero_pedido: "${primeiro.cabecalho?.numero_pedido}"`);
-              console.log(`   cabecalho.etapa: "${primeiro.cabecalho?.etapa}"`);
-            }
-            if (primeiro.nf) {
-              console.log(`   Chaves nf: ${Object.keys(primeiro.nf).join(', ')}`);
-              console.log(`   nf.numero_nf: "${primeiro.nf?.numero_nf}"`);
-            }
-            // Campos diretos (estrutura plana)
-            console.log(`   numero: "${primeiro.numero}", nNF: "${primeiro.nNF}"`);
-          }
-
-          for (const pedido of pedidos) {
-            // ✅ ESTRUTURA CORRETA DO OMIE (verificada em logs):
-            // - pedido.cabecalho.numero_pedido = número do pedido (31092, 31094...)
-            // - pedido.cabecalho.codigo_cliente = código do cliente (precisa buscar nome)
-            // - pedido.total_pedido.valor_total_pedido = valor total
-            // - pedido.informacoes_adicionais.codVend = código do vendedor
-            // - NF só existe após faturamento - buscar via infoCadastro.faturado
-            
-            const cabecalho = pedido.cabecalho || pedido;
-            const infoCad = pedido.infoCadastro || {};
-            const infAdicional = pedido.informacoes_adicionais || {};
-            const totalPedido = pedido.total_pedido || {};
-            
-            // Número do PEDIDO (31092, 31094, etc)
-            const pedidoNumber = String(cabecalho.numero_pedido || cabecalho.numero || pedido.numero_pedido || '').trim();
-            
-            // Se não tem número de pedido, pular
-            if (!pedidoNumber) continue;
-            
-            // Data do pedido
-            const dataEmissaoStr = cabecalho.data_previsao || infoCad.dInc || cabecalho.data || pedido.data || pedido.dEmi;
-            if (!dataEmissaoStr) continue;
-
-            const [day, month, year] = dataEmissaoStr.split('/');
-            const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-
-            // Vendedor - está em informacoes_adicionais.codVend
-            const vendorCode = String(infAdicional.codVend || cabecalho.codigo_vendedor || pedido.codigo_vendedor || '');
-            let vendorName = vendorCode;
-            
-            if (vendorCode) {
-              try {
-                const vendorData = await omieService.fetchVendorData(vendorCode);
-                vendorName = vendorData?.nome || vendorCode;
-              } catch (error) {
-                vendorName = vendorCode;
-              }
-            }
-
-            // Cliente - precisa buscar pelo codigo_cliente
-            const codigoCliente = cabecalho.codigo_cliente;
-            let customerName = 'Cliente';
-            
-            if (codigoCliente) {
-              // Tentar buscar na tabela local de clientes primeiro
-              try {
-                const localCustomer = await db.select()
-                  .from(customersTable)
-                  .where(eq(customersTable.omieId, String(codigoCliente)))
-                  .limit(1);
-                
-                if (localCustomer.length > 0) {
-                  customerName = localCustomer[0].fantasyName || localCustomer[0].companyName || 'Cliente';
-                }
-              } catch (error) {
-                // Fallback: manter "Cliente" se não encontrar
-              }
-            }
-            
-            // Valor total - está em total_pedido.valor_total_pedido
-            const totalValue = parseFloat(String(totalPedido.valor_total_pedido || totalPedido.valor_mercadorias || cabecalho.total_pedido || 0));
-            
-            // Número da NF - pedidos em "Aguardando Rota" geralmente ainda não têm NF emitida
-            const nfNumber = '';
-
-            console.log(`✅ Pedido ${pedidoNumber} | Valor: R$${totalValue.toFixed(2)} | Cliente: ${customerName}`);
-
-            allBillings.push({
-              omieInvoiceId: nfNumber || pedidoNumber, // Fallback para número do pedido se não tem NF
-              invoiceNumber: nfNumber || '', // NF separado
-              customerFantasyName: customerName,
-              totalValue: totalValue,
-              invoiceDate: invoiceDateObj,
-              vendorCode: vendorCode,
-              sellerName: vendorName,
-              invoiceStage: 'Aguardando Rota',
-              stageName: 'Aguardando Rota (80)',
-              cfop: '',
-              isCancelled: false,
-              omieOrderId: String(cabecalho.codigo_pedido || pedido.codigo || ''),
-              orderNumber: pedidoNumber, // Número do PEDIDO (diferente da NF!)
-              orderDate: invoiceDateObj,
-              billingType: 'venda' as const
-            });
-          }
-
-          if (pedidos.length < 50) {
-            hasMorePages = false;
-          }
-          
-          page++;
-        } catch (pageError: any) {
-          console.log(`⚠️ Erro ao buscar página ${page}:`, pageError.message);
-          
-          // Se for erro de rate limit (425), parar imediatamente
-          if (pageError.message?.includes('425') || pageError.message?.includes('bloqueada')) {
-            console.log(`🛑 API bloqueada por rate limit - parando sincronização`);
-            hasMorePages = false;
-            break;
-          }
-          
-          console.log(`⏭️ Pulando página ${page} e tentando próxima`);
-          page++;
-          continue;
         }
+
+        if (invoices.length < 50) {
+          hasMorePages = false;
+        }
+        
+        page++;
       }
 
       console.log(`\n✅ Total de faturamentos coletados: ${allBillings.length}\n`);
@@ -15288,10 +15202,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const billing of allBillings) {
         try {
-          // ✅ CORRIGIDO: Usar orderNumber como chave única (não invoiceNumber que está vazio)
+          // Verificar se já existe
           const existing = await db.select()
             .from(billingsTable)
-            .where(eq(billingsTable.orderNumber, billing.orderNumber))
+            .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber))
             .limit(1);
 
           if (existing.length > 0) {
@@ -15301,7 +15215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...billing,
                 updatedAt: new Date()
               })
-              .where(eq(billingsTable.orderNumber, billing.orderNumber));
+              .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
             updatedCount++;
           } else {
             // Inserir
@@ -15309,14 +15223,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             insertedCount++;
           }
         } catch (error) {
-          console.error(`Erro ao processar faturamento ${billing.orderNumber}:`, error);
+          console.error(`Erro ao processar faturamento ${billing.invoiceNumber}:`, error);
         }
       }
 
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
-      console.log(`🔄 Atualizados: ${updatedCount}`);
-      console.log(`✅ Total de pedidos sincronizados: ${allBillings.length}\n`);
+      console.log(`🔄 Atualizados: ${updatedCount}\n`);
 
       res.json({ 
         success: true,
@@ -15335,7 +15248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Debug: Buscar notas específicas do Omie e mostrar TODOS os campos
+  // Debug: Buscar notas específicas do Omie
   app.post('/api/omie/debug-invoices', authenticateUser, async (req: any, res) => {
     try {
       const { invoiceNumbers } = req.body;
@@ -15384,31 +15297,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // Analisar campo de etapa
-        const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
-        const stageMap: Record<string, string> = {
-          '10': 'Pedido de Venda',
-          '20': 'Em Rota',
-          '50': 'Faturado',
-          '60': 'Faturado',
-          '70': 'Entregue',
-          '80': 'Aguardando Rota'
-        };
-        const stageName = stageMap[nfStageCode] || (nfStageCode ? `Etapa ${nfStageCode}` : 'SEM ETAPA');
-
         results.push({
           invoiceNumber,
           found: true,
-          stageInfo: {
-            codigo: nfStageCode,
-            nome: stageName,
-            nfProdServStatus_cEtapa: invoice.nfProdServStatus?.cEtapa,
-            cabecalho_etapa: invoice.cabecalho?.etapa,
-            allStageFields: {
-              'nfProdServStatus': invoice.nfProdServStatus,
-              'cabecalho': invoice.cabecalho
-            }
-          },
           invoiceData: {
             nIdNF: invoice.compl?.nIdNF,
             nNF: invoice.ide?.nNF,
@@ -15434,112 +15325,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Erro ao buscar notas:', error);
       res.status(500).json({ 
         message: 'Erro ao buscar notas',
-        error: error.message 
-      });
-    }
-  });
-
-  // Debug: Listar TODAS as notas dos últimos 30 dias com etapa
-  app.get('/api/omie/debug-all-stages', authenticateUser, async (req: any, res) => {
-    try {
-      const omieService = getOmieService();
-      if (!omieService) {
-        return res.status(500).json({ message: 'Omie não configurado' });
-      }
-
-      const today = new Date();
-      const thirtyDaysAgo = new Date(today);
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
-      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
-      
-      const stageMap: Record<string, string> = {
-        '10': 'Pedido de Venda',
-        '20': 'Em Rota',
-        '50': 'Faturado',
-        '60': 'Faturado',
-        '70': 'Entregue',
-        '80': 'Aguardando Rota'
-      };
-
-      const stagesCount: Record<string, number> = {};
-      const invoicesByStage: Record<string, any[]> = {};
-      const sampleInvoices: any[] = [];
-
-      let page = 1;
-      let allInvoices = [];
-      let hasMore = true;
-
-      // Pegar TODAS as páginas para análise completa
-      while (hasMore && page <= 50) {
-        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-          pagina: page,
-          registros_por_pagina: 50,
-          apenas_importado_api: 'N',
-          ordenar_por: 'DATA',
-          ordem_decrescente: 'S',
-          filtrar_por_data_de: dataDe,
-          filtrar_por_data_ate: dataAte
-        });
-
-        const invoices = response.nfCadastro || [];
-        if (invoices.length === 0) break;
-        
-        allInvoices = allInvoices.concat(invoices);
-        if (invoices.length < 50) hasMore = false;
-        page++;
-      }
-
-      for (const invoice of allInvoices) {
-        // Debugar: Mostrar TODOS os campos potenciais de etapa
-        if (sampleInvoices.length < 3) {
-          sampleInvoices.push({
-            nNF: invoice.ide?.nNF,
-            allFields: {
-              nfProdServStatus: invoice.nfProdServStatus,
-              cabecalho: invoice.cabecalho,
-              pedido: invoice.pedido,
-              compl: invoice.compl
-            }
-          });
-        }
-
-        const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || 'NENHUMA';
-        const stageName = stageMap[nfStageCode] || (nfStageCode === 'NENHUMA' ? 'SEM ETAPA' : `Etapa ${nfStageCode}`);
-        
-        stagesCount[stageName] = (stagesCount[stageName] || 0) + 1;
-        
-        if (!invoicesByStage[stageName]) {
-          invoicesByStage[stageName] = [];
-        }
-        
-        invoicesByStage[stageName].push({
-          nNF: invoice.ide?.nNF,
-          cliente: invoice.nfDestInt?.cRazao,
-          valor: invoice.total?.ICMSTot?.vNF,
-          dEmi: invoice.ide?.dEmi,
-          stageCode: nfStageCode,
-          nfProdServStatus_cEtapa: invoice.nfProdServStatus?.cEtapa,
-          cabecalho_etapa: invoice.cabecalho?.etapa
-        });
-      }
-
-      res.json({
-        periodo: `${dataDe} até ${dataAte}`,
-        totalNotas: allInvoices.length,
-        resumoPorEtapa: stagesCount,
-        notasPorEtapa: Object.keys(invoicesByStage).reduce((acc: any, stage) => {
-          acc[stage] = invoicesByStage[stage].slice(0, 5); // Apenas 5 primeiras por etapa
-          return acc;
-        }, {}),
-        sampleInvoices: sampleInvoices
-      });
-
-    } catch (error: any) {
-      console.error('Erro ao debug estágios:', error);
-      res.status(500).json({ 
-        message: 'Erro ao debug estágios',
         error: error.message 
       });
     }
@@ -17736,15 +17521,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Criar novo lead (admin, coordinator, administrative, vendedor)
+  // Criar novo lead (apenas admin, coordinator, administrative)
   app.post('/api/leads', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
       
-      // Verificar permissão (admin/coordinator/administrative/vendedor podem criar)
-      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
+      // Verificar permissão (apenas admin/coordinator/administrative podem criar)
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
         return res.status(403).json({ 
-          message: 'Acesso negado. Apenas usuários administrativos e vendedores podem criar leads.' 
+          message: 'Acesso negado. Apenas usuários administrativos podem criar leads.' 
         });
       }
       

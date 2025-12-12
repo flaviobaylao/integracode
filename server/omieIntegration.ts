@@ -949,6 +949,33 @@ export class OmieService {
     }
   }
 
+  // Método legado para listar apenas notas fiscais (manter para compatibilidade)
+  async listInvoices(page: number = 1, pageSize: number = 50): Promise<any> {
+    try {
+      console.log(`🔍 Listando notas fiscais - Página ${page} (${pageSize} registros)...`);
+      
+      const payload = {
+        call: 'ListarNF',
+        param: [{
+          pagina: page,
+          registros_por_pagina: pageSize,
+          filtrar_apenas_inclusao: 'N',
+          filtrar_por_data_de: '', // Deixar vazio para buscar todas
+          filtrar_por_data_ate: '' // Deixar vazio para buscar todas
+        }]
+      };
+
+      console.log(`📤 Enviando payload ListarNF (parâmetros seguros):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
+      
+      const response = await this.makeRequest('/produtos/nfconsultar/', payload.call, payload.param[0]);
+      console.log(`✅ Resposta ListarNF recebida: ${response.nfCadastro?.length || 0} notas encontradas`);
+      
+      return response;
+    } catch (error) {
+      console.error('❌ Erro ao listar notas fiscais:', error);
+      throw error;
+    }
+  }
 
   // Método NOVO para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
   async syncAllOrders(): Promise<{
@@ -3672,126 +3699,16 @@ export class OmieService {
   // Listar etapas de faturamento disponíveis
   async getAvailableStages(): Promise<any[]> {
     try {
-      const response = await this.makeRequest('/geral/etapas/', 'ListarEtapasFaturamento', {});
+      const response = await this.makeRequest('/produtos/pedido/', 'ListarEtapasFaturamento', {});
       
-      // Debug: Log a resposta completa
-      console.log('📦 Resposta completa de etapas:', JSON.stringify(response, null, 2));
+      // A resposta pode vir em diferentes formatos dependendo da versão
+      const stages = response.etapas || response.lista_etapas || [];
+      console.log('Etapas de faturamento disponíveis:', stages);
       
-      // A resposta pode vir em diferentes formatos
-      let stages = response.etapas || response.lista_etapas || response.stage || [];
-      
-      // Se não encontrou etapas e a resposta tem outras propriedades, tentar extrair
-      if (!stages || stages.length === 0) {
-        console.log('❌ Etapas não encontradas em formatos esperados. Propriedades da resposta:', Object.keys(response));
-        stages = [];
-      }
-      
-      console.log(`✅ Etapas de faturamento disponíveis (${stages.length} encontradas):`, 
-        stages.map((s: any) => ({
-          codigo: s.cCodigo || s.codigo,
-          descricao: s.cDescricao || s.descricao,
-          inativo: s.cInativo || s.inativo
-        }))
-      );
-      
-      return stages.filter((stage: any) => (stage.cInativo || stage.inativo) !== 'S'); // Apenas etapas ativas
+      return stages.filter((stage: any) => stage.cInativo !== 'S'); // Apenas etapas ativas
     } catch (error) {
-      console.error('❌ Erro ao buscar etapas de faturamento:', error);
+      console.error('Erro ao buscar etapas de faturamento:', error);
       return [];
-    }
-  }
-
-  // Listar Notas Fiscais (NFe) do Omie - com filtro de 30 dias
-  async listInvoices(page = 1, pageSize = 100): Promise<{
-    invoices: any[];
-    totalPages: number;
-    totalRecords: number;
-    currentPage: number;
-  }> {
-    try {
-      // Filtrar apenas últimos 30 dias (NFes em "Aguardando Rota" não são mais antigas que isso)
-      const today = new Date();
-      const thirtyDaysAgo = new Date(today);
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
-      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
-      
-      console.log(`📄 Buscando NFes do Omie (página ${page}) - Período: ${dataDe} até ${dataAte}...`);
-      
-      const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-        pagina: page,
-        registros_por_pagina: pageSize,
-        apenas_importado_api: 'N',
-        filtrar_por_data_de: dataDe,
-        filtrar_por_data_ate: dataAte
-      });
-      
-      const invoices = response.nfCadastro || [];
-      const totalPages = response.total_de_paginas || 1;
-      const totalRecords = response.total_de_registros || invoices.length;
-      
-      console.log(`✅ NFes encontradas: ${invoices.length} (página ${page}/${totalPages}, total: ${totalRecords})`);
-      
-      return {
-        invoices,
-        totalPages,
-        totalRecords,
-        currentPage: page
-      };
-    } catch (error) {
-      console.error('❌ Erro ao buscar Notas Fiscais:', error);
-      throw error;
-    }
-  }
-
-  // Buscar NFes dos últimos 30 dias e criar mapeamento codigo_pedido -> numero_nota_fiscal
-  // A estrutura da NFe tem: compl.nIdPedido (codigo_pedido) e ide.nNF (numero NF)
-  async getOrderToInvoiceMapping(): Promise<Map<number, string>> {
-    const mapping = new Map<number, string>();
-    
-    try {
-      // Buscar primeira página para saber total de páginas (com filtro de 30 dias aplicado)
-      const firstResult = await this.listInvoices(1, 100);
-      const totalPages = firstResult.totalPages;
-      
-      console.log(`📄 Total de páginas de NFes (últimos 30 dias): ${totalPages}`);
-      
-      // Processar NFes da primeira página
-      for (const nf of firstResult.invoices) {
-        const codigoPedido = nf.compl?.nIdPedido;
-        const numeroNF = nf.ide?.nNF;
-        if (codigoPedido && numeroNF) {
-          mapping.set(Number(codigoPedido), String(numeroNF));
-        }
-      }
-      console.log(`📄 Página 1: ${firstResult.invoices.length} NFes processadas`);
-      
-      // Buscar páginas restantes (com limite de segurança de 20 páginas = 2000 NFes)
-      const maxPages = Math.min(totalPages, 20);
-      for (let page = 2; page <= maxPages; page++) {
-        try {
-          const result = await this.listInvoices(page, 100);
-          
-          for (const nf of result.invoices) {
-            const codigoPedido = nf.compl?.nIdPedido;
-            const numeroNF = nf.ide?.nNF;
-            if (codigoPedido && numeroNF) {
-              mapping.set(Number(codigoPedido), String(numeroNF));
-            }
-          }
-          
-          console.log(`📄 Página ${page}: ${result.invoices.length} NFes processadas`);
-        } catch (e) {
-          console.warn(`⚠️ Erro ao buscar página ${page}:`, e);
-        }
-      }
-      
-      console.log(`📊 Mapeamento criado: ${mapping.size} pedidos com NF real (últimos 30 dias)`);
-      return mapping;
-    } catch (error) {
-      console.error('❌ Erro ao criar mapeamento pedido->NF:', error);
-      return mapping;
     }
   }
 
@@ -3809,7 +3726,7 @@ export class OmieService {
       
       while (hasMorePages) {
         try {
-          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+          const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidosVenda', {
             pagina: currentPage,
             registros_por_pagina: pageSize,
             etapa: stage, // Filtrar por etapa específica
@@ -3817,13 +3734,7 @@ export class OmieService {
           });
 
           const orders = response.pedido_venda_produto || [];
-          console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos (filtro etapa=${stage})`);
-          
-          // DEBUG: Verificar se os pedidos realmente são da etapa solicitada
-          if (orders.length > 0) {
-            const stagesInResponse = [...new Set(orders.map((o: any) => o.cabecalho?.etapa))];
-            console.log(`  ⚠️ ETAPAS RETORNADAS: ${stagesInResponse.join(', ')} (esperado: ${stage})`);
-          }
+          console.log(`Página ${currentPage}: Encontrados ${orders.length} pedidos na etapa ${stage}`);
           
           allOrders = allOrders.concat(orders);
           
@@ -3855,30 +3766,6 @@ export class OmieService {
       
       console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
       
-      // DEBUG: Procurar por "27127" (NF do cliente POLIFRIOS) em todos os campos
-      if (allOrders.length > 0) {
-        console.log(`\n\n════════════════════════════════════════════════════`);
-        console.log(`🔍 PROCURANDO POR NF 27127 EM TODOS OS PEDIDOS`);
-        console.log(`════════════════════════════════════════════════════`);
-        
-        for (let i = 0; i < allOrders.length; i++) {
-          const orderStr = JSON.stringify(allOrders[i]);
-          if (orderStr.includes('27127') || orderStr.includes('31270')) {
-            console.log(`\n✅ ENCONTRADO PEDIDO COM 27127 ou 31270 NO ÍNDICE ${i}:`);
-            console.log(JSON.stringify(allOrders[i], null, 2));
-            break; // Parar após encontrar o primeiro
-          }
-        }
-        
-        // Se não encontrou, imprimir o primeiro pedido como base
-        if (!JSON.stringify(allOrders[0]).includes('27127')) {
-          console.log(`\nNenhum pedido contém 27127. Mostrando PRIMEIRO PEDIDO como exemplo:`);
-          console.log(JSON.stringify(allOrders[0], null, 2));
-        }
-        
-        console.log(`════════════════════════════════════════════════════\n\n`);
-      }
-
       // Mapear e enriquecer os pedidos com dados dos clientes
       const enrichedOrders = await Promise.all(
         allOrders.map(async (order: any) => {
@@ -3891,7 +3778,6 @@ export class OmieService {
             return {
               codigo_pedido: order.cabecalho?.codigo_pedido,
               numero_pedido: order.cabecalho?.numero_pedido,
-              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || null,
               codigo_cliente: order.cabecalho?.codigo_cliente,
               cliente: {
                 nome_fantasia: clientResponse.nome_fantasia || 'Cliente não encontrado',
@@ -3909,7 +3795,6 @@ export class OmieService {
             return {
               codigo_pedido: order.cabecalho?.codigo_pedido,
               numero_pedido: order.cabecalho?.numero_pedido,
-              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || null,
               codigo_cliente: order.cabecalho?.codigo_cliente,
               cliente: {
                 nome_fantasia: 'Cliente não encontrado',
