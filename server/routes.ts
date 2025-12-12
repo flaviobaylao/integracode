@@ -15124,155 +15124,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sincronizar faturamentos do Omie para banco de dados
   app.post('/api/omie/sync-billings', authenticateUser, async (req: any, res) => {
     try {
-      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
+      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (PEDIDOS EM "AGUARDANDO ROTA")...\n');
 
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 7 dias atrás (apenas notas RECENTES em "Aguardando Rota")
-      // Nota: mudou de 30 para 7 dias conforme feedback do usuário
-      const today = new Date();
-      const sevenDaysAgo = new Date(today);
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      
-      // Formatar datas para API do Omie (DD/MM/YYYY)
-      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-      const dataDe = `${String(sevenDaysAgo.getDate()).padStart(2, '0')}/${String(sevenDaysAgo.getMonth() + 1).padStart(2, '0')}/${sevenDaysAgo.getFullYear()}`;
-      
-      console.log(`📅 Filtro de período: ${dataDe} até ${dataAte} (últimos 7 dias)`);
-
       const allBillings: any[] = [];
-      const processedInvoiceNumbers = new Set<string>(); // ✅ REMOVER DUPLICATAS: rastrear NFs já processadas
       let page = 1;
       let hasMorePages = true;
-      let duplicatesFound = 0;
 
-      // Buscar notas fiscais dos últimos 30 dias COM FILTRO DE DATA NA API
-      // ⚠️ Nota: Omie pode retornar erros em algumas páginas - pulamos e continuamos nas próximas
+      // ⚠️ CRÍTICO: Buscar PEDIDOS (não NFEs) filtrados por ETAPA ATUAL = 80 ("Aguardando Rota")
+      // Isso sincroniza apenas pedidos que estão ATUALMENTE nessa etapa, não os que já passaram por ela
+      console.log(`🔎 Buscando pedidos que estão ATUALMENTE na etapa 80 (Aguardando Rota)...`);
+
       while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
         try {
-          const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-            pagina: page,
-            registros_por_pagina: 50,
-            apenas_importado_api: 'N',
-            ordenar_por: 'DATA',
-            ordem_decrescente: 'S',
-            filtrar_por_data_de: dataDe,
-            filtrar_por_data_ate: dataAte
+          const response = await omieService.makeRequest('/produtos/pedido/', 'ListarPedidos', {
+            nPagina: page,
+            nRegPorPagina: 50,
+            filtrarPorEtapa: '80', // ✅ CRÍTICO: Apenas pedidos ATUALMENTE em "Aguardando Rota"
+            ordem_decrescente: 'S'
           });
 
-          const invoices = response.nfCadastro || [];
-          console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
+          const pedidos = response.pedido || [];
+          console.log(`✅ Página ${page}: ${pedidos.length} pedidos encontrados em etapa 80`);
 
-        for (const invoice of invoices) {
-          const invoiceNumber = invoice.ide?.nNF || '';
-          
-          // ✅ FILTRO CRÍTICO: APENAS NOTAS FISCAIS COM NÚMERO VÁLIDO
-          // Pedidos sem NFe (apenas pedidos) NÃO devem ser incluídos
-          if (!invoiceNumber || invoiceNumber.trim() === '') {
-            console.log(`⏭️ Pedido SEM NOTA FISCAL (apenas pedido) - pulando`);
-            continue;
-          }
-          
-          // ✅ VERIFICAR DUPLICATA: Omie retorna a mesma NF 2x (uma por NF, outra por PEDIDO)
-          if (processedInvoiceNumbers.has(invoiceNumber)) {
-            console.log(`🔄 Nota ${invoiceNumber} JÁ PROCESSADA (duplicata) - pulando`);
-            duplicatesFound++;
-            continue;
-          }
-          processedInvoiceNumbers.add(invoiceNumber);
-
-          const invoiceDateStr = invoice.ide?.dEmi;
-          if (!invoiceDateStr) {
-            console.log(`⚠️ Nota sem data - pulando`);
-            continue;
-          }
-
-          // Parsear data do Omie (DD/MM/YYYY) para Date object
-          const [day, month, year] = invoiceDateStr.split('/');
-          const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-
-          // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
-          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
-          
-          if (notaCancelada) {
-            console.log(`❌ Nota ${invoice.ide?.nNF} CANCELADA - pulando`);
-            continue;
-          }
-
-          // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
-          const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
-          
-          // ⚠️ FILTRO CRÍTICO: APENAS notas em "Aguardando Rota" (etapa 80) OU sem etapa definida
-          // Nota: Omie frequentemente retorna "SEM ETAPA" para notas em "Aguardando Rota"
-          const isAwaitingRoute = nfStageCode === '80' || !nfStageCode;
-          
-          if (!isAwaitingRoute) {
-            const stageMap: Record<string, string> = {
-              '10': 'Pedido de Venda',
-              '20': 'Em Rota',
-              '50': 'Faturado',
-              '60': 'Faturado',
-              '70': 'Entregue',
-              '80': 'Aguardando Rota'
-            };
-            const stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
-            console.log(`⏭️ Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (${nfStageCode}) - NÃO É AGUARDANDO ROTA, pulando`);
-            continue; // Pular notas que não estão em "Aguardando Rota"
-          }
-
-          const stageName = nfStageCode === '80' ? 'Aguardando Rota (80)' : 'Aguardando Rota (SEM ETAPA)';
-          console.log(`✅ Nota ${invoice.ide?.nNF} - Etapa: ${stageName} - SINCRONIZANDO`);
-
-          // Buscar nome do vendedor pelo código
-          const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
-          let vendorName = '';
-          
-          if (vendorCode) {
-            try {
-              const vendorData = await omieService.fetchVendorData(vendorCode);
-              vendorName = vendorData?.nome || vendorCode;
-            } catch (error) {
-              console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
-              vendorName = vendorCode; // Usar código se não encontrar nome
+          for (const pedido of pedidos) {
+            // Campos do Omie para pedidos em ListarPedidos
+            const nfNumber = pedido.numero || pedido.nNF || '';
+            const pedidoNumber = pedido.numero || '';
+            
+            // ✅ FILTRO: Apenas pedidos com NF (notas fiscais)
+            if (!nfNumber || nfNumber.trim() === '') {
+              console.log(`⏭️ Pedido SEM NOTA FISCAL - pulando`);
+              continue;
             }
+            
+            const dataEmissaoStr = pedido.data || pedido.dEmi;
+            if (!dataEmissaoStr) {
+              console.log(`⚠️ Pedido ${nfNumber} sem data - pulando`);
+              continue;
+            }
+
+            // Parsear data do Omie (DD/MM/YYYY) para Date object
+            const [day, month, year] = dataEmissaoStr.split('/');
+            const invoiceDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+
+            console.log(`✅ Pedido ${pedidoNumber} com NF ${nfNumber} - Etapa: Aguardando Rota (80) - SINCRONIZANDO`);
+
+            // Buscar nome do vendedor pelo código
+            const vendorCode = pedido.codigo_vendedor?.toString() || '';
+            let vendorName = '';
+            
+            if (vendorCode) {
+              try {
+                const vendorData = await omieService.fetchVendorData(vendorCode);
+                vendorName = vendorData?.nome || vendorCode;
+              } catch (error) {
+                console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
+                vendorName = vendorCode;
+              }
+            }
+
+            // Adicionar à lista de faturamentos
+            allBillings.push({
+              omieInvoiceId: nfNumber,
+              invoiceNumber: nfNumber,
+              customerFantasyName: pedido.nome_fantasia || pedido.razao_social || 'Cliente',
+              totalValue: parseFloat(pedido.total_pedido?.toString() || '0'),
+              invoiceDate: invoiceDateObj,
+              vendorCode: vendorCode,
+              sellerName: vendorName,
+              invoiceStage: 'Aguardando Rota',
+              stageName: 'Aguardando Rota (80)',
+              cfop: '',
+              isCancelled: false,
+              omieOrderId: pedido.codigo?.toString() || '',
+              orderNumber: pedidoNumber,
+              orderDate: invoiceDateObj,
+              billingType: 'venda' as const
+            });
           }
 
-          // Adicionar à lista de faturamentos (APENAS NOTAS EM "AGUARDANDO ROTA")
-          const pedidoId = invoice.compl?.nIdPedido;
+          if (pedidos.length < 50) {
+            hasMorePages = false;
+          }
           
-          allBillings.push({
-            omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
-            invoiceNumber: invoice.ide?.nNF || '',
-            customerFantasyName: invoice.nfDestInt?.cRazao || '',
-            totalValue: invoice.total?.ICMSTot?.vNF || 0,
-            invoiceDate: invoiceDateObj,
-            vendorCode: vendorCode,
-            sellerName: vendorName,
-            invoiceStage: 'Aguardando Rota', // ✅ CAMPO CRÍTICO para getPendingDeliveries()
-            stageName: 'Aguardando Rota',
-            cfop: invoice.det?.[0]?.prod?.CFOP || '',
-            isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
-            omieOrderId: pedidoId?.toString() || '',
-            orderNumber: invoice.compl?.nPed || invoice.ide?.nNF || '',
-            orderDate: invoiceDateObj,
-            billingType: 'venda' as const
-          });
-        }
-
-        if (invoices.length < 50) {
-          hasMorePages = false;
-        }
-        
-        page++;
+          page++;
         } catch (pageError: any) {
           console.log(`⚠️ Erro ao buscar página ${page}:`, pageError.message);
           console.log(`⏭️ Pulando página ${page} e tentando próxima`);
-          page++; // Tentar próxima página mesmo com erro
+          page++;
           continue;
         }
       }
@@ -15313,7 +15259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
       console.log(`🔄 Atualizados: ${updatedCount}`);
-      console.log(`🔄 Duplicatas removidas: ${duplicatesFound}\n`);
+      console.log(`✅ Total de pedidos sincronizados: ${allBillings.length}\n`);
 
       res.json({ 
         success: true,
