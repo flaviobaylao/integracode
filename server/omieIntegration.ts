@@ -3788,13 +3788,27 @@ export class OmieService {
       
       console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
       
-      // DEBUG: Imprimir estrutura completa do PRIMEIRO pedido em raw JSON (procurando por campo de NF)
+      // DEBUG: Procurar por "27127" (NF do cliente POLIFRIOS) em todos os campos
       if (allOrders.length > 0) {
-        const firstOrder = allOrders[0];
         console.log(`\n\n════════════════════════════════════════════════════`);
-        console.log(`🔍 ESTRUTURA COMPLETA DO PRIMEIRO PEDIDO:`);
+        console.log(`🔍 PROCURANDO POR NF 27127 EM TODOS OS PEDIDOS`);
         console.log(`════════════════════════════════════════════════════`);
-        console.log(JSON.stringify(firstOrder, null, 2));
+        
+        for (let i = 0; i < allOrders.length; i++) {
+          const orderStr = JSON.stringify(allOrders[i]);
+          if (orderStr.includes('27127') || orderStr.includes('31270')) {
+            console.log(`\n✅ ENCONTRADO PEDIDO COM 27127 ou 31270 NO ÍNDICE ${i}:`);
+            console.log(JSON.stringify(allOrders[i], null, 2));
+            break; // Parar após encontrar o primeiro
+          }
+        }
+        
+        // Se não encontrou, imprimir o primeiro pedido como base
+        if (!JSON.stringify(allOrders[0]).includes('27127')) {
+          console.log(`\nNenhum pedido contém 27127. Mostrando PRIMEIRO PEDIDO como exemplo:`);
+          console.log(JSON.stringify(allOrders[0], null, 2));
+        }
+        
         console.log(`════════════════════════════════════════════════════\n\n`);
       }
 
