@@ -5584,66 +5584,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Cache global para mapeamento pedido->NF do Excel
-  let orderToInvoiceMapping: Map<number, string> = new Map();
-  
-  // Endpoint para carregar mapeamento do Excel
-  app.post('/api/omie/load-invoice-mapping', authenticateUser, async (req: any, res) => {
-    try {
-      const xlsx = require('xlsx');
-      const path = require('path');
-      
-      // Usar o Excel mais recente
-      const excelPath = path.join(process.cwd(), 'attached_assets/vendas_e_nf-e_796860129420913_1765501829573.xlsx');
-      
-      console.log('📄 Carregando mapeamento do Excel:', excelPath);
-      
-      const workbook = xlsx.readFile(excelPath);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const data = xlsx.utils.sheet_to_json(sheet);
-      
-      // Limpar mapeamento anterior
-      orderToInvoiceMapping = new Map();
-      
-      // Processar linhas do Excel (pular cabeçalhos)
-      for (const row of data) {
-        const orderNum = row['__EMPTY_1']; // Número do Pedido
-        const invoiceNum = row['FILIAL GYN - Vendas e NF-e - Pedido de Venda']; // Nota Fiscal
-        
-        if (typeof orderNum === 'number' && typeof invoiceNum === 'string' && invoiceNum.match(/^\d{8}$/)) {
-          orderToInvoiceMapping.set(orderNum, invoiceNum);
-        }
-      }
-      
-      console.log(`✅ Mapeamento carregado: ${orderToInvoiceMapping.size} pedidos com NF real`);
-      
-      // Mostrar alguns exemplos
-      const examples: any[] = [];
-      let count = 0;
-      for (const [order, nf] of orderToInvoiceMapping) {
-        if (count++ < 5) examples.push({ pedido: order, notaFiscal: nf });
-      }
-      
-      res.json({
-        success: true,
-        count: orderToInvoiceMapping.size,
-        examples
-      });
-    } catch (error) {
-      console.error('❌ Erro ao carregar mapeamento:', error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  });
-  
-  // Função helper para obter NF real de um pedido
-  function getRealInvoiceNumber(orderNumber: number | string): string | null {
-    const orderNum = typeof orderNumber === 'string' ? parseInt(orderNumber) : orderNumber;
-    return orderToInvoiceMapping.get(orderNum) || null;
-  }
-
   // DEBUG: Inspecionar estrutura das NFes do Omie
   app.get('/api/debug/omie-invoices', authenticateUser, async (req: any, res) => {
     try {
@@ -5687,31 +5627,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('🔄 Iniciando sincronização de pedidos "Aguardando Rota"...');
 
-      // Carregar mapeamento do Excel automaticamente se não estiver carregado
-      if (orderToInvoiceMapping.size === 0) {
-        try {
-          const xlsx = require('xlsx');
-          const path = require('path');
-          const excelPath = path.join(process.cwd(), 'attached_assets/vendas_e_nf-e_796860129420913_1765501829573.xlsx');
-          
-          console.log('📄 Carregando mapeamento do Excel automaticamente...');
-          const workbook = xlsx.readFile(excelPath);
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const data = xlsx.utils.sheet_to_json(sheet);
-          
-          for (const row of data) {
-            const orderNum = row['__EMPTY_1'];
-            const invoiceNum = row['FILIAL GYN - Vendas e NF-e - Pedido de Venda'];
-            if (typeof orderNum === 'number' && typeof invoiceNum === 'string' && invoiceNum.match(/^\d{8}$/)) {
-              orderToInvoiceMapping.set(orderNum, invoiceNum);
-            }
-          }
-          console.log(`✅ Mapeamento carregado: ${orderToInvoiceMapping.size} pedidos`);
-        } catch (e) {
-          console.warn('⚠️ Não foi possível carregar mapeamento do Excel:', e);
-        }
-      }
-
       // Usar o código de etapa conhecida: 80 = "Aguardando Rota"
       const stageCode = '80';
       console.log(`📦 Buscando pedidos da etapa 80 (Aguardando Rota)...`);
@@ -5728,39 +5643,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // ESTRATÉGIA ATUALIZADA: Usar mapeamento do Excel para obter NF real
-      // 1. Primeiro tenta buscar a NF real no mapeamento carregado do Excel
-      // 2. Se não encontrar, usa numero_nota_fiscal do Omie
-      // 3. Último fallback: numero_pedido com padding
-      const seenInvoices = new Set<string>();
-      const mappingLoaded = orderToInvoiceMapping.size > 0;
+      // ESTRATÉGIA: Buscar mapeamento de NFes reais da API do Omie
+      // O mapeamento usa codigo_pedido (ID interno) -> numero_nota_fiscal (NF real)
+      console.log('📄 Buscando mapeamento de NFes reais do Omie...');
+      let nfMapping: Map<number, string> = new Map();
       
-      if (!mappingLoaded) {
-        console.warn(`⚠️ Mapeamento do Excel não carregado! Execute POST /api/omie/load-invoice-mapping primeiro`);
-      } else {
-        console.log(`✅ Usando mapeamento do Excel com ${orderToInvoiceMapping.size} pedidos`);
+      try {
+        nfMapping = await omieService.getOrderToInvoiceMapping();
+        console.log(`✅ Mapeamento carregado: ${nfMapping.size} NFes encontradas`);
+      } catch (e) {
+        console.warn('⚠️ Não foi possível carregar mapeamento de NFes:', e);
       }
       
+      const seenInvoices = new Set<string>();
       const validOrders = result.orders.filter((order: any) => {
         let invoiceNum: string | null = null;
         let source = '';
         
-        // Prioridade 1: Mapeamento do Excel (números reais de NF)
-        const realNF = getRealInvoiceNumber(order.numero_pedido);
-        if (realNF) {
-          invoiceNum = realNF;
-          source = 'EXCEL-MAPPING';
+        // Prioridade 1: Mapeamento da API (codigo_pedido -> NF real)
+        const codigoPedido = order.codigo_pedido;
+        if (codigoPedido && nfMapping.has(Number(codigoPedido))) {
+          invoiceNum = nfMapping.get(Number(codigoPedido))!;
+          source = 'OMIE-NFE-API';
         }
-        // Prioridade 2: numero_nota_fiscal do Omie (se disponível)
+        // Prioridade 2: numero_nota_fiscal do ListarPedidos (se disponível)
         else if (order.numero_nota_fiscal && String(order.numero_nota_fiscal).trim()) {
           invoiceNum = String(order.numero_nota_fiscal).trim();
-          source = 'OMIE-NF';
+          source = 'OMIE-PEDIDO';
         }
         // Prioridade 3: Fallback para numero_pedido com padding
         else if (order.numero_pedido) {
           const pedidoNum = String(order.numero_pedido).trim();
           invoiceNum = pedidoNum.padStart(8, '0');
-          source = 'PEDIDO-FALLBACK';
+          source = 'FALLBACK';
         }
         
         if (!invoiceNum) {
@@ -5774,7 +5689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         seenInvoices.add(invoiceNum);
-        console.log(`✅ Pedido ${order.numero_pedido}: ${source} = ${invoiceNum}`);
+        console.log(`✅ Pedido ${order.numero_pedido} (cod: ${codigoPedido}): ${source} = ${invoiceNum}`);
         return true;
       });
 
@@ -5787,11 +5702,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const order of validOrders) {
         try {
-          // Recalcular invoiceNum de forma consistente (prioridade: Excel > Omie > Fallback)
+          // Recalcular invoiceNum de forma consistente (prioridade: API NFe > ListarPedidos > Fallback)
           let invoiceNum: string;
-          const realNF = getRealInvoiceNumber(order.numero_pedido);
-          if (realNF) {
-            invoiceNum = realNF;
+          const codigoPedido = order.codigo_pedido;
+          if (codigoPedido && nfMapping.has(Number(codigoPedido))) {
+            invoiceNum = nfMapping.get(Number(codigoPedido))!;
           } else if (order.numero_nota_fiscal && String(order.numero_nota_fiscal).trim()) {
             invoiceNum = String(order.numero_nota_fiscal).trim();
           } else {

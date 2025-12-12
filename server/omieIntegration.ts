@@ -949,33 +949,6 @@ export class OmieService {
     }
   }
 
-  // Método legado para listar apenas notas fiscais (manter para compatibilidade)
-  async listInvoices(page: number = 1, pageSize: number = 50): Promise<any> {
-    try {
-      console.log(`🔍 Listando notas fiscais - Página ${page} (${pageSize} registros)...`);
-      
-      const payload = {
-        call: 'ListarNF',
-        param: [{
-          pagina: page,
-          registros_por_pagina: pageSize,
-          filtrar_apenas_inclusao: 'N',
-          filtrar_por_data_de: '', // Deixar vazio para buscar todas
-          filtrar_por_data_ate: '' // Deixar vazio para buscar todas
-        }]
-      };
-
-      console.log(`📤 Enviando payload ListarNF (parâmetros seguros):`, JSON.stringify({ call: payload.call, paramCount: payload.param.length }, null, 2));
-      
-      const response = await this.makeRequest('/produtos/nfconsultar/', payload.call, payload.param[0]);
-      console.log(`✅ Resposta ListarNF recebida: ${response.nfCadastro?.length || 0} notas encontradas`);
-      
-      return response;
-    } catch (error) {
-      console.error('❌ Erro ao listar notas fiscais:', error);
-      throw error;
-    }
-  }
 
   // Método NOVO para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
   async syncAllOrders(): Promise<{
@@ -3728,7 +3701,7 @@ export class OmieService {
     }
   }
 
-  // Listar Notas Fiscais (NFe) do Omie
+  // Listar Notas Fiscais (NFe) do Omie - com filtro de 30 dias
   async listInvoices(page = 1, pageSize = 100): Promise<{
     invoices: any[];
     totalPages: number;
@@ -3736,19 +3709,29 @@ export class OmieService {
     currentPage: number;
   }> {
     try {
-      console.log(`📄 Buscando Notas Fiscais do Omie (página ${page})...`);
+      // Filtrar apenas últimos 30 dias (NFes em "Aguardando Rota" não são mais antigas que isso)
+      const today = new Date();
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
+      
+      console.log(`📄 Buscando NFes do Omie (página ${page}) - Período: ${dataDe} até ${dataAte}...`);
       
       const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
         pagina: page,
         registros_por_pagina: pageSize,
-        apenas_importado_api: 'N'
+        apenas_importado_api: 'N',
+        filtrar_por_data_de: dataDe,
+        filtrar_por_data_ate: dataAte
       });
       
       const invoices = response.nfCadastro || [];
       const totalPages = response.total_de_paginas || 1;
       const totalRecords = response.total_de_registros || invoices.length;
       
-      console.log(`✅ NFes encontradas: ${invoices.length} (página ${page}/${totalPages})`);
+      console.log(`✅ NFes encontradas: ${invoices.length} (página ${page}/${totalPages}, total: ${totalRecords})`);
       
       return {
         invoices,
@@ -3762,35 +3745,49 @@ export class OmieService {
     }
   }
 
-  // Buscar todas as NFes e criar mapeamento pedido -> NF
+  // Buscar NFes dos últimos 30 dias e criar mapeamento codigo_pedido -> numero_nota_fiscal
+  // A estrutura da NFe tem: compl.nIdPedido (codigo_pedido) e ide.nNF (numero NF)
   async getOrderToInvoiceMapping(): Promise<Map<number, string>> {
     const mapping = new Map<number, string>();
     
     try {
-      let currentPage = 1;
-      let hasMorePages = true;
+      // Buscar primeira página para saber total de páginas (com filtro de 30 dias aplicado)
+      const firstResult = await this.listInvoices(1, 100);
+      const totalPages = firstResult.totalPages;
       
-      while (hasMorePages) {
-        const result = await this.listInvoices(currentPage, 100);
-        
-        for (const nf of result.invoices) {
-          // Procurar campo que vincula a NF ao pedido
-          const orderNumber = nf.nPedido || nf.pedido?.numero_pedido || nf.cabecalho?.numero_pedido;
-          const invoiceNumber = nf.nNF || nf.numero_nf;
-          
-          if (orderNumber && invoiceNumber) {
-            mapping.set(Number(orderNumber), String(invoiceNumber).padStart(8, '0'));
-          }
+      console.log(`📄 Total de páginas de NFes (últimos 30 dias): ${totalPages}`);
+      
+      // Processar NFes da primeira página
+      for (const nf of firstResult.invoices) {
+        const codigoPedido = nf.compl?.nIdPedido;
+        const numeroNF = nf.ide?.nNF;
+        if (codigoPedido && numeroNF) {
+          mapping.set(Number(codigoPedido), String(numeroNF));
         }
-        
-        hasMorePages = currentPage < result.totalPages;
-        currentPage++;
-        
-        // Limite de segurança
-        if (currentPage > 20) break;
+      }
+      console.log(`📄 Página 1: ${firstResult.invoices.length} NFes processadas`);
+      
+      // Buscar páginas restantes (com limite de segurança de 20 páginas = 2000 NFes)
+      const maxPages = Math.min(totalPages, 20);
+      for (let page = 2; page <= maxPages; page++) {
+        try {
+          const result = await this.listInvoices(page, 100);
+          
+          for (const nf of result.invoices) {
+            const codigoPedido = nf.compl?.nIdPedido;
+            const numeroNF = nf.ide?.nNF;
+            if (codigoPedido && numeroNF) {
+              mapping.set(Number(codigoPedido), String(numeroNF));
+            }
+          }
+          
+          console.log(`📄 Página ${page}: ${result.invoices.length} NFes processadas`);
+        } catch (e) {
+          console.warn(`⚠️ Erro ao buscar página ${page}:`, e);
+        }
       }
       
-      console.log(`📊 Mapeamento criado: ${mapping.size} pedidos com NF`);
+      console.log(`📊 Mapeamento criado: ${mapping.size} pedidos com NF real (últimos 30 dias)`);
       return mapping;
     } catch (error) {
       console.error('❌ Erro ao criar mapeamento pedido->NF:', error);
