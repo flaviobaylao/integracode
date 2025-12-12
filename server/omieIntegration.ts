@@ -3728,6 +3728,76 @@ export class OmieService {
     }
   }
 
+  // Listar Notas Fiscais (NFe) do Omie
+  async listInvoices(page = 1, pageSize = 100): Promise<{
+    invoices: any[];
+    totalPages: number;
+    totalRecords: number;
+    currentPage: number;
+  }> {
+    try {
+      console.log(`📄 Buscando Notas Fiscais do Omie (página ${page})...`);
+      
+      const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+        pagina: page,
+        registros_por_pagina: pageSize,
+        apenas_importado_api: 'N'
+      });
+      
+      const invoices = response.nfCadastro || [];
+      const totalPages = response.total_de_paginas || 1;
+      const totalRecords = response.total_de_registros || invoices.length;
+      
+      console.log(`✅ NFes encontradas: ${invoices.length} (página ${page}/${totalPages})`);
+      
+      return {
+        invoices,
+        totalPages,
+        totalRecords,
+        currentPage: page
+      };
+    } catch (error) {
+      console.error('❌ Erro ao buscar Notas Fiscais:', error);
+      throw error;
+    }
+  }
+
+  // Buscar todas as NFes e criar mapeamento pedido -> NF
+  async getOrderToInvoiceMapping(): Promise<Map<number, string>> {
+    const mapping = new Map<number, string>();
+    
+    try {
+      let currentPage = 1;
+      let hasMorePages = true;
+      
+      while (hasMorePages) {
+        const result = await this.listInvoices(currentPage, 100);
+        
+        for (const nf of result.invoices) {
+          // Procurar campo que vincula a NF ao pedido
+          const orderNumber = nf.nPedido || nf.pedido?.numero_pedido || nf.cabecalho?.numero_pedido;
+          const invoiceNumber = nf.nNF || nf.numero_nf;
+          
+          if (orderNumber && invoiceNumber) {
+            mapping.set(Number(orderNumber), String(invoiceNumber).padStart(8, '0'));
+          }
+        }
+        
+        hasMorePages = currentPage < result.totalPages;
+        currentPage++;
+        
+        // Limite de segurança
+        if (currentPage > 20) break;
+      }
+      
+      console.log(`📊 Mapeamento criado: ${mapping.size} pedidos com NF`);
+      return mapping;
+    } catch (error) {
+      console.error('❌ Erro ao criar mapeamento pedido->NF:', error);
+      return mapping;
+    }
+  }
+
   // Listar pedidos por etapa do Omie
   async getOrdersByStage(stage: string, page = 1, pageSize = 50): Promise<{
     orders: any[];
