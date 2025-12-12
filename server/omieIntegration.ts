@@ -3819,7 +3819,7 @@ export class OmieService {
             return {
               codigo_pedido: order.cabecalho?.codigo_pedido,
               numero_pedido: order.cabecalho?.numero_pedido,
-              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || order.cabecalho?.numero_pedido,
+              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || null,
               codigo_cliente: order.cabecalho?.codigo_cliente,
               cliente: {
                 nome_fantasia: clientResponse.nome_fantasia || 'Cliente não encontrado',
@@ -3837,7 +3837,7 @@ export class OmieService {
             return {
               codigo_pedido: order.cabecalho?.codigo_pedido,
               numero_pedido: order.cabecalho?.numero_pedido,
-              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || order.cabecalho?.numero_pedido,
+              numero_nota_fiscal: order.cabecalho?.numero_nota_fiscal || null,
               codigo_cliente: order.cabecalho?.codigo_cliente,
               cliente: {
                 nome_fantasia: 'Cliente não encontrado',

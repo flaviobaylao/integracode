@@ -5582,14 +5582,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Usar numero_nota_fiscal como CHAVE PRIMÁRIA de sincronismo
-      // IMPORTANTE: Usar o campo numero_nota_fiscal do Omie (não usar numero_pedido como fallback!)
+      // CRÍTICO: Descartar TODOS os pedidos que NÃO têm numero_nota_fiscal
+      // Só sincronizar os que têm NF com valor real (não null, não vazio)
       const seenInvoices = new Set<string>();
       const validOrders = result.orders.filter((order: any) => {
-        // Usar APENAS numero_nota_fiscal - é a chave correta para sincronismo
-        const invoiceNum = String(order.numero_nota_fiscal || '').trim();
+        // APENAS numero_nota_fiscal válido - sem fallback para numero_pedido!
+        const invoiceNum = order.numero_nota_fiscal ? String(order.numero_nota_fiscal).trim() : null;
         
-        if (!invoiceNum || invoiceNum === '') {
-          console.warn(`⚠️ Pedido ${order.numero_pedido} SEM numero_nota_fiscal - descartado`);
+        // Se numero_nota_fiscal for null, undefined ou vazio, DESCARTAR completamente
+        if (!invoiceNum) {
+          console.warn(`⚠️ Pedido ${order.numero_pedido}: numero_nota_fiscal é ${invoiceNum} - DESCARTADO`);
+          return false;
+        }
+        
+        // Descartar se for a string literal "null"
+        if (invoiceNum === 'null' || invoiceNum === 'undefined') {
+          console.warn(`⚠️ Pedido ${order.numero_pedido}: numero_nota_fiscal é "${invoiceNum}" - DESCARTADO`);
           return false;
         }
         
@@ -5599,10 +5607,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         seenInvoices.add(invoiceNum);
+        console.log(`✅ NF válida encontrada: ${invoiceNum} (Pedido ${order.numero_pedido})`);
         return true;
       });
 
-      console.log(`📊 Filtrados ${validOrders.length} NFs únicas com numero_nota_fiscal válido de ${result.orders.length} retornados`);
+      console.log(`📊 RESULTADO: ${validOrders.length} NFs com numero_nota_fiscal válido de ${result.orders.length} pedidos retornados do Omie`);
 
       // Verificar quais NFs já existem no banco para evitar duplicatas
       let skippedCount = 0;
@@ -5611,12 +5620,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const order of validOrders) {
         try {
-          const invoiceNum = String(order.numero_nota_fiscal || '').trim();
-          
-          if (!invoiceNum) {
-            console.warn(`⚠️ Pulando pedido ${order.numero_pedido}: numero_nota_fiscal vazio`);
-            continue;
-          }
+          // invoiceNum já foi validado no filtro, então deve estar seguro aqui
+          const invoiceNum = String(order.numero_nota_fiscal).trim();
           
           // Verificar se esta NF já foi sincronizada
           const existingBilling = await storage.getBillingByInvoiceNumber(invoiceNum);
