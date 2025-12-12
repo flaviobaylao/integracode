@@ -8627,44 +8627,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota para buscar faturamentos (com filtro de 90 dias por padrão)
+  // Rota para buscar faturamentos
   app.get('/api/billings', authenticateUser, checkSellerAccess, async (req: any, res) => {
     try {
       const sellerId = req.sellerId; // Set by checkSellerAccess middleware
-      const { days = '90' } = req.query; // Padrão: últimos 90 dias
-      
-      let billings = await storage.getBillings(sellerId);
-      
-      // Filtrar por data (últimos X dias)
-      if (days) {
-        const daysNum = parseInt(days as string, 10);
-        if (daysNum > 0) {
-          // Filtrar por data se daysNum > 0
-          const cutoffDate = new Date();
-          cutoffDate.setDate(cutoffDate.getDate() - daysNum);
-          cutoffDate.setHours(0, 0, 0, 0);
-          
-          billings = billings.filter(billing => {
-            try {
-              // Usa invoiceDate (data fiscal) se disponível, senão orderDate (data do pedido)
-              const dateToCheck = billing.invoiceDate || billing.orderDate;
-              if (!dateToCheck) return true; // Incluir se nenhuma data disponível
-              
-              const billingDate = new Date(dateToCheck);
-              return billingDate >= cutoffDate;
-            } catch (e) {
-              console.warn(`⚠️ Erro ao converter data para billing ${billing.id}:`, e);
-              return true; // Incluir se data for inválida
-            }
-          });
-          
-          console.log(`📊 [/api/billings] Filtrados para últimos ${daysNum} dias: ${billings.length} notas`);
-        } else if (daysNum === 0) {
-          // Se days=0, retorna TODOS os dados sem filtro de data
-          console.log(`📊 [/api/billings] Retornando TODOS os dados (${billings.length} notas) - sem filtro de data`);
-        }
-      }
-      
+      const billings = await storage.getBillings(sellerId);
       res.json(billings);
     } catch (error) {
       console.error('Erro ao buscar faturamentos:', error);

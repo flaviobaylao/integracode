@@ -145,10 +145,6 @@ export default function DeliveryManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
-  const [selectedCities, setSelectedCities] = useState<Set<string>>(new Set());
-  const [selectedNeighborhoods, setSelectedNeighborhoods] = useState<Set<string>>(new Set());
-  const [showCityFilter, setShowCityFilter] = useState(false);
-  const [showNeighborhoodFilter, setShowNeighborhoodFilter] = useState(false);
   
   // Função para limpar cache local e recarregar
   const handleClearCache = async () => {
@@ -560,25 +556,6 @@ export default function DeliveryManagement() {
   // Pedidos disponíveis (aguardando rota)
   const availableOrders = orders?.filter(o => !routePlan?.routes.some(r => r.stops.some((s: any) => s.salesCardId === o.id))) || [];
 
-  // Extrair cidades e bairros únicos
-  const uniqueCities = useMemo(() => {
-    if (!orders) return [];
-    return Array.from(new Set(orders
-      .filter(o => o.customerCity)
-      .map(o => o.customerCity)
-      .sort()))
-      .sort();
-  }, [orders]);
-
-  const uniqueNeighborhoods = useMemo(() => {
-    if (!orders) return [];
-    return Array.from(new Set(orders
-      .filter(o => o.customerNeighborhood)
-      .map(o => o.customerNeighborhood)
-      .sort()))
-      .sort();
-  }, [orders]);
-
   // Filtrar pedidos
   const filteredOrders = useMemo(() => {
     if (!orders) return [];
@@ -589,12 +566,9 @@ export default function DeliveryManagement() {
         (order.customerAddress?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
         (order.id?.toLowerCase() || '').includes(searchTerm.toLowerCase());
 
-      const matchesCity = selectedCities.size === 0 || selectedCities.has(order.customerCity || '');
-      const matchesNeighborhood = selectedNeighborhoods.size === 0 || selectedNeighborhoods.has(order.customerNeighborhood || '');
-
-      return matchesSearch && matchesCity && matchesNeighborhood;
+      return matchesSearch;
     });
-  }, [orders, searchTerm, selectedCities, selectedNeighborhoods]);
+  }, [orders, searchTerm]);
 
   // Funções de veículos
   const addVehicle = () => {
@@ -756,168 +730,68 @@ export default function DeliveryManagement() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {/* Row 1: Search and Date */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="search">Buscar</Label>
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="search"
-                    placeholder="Cliente, endereço, ID..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8"
-                    data-testid="input-search"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="route-date">Data da Rota</Label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="search">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  id="route-date"
-                  type="date"
-                  min={new Date().toISOString().split('T')[0]}
-                  value={routeDate}
-                  onChange={(e) => setRouteDate(e.target.value)}
-                  data-testid="input-route-date"
+                  id="search"
+                  placeholder="Cliente, endereço, ID..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-8"
+                  data-testid="input-search"
                 />
-                <p className="text-xs text-muted-foreground">
-                  <Calendar className="h-3 w-3 inline mr-1" />
-                  Selecione a data de execução da rota
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label>&nbsp;</Label>
-                <div className="flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => {
-                      setSearchTerm("");
-                      setSelectedCities(new Set());
-                      setSelectedNeighborhoods(new Set());
-                    }}
-                    className="flex-1"
-                    data-testid="button-clear-filters"
-                  >
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Limpar
-                  </Button>
-                  <Button 
-                    variant="default" 
-                    onClick={() => {
-                      queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
-                      toast({
-                        title: "Pedidos atualizados",
-                        description: "A lista de pedidos foi recarregada",
-                      });
-                    }}
-                    className="flex-1"
-                    data-testid="button-refresh-orders"
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Recarregar Pedidos
-                  </Button>
-                </div>
               </div>
             </div>
 
-            {/* Row 2: City and Neighborhood Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="flex items-center justify-between">
-                  <span>Cidades {selectedCities.size > 0 && <Badge variant="secondary">{selectedCities.size}</Badge>}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowCityFilter(!showCityFilter)}
-                    data-testid="button-toggle-city-filter"
-                    className="h-6 text-xs"
-                  >
-                    {showCityFilter ? 'Ocultar' : 'Mostrar'}
-                  </Button>
-                </Label>
-                {showCityFilter && (
-                  <div className="border rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto bg-gray-50">
-                    {uniqueCities.length === 0 ? (
-                      <p className="text-sm text-gray-500">Nenhuma cidade disponível</p>
-                    ) : (
-                      uniqueCities.map((city) => (
-                        <div key={city} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`city-${city}`}
-                            checked={selectedCities.has(city)}
-                            onCheckedChange={(checked) => {
-                              const newCities = new Set(selectedCities);
-                              if (checked) {
-                                newCities.add(city);
-                              } else {
-                                newCities.delete(city);
-                              }
-                              setSelectedCities(newCities);
-                            }}
-                            data-testid={`checkbox-city-${city}`}
-                          />
-                          <Label htmlFor={`city-${city}`} className="cursor-pointer text-sm">
-                            {city}
-                          </Label>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label className="flex items-center justify-between">
-                  <span>Bairros {selectedNeighborhoods.size > 0 && <Badge variant="secondary">{selectedNeighborhoods.size}</Badge>}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowNeighborhoodFilter(!showNeighborhoodFilter)}
-                    data-testid="button-toggle-neighborhood-filter"
-                    className="h-6 text-xs"
-                  >
-                    {showNeighborhoodFilter ? 'Ocultar' : 'Mostrar'}
-                  </Button>
-                </Label>
-                {showNeighborhoodFilter && (
-                  <div className="border rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto bg-gray-50">
-                    {uniqueNeighborhoods.length === 0 ? (
-                      <p className="text-sm text-gray-500">Nenhum bairro disponível</p>
-                    ) : (
-                      uniqueNeighborhoods.map((neighborhood) => (
-                        <div key={neighborhood} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`neighborhood-${neighborhood}`}
-                            checked={selectedNeighborhoods.has(neighborhood)}
-                            onCheckedChange={(checked) => {
-                              const newNeighborhoods = new Set(selectedNeighborhoods);
-                              if (checked) {
-                                newNeighborhoods.add(neighborhood);
-                              } else {
-                                newNeighborhoods.delete(neighborhood);
-                              }
-                              setSelectedNeighborhoods(newNeighborhoods);
-                            }}
-                            data-testid={`checkbox-neighborhood-${neighborhood}`}
-                          />
-                          <Label htmlFor={`neighborhood-${neighborhood}`} className="cursor-pointer text-sm">
-                            {neighborhood}
-                          </Label>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="route-date">Data da Rota</Label>
+              <Input
+                id="route-date"
+                type="date"
+                min={new Date().toISOString().split('T')[0]}
+                value={routeDate}
+                onChange={(e) => setRouteDate(e.target.value)}
+                data-testid="input-route-date"
+              />
+              <p className="text-xs text-muted-foreground">
+                <Calendar className="h-3 w-3 inline mr-1" />
+                Selecione a data de execução da rota
+              </p>
             </div>
 
-            {/* Row 3: Other buttons */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>&nbsp;</Label>
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setSearchTerm("");
+                  }}
+                  className="flex-1"
+                  data-testid="button-clear-filters"
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Limpar
+                </Button>
+                <Button 
+                  variant="default" 
+                  onClick={() => {
+                    queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
+                    toast({
+                      title: "Pedidos atualizados",
+                      description: "A lista de pedidos foi recarregada",
+                    });
+                  }}
+                  className="flex-1"
+                  data-testid="button-refresh-orders"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Recarregar Pedidos
+                </Button>
+              </div>
               <Button 
                 variant="outline"
                 onClick={handleClearCache}
@@ -935,7 +809,7 @@ export default function DeliveryManagement() {
                   data-testid="checkbox-select-all"
                 />
                 <Label htmlFor="select-all" className="cursor-pointer text-sm">
-                  Selecionar Todos ({filteredOrders.length})
+                  Selecionar Todos
                 </Label>
               </div>
             </div>
