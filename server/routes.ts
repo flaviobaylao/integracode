@@ -15298,7 +15298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Debug: Buscar notas específicas do Omie
+  // Debug: Buscar notas específicas do Omie e mostrar TODOS os campos
   app.post('/api/omie/debug-invoices', authenticateUser, async (req: any, res) => {
     try {
       const { invoiceNumbers } = req.body;
@@ -15347,9 +15347,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        // Analisar campo de etapa
+        const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
+        const stageMap: Record<string, string> = {
+          '10': 'Pedido de Venda',
+          '20': 'Em Rota',
+          '50': 'Faturado',
+          '60': 'Faturado',
+          '70': 'Entregue',
+          '80': 'Aguardando Rota'
+        };
+        const stageName = stageMap[nfStageCode] || (nfStageCode ? `Etapa ${nfStageCode}` : 'SEM ETAPA');
+
         results.push({
           invoiceNumber,
           found: true,
+          stageInfo: {
+            codigo: nfStageCode,
+            nome: stageName,
+            nfProdServStatus_cEtapa: invoice.nfProdServStatus?.cEtapa,
+            cabecalho_etapa: invoice.cabecalho?.etapa,
+            allStageFields: {
+              'nfProdServStatus': invoice.nfProdServStatus,
+              'cabecalho': invoice.cabecalho
+            }
+          },
           invoiceData: {
             nIdNF: invoice.compl?.nIdNF,
             nNF: invoice.ide?.nNF,
@@ -15375,6 +15397,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Erro ao buscar notas:', error);
       res.status(500).json({ 
         message: 'Erro ao buscar notas',
+        error: error.message 
+      });
+    }
+  });
+
+  // Debug: Listar TODAS as notas dos últimos 30 dias com etapa
+  app.get('/api/omie/debug-all-stages', authenticateUser, async (req: any, res) => {
+    try {
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
+      }
+
+      const today = new Date();
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const dataAte = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+      const dataDe = `${String(thirtyDaysAgo.getDate()).padStart(2, '0')}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0')}/${thirtyDaysAgo.getFullYear()}`;
+      
+      const stageMap: Record<string, string> = {
+        '10': 'Pedido de Venda',
+        '20': 'Em Rota',
+        '50': 'Faturado',
+        '60': 'Faturado',
+        '70': 'Entregue',
+        '80': 'Aguardando Rota'
+      };
+
+      const stagesCount: Record<string, number> = {};
+      const invoicesByStage: Record<string, any[]> = {};
+
+      let page = 1;
+      const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+        pagina: page,
+        registros_por_pagina: 50,
+        apenas_importado_api: 'N',
+        ordenar_por: 'DATA',
+        ordem_decrescente: 'S',
+        filtrar_por_data_de: dataDe,
+        filtrar_por_data_ate: dataAte
+      });
+
+      const invoices = response.nfCadastro || [];
+
+      for (const invoice of invoices) {
+        const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || 'NENHUMA';
+        const stageName = stageMap[nfStageCode] || (nfStageCode === 'NENHUMA' ? 'SEM ETAPA' : `Etapa ${nfStageCode}`);
+        
+        stagesCount[stageName] = (stagesCount[stageName] || 0) + 1;
+        
+        if (!invoicesByStage[stageName]) {
+          invoicesByStage[stageName] = [];
+        }
+        
+        invoicesByStage[stageName].push({
+          nNF: invoice.ide?.nNF,
+          cliente: invoice.nfDestInt?.cRazao,
+          valor: invoice.total?.ICMSTot?.vNF,
+          dEmi: invoice.ide?.dEmi,
+          stageCode: nfStageCode
+        });
+      }
+
+      res.json({
+        periodo: `${dataDe} até ${dataAte}`,
+        totalNotas: invoices.length,
+        resumoPorEtapa: stagesCount,
+        notasPorEtapa: invoicesByStage
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao debug estágios:', error);
+      res.status(500).json({ 
+        message: 'Erro ao debug estágios',
         error: error.message 
       });
     }
