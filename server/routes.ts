@@ -15149,8 +15149,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let duplicatesFound = 0;
 
       // Buscar notas fiscais dos últimos 30 dias COM FILTRO DE DATA NA API
-      // ⚠️ Nota: Omie retorna erro após página 1, limitando a apenas primeira página por agora
-      while (hasMorePages && page <= 1) {
+      // ⚠️ Nota: Omie pode retornar erros em algumas páginas - pulamos e continuamos nas próximas
+      while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
         try {
@@ -15263,8 +15263,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         page++;
         } catch (pageError: any) {
           console.log(`⚠️ Erro ao buscar página ${page}:`, pageError.message);
-          console.log(`✅ Parando sincronização (Omie retornou erro)`);
-          hasMorePages = false;
+          console.log(`⏭️ Pulando página ${page} e tentando próxima`);
+          page++; // Tentar próxima página mesmo com erro
+          continue;
         }
       }
 
