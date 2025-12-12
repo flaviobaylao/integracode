@@ -5581,37 +5581,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Usar numero_nota_fiscal como CHAVE PRIMÁRIA de sincronismo
-      // CRÍTICO: Descartar TODOS os pedidos que NÃO têm numero_nota_fiscal
-      // Só sincronizar os que têm NF com valor real (não null, não vazio)
+      // ESTRATÉGIA: Usar numero_pedido com padding para 8 dígitos como chave temporária
+      // (numero_nota_fiscal é null em "Aguardando Rota" porque NFs não foram emitidas ainda)
       const seenInvoices = new Set<string>();
       const validOrders = result.orders.filter((order: any) => {
-        // APENAS numero_nota_fiscal válido - sem fallback para numero_pedido!
-        const invoiceNum = order.numero_nota_fiscal ? String(order.numero_nota_fiscal).trim() : null;
+        // Tentar numero_nota_fiscal primeiro, se não, usar numero_pedido padronizado
+        let invoiceNum: string | null = null;
         
-        // Se numero_nota_fiscal for null, undefined ou vazio, DESCARTAR completamente
-        if (!invoiceNum) {
-          console.warn(`⚠️ Pedido ${order.numero_pedido}: numero_nota_fiscal é ${invoiceNum} - DESCARTADO`);
-          return false;
+        if (order.numero_nota_fiscal && String(order.numero_nota_fiscal).trim()) {
+          // Se tem NF real, usar ela
+          invoiceNum = String(order.numero_nota_fiscal).trim();
+        } else if (order.numero_pedido) {
+          // Fallback: usar numero_pedido com padding para 8 dígitos
+          const pedidoNum = String(order.numero_pedido).trim();
+          invoiceNum = pedidoNum.padStart(8, '0'); // "31296" -> "00031296"
         }
         
-        // Descartar se for a string literal "null"
-        if (invoiceNum === 'null' || invoiceNum === 'undefined') {
-          console.warn(`⚠️ Pedido ${order.numero_pedido}: numero_nota_fiscal é "${invoiceNum}" - DESCARTADO`);
+        if (!invoiceNum) {
+          console.warn(`⚠️ Pedido descartado: sem numero_nota_fiscal ou numero_pedido`);
           return false;
         }
         
         if (seenInvoices.has(invoiceNum)) {
-          console.warn(`⚠️ Duplicata descartada: NF ${invoiceNum} já processada`);
+          console.warn(`⚠️ Duplicata descartada: ${invoiceNum} já processada`);
           return false;
         }
         
         seenInvoices.add(invoiceNum);
-        console.log(`✅ NF válida encontrada: ${invoiceNum} (Pedido ${order.numero_pedido})`);
+        const source = order.numero_nota_fiscal ? 'NF' : 'PEDIDO-PADDING';
+        console.log(`✅ Pedido ${order.numero_pedido}: ${source} = ${invoiceNum}`);
         return true;
       });
 
-      console.log(`📊 RESULTADO: ${validOrders.length} NFs com numero_nota_fiscal válido de ${result.orders.length} pedidos retornados do Omie`);
+      console.log(`📊 RESULTADO: ${validOrders.length} pedidos de ${result.orders.length} retornados (usando numero_pedido com padding como fallback)`);
 
       // Verificar quais NFs já existem no banco para evitar duplicatas
       let skippedCount = 0;
@@ -5620,8 +5622,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const order of validOrders) {
         try {
-          // invoiceNum já foi validado no filtro, então deve estar seguro aqui
-          const invoiceNum = String(order.numero_nota_fiscal).trim();
+          // Recalcular invoiceNum de forma consistente com o filtro acima
+          let invoiceNum: string;
+          if (order.numero_nota_fiscal && String(order.numero_nota_fiscal).trim()) {
+            invoiceNum = String(order.numero_nota_fiscal).trim();
+          } else {
+            invoiceNum = String(order.numero_pedido).trim().padStart(8, '0');
+          }
           
           // Verificar se esta NF já foi sincronizada
           const existingBilling = await storage.getBillingByInvoiceNumber(invoiceNum);

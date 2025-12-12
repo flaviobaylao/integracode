@@ -3788,25 +3788,16 @@ export class OmieService {
       
       console.log(`Total de pedidos encontrados na etapa ${stage}: ${allOrders.length}`);
       
-      // DEBUG: Verificar as etapas dos pedidos retornados
+      // DEBUG: Imprimir estrutura completa do PRIMEIRO pedido em raw JSON (procurando por campo de NF)
       if (allOrders.length > 0) {
-        const stageDistribution = allOrders.reduce((acc: any, order: any) => {
-          const stageCode = order.cabecalho?.etapa || 'UNKNOWN';
-          acc[stageCode] = (acc[stageCode] || 0) + 1;
-          return acc;
-        }, {});
-        console.log(`📊 Distribuição de etapas nos ${allOrders.length} pedidos:`, stageDistribution);
-        console.log(`🔍 Exemplos de primeiros 3 pedidos:`, allOrders.slice(0, 3).map((o: any) => ({
-          numero: o.cabecalho?.numero_pedido,
-          numero_nf_field: o.cabecalho?.numero_nota_fiscal,
-          nfe_numero: o.cabecalho?.nfe_numero,
-          etapa: o.cabecalho?.etapa,
-          cliente: o.cabecalho?.codigo_cliente
-        })));
-        // DEBUG: Mostrar estrutura completa do primeiro pedido
-        console.log(`🔍 ESTRUTURA COMPLETA DO PRIMEIRO PEDIDO:`, JSON.stringify(allOrders[0]?.cabecalho, null, 2));
+        const firstOrder = allOrders[0];
+        console.log(`\n\n════════════════════════════════════════════════════`);
+        console.log(`🔍 ESTRUTURA COMPLETA DO PRIMEIRO PEDIDO:`);
+        console.log(`════════════════════════════════════════════════════`);
+        console.log(JSON.stringify(firstOrder, null, 2));
+        console.log(`════════════════════════════════════════════════════\n\n`);
       }
-      
+
       // Mapear e enriquecer os pedidos com dados dos clientes
       const enrichedOrders = await Promise.all(
         allOrders.map(async (order: any) => {
