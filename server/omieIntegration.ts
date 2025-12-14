@@ -2993,16 +2993,12 @@ export class OmieService {
               totalAmount += valor;
 
               if (!debtorsMap.has(clientId)) {
-                // Usar dados que já vêm na resposta de contas a receber
-                // Evita chamadas extras à API para melhor performance
-                // PRIORIZAR nome_fantasia sobre razao_social
-                const nomeFantasia = conta.nome_fantasia || conta.razao_social || `Cliente ${clientId}`;
-                const cnpjCpf = conta.cpf_cnpj || 'Documento não informado';
-                
+                // Inicializar com dados temporários - serão preenchidos depois pela busca completa do cliente
+                // A API de contas a receber NÃO retorna nome_fantasia/razao_social/cpf_cnpj diretamente
                 const clienteBasico = {
                   codigo_cliente_omie: clientId,
-                  nome_fantasia: `${nomeFantasia} - ${cnpjCpf}`,
-                  cnpj_cpf: cnpjCpf
+                  nome_fantasia: `Carregando...`,
+                  cnpj_cpf: ''
                 };
                 
                 debtorsMap.set(clientId, {
@@ -3074,14 +3070,17 @@ export class OmieService {
       
       const clienteEntries = Array.from(debtorsMap.entries());
       
-      // Buscar todos os clientes em paralelo (batch de 3 por vez para respeitar limites da API Omie)
-      const batchSize = 3;
+      // Buscar todos os clientes em paralelo (batch de 5 por vez para melhor performance)
+      const batchSize = 5;
+      let clientesEnriquecidos = 0;
+      let clientesSemDados = 0;
+      
       for (let i = 0; i < clienteEntries.length; i += batchSize) {
         const batch = clienteEntries.slice(i, i + batchSize);
         
-        // Aguardar 500ms entre batches para evitar rate limit
+        // Aguardar 300ms entre batches para evitar rate limit
         if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
         
         await Promise.all(
@@ -3090,25 +3089,56 @@ export class OmieService {
               const clienteCompleto = await this.getClientByCode(clientId);
               
               if (clienteCompleto) {
-                const nomeFantasia = clienteCompleto.nome_fantasia || clienteCompleto.razao_social || `Cliente ${clientId}`;
-                const cnpjCpf = clienteCompleto.cnpj_cpf || 'Documento não informado';
+                // Priorizar nome_fantasia sobre razao_social
+                const nomeFantasia = clienteCompleto.nome_fantasia || clienteCompleto.razao_social || '';
+                const cnpjCpf = clienteCompleto.cnpj_cpf || '';
                 
-                // Atualizar dados do cliente com informações completas
+                // Só atualizar se tiver dados válidos
+                if (nomeFantasia || cnpjCpf) {
+                  const displayName = nomeFantasia || `Cliente ${clientId}`;
+                  const displayDoc = cnpjCpf || 'Sem documento';
+                  
+                  debtor.cliente = {
+                    codigo_cliente_omie: clientId,
+                    nome_fantasia: `${displayName} - ${displayDoc}`,
+                    cnpj_cpf: cnpjCpf
+                  };
+                  clientesEnriquecidos++;
+                } else {
+                  // Fallback se cliente não tem nome nem documento
+                  debtor.cliente = {
+                    codigo_cliente_omie: clientId,
+                    nome_fantasia: `Cliente ${clientId} - Sem cadastro completo`,
+                    cnpj_cpf: ''
+                  };
+                  clientesSemDados++;
+                }
+              } else {
+                // Cliente não encontrado no Omie
                 debtor.cliente = {
                   codigo_cliente_omie: clientId,
-                  nome_fantasia: `${nomeFantasia} - ${cnpjCpf}`,
-                  cnpj_cpf: cnpjCpf
+                  nome_fantasia: `Cliente ${clientId} - Não encontrado no Omie`,
+                  cnpj_cpf: ''
                 };
+                clientesSemDados++;
               }
-            } catch (error) {
-              console.error(`Erro ao buscar cliente ${clientId}:`, error);
-              // Manter dados básicos em caso de erro
+            } catch (error: any) {
+              console.error(`❌ Erro ao buscar cliente ${clientId}:`, error.message || error);
+              // Manter dados com indicação de erro
+              debtor.cliente = {
+                codigo_cliente_omie: clientId,
+                nome_fantasia: `Cliente ${clientId} - Erro ao buscar`,
+                cnpj_cpf: ''
+              };
+              clientesSemDados++;
             }
           })
         );
         
         console.log(`✅ Processados ${Math.min(i + batchSize, clienteEntries.length)}/${clienteEntries.length} clientes`);
       }
+      
+      console.log(`📊 Enriquecimento concluído: ${clientesEnriquecidos} com dados, ${clientesSemDados} sem dados completos`)
       
       // Converter Sets de vendedores para arrays antes de retornar
       const debtsList = Array.from(debtorsMap.values()).map(debtor => ({
