@@ -1366,6 +1366,22 @@ export class OmieService {
       let page = 1;
       let hasMorePages = true;
       
+      // Criar cache de clientes para evitar buscas repetidas
+      const customersCache = new Map<string, any>();
+      if (this.storage) {
+        try {
+          const allCustomers = await this.storage.getCustomers();
+          for (const customer of allCustomers) {
+            if (customer.omieClientCode) {
+              customersCache.set(customer.omieClientCode.toString(), customer);
+            }
+          }
+          console.log(`✅ Cache de clientes carregado: ${customersCache.size} clientes`);
+        } catch (err) {
+          console.log(`⚠️ Não foi possível carregar cache de clientes: ${err}`);
+        }
+      }
+      
       while (hasMorePages) {
         try {
           console.log(`📄 Processando página ${page}...`);
