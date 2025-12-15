@@ -287,6 +287,29 @@ export default function Billings() {
     }
   });
 
+  // Mutation para sincronização TOTAL de faturamentos (limpa e reimporta tudo)
+  const fullSyncMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/billings/full-sync');
+      return response;
+    },
+    onSuccess: (result: any) => {
+      toast({
+        title: 'Sincronização Total Concluída',
+        description: `${result.deleted || 0} removidos, ${result.imported || 0} importados, ${result.updated || 0} atualizados.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro na sincronização total',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
       ...prev,
@@ -407,6 +430,25 @@ export default function Billings() {
             variant="default"
             data-testid="button-sync-billings"
           />
+          
+          <Button 
+            variant="destructive" 
+            onClick={() => {
+              if (window.confirm('ATENÇÃO: Esta ação vai APAGAR todos os faturamentos existentes e reimportar TODAS as NFs do Omie. Isso pode demorar alguns minutos. Deseja continuar?')) {
+                fullSyncMutation.mutate();
+              }
+            }}
+            disabled={fullSyncMutation.isPending}
+            data-testid="button-full-sync"
+            title="Limpa todos os faturamentos e reimporta TODAS as NFs do Omie (sem filtro de data)"
+          >
+            {fullSyncMutation.isPending ? (
+              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Sync Total
+          </Button>
           
           <Button 
             variant="secondary" 
