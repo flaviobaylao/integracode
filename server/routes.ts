@@ -6573,15 +6573,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⏰ Sincronizando débitos vencidos...');
         const overdueData = await omieService.getOverdueDebts();
         
-        // Salvar débitos no banco de dados
-        await storage.syncOverdueDebts(overdueData.debts);
-        
-        results.overdueDebts = {
-          totalClients: overdueData.totalClients || 0,
-          totalAmount: overdueData.totalAmount || 0,
-          debts: overdueData.debts ? overdueData.debts.length : 0
-        };
-        console.log('✅ Débitos vencidos sincronizados e salvos no banco:', results.overdueDebts);
+        // PROTEÇÃO: Só salvar se a sincronização foi bem-sucedida
+        if (overdueData.success) {
+          await storage.syncOverdueDebts(overdueData.debts);
+          
+          results.overdueDebts = {
+            totalClients: overdueData.totalClients || 0,
+            totalAmount: overdueData.totalAmount || 0,
+            debts: overdueData.debts ? overdueData.debts.length : 0
+          };
+          console.log('✅ Débitos vencidos sincronizados e salvos no banco:', results.overdueDebts);
+        } else {
+          console.error(`❌ Sincronização de débitos falhou: ${overdueData.errorMessage}`);
+          results.errors.push(`Débitos: ${overdueData.errorMessage || 'Erro na API Omie'}`);
+          results.overdueDebts = { totalClients: 0, totalAmount: 0, debts: 0, preserved: true };
+        }
       } catch (error: any) {
         console.error('❌ Erro na sincronização de débitos:', error);
         results.errors.push(`Débitos: ${error.message}`);
@@ -7357,9 +7363,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timestamp = new Date().toISOString();
       console.log(`[${timestamp}] Fetching overdue debts from Omie - NO CACHE...`);
       const overdueData = await omieService.getOverdueDebts();
-      console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients`);
+      console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients, success: ${overdueData.success}`);
       
-      // Salvar débitos no banco de dados
+      // PROTEÇÃO: Só salvar se a sincronização foi bem-sucedida
+      if (!overdueData.success) {
+        console.error(`❌ Sincronização falhou: ${overdueData.errorMessage}`);
+        return res.status(503).json({
+          message: `Erro na sincronização com Omie: ${overdueData.errorMessage || 'Erro desconhecido'}`,
+          error: overdueData.errorMessage,
+          preservedData: true // Indica que os dados anteriores foram preservados
+        });
+      }
+      
+      // Salvar débitos no banco de dados (apenas se sucesso)
       try {
         await storage.syncOverdueDebts(overdueData.debts);
         console.log('✅ Débitos salvos no banco de dados');

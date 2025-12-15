@@ -2888,6 +2888,8 @@ export class OmieService {
     debts: any[];
     totalAmount: number;
     totalClients: number;
+    success: boolean;
+    errorMessage?: string;
   }> {
     try {
       const executionId = Date.now();
@@ -3211,7 +3213,8 @@ export class OmieService {
       const result = {
         debts: debtsList,
         totalAmount,
-        totalClients: debtorsMap.size
+        totalClients: debtorsMap.size,
+        success: true
       };
       
       console.log(`\n${'='.repeat(80)}`);
@@ -3223,13 +3226,17 @@ export class OmieService {
       console.log(`${'='.repeat(80)}\n`);
       
       return result;
-    } catch (error) {
-      console.error('Erro ao buscar débitos em atraso no Omie:', error);
-      // Retornar estrutura vazia para não quebrar a aplicação
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      console.error('❌ Erro ao buscar débitos em atraso no Omie:', errorMessage);
+      
+      // Retornar estrutura com flag de erro - NÃO sobrescrever dados existentes
       return {
         debts: [],
         totalAmount: 0,
-        totalClients: 0
+        totalClients: 0,
+        success: false,
+        errorMessage: errorMessage
       };
     }
   }
