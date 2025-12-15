@@ -4318,6 +4318,33 @@ export class DatabaseStorage implements IStorage {
         };
       }
       
+      // Validação: Rejeitar datas epoch (01/01/1970) que indicam dados inválidos
+      const epochDate = new Date(1970, 0, 1);
+      if (invoiceDate.getFullYear() < 2000) {
+        const reason = `Data inválida (muito antiga): ${invoiceDate.toLocaleDateString()}`;
+        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
+      // Validação: Rejeitar valor total zero ou inválido (exceto para notas canceladas)
+      const totalValue = typeof billing.totalValue === 'string' 
+        ? parseFloat(billing.totalValue.replace(',', '.')) 
+        : Number(billing.totalValue);
+      
+      if ((isNaN(totalValue) || totalValue <= 0) && !isCanceled) {
+        const reason = `Valor total inválido: ${billing.totalValue}`;
+        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+        return {
+          success: false,
+          reason,
+          action: 'skipped'
+        };
+      }
+      
       // Validação 3: Verificar se tem número de nota fiscal
       if (!billing.invoiceNumber || billing.invoiceNumber.trim() === '') {
         const reason = 'Número da nota fiscal não informado';
