@@ -6672,6 +6672,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // SINCRONIZAÇÃO TOTAL - Limpa todos os faturamentos e reimporta do Omie (sem filtro de data)
+  app.post('/api/billings/full-sync', authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      console.log(`🔄 SINCRONIZAÇÃO TOTAL: Limpando e reimportando TODAS as NFs do Omie (sem filtro de data)...`);
+      
+      // Usar a flag fullResync para limpar e sincronizar todas as NFs
+      const result = await omieService.syncBillings({ fullResync: true });
+      
+      console.log('✅ Sincronização TOTAL de faturamentos concluída:', result);
+      res.json({
+        success: true,
+        message: result.message,
+        totalProcessed: result.totalProcessed,
+        imported: result.imported,
+        updated: result.updated,
+        skipped: result.skipped,
+        errors: result.errors?.length || 0,
+        deleted: result.deleted || 0
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização TOTAL de faturamentos:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Atualizar seller_name retroativamente para todos os faturamentos
   app.post('/api/billings/update-seller-names', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {

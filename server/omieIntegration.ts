@@ -3222,7 +3222,7 @@ export class OmieService {
   }
 
   // Método para sincronizar faturamentos/notas fiscais do Omie
-  async syncBillings(): Promise<{
+  async syncBillings(options?: { fullResync?: boolean }): Promise<{
     totalProcessed: number;
     imported: number;
     updated: number;
@@ -3230,9 +3230,18 @@ export class OmieService {
     errors: any[];
     isComplete: boolean;
     message: string;
+    deleted?: number;
   }> {
+    const fullResync = options?.fullResync ?? false;
+    
     try {
-      console.log('🔄 Iniciando sincronização de TODAS as notas fiscais históricas (apenas NF-e autorizadas)...');
+      if (fullResync) {
+        console.log('🔄 SINCRONIZAÇÃO TOTAL: Limpando todos os faturamentos existentes...');
+        const resetResult = await this.storage.resetAllBillings();
+        console.log(`🗑️ ${resetResult.deleted} faturamentos removidos.`);
+      }
+      
+      console.log(`🔄 Iniciando sincronização de notas fiscais ${fullResync ? '(TODAS - sem filtro de data)' : '(apenas NF-e autorizadas)'}...`);
       
       // Carregar cache de customers para evitar N+1 queries
       const customersCache = await this.loadCustomersCache();
@@ -3335,14 +3344,17 @@ export class OmieService {
                 continue;
               }
               
-              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/09/2025
-              const dataLimite = new Date(2025, 8, 1); // 01/09/2025 (mês 8 = setembro)
-              if (invoiceDateObj < dataLimite) {
-                console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/09/2025)`);
-                continue; // Rejeitar notas antes de setembro/2025
+              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/09/2025 (apenas quando NÃO é fullResync)
+              if (!fullResync) {
+                const dataLimite = new Date(2025, 8, 1); // 01/09/2025 (mês 8 = setembro)
+                if (invoiceDateObj < dataLimite) {
+                  console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/09/2025)`);
+                  continue; // Rejeitar notas antes de setembro/2025
+                }
+                console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/09/2025)`);
+              } else {
+                console.log(`📋 FULL RESYNC - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()}`);
               }
-              
-              console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/09/2025)`);
               pageHasValidData = true;
               nfsFromOmie.add(invoiceNumber); // Rastrear NF que veio do Omie
               

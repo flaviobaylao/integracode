@@ -286,6 +286,7 @@ export interface IStorage {
   createBilling(billing: InsertBilling): Promise<Billing>;
   updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing>;
   deleteBilling(id: string): Promise<void>;
+  resetAllBillings(): Promise<{ deleted: number }>;
   getBillingsWithFilters(filters: {
     sellerId?: string;
     startDate?: Date;
@@ -3969,6 +3970,14 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(billings)
       .where(eq(billings.id, id));
+  }
+
+  async resetAllBillings(): Promise<{ deleted: number }> {
+    console.log('🗑️ Removendo todos os faturamentos para sincronização total...');
+    const result = await db.delete(billings).returning({ id: billings.id });
+    const deleted = result.length;
+    console.log(`✅ ${deleted} faturamentos removidos.`);
+    return { deleted };
   }
 
   async getBillingsWithFilters(filters: {
