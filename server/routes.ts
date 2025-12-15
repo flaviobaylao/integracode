@@ -13061,6 +13061,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
+      console.log(`📍 [CHECKPOINTS-FETCH] Rota ${route.id} (${date}): ${checkpoints.length} checkpoints encontrados`);
+      if (checkpoints.length > 0) {
+        console.log(`📍 [CHECKPOINTS-DATA] Sample:`, JSON.stringify(checkpoints[0], null, 2));
+      }
 
       // Calcular completedVisits dinamicamente a partir dos checkpoints
       // Cada check-out representa uma visita completada
@@ -13595,6 +13599,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Buscar checkpoints da rota
       const checkpoints = await storage.getRouteCheckpoints(route.id);
+      console.log(`📍 [CHECKPOINTS-FETCH] Rota ${route.id} (${date}): ${checkpoints.length} checkpoints encontrados`);
+      if (checkpoints.length > 0) {
+        console.log(`📍 [CHECKPOINTS-DATA] Sample:`, JSON.stringify(checkpoints[0], null, 2));
+      }
 
       // Calcular completedVisits dinamicamente a partir dos checkpoints
       // Cada check-out representa uma visita completada
