@@ -6673,6 +6673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // SINCRONIZAÇÃO TOTAL - Limpa todos os faturamentos e reimporta do Omie (sem filtro de data)
+  // Executa em BACKGROUND para evitar timeout do browser
   app.post('/api/billings/full-sync', authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       const omieService = getOmieService(storage);
@@ -6682,25 +6683,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      console.log(`🔄 SINCRONIZAÇÃO TOTAL: Limpando e reimportando TODAS as NFs do Omie (sem filtro de data)...`);
+      console.log(`🔄 SINCRONIZAÇÃO TOTAL: Iniciando em background...`);
       
-      // Usar a flag fullResync para limpar e sincronizar todas as NFs
-      const result = await omieService.syncBillings({ fullResync: true });
+      // Marcar como "em andamento" imediatamente
+      await storage.upsertSyncStatus({
+        syncType: 'omie_billings_full',
+        lastSyncAt: new Date(),
+        status: 'running',
+        message: 'Sincronização total em andamento...',
+        recordsProcessed: 0
+      });
       
-      console.log('✅ Sincronização TOTAL de faturamentos concluída:', result);
-      res.json({
+      // Retornar resposta imediatamente (202 Accepted) para evitar timeout
+      res.status(202).json({
         success: true,
-        message: result.message,
-        totalProcessed: result.totalProcessed,
-        imported: result.imported,
-        updated: result.updated,
-        skipped: result.skipped,
-        errors: result.errors?.length || 0,
-        deleted: result.deleted || 0
+        message: 'Sincronização total iniciada em background. Acompanhe o progresso pelo status de sincronização.',
+        status: 'running'
+      });
+      
+      // Executar sincronização em background (após responder ao cliente)
+      setImmediate(async () => {
+        try {
+          console.log(`🔄 SINCRONIZAÇÃO TOTAL: Executando em background...`);
+          const result = await omieService.syncBillings({ fullResync: true });
+          
+          console.log('✅ Sincronização TOTAL de faturamentos concluída:', result);
+          
+          // Atualizar status para sucesso
+          await storage.upsertSyncStatus({
+            syncType: 'omie_billings_full',
+            lastSyncAt: new Date(),
+            status: 'success',
+            message: `Concluído: ${result.imported || 0} importados, ${result.updated || 0} atualizados`,
+            recordsProcessed: result.totalProcessed || 0
+          });
+        } catch (error: any) {
+          console.error('❌ Erro na sincronização TOTAL (background):', error);
+          
+          // Atualizar status para erro
+          await storage.upsertSyncStatus({
+            syncType: 'omie_billings_full',
+            lastSyncAt: new Date(),
+            status: 'error',
+            message: error.message || 'Erro desconhecido',
+            recordsProcessed: 0
+          });
+        }
       });
       
     } catch (error: any) {
-      console.error('❌ Erro na sincronização TOTAL de faturamentos:', error);
+      console.error('❌ Erro ao iniciar sincronização TOTAL:', error);
       res.status(500).json({ 
         error: 'Erro interno do servidor',
         message: error.message 

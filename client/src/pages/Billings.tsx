@@ -288,18 +288,34 @@ export default function Billings() {
   });
 
   // Mutation para sincronização TOTAL de faturamentos (limpa e reimporta tudo)
+  // Agora executa em background - retorna 202 imediatamente
   const fullSyncMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/billings/full-sync');
-      return response;
+      const response = await fetch('/api/billings/full-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      
+      if (!response.ok && response.status !== 202) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro desconhecido');
+      }
+      
+      return response.json();
     },
     onSuccess: (result: any) => {
+      // Agora recebe resposta imediata - sincronização acontece em background
       toast({
-        title: 'Sincronização Total Concluída',
-        description: `${result.deleted || 0} removidos, ${result.imported || 0} importados, ${result.updated || 0} atualizados.`,
+        title: 'Sincronização Total Iniciada',
+        description: result.message || 'A sincronização está sendo executada em background. Aguarde alguns minutos e atualize a página.',
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+      
+      // Agendar atualização automática após alguns segundos
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+      }, 5000);
     },
     onError: (error: any) => {
       toast({
