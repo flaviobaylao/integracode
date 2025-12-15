@@ -596,7 +596,7 @@ export default function ChatCenter() {
                 </Card>
 
                 {/* Área de Chat */}
-                <Card className="flex flex-col h-96">
+                <Card className="flex flex-col min-h-screen">
                   <CardContent className="flex-1 overflow-hidden p-4">
                     <ScrollArea ref={scrollRef} className="h-full">
                       <div className="space-y-4">
@@ -761,7 +761,7 @@ export default function ChatCenter() {
                         }}
                         data-testid="textarea-message"
                         className="resize-none"
-                        rows={3}
+                        rows={8}
                         disabled={!!selectedFile}
                       />
                       <div className="flex flex-col gap-2 self-end">
