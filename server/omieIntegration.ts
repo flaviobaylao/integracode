@@ -3090,8 +3090,10 @@ export class OmieService {
       const allCustomers = await this.storage.getCustomers();
       const customersByOmieId = new Map<string, any>();
       for (const customer of allCustomers) {
-        if (customer.omieClientId) {
-          customersByOmieId.set(customer.omieClientId, customer);
+        // Usar omieClientCode (campo correto do schema) OU omieClientId como fallback
+        const omieCode = customer.omieClientCode || customer.omieClientId;
+        if (omieCode) {
+          customersByOmieId.set(omieCode.toString(), customer);
         }
       }
       console.log(`📦 Cache local: ${customersByOmieId.size} clientes carregados`);
@@ -3107,7 +3109,8 @@ export class OmieService {
         
         if (customerLocal) {
           const nomeFantasia = customerLocal.fantasyName || customerLocal.name || '';
-          const cnpjCpf = customerLocal.cnpjCpf || '';
+          // Os campos são cpf e cnpj separados no schema
+          const cnpjCpf = customerLocal.cnpj || customerLocal.cpf || '';
           
           if (nomeFantasia || cnpjCpf) {
             const displayName = nomeFantasia || `Cliente ${clientId}`;
