@@ -324,7 +324,7 @@ export interface IStorage {
   // Overdue debts operations
   getOverdueDebts(): Promise<any[]>;
   getOverdueDebtByDocument(document: string): Promise<any | undefined>;
-  syncOverdueDebts(debts: any[]): Promise<void>;
+  syncOverdueDebts(debts: any[], forceEmpty?: boolean): Promise<void>;
   clearOverdueDebts(): Promise<void>;
 
   // Exported reports operations
@@ -4859,45 +4859,48 @@ export class DatabaseStorage implements IStorage {
     return debt;
   }
 
-  async syncOverdueDebts(debts: any[]): Promise<void> {
+  async syncOverdueDebts(debts: any[], forceEmpty: boolean = false): Promise<void> {
     console.log(`💾 [SYNC-DEBTS] Recebidos ${debts.length} débitos para sincronizar`);
     
-    // Clear existing debts
+    // PROTEÇÃO: Não limpar dados existentes se receber array vazio (exceto se forceEmpty=true)
+    if (debts.length === 0 && !forceEmpty) {
+      console.log(`⚠️ [SYNC-DEBTS] Array vazio recebido - MANTENDO dados existentes para evitar perda de dados`);
+      console.log(`⚠️ [SYNC-DEBTS] Se realmente deseja limpar, use forceEmpty=true`);
+      return;
+    }
+    
+    // Mapear dados antes de limpar (para garantir que temos dados válidos)
+    const debtsToInsert = debts.map((debt, index) => {
+      const mapped = {
+        clientId: debt.cliente.codigo_cliente_omie?.toString() || 'unknown',
+        omieClientId: debt.cliente.codigo_cliente_omie?.toString() || '0',
+        clientName: debt.cliente.nome_fantasia || 'Cliente Desconhecido',
+        clientDocument: debt.cliente.cnpj_cpf || '',
+        totalAmount: debt.valorTotal.toString(),
+        maxDaysOverdue: debt.diasMaximoAtraso,
+        vendedores: debt.vendedores || [],
+        debts: debt.debitos || []
+      };
+      
+      if (index === 0) {
+        console.log(`📝 [SYNC-DEBTS] Exemplo de débito mapeado:`, {
+          cliente: mapped.clientName,
+          documento: mapped.clientDocument,
+          valor: mapped.totalAmount,
+          diasAtraso: mapped.maxDaysOverdue
+        });
+      }
+      
+      return mapped;
+    });
+    
+    // Agora sim, limpar e inserir novos dados
     await db.delete(overdueDebts);
     console.log(`🗑️ [SYNC-DEBTS] Tabela overdue_debts limpa`);
     
-    // Insert new debts
-    if (debts.length > 0) {
-      const debtsToInsert = debts.map((debt, index) => {
-        const mapped = {
-          clientId: debt.cliente.codigo_cliente_omie?.toString() || 'unknown',
-          omieClientId: debt.cliente.codigo_cliente_omie?.toString() || '0',
-          clientName: debt.cliente.nome_fantasia || 'Cliente Desconhecido',
-          clientDocument: debt.cliente.cnpj_cpf || '',
-          totalAmount: debt.valorTotal.toString(),
-          maxDaysOverdue: debt.diasMaximoAtraso,
-          vendedores: debt.vendedores || [], // Salvar array de vendedores
-          debts: debt.debitos || []
-        };
-        
-        if (index === 0) {
-          console.log(`📝 [SYNC-DEBTS] Exemplo de débito mapeado:`, {
-            cliente: mapped.clientName,
-            documento: mapped.clientDocument,
-            valor: mapped.totalAmount,
-            diasAtraso: mapped.maxDaysOverdue
-          });
-        }
-        
-        return mapped;
-      });
-      
-      console.log(`💾 [SYNC-DEBTS] Inserindo ${debtsToInsert.length} débitos no banco...`);
-      await db.insert(overdueDebts).values(debtsToInsert);
-      console.log(`✅ [SYNC-DEBTS] ${debtsToInsert.length} débitos inseridos com sucesso`);
-    } else {
-      console.log(`⚠️ [SYNC-DEBTS] Nenhum débito para inserir (array vazio)`);
-    }
+    console.log(`💾 [SYNC-DEBTS] Inserindo ${debtsToInsert.length} débitos no banco...`);
+    await db.insert(overdueDebts).values(debtsToInsert);
+    console.log(`✅ [SYNC-DEBTS] ${debtsToInsert.length} débitos inseridos com sucesso`);
   }
 
   async clearOverdueDebts(): Promise<void> {
