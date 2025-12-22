@@ -151,6 +151,9 @@ export const users = pgTable("users", {
   homeLatitude: decimal("home_latitude", { precision: 9, scale: 6 }),
   homeLongitude: decimal("home_longitude", { precision: 10, scale: 6 }),
   
+  // Código do vendedor no Omie (para mapeamento correto de clientes)
+  omieVendorCode: varchar("omie_vendor_code"),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

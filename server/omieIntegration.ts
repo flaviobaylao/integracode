@@ -526,20 +526,25 @@ export class OmieService {
               email: vendor.email || `vendor-${vendorCode}@omie.com`,
               role: 'vendedor' as const,
               isActive: vendor.inativo === 'N', // Vendedor ativo se inativo='N'
+              omieVendorCode: vendorCode, // CRÍTICO: Vincular código Omie ao usuário
             };
 
             if (existingUser) {
               // CRITICAL: NÃO sobrescrever usuários admin, coordinator ou administrative
+              // MAS ainda assim atualizar o omieVendorCode para mapeamento correto
               const protectedRoles = ['admin', 'coordinator', 'administrative'];
               if (protectedRoles.includes(existingUser.role)) {
-                console.log(`⚠️ Pulando vendedor ${fullName}: usuário já existe com role protegida (${existingUser.role})`);
+                // Atualizar APENAS o omieVendorCode para usuários protegidos
+                await this.storage.updateUser(existingUser.id, { omieVendorCode: vendorCode });
+                console.log(`✅ Código Omie ${vendorCode} vinculado ao usuário protegido: ${fullName} (${existingUser.role})`);
+                results.updated++;
                 continue;
               }
               
               // Atualizar vendedor existente (apenas se for vendedor, motorista ou telemarketing)
               await this.storage.updateUser(existingUser.id, userData);
               results.updated++;
-              console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode})`);
+              console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode}) - omieVendorCode: ${vendorCode}`);
             } else {
               // Criar novo vendedor
               await this.storage.createUser({
@@ -2678,6 +2683,27 @@ export class OmieService {
     }
   }
 
+  // Resolver o ID do vendedor Omie para o ID real do usuário no sistema
+  async resolveOmieVendorIdToRealUserId(omieVendorCode: string): Promise<string | null> {
+    if (!this.storage) return null;
+    
+    try {
+      // Primeiro, tentar buscar pelo omieVendorCode
+      const userByOmieCode = await this.storage.getUserByOmieVendorCode(omieVendorCode);
+      if (userByOmieCode) {
+        console.log(`✅ Vendedor Omie ${omieVendorCode} resolvido para usuário: ${userByOmieCode.id} (${userByOmieCode.email})`);
+        return userByOmieCode.id;
+      }
+      
+      // Fallback: retornar o formato omie-vendor-* se não encontrou mapeamento
+      console.log(`⚠️ Vendedor Omie ${omieVendorCode} não encontrado no sistema, usando ID sintético`);
+      return `omie-vendor-${omieVendorCode}`;
+    } catch (error) {
+      console.error(`❌ Erro ao resolver vendedor Omie ${omieVendorCode}:`, error);
+      return `omie-vendor-${omieVendorCode}`;
+    }
+  }
+
   // Converter cliente do Omie para formato do sistema
   convertClientToSystemFormat(omieClient: OmieClient) {
     // Limpar e validar documento
@@ -2695,10 +2721,13 @@ export class OmieService {
       cnpj = docLimpo;
     }
     
-    // Extrair seller_id das recomendações do Omie
+    // Extrair código do vendedor das recomendações do Omie
+    // NOTA: Este método é síncrono, a resolução para ID real será feita posteriormente
     let sellerId = null;
+    let omieVendorCodeRaw = null;
     if (omieClient.recomendacoes?.codigo_vendedor) {
-      sellerId = `omie-vendor-${omieClient.recomendacoes.codigo_vendedor}`;
+      omieVendorCodeRaw = omieClient.recomendacoes.codigo_vendedor.toString();
+      sellerId = `omie-vendor-${omieVendorCodeRaw}`;
       console.log(`✅ Vendedor extraído do cliente ${omieClient.codigo_cliente_omie}: ${sellerId}`);
     }
     

@@ -5076,6 +5076,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Converter para formato do sistema
           const converted = omieService.convertClientToSystemFormat(omieClient);
           
+          // ✅ CORREÇÃO: Resolver omie-vendor-* para ID real do usuário
+          let resolvedSellerId = converted.sellerId;
+          if (resolvedSellerId && resolvedSellerId.startsWith('omie-vendor-')) {
+            const omieCode = resolvedSellerId.replace('omie-vendor-', '');
+            const realUserId = await omieService.resolveOmieVendorIdToRealUserId(omieCode);
+            if (realUserId) {
+              resolvedSellerId = realUserId;
+            }
+          }
+          
           // Normalizar weekdays e calcular dias de entrega automaticamente
           const defaultWeekdays = ["Seg", "Ter", "Qua", "Qui", "Sex"];
           const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
@@ -5083,8 +5093,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const systemClient = {
             ...converted,
-            // Usar sellerId do Omie se disponível, senão usar sellerId da planilha
-            sellerId: converted.sellerId || sellerId || '',
+            // Usar sellerId do Omie (resolvido) se disponível, senão usar sellerId da planilha
+            sellerId: resolvedSellerId || sellerId || '',
             weekdays: JSON.stringify(normalizedWeekdays),
             deliveryWeekdays: autoDeliveryDays
           };
@@ -5161,6 +5171,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Converter para formato do sistema
       const converted = omieService.convertClientToSystemFormat(omieClient);
       
+      // ✅ CORREÇÃO: Resolver omie-vendor-* para ID real do usuário
+      let resolvedSellerId = converted.sellerId;
+      if (resolvedSellerId && resolvedSellerId.startsWith('omie-vendor-')) {
+        const omieCode = resolvedSellerId.replace('omie-vendor-', '');
+        const realUserId = await omieService.resolveOmieVendorIdToRealUserId(omieCode);
+        if (realUserId) {
+          resolvedSellerId = realUserId;
+        }
+      }
+      
       // Normalizar weekdays
       const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
       const normalizedWeekdays = normalizeWeekdayInput(converted.weekdays || defaultWeekdays);
@@ -5168,7 +5188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const systemClient = {
         ...converted,
-        sellerId: converted.sellerId || '',
+        sellerId: resolvedSellerId || '',
         weekdays: JSON.stringify(normalizedWeekdays),
         deliveryWeekdays: autoDeliveryDays
       };
@@ -5269,8 +5289,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Verificar se cliente já existe ANTES de definir sellerId
               let existingCustomer = await storage.getCustomer(converted.id);
               
-              // Prioridade: Omie > Existente > Default (NUNCA sobrescrever vendedor existente)
-              const finalSellerId = converted.sellerId || existingCustomer?.sellerId || defaultSellerId || '';
+              // ✅ CORREÇÃO: Resolver omie-vendor-* para ID real do usuário
+              let resolvedSellerId = converted.sellerId;
+              if (resolvedSellerId && resolvedSellerId.startsWith('omie-vendor-')) {
+                const omieCode = resolvedSellerId.replace('omie-vendor-', '');
+                const realUserId = await omieService.resolveOmieVendorIdToRealUserId(omieCode);
+                if (realUserId) {
+                  resolvedSellerId = realUserId;
+                }
+              }
+              
+              // Prioridade: Omie (resolvido) > Existente > Default (NUNCA sobrescrever vendedor existente)
+              const finalSellerId = resolvedSellerId || existingCustomer?.sellerId || defaultSellerId || '';
               
               // Normalizar weekdays e calcular dias de entrega automaticamente
               // ✅ CORREÇÃO: Não usar fallback de "todos os dias" se weekdays não estiver definido
@@ -5305,7 +5335,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   city: systemClient.city,
                   state: systemClient.state,
                   zipCode: systemClient.zipCode,
-                  sellerId: converted.sellerId || existingCustomer.sellerId, // NUNCA sobrescrever com default
+                  // ✅ CORREÇÃO: Usar sellerId resolvido em vez de converted.sellerId
+                  sellerId: resolvedSellerId || existingCustomer.sellerId, // Usa ID real do vendedor
                   isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao
@@ -18511,6 +18542,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ ...result, timestamp: new Date() });
     } catch (error) {
       res.status(500).json({ message: 'Erro ao executar backup', error: String(error) });
+    }
+  });
+
+  // ============================================================================
+  // SELLER-CUSTOMER MAPPING BACKFILL - Fix omie-vendor-* to real user IDs
+  // ============================================================================
+  app.post('/api/admin/backfill-seller-mapping', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { dryRun = true } = req.body;
+      
+      console.log(`🔄 [BACKFILL] Iniciando correção de mapeamento vendedor-cliente (dryRun: ${dryRun})...`);
+      
+      // 1. Buscar todos os clientes com sellerId no formato omie-vendor-*
+      const customersWithOmieVendor = await db
+        .select()
+        .from(customers)
+        .where(like(customers.sellerId, 'omie-vendor-%'));
+      
+      console.log(`📋 [BACKFILL] Encontrados ${customersWithOmieVendor.length} clientes com sellerId no formato omie-vendor-*`);
+      
+      // 2. Buscar todos os usuários com omieVendorCode definido
+      const usersWithOmieCode = await db
+        .select()
+        .from(users)
+        .where(isNotNull(users.omieVendorCode));
+      
+      // Criar mapa de código Omie para ID do usuário
+      const omieCodeToUserId = new Map<string, string>();
+      for (const user of usersWithOmieCode) {
+        if (user.omieVendorCode) {
+          omieCodeToUserId.set(user.omieVendorCode, user.id);
+          console.log(`📍 [BACKFILL] Mapeamento: omie-vendor-${user.omieVendorCode} -> ${user.id} (${user.email})`);
+        }
+      }
+      
+      console.log(`📋 [BACKFILL] ${omieCodeToUserId.size} usuários com omieVendorCode configurado`);
+      
+      // 3. Corrigir clientes
+      let corrected = 0;
+      let notMapped = 0;
+      const corrections: { customerId: string; customerName: string; oldSellerId: string; newSellerId: string }[] = [];
+      const notFound: { customerId: string; customerName: string; oldSellerId: string }[] = [];
+      
+      for (const customer of customersWithOmieVendor) {
+        const omieCode = customer.sellerId.replace('omie-vendor-', '');
+        const newUserId = omieCodeToUserId.get(omieCode);
+        
+        if (newUserId) {
+          corrections.push({
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            oldSellerId: customer.sellerId,
+            newSellerId: newUserId
+          });
+          
+          if (!dryRun) {
+            await db
+              .update(customers)
+              .set({ sellerId: newUserId })
+              .where(eq(customers.id, customer.id));
+            corrected++;
+          }
+        } else {
+          notMapped++;
+          notFound.push({
+            customerId: customer.id,
+            customerName: customer.fantasyName || customer.name,
+            oldSellerId: customer.sellerId
+          });
+        }
+      }
+      
+      const result = {
+        success: true,
+        dryRun,
+        totalCustomersWithOmieVendor: customersWithOmieVendor.length,
+        usersWithOmieCode: usersWithOmieCode.length,
+        corrections: dryRun ? corrections.length : corrected,
+        notMapped,
+        correctionDetails: dryRun ? corrections.slice(0, 50) : undefined,
+        notFoundDetails: notFound.slice(0, 50),
+        message: dryRun 
+          ? `Modo simulação: ${corrections.length} clientes seriam corrigidos, ${notMapped} sem mapeamento`
+          : `Correção concluída: ${corrected} clientes corrigidos, ${notMapped} sem mapeamento`
+      };
+      
+      console.log(`✅ [BACKFILL] ${result.message}`);
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ [BACKFILL] Erro:', error);
+      res.status(500).json({ success: false, message: error.message });
     }
   });
 
