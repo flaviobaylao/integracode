@@ -3575,11 +3575,23 @@ export class DatabaseStorage implements IStorage {
       
       console.log(`  📅 Data atual (Brasília):`, currentDate.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
       
-      // Normalizar sellerId: billings usa ID numérico, mas customers/users usam prefixo "omie-vendor-"
-      const numericSellerId = sellerId ? sellerId.replace('omie-vendor-', '') : undefined;
-      const prefixedSellerId = sellerId; // Mantém o ID original com prefixo para queries de customers
+      // ✅ CORREÇÃO: sellerId é o UUID do usuário do sistema
+      // - Para billings: usar omieVendorCode (código numérico do vendedor no Omie)
+      // - Para customers: usar o UUID diretamente (seller_id agora é o ID real do usuário)
+      let omieVendorCode: string | undefined = undefined;
+      const userSellerId = sellerId; // UUID do usuário para consultar customers
       
-      console.log(`  IDs normalizados:`, { numericSellerId, prefixedSellerId });
+      if (sellerId) {
+        // Buscar o omieVendorCode do usuário para usar em billings
+        const userResult = await db.execute(sql`
+          SELECT omie_vendor_code FROM users WHERE id = ${sellerId}
+        `);
+        if (userResult.rows.length > 0 && userResult.rows[0].omie_vendor_code) {
+          omieVendorCode = userResult.rows[0].omie_vendor_code as string;
+        }
+      }
+      
+      console.log(`  IDs resolvidos:`, { userSellerId, omieVendorCode });
       
       // Feriados nacionais brasileiros (formato: 'YYYY-MM-DD')
       const nationalHolidays = new Set([
@@ -3648,39 +3660,38 @@ export class DatabaseStorage implements IStorage {
       const searchEndDate = isCurrentMonth ? currentDate : endOfMonth;
       
       // === 1. POSITIVAÇÃO: Clientes únicos que tiveram venda no mês (via faturamentos) ===
-      const billingConditions = [];
-      
-      if (numericSellerId) {
-        billingConditions.push(eq(billings.sellerId, numericSellerId));
-      }
-      
-      billingConditions.push(
-        and(
-          gte(billings.invoiceDate, startOfMonth),
-          lte(billings.invoiceDate, searchEndDate)
-        )
-      );
-
       // Buscar faturamentos do mês usando SQL raw para evitar problemas do Drizzle
       console.log(`  Buscando faturamentos para:`, { 
-        numericSellerId, 
+        omieVendorCode, 
         startOfMonth, 
         searchEndDate,
         isCurrentMonth,
         note: isCurrentMonth ? 'Usando data atual como limite' : 'Usando fim do mês como limite'
       });
-      console.log(`  Tipo de numericSellerId:`, typeof numericSellerId, 'Valor:', numericSellerId);
+      console.log(`  Tipo de omieVendorCode:`, typeof omieVendorCode, 'Valor:', omieVendorCode);
       
-      const monthBillings = await db.execute(sql`
-        SELECT id, customer_document, cfop, total_value, seller_id, billing_type
-        FROM billings
-        WHERE invoice_date >= ${startOfMonth}
-          AND invoice_date <= ${searchEndDate}
-          AND invoice_status = '100'
-          AND is_cancelled = false
-          AND billing_type IN ('venda', 'devolução')
-          ${numericSellerId ? sql`AND seller_id = ${numericSellerId}` : sql``}
-      `);
+      // ✅ CORREÇÃO: Se sellerId foi especificado mas não tem omieVendorCode, 
+      // não devemos buscar todos os billings - retornar array vazio
+      // Isso evita métricas inflacionadas para vendedores sem código Omie
+      let monthBillings: { rows: any[] } = { rows: [] };
+      
+      if (!userSellerId || omieVendorCode) {
+        // Apenas buscar billings se:
+        // 1. Não foi especificado vendedor (busca geral) OU
+        // 2. Vendedor tem omieVendorCode definido
+        monthBillings = await db.execute(sql`
+          SELECT id, customer_document, cfop, total_value, seller_id, billing_type
+          FROM billings
+          WHERE invoice_date >= ${startOfMonth}
+            AND invoice_date <= ${searchEndDate}
+            AND invoice_status = '100'
+            AND is_cancelled = false
+            AND billing_type IN ('venda', 'devolução')
+            ${omieVendorCode ? sql`AND seller_id = ${omieVendorCode}` : sql``}
+        `);
+      } else {
+        console.log(`  ⚠️ Vendedor ${userSellerId} não tem omieVendorCode - billings zerados`);
+      }
       
       console.log(`  ✅ Faturamentos encontrados: ${monthBillings.rows.length}`);
       if (monthBillings.rows.length > 0) {
@@ -3696,15 +3707,21 @@ export class DatabaseStorage implements IStorage {
       const positivatedCustomers = uniqueCustomers.size;
 
       // Total de clientes ativos na carteira do vendedor
+      // ✅ CORREÇÃO: Usar userSellerId (UUID do usuário) para buscar customers
       let totalCustomersInRoute = 0;
-      if (prefixedSellerId) {
+      if (userSellerId) {
         const routeCustomersResult = await db.execute(sql`
           SELECT id FROM customers
-          WHERE seller_id = ${prefixedSellerId}
+          WHERE seller_id = ${userSellerId}
             AND omie_status = 'ativo'
             AND virtual_service = false
         `);
         totalCustomersInRoute = routeCustomersResult.rows.length;
+        console.log(`  👥 CLIENTES NA CARTEIRA:`, {
+          sellerId: userSellerId,
+          total: totalCustomersInRoute,
+          positivados: positivatedCustomers
+        });
       }
 
       const positivationRate = totalCustomersInRoute > 0 
@@ -3759,7 +3776,8 @@ export class DatabaseStorage implements IStorage {
       // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Projeção de faturamento ===
       let overdueDebtRatio = 0;
       
-      if (prefixedSellerId && revenueProjection > 0) {
+      // ✅ CORREÇÃO: Usar userSellerId (UUID do usuário) para buscar débitos via customers
+      if (userSellerId && revenueProjection > 0) {
         // Buscar débitos vencidos da carteira usando JOIN
         const overdueDebtsResult = await db.execute(sql`
           SELECT 
@@ -3770,7 +3788,7 @@ export class DatabaseStorage implements IStorage {
             REPLACE(REPLACE(REPLACE(od.client_document, '.', ''), '-', ''), '/', '') = 
             COALESCE(c.cpf, c.cnpj)
           )
-          WHERE c.seller_id = ${prefixedSellerId}
+          WHERE c.seller_id = ${userSellerId}
             AND c.omie_status = 'ativo'
         `);
 
@@ -3803,8 +3821,9 @@ export class DatabaseStorage implements IStorage {
       ];
       
       // Adicionar filtro de seller apenas se especificado
-      if (prefixedSellerId) {
-        routeConditions.push(eq(dailyRoutes.sellerId, prefixedSellerId));
+      // ✅ CORREÇÃO: Usar userSellerId (UUID) para filtrar rotas
+      if (userSellerId) {
+        routeConditions.push(eq(dailyRoutes.sellerId, userSellerId));
       }
       
       // Buscar todas as rotas diárias do mês (apenas dias já decorridos)
@@ -3857,7 +3876,8 @@ export class DatabaseStorage implements IStorage {
       });
 
       console.log(`  📊 RESUMO FINAL:`, {
-        sellerId: prefixedSellerId,
+        sellerId: userSellerId,
+        omieVendorCode: omieVendorCode,
         positivationRate: positivationRate.toFixed(2) + '%',
         totalRevenue: totalRevenue.toFixed(2),
         revenueProjection: revenueProjection.toFixed(2),
