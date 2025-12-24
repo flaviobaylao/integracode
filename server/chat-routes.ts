@@ -829,9 +829,18 @@ export function registerChatRoutes(app: Express): void {
           let normalizedPhone = normalizePhoneNumber(phoneNumber);
           console.log(`📞 [NORMALIZE-END] Telefone normalizado: ${normalizedPhone} (length: ${normalizedPhone.length})`);
 
-          // Buscar ou criar cliente (o "outro lado" da conversa)
-          let customer = await storage.getChatCustomerByPhone(normalizedPhone);
-          let matchingConv: any = null;
+          // 🔴 CORREÇÃO CRÍTICA: Buscar conversa DIRETAMENTE pelo telefone normalizado
+          // Isso resolve o problema de mensagens que não aparecem por erro na busca de cliente
+          let matchingConv = await storage.getChatConversationByPhone?.(normalizedPhone);
+          let customer = null;
+
+          if (matchingConv) {
+            customer = await storage.getChatCustomer(matchingConv.customerId);
+          }
+          
+          if (!customer) {
+            customer = await storage.getChatCustomerByPhone(normalizedPhone);
+          }
           
           if (!customer) {
             // ⚠️ Cliente não encontrado pelo normalizedPhone
@@ -980,8 +989,21 @@ export function registerChatRoutes(app: Express): void {
             // isFromMe = false: mensagem recebida do cliente
             console.log(`📝 [WEBHOOK-MIRROR] Salvando mensagem: tipo=${finalMessageType}, conteúdo=${finalContent?.substring(0, 50)}`);
             try {
+              // 🔴 CORREÇÃO CRÍTICA: Buscar conversa pelo telefone normalizado primeiro
+              // para garantir que estamos salvando na conversa correta
+              let currentMatchingConv = matchingConv;
+              if (!currentMatchingConv) {
+                currentMatchingConv = await storage.upsertChatConversation({
+                  customerId: customer!.id,
+                  customerName: customer!.name || `Cliente ${normalizedPhone}`,
+                  customerPhone: normalizedPhone,
+                  status: 'new' as const,
+                  priority: 'normal' as const
+                });
+              }
+
               const message = await storage.createChatMessage({
-                conversationId: matchingConv.id,
+                conversationId: currentMatchingConv.id,
                 senderId: isFromMe ? 'system' : customer.id,
                 senderType: isFromMe ? 'agent' : 'customer',
                 content: finalContent,
@@ -990,13 +1012,13 @@ export function registerChatRoutes(app: Express): void {
                 isRead: isFromMe, // Mensagens enviadas por nós já são "lidas"
                 externalId: messageId // Guardar ID externo para evitar duplicatas
               });
-              console.log(`💬 [WEBHOOK-MIRROR] ✅ Mensagem salva: ${message.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
+              console.log(`💬 [WEBHOOK-MIRROR] ✅ Mensagem salva: ${message.id} | Conv: ${currentMatchingConv.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
               
               // 🟢 Incrementar contador de unread APENAS para mensagens recebidas
               if (!isFromMe) {
                 try {
-                  await storage.incrementUnreadCount(matchingConv.id);
-                  console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${matchingConv.id}`);
+                  await storage.incrementUnreadCount(currentMatchingConv.id);
+                  console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${currentMatchingConv.id}`);
                 } catch (err) {
                   console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao incrementar unreadCount:`, err);
                 }
