@@ -831,7 +831,7 @@ export function registerChatRoutes(app: Express): void {
 
           // 🔴 CORREÇÃO CRÍTICA: Buscar conversa DIRETAMENTE pelo telefone normalizado
           // Isso resolve o problema de mensagens que não aparecem por erro na busca de cliente
-          let matchingConv = await storage.getChatConversationByPhone?.(normalizedPhone);
+          let matchingConv = await storage.getChatConversationByPhone(normalizedPhone);
           let customer = null;
 
           if (matchingConv) {
