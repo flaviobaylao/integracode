@@ -609,12 +609,52 @@ export async function registerCheckpoint(
   const route = await storage.getDailyRoute(dailyRouteId);
   
   // Verificar se o customerId está na rota planejada (optimizedOrder)
-  const isOffRoute = route && route.optimizedOrder 
-    ? !route.optimizedOrder.includes(customerId)
-    : false;
+  // OU se há uma sales_card válida para esse cliente na data da rota (visita adicionada manualmente)
+  let isOffRoute = false;
+  
+  if (route && route.optimizedOrder) {
+    // Primeiro, verificar se está no optimizedOrder
+    const inOptimizedOrder = route.optimizedOrder.includes(customerId);
+    
+    if (!inOptimizedOrder) {
+      // Se não está no optimizedOrder, verificar se há uma visita ativa (sales_card) para esse cliente
+      // Isso cobre o caso de visitas adicionadas manualmente DEPOIS da rota ser gerada
+      const routeDate = new Date(route.routeDate);
+      const routeDateStr = routeDate.toISOString().split('T')[0];
+      
+      // Buscar sales_card para esse cliente na data da rota
+      try {
+        const salesCard = await storage.getSalesCard(visitId);
+        if (salesCard && salesCard.customerId === customerId && salesCard.sellerId === sellerId) {
+          // Há uma sales_card válida para esse cliente - NÃO é off-route
+          isOffRoute = false;
+        } else {
+          // Nenhuma sales_card encontrada - é off-route
+          isOffRoute = true;
+        }
+      } catch {
+        // Se não conseguir encontrar a sales_card, marcar como off-route
+        isOffRoute = true;
+      }
+    }
+  }
   
   if (isOffRoute) {
     console.log(`⚠️  VISITA FORA DA ROTA detectada: Cliente ${customerId}, Visita ${visitId}`);
+  } else if (route && route.optimizedOrder && !route.optimizedOrder.includes(customerId)) {
+    console.log(`✅ Cliente ${customerId} não está em optimizedOrder, mas tem sales_card válida - ADICIONANDO ao optimizedOrder`);
+    
+    // Adicionar customerId ao optimizedOrder se não estiver lá
+    // Isso sincroniza visitas adicionadas manualmente com a rota
+    const currentOrder = (route.optimizedOrder as string[]) || [];
+    if (!currentOrder.includes(customerId)) {
+      const updatedOrder = [...currentOrder, customerId];
+      await storage.updateDailyRoute(dailyRouteId, {
+        optimizedOrder: updatedOrder,
+        totalVisits: updatedOrder.length
+      });
+      console.log(`✅ optimizedOrder atualizado: ${currentOrder.length} → ${updatedOrder.length} visitas`);
+    }
   }
   
   // Buscar último checkpoint
