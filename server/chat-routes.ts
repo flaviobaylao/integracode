@@ -753,6 +753,10 @@ export function registerChatRoutes(app: Express): void {
   // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
+    console.log(`\n🔔🔔🔔 [WEBHOOK-ENTRY] ====================================`);
+    console.log(`🔔 [WEBHOOK-ENTRY] POST recebido em /api/chat/webhook/messages`);
+    console.log(`🔔 [WEBHOOK-ENTRY] Timestamp: ${new Date().toISOString()}`);
+    console.log(`🔔🔔🔔 [WEBHOOK-ENTRY] ====================================\n`);
     try {
       let { event, instance, data } = req.body;
       

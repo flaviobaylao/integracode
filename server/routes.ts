@@ -247,9 +247,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('✅ Evolution API configurada com sucesso para WhatsApp');
 
     // Configure webhook for receiving messages
-    const webhookUrl = process.env.REPLIT_DOMAINS 
-      ? `https://${process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '')}/api/chat/webhook/messages`
-      : 'http://localhost:5000/api/chat/webhook/messages';
+    // In development mode, use REPLIT_DEV_DOMAIN because external traffic to REPLIT_DOMAINS 
+    // goes to the Autoscale deployment, not the dev server
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const devDomain = process.env.REPLIT_DEV_DOMAIN;
+    const prodDomain = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '');
+    
+    let webhookUrl: string;
+    if (isDevelopment && devDomain) {
+      // Development: use the dev domain so external webhooks reach the dev server
+      webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
+      console.log('🔧 [WEBHOOK] Modo desenvolvimento - usando REPLIT_DEV_DOMAIN');
+    } else if (prodDomain) {
+      // Production: use the production domain
+      webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      console.log('🔧 [WEBHOOK] Modo produção - usando REPLIT_DOMAINS');
+    } else {
+      // Fallback to localhost
+      webhookUrl = 'http://localhost:5000/api/chat/webhook/messages';
+      console.log('🔧 [WEBHOOK] Fallback - usando localhost');
+    }
+    console.log('🔧 [WEBHOOK] URL configurada:', webhookUrl);
 
     try {
       // 🪞 ESPELHO COMPLETO DO WHATSAPP - Configurar webhook para capturar TODAS as mensagens

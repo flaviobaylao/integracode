@@ -20,6 +20,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// DEBUG: Log ALL POST requests immediately to console
+app.use((req, res, next) => {
+  if (req.method === 'POST') {
+    console.log(`📫 [POST-DETECT] ${new Date().toISOString()} ${req.method} ${req.path}`);
+  }
+  next();
+});
+
 // Middleware condicional para JSON - NÃO processar requisições multipart/form-data
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
