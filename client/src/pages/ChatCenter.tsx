@@ -42,6 +42,7 @@ interface Conversation {
   unreadCount?: number; // 🟢 Número de mensagens não lidas
   hasUnread?: boolean; // 🟢 Flag para mostrar indicador
   messages?: ChatMessage[];
+  createdAt?: string; // Data de criação da conversa
 }
 
 interface Agent {
@@ -406,10 +407,10 @@ export default function ChatCenter() {
     mutationFn: async () => {
       const chat = conversations.find((c: Conversation) => c.id === selectedConversation);
       if (!selectedConversation || !chat) throw new Error("Nenhuma conversa selecionada");
-      if (messagesRaw.length === 0) throw new Error("Aguarde as mensagens carregarem");
+      if (!messagesData?.length) throw new Error("Aguarde as mensagens carregarem");
       
       // Enviar todas as mensagens ordenadas cronologicamente para contexto completo
-      const orderedMessages = [...messagesRaw].sort((a, b) => 
+      const orderedMessages = [...messagesData].sort((a, b) => 
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       );
       
@@ -911,7 +912,7 @@ export default function ChatCenter() {
                               onClick={() => aiSuggestionMutation.mutate()}
                               variant="outline"
                               size="icon"
-                              disabled={aiSuggestionMutation.isPending || messagesLoading || messagesRaw.length === 0}
+                              disabled={aiSuggestionMutation.isPending || messagesLoading || !messagesData?.length}
                               data-testid="button-ai-suggestion"
                               title={messagesLoading ? "Carregando mensagens..." : "IA Ajuda - Sugerir resposta"}
                               className="bg-purple-50 hover:bg-purple-100 border-purple-300"
