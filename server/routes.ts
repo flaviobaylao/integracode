@@ -18685,19 +18685,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST /api/chat/sync-whatsapp - Sincronizar mensagens do WhatsApp
-  app.post('/api/chat/sync-whatsapp', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+  app.post('/api/chat/sync-whatsapp', authenticateUser, async (req: any, res) => {
+    // Verificar se é admin ou coordinator
+    const user = (req as any).currentUser;
+    if (!user || !['admin', 'coordinator'].includes(user.role)) {
+      return res.status(403).json({ success: false, message: 'Acesso negado' });
+    }
     try {
       console.log('🔄 [SYNC-WHATSAPP] Iniciando sincronização de mensagens do WhatsApp...');
       
       const config = evolutionAPIService.getConfig();
+      console.log('📋 [SYNC-WHATSAPP] Config:', config ? '✅ Configurado' : '❌ Não configurado');
+      
       if (!config) {
+        console.error('❌ [SYNC-WHATSAPP] Evolution API não configurada');
         return res.status(400).json({ success: false, message: 'Evolution API não está configurada' });
       }
 
+      console.log(`🔗 [SYNC-WHATSAPP] Buscando chats da instância: ${config.instanceName}`);
+      
       // Buscar todos os chats da Evolution API
       const chatsResult = await evolutionAPIService.fetchAllChats(config.instanceName);
+      console.log('📊 [SYNC-WHATSAPP] Resultado fetchAllChats:', { success: chatsResult.success, count: chatsResult.chats?.length || 0, error: chatsResult.error });
       
       if (!chatsResult.success) {
+        console.error('❌ [SYNC-WHATSAPP] Erro ao buscar chats:', chatsResult.error);
         return res.status(500).json({ success: false, message: chatsResult.error || 'Falha ao buscar chats' });
       }
 
@@ -18724,6 +18736,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      console.log(`✅ [SYNC-WHATSAPP] Sincronização concluída: ${syncedCount}/${chats.length} chats`);
+      
       res.json({ 
         success: true, 
         message: `Sincronização concluída`,
@@ -18731,8 +18745,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         syncedChats: syncedCount
       });
     } catch (error: any) {
-      console.error('❌ Erro ao sincronizar WhatsApp:', error);
-      res.status(500).json({ success: false, message: error.message });
+      console.error('❌ [SYNC-WHATSAPP] Erro ao sincronizar WhatsApp:', error);
+      console.error('❌ [SYNC-WHATSAPP] Stack:', error.stack);
+      res.status(500).json({ success: false, message: error.message || 'Erro desconhecido na sincronização' });
     }
   });
 
