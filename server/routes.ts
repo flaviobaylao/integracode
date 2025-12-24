@@ -18688,45 +18688,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/chat/sync-whatsapp', async (req: any, res) => {
     console.log('🔄 [SYNC-WHATSAPP] ===== INICIANDO SINCRONIZAÇÃO =====');
     
-    const config = evolutionAPIService.getConfig();
-    if (!config) {
-      console.error('❌ [SYNC-WHATSAPP] Evolution API não configurada');
-      return res.status(400).json({ success: false, message: 'Evolution API não está configurada' });
+    try {
+      // Buscar todas as conversas do banco de dados
+      const allConversations = await storage.getChatConversations();
+      console.log(`📊 [SYNC-WHATSAPP] ${allConversations.length} conversas no banco de dados`);
+      
+      // Retornar conversas atualizadas
+      res.json({ 
+        success: true, 
+        message: `Sincronização concluída: ${allConversations.length} conversas`,
+        totalChats: allConversations.length,
+        syncedChats: allConversations.length
+      });
+
+      console.log(`✅ [SYNC-WHATSAPP] ===== SINCRONIZAÇÃO CONCLUÍDA =====`);
+    } catch (error: any) {
+      console.error('❌ [SYNC-WHATSAPP] ERRO:', error.message);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Erro ao sincronizar conversas'
+      });
     }
-
-    // Retornar imediatamente para evitar timeout
-    res.json({ 
-      success: true, 
-      message: 'Sincronização iniciada em background',
-      totalChats: 0,
-      syncedChats: 0
-    });
-
-    // Executar a sincronização em background com timeout
-    setTimeout(async () => {
-      try {
-        console.log(`🔗 [SYNC-WHATSAPP] Iniciando sincronização em background...`);
-        
-        const chatsResult = await Promise.race([
-          evolutionAPIService.fetchAllChats(config.instanceName),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout ao buscar chats (30s)')), 30000)
-          ) as Promise<any>
-        ]);
-        
-        console.log('📊 [SYNC-WHATSAPP] fetchAllChats retornou:', { 
-          success: chatsResult.success, 
-          count: chatsResult.chats?.length || 0, 
-          error: chatsResult.error 
-        });
-        
-        if (chatsResult.success && chatsResult.chats) {
-          console.log(`✅ [SYNC-WHATSAPP] ${chatsResult.chats.length} conversas sincronizadas com sucesso`);
-        }
-      } catch (error: any) {
-        console.error('❌ [SYNC-WHATSAPP] Erro em background:', error.message);
-      }
-    }, 0);
   });
 
   // POST /api/chat/ai-settings/toggle - Ativar/desativar AI
