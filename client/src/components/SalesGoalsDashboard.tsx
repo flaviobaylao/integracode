@@ -17,6 +17,8 @@ interface SalesGoalsDashboardProps {
 
 interface SalesMetrics {
   positivationRate: number;
+  positivatedCustomers: number;
+  totalCustomersInRoute: number;
   totalRevenue: number;
   revenueProjection: number;
   overdueDebtRatio: number;
@@ -210,10 +212,10 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                   </Badge>
                 </div>
                 <div className="text-2xl font-bold">
-                  {metrics?.positivationRate?.toFixed(1) || '0.0'}%
+                  {metrics?.positivatedCustomers || 0}/{metrics?.totalCustomersInRoute || 0} clientes
                 </div>
                 <div className="text-sm text-gray-500">
-                  Meta: {goal.positivationGoal}%
+                  {metrics?.positivationRate?.toFixed(1) || '0.0'}% · Meta: {goal.positivationGoal}%
                 </div>
                 <Progress
                   value={Math.min(100, (metrics?.positivationRate || 0) / parseFloat(goal.positivationGoal.toString()) * 100)}
