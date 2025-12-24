@@ -50,6 +50,66 @@ interface Agent {
   status: string;
 }
 
+// Componente Auxiliar para Item de Conversa
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime }: any) {
+  return (
+    <button
+      onClick={() => setSelectedConversation(conv.id)}
+      className={`w-full text-left p-3 rounded-lg transition-colors ${
+        selectedConversation === conv.id
+          ? "bg-green-100 border-2 border-green-600 shadow-sm"
+          : conv.hasUnread 
+            ? "bg-white border-l-4 border-l-red-500 shadow-md hover:bg-gray-50" 
+            : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
+      }`}
+      data-testid={`button-conversation-${conv.id}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className={`font-semibold text-sm truncate ${conv.hasUnread ? "text-red-600" : "text-gray-900"}`}>
+              {conv.customerName}
+            </p>
+            {conv.hasUnread && conv.unreadCount! > 0 && (
+              <Badge className="bg-red-500 text-white text-[10px] px-1.5 h-4 min-w-4 flex items-center justify-center rounded-full border-none animate-pulse">
+                {conv.unreadCount}
+              </Badge>
+            )}
+            {conv.priority === "urgent" && (
+              <Badge variant="destructive" className="text-[10px] h-4">
+                Urgente
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 truncate mt-1">
+            {conv.customerPhone}
+          </p>
+          <div className="flex items-center gap-2 mt-2">
+            <Badge className={`text-[10px] ${getStatusColor(conv.status)}`}>
+              {conv.status === 'new' ? 'Nova' : 
+               conv.status === 'assigned' ? 'Atribuída' :
+               conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
+            </Badge>
+            <span className="text-[10px] text-gray-400 truncate">
+              Atendente: {conv.agentName || "Ninguém"}
+            </span>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className={`text-[10px] font-medium whitespace-nowrap ${conv.hasUnread ? "text-red-500" : "text-gray-400"}`}>
+            {formatLastMessageTime(conv.lastMessageTime)}
+          </p>
+          {conv.hasUnread && (
+             <div className="mt-1 flex justify-end">
+               <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
+             </div>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export default function ChatCenter() {
   const { toast } = useToast();
   const [location] = useLocation();
@@ -85,7 +145,19 @@ export default function ChatCenter() {
   // Fetch conversations - CORREÇÃO: polling cada 500ms para real-time melhor
   const { data: conversationsData, isLoading: convLoading, refetch: refetchConversations } = useQuery({
     queryKey: ["/api/chat/conversations"],
-    refetchInterval: 500  // 🚀 Reduzido de 2000ms para 500ms para updates mais rápidos
+    refetchInterval: 500,
+    select: (data: Conversation[]) => {
+      return [...data].sort((a, b) => {
+        // 1. Prioridade para mensagens não lidas
+        if (a.hasUnread && !b.hasUnread) return -1;
+        if (!a.hasUnread && b.hasUnread) return 1;
+        
+        // 2. Por tempo da última mensagem (mais recente primeiro)
+        const timeA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
+        const timeB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
   });
   const conversations = (conversationsData as Conversation[]) || [];
 
@@ -93,23 +165,14 @@ export default function ChatCenter() {
   const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["/api/chat/conversations", selectedConversation, "messages"],
     enabled: !!selectedConversation,
-    refetchInterval: 300,  // 🚀 Polling rápido para atualizar mensagens em tempo real
+    refetchInterval: 300,
     queryFn: async () => {
       const response = await fetch(`/api/chat/conversations/${selectedConversation}/messages`);
       if (!response.ok) throw new Error("Falha ao buscar mensagens");
       return response.json();
     }
   });
-  const messagesRaw = (messagesData as ChatMessage[]) || [];
-  
-  // 📍 Ordenar mensagens: não lidas primeiro, depois por data
-  const messages = [...messagesRaw].sort((a, b) => {
-    // Não lidas vêm primeiro
-    if (!a.isRead && b.isRead) return -1;
-    if (a.isRead && !b.isRead) return 1;
-    // Se ambas têm o mesmo status de leitura, ordenar por data
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
+  const messages = (messagesData as ChatMessage[]) || [];
 
   // Fetch agents
   const { data: agentsData } = useQuery({
@@ -553,49 +616,47 @@ export default function ChatCenter() {
                     ) : conversations.length === 0 ? (
                       <div className="text-center py-4 text-gray-500">Nenhuma conversa</div>
                     ) : (
-                      conversations.map((conv) => (
-                        <button
-                          key={conv.id}
-                          onClick={() => setSelectedConversation(conv.id)}
-                          className={`w-full text-left p-3 rounded-lg transition-colors ${
-                            selectedConversation === conv.id
-                              ? "bg-green-100 border-2 border-green-600"
-                              : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
-                          }`}
-                          data-testid={`button-conversation-${conv.id}`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="font-semibold text-sm text-gray-900 truncate">
-                                  {conv.customerName}
-                                </p>
-                                {/* 🟢 Indicador verde com número de mensagens não lidas */}
-                                {conv.hasUnread && conv.unreadCount! > 0 && (
-                                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-green-500 text-white text-xs font-bold flex-shrink-0">
-                                    {conv.unreadCount}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-gray-500">{conv.customerPhone}</p>
-                              {/* 👤 Nome do agente em atendimento */}
-                              {conv.agentName && (
-                                <p className="text-xs text-green-600 font-semibold mt-0.5">
-                                  👤 {conv.agentName}
-                                </p>
-                              )}
-                              {/* 📅 Data e hora da última mensagem */}
-                              <p className="text-xs text-gray-500 truncate mt-1">
-                                📅 {formatLastMessageTime(conv.lastMessageTime)}
-                              </p>
+                      <div className="space-y-6">
+                        {/* Seção de Não Respondidas */}
+                        {conversations.some(c => c.hasUnread) && (
+                          <div className="space-y-3">
+                            <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
+                              <AlertCircle className="w-3 h-3" />
+                              Mensagens Não Respondidas
+                            </h3>
+                            <div className="space-y-2">
+                              {conversations.filter(c => c.hasUnread).map((conv) => (
+                                <ConversationItem 
+                                  key={conv.id} 
+                                  conv={conv} 
+                                  selectedConversation={selectedConversation}
+                                  setSelectedConversation={setSelectedConversation}
+                                  getStatusColor={getStatusColor}
+                                  formatLastMessageTime={formatLastMessageTime}
+                                />
+                              ))}
                             </div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs">{getPriorityIcon(conv.priority)}</span>
-                              <Badge variant="outline" className="text-xs">{conv.messageCount}</Badge>
-                            </div>
+                            <div className="my-6 border-b border-gray-100" />
                           </div>
-                        </button>
-                      ))
+                        )}
+
+                        {/* Seção de Todas as Conversas */}
+                        <div className="space-y-3">
+                          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Histórico de Conversas</h3>
+                          <div className="space-y-2">
+                            {conversations.filter(c => !c.hasUnread).map((conv) => (
+                              <ConversationItem 
+                                key={conv.id} 
+                                conv={conv} 
+                                selectedConversation={selectedConversation}
+                                setSelectedConversation={setSelectedConversation}
+                                getStatusColor={getStatusColor}
+                                formatLastMessageTime={formatLastMessageTime}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </ScrollArea>
