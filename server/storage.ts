@@ -3707,17 +3707,17 @@ export class DatabaseStorage implements IStorage {
       const positivatedCustomers = uniqueCustomers.size;
 
       // Total de clientes ativos na carteira do vendedor
-      // ✅ CORREÇÃO: Usar userSellerId (UUID do usuário) para buscar customers
+      // ✅ CORREÇÃO: Usar tabela activeCustomers que é a fonte de verdade para clientes ativos
       let totalCustomersInRoute = 0;
       if (userSellerId) {
         const routeCustomersResult = await db.execute(sql`
-          SELECT id FROM customers
-          WHERE seller_id = ${userSellerId}
-            AND omie_status = 'ativo'
-            AND virtual_service = false
+          SELECT DISTINCT ac.customer_id FROM active_customers ac
+          INNER JOIN customers c ON ac.customer_id = c.id
+          WHERE c.seller_id = ${userSellerId}
+            AND ac.is_active = true
         `);
         totalCustomersInRoute = routeCustomersResult.rows.length;
-        console.log(`  👥 CLIENTES NA CARTEIRA:`, {
+        console.log(`  👥 CLIENTES NA CARTEIRA (activeCustomers):`, {
           sellerId: userSellerId,
           total: totalCustomersInRoute,
           positivados: positivatedCustomers
