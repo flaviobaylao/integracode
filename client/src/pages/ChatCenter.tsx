@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2 } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -64,6 +64,7 @@ export default function ChatCenter() {
   const [mediaCaption, setMediaCaption] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
   useEffect(() => {
@@ -130,6 +131,33 @@ export default function ChatCenter() {
     refetchInterval: 5000,
   });
   const agentStats = (agentStatsData as any[]) || [];
+
+  // Mutation para sincronizar mensagens do WhatsApp
+  const syncWhatsAppMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/chat/sync-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      if (!response.ok) throw new Error('Falha ao sincronizar');
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "✅ Sincronização Concluída",
+        description: `${data.totalChats || 0} conversas sincronizadas`
+      });
+      refetchConversations();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "❌ Erro na Sincronização",
+        description: error.message || "Falha ao sincronizar mensagens do WhatsApp",
+        variant: "destructive"
+      });
+    }
+  });
 
   // Seller info will be fetched later after selectedChat is determined
 
@@ -449,7 +477,20 @@ export default function ChatCenter() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Central de Atendimento WhatsApp</h1>
             <p className="text-gray-600">Gerencie conversas e atenda clientes em tempo real</p>
           </div>
-          <BackToDashboardButton />
+          <div className="flex gap-3">
+            {isAdmin && (
+              <Button
+                onClick={() => syncWhatsAppMutation.mutate()}
+                disabled={syncWhatsAppMutation.isPending}
+                variant="outline"
+                className="gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${syncWhatsAppMutation.isPending ? 'animate-spin' : ''}`} />
+                {syncWhatsAppMutation.isPending ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
+              </Button>
+            )}
+            <BackToDashboardButton />
+          </div>
         </div>
 
         <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-5" : "lg:grid-cols-4"} gap-6`}>

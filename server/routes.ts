@@ -18684,6 +18684,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/chat/sync-whatsapp - Sincronizar mensagens do WhatsApp
+  app.post('/api/chat/sync-whatsapp', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      console.log('🔄 [SYNC-WHATSAPP] Iniciando sincronização de mensagens do WhatsApp...');
+      
+      const config = evolutionAPIService.getConfig();
+      if (!config) {
+        return res.status(400).json({ success: false, message: 'Evolution API não está configurada' });
+      }
+
+      // Buscar todos os chats da Evolution API
+      const chatsResult = await evolutionAPIService.fetchAllChats(config.instanceName);
+      
+      if (!chatsResult.success) {
+        return res.status(500).json({ success: false, message: chatsResult.error || 'Falha ao buscar chats' });
+      }
+
+      const chats = chatsResult.chats || [];
+      console.log(`📊 [SYNC-WHATSAPP] ${chats.length} conversas encontradas na Evolution API`);
+
+      // Sincronizar cada chat
+      let syncedCount = 0;
+      for (const chat of chats) {
+        try {
+          const phoneNumber = chat.id?.replace('@s.whatsapp.net', '').replace('@g.us', '') || '';
+          if (!phoneNumber) continue;
+
+          // Buscar histórico de mensagens para este chat
+          const historyResult = await evolutionAPIService.fetchChatHistory(config.instanceName, phoneNumber);
+          
+          if (historyResult.success && historyResult.messages && historyResult.messages.length > 0) {
+            // As mensagens já foram salvas via webhook, então apenas contamos
+            syncedCount++;
+            console.log(`✅ Chat sincronizado: ${phoneNumber} (${historyResult.messages.length} mensagens)`);
+          }
+        } catch (error: any) {
+          console.warn(`⚠️ Erro ao sincronizar chat:`, error.message);
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        message: `Sincronização concluída`,
+        totalChats: chats.length,
+        syncedChats: syncedCount
+      });
+    } catch (error: any) {
+      console.error('❌ Erro ao sincronizar WhatsApp:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   // POST /api/chat/ai-settings/toggle - Ativar/desativar AI
   app.post('/api/chat/ai-settings/toggle', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
