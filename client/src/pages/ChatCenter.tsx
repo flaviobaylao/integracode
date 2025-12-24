@@ -148,14 +148,25 @@ export default function ChatCenter() {
     refetchInterval: 500,
     select: (data: Conversation[]) => {
       return [...data].sort((a, b) => {
-        // 1. Prioridade para mensagens não lidas
+        // 1. Prioridade absoluta para mensagens não lidas
         if (a.hasUnread && !b.hasUnread) return -1;
         if (!a.hasUnread && b.hasUnread) return 1;
         
         // 2. Por tempo da última mensagem (mais recente primeiro)
         const timeA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
         const timeB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
-        return timeB - timeA;
+        
+        if (timeA !== timeB) {
+           return timeB - timeA;
+        }
+        
+        // 3. Fallback para data de criação se não houver mensagens (ex: nova conversa iniciada sem mensagem ainda)
+        const createA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        
+        // Adicionando um log interno simulado via comentário para garantir unicidade do edit se necessário
+        // Ordem: Não lidas -> Última Mensagem -> Criação
+        return createB - createA;
       });
     }
   });
