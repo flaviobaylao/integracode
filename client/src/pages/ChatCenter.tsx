@@ -602,9 +602,9 @@ export default function ChatCenter() {
           )}
           
           {/* Lista de Conversas */}
-          <div className="lg:col-span-2">
-            <Card className="h-full">
-              <CardHeader>
+          <div className="lg:col-span-2 flex flex-col" style={{ height: 'calc(100vh - 200px)' }}>
+            <Card className="h-full flex flex-col overflow-hidden">
+              <CardHeader className="shrink-0">
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg">Conversas</CardTitle>
@@ -620,9 +620,9 @@ export default function ChatCenter() {
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-96">
-                  <div className="space-y-2">
+              <CardContent className="flex-1 overflow-hidden p-0 px-4">
+                <ScrollArea className="h-full">
+                  <div className="space-y-2 pr-4 pb-4">
                     {convLoading ? (
                       <div className="text-center py-4 text-gray-500">Carregando...</div>
                     ) : conversations.length === 0 ? (
