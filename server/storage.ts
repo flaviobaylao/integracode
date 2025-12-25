@@ -6906,7 +6906,8 @@ export class DatabaseStorage implements IStorage {
     console.log(`🔍 [getPhoneMappingBySource] Buscando mapeamento para: ${cleanPhone}`);
     
     try {
-      // Buscar mapeamento onde o telefone alternativo corresponde
+      // Buscar mapeamento onde o telefone alternativo corresponde EXATAMENTE
+      // (sem LIKE para evitar falsos positivos)
       const [mapping] = await db.select()
         .from(phoneNumberMappings)
         .where(
@@ -6914,8 +6915,7 @@ export class DatabaseStorage implements IStorage {
             eq(phoneNumberMappings.isActive, true),
             or(
               eq(phoneNumberMappings.alternativePhone, cleanPhone),
-              eq(phoneNumberMappings.alternativePhone, `55${cleanPhone}`),
-              sql`${phoneNumberMappings.alternativePhone} LIKE ${'%' + cleanPhone.slice(-10)}`
+              eq(phoneNumberMappings.alternativePhone, `55${cleanPhone}`)
             )
           )
         )
