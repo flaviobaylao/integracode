@@ -790,7 +790,15 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
-      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+      // Mapeamento de telefone solicitado pelo usuário
+      let targetPhone = phoneNumber;
+      if (phoneNumber === '5504884295924') {
+        targetPhone = '5562996353860';
+        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando telefone: 5504884295924 -> 5562996353860`);
+      }
+
+      const normalizedPhone = normalizePhoneNumber(targetPhone);
       const isFromMe = data.key.fromMe === true;
       const messageText = evolutionAPIService.extractMessageText(data.message) || '';
       const messageId = data.key.id;
