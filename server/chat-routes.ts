@@ -792,7 +792,6 @@ export function registerChatRoutes(app: Express): void {
       const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
 
       // Mapeamento de telefone solicitado pelo usuário
-      // Primeiro: consultar mapeamentos no banco de dados (SOMENTE correspondências exatas)
       let targetPhone = phoneNumber;
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       
@@ -801,16 +800,10 @@ export function registerChatRoutes(app: Express): void {
       if (phoneMapping) {
         targetPhone = phoneMapping.canonicalPhone;
         console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
-      } else {
-        // Fallback: mapeamentos hardcoded EXATOS do Flavio (sem endsWith para evitar falsos positivos)
-        const flavioMappings = new Set([
-          '5504884295924', '04884295924',
-          '5550575396912', '550575396912'
-        ]);
-        if (flavioMappings.has(cleanPhone)) {
-          targetPhone = '5562996353860';
-          console.log(`🔄 [WEBHOOK-MIRROR] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
-        }
+      } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
+        // Fallback: mapeamentos hardcoded EXATOS
+        targetPhone = '5562996353860';
+        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
       }
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
@@ -901,16 +894,10 @@ export function registerChatRoutes(app: Express): void {
       if (phoneMapping) {
         targetPhone = phoneMapping.canonicalPhone;
         console.log(`🔄 [WHATSAPP-SEND] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
-      } else {
-        // Fallback: mapeamentos hardcoded EXATOS do Flavio (sem endsWith)
-        const flavioMappings = new Set([
-          '5504884295924', '04884295924',
-          '5550575396912', '550575396912'
-        ]);
-        if (flavioMappings.has(cleanPhone)) {
-          targetPhone = '5562996353860';
-          console.log(`🔄 [WHATSAPP-SEND] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
-        }
+      } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
+        // Fallback: mapeamentos hardcoded EXATOS
+        targetPhone = '5562996353860';
+        console.log(`🔄 [WHATSAPP-SEND] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
       }
       
       const normalizedPhone = normalizePhoneNumber(targetPhone);
