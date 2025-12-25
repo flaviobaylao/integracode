@@ -878,7 +878,13 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // Normalizar telefone com MESMA função do webhook
-      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+      let targetPhone = phoneNumber;
+      if (phoneNumber === '5504884295924') {
+        targetPhone = '5562996353860';
+        console.log(`🔄 [WHATSAPP-SEND] Remapeando telefone: 5504884295924 -> 5562996353860`);
+      }
+      
+      const normalizedPhone = normalizePhoneNumber(targetPhone);
       console.log(`📨 [WHATSAPP-SEND] Enviando para: ${phoneNumber} -> ${normalizedPhone}`);
 
       // Get Evolution API config
