@@ -377,6 +377,9 @@ export interface IStorage {
   updateChatConversation(id: string, conversation: Partial<InsertChatConversation>): Promise<ChatConversation>;
   upsertChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
   
+  // Phone Mapping operations
+  getPhoneMappingBySource(sourcePhone: string): Promise<{ canonicalPhone: string; alternativePhone: string } | undefined>;
+  
   // Chat Messages operations
   getChatMessages(conversationId: string): Promise<ChatMessage[]>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
@@ -6895,6 +6898,43 @@ export class DatabaseStorage implements IStorage {
       .limit(1);
     
     return messages[0]?.createdAt || null;
+  }
+
+  async getPhoneMappingBySource(sourcePhone: string): Promise<{ canonicalPhone: string; alternativePhone: string } | undefined> {
+    // Normalizar o telefone de origem
+    const cleanPhone = sourcePhone.replace(/\D/g, '');
+    console.log(`🔍 [getPhoneMappingBySource] Buscando mapeamento para: ${cleanPhone}`);
+    
+    try {
+      // Buscar mapeamento onde o telefone alternativo corresponde
+      const [mapping] = await db.select()
+        .from(phoneNumberMappings)
+        .where(
+          and(
+            eq(phoneNumberMappings.isActive, true),
+            or(
+              eq(phoneNumberMappings.alternativePhone, cleanPhone),
+              eq(phoneNumberMappings.alternativePhone, `55${cleanPhone}`),
+              sql`${phoneNumberMappings.alternativePhone} LIKE ${'%' + cleanPhone.slice(-10)}`
+            )
+          )
+        )
+        .limit(1);
+      
+      if (mapping) {
+        console.log(`✅ [getPhoneMappingBySource] Mapeamento encontrado: ${cleanPhone} -> ${mapping.canonicalPhone}`);
+        return { 
+          canonicalPhone: mapping.canonicalPhone, 
+          alternativePhone: mapping.alternativePhone 
+        };
+      }
+      
+      console.log(`❌ [getPhoneMappingBySource] Nenhum mapeamento encontrado para: ${cleanPhone}`);
+      return undefined;
+    } catch (err) {
+      console.error(`⚠️ [getPhoneMappingBySource] Erro ao buscar mapeamento:`, err);
+      return undefined;
+    }
   }
 }
 
