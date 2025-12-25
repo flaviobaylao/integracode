@@ -620,9 +620,9 @@ export default function ChatCenter() {
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="flex-1 overflow-hidden p-0 px-4">
-                <ScrollArea className="h-full">
-                  <div className="space-y-2 pr-4 pb-4">
+              <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                <div className="h-full overflow-y-auto pr-2">
+                  <div className="space-y-2">
                     {convLoading ? (
                       <div className="text-center py-4 text-gray-500">Carregando...</div>
                     ) : conversations.length === 0 ? (
@@ -671,7 +671,7 @@ export default function ChatCenter() {
                       </div>
                     )}
                   </div>
-                </ScrollArea>
+                </div>
               </CardContent>
             </Card>
           </div>
