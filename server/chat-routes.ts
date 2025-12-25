@@ -751,22 +751,21 @@ export function registerChatRoutes(app: Express): void {
   // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
-    console.log(`\n🔔🔔🔔 [WEBHOOK-ENTRY] ====================================`);
-    console.log(`🔔 [WEBHOOK-ENTRY] POST recebido em /api/chat/webhook/messages`);
-    console.log(`🔔 [WEBHOOK-ENTRY] Timestamp: ${new Date().toISOString()}`);
-    console.log(`🔔🔔🔔 [WEBHOOK-ENTRY] ====================================\n`);
     try {
       let { event, instance, data } = req.body;
       
-      // Debug: Log COMPLETO para diagnóstico
-      console.log(`\n📬 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`📬 [WEBHOOK-MIRROR] Evento: ${event} | Instância: ${instance}`);
-      
-      // Suportar múltiplos formatos de webhook
+      // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
       if (!event && req.body.webhook?.event) {
         event = req.body.webhook.event;
         instance = req.body.webhook.instance;
         data = req.body.webhook.data;
+      }
+      
+      if (!event) {
+        if (req.body.key && req.body.message) {
+          event = 'messages.upsert';
+          data = req.body;
+        }
       }
       
       const messageEvents = [
@@ -794,6 +793,7 @@ export function registerChatRoutes(app: Express): void {
       const normalizedPhone = normalizePhoneNumber(phoneNumber);
       const isFromMe = data.key.fromMe === true;
       const messageText = evolutionAPIService.extractMessageText(data.message) || '';
+      const messageId = data.key.id;
       
       console.log(`📱 [WEBHOOK-MIRROR] Processando: ${normalizedPhone} | FromMe: ${isFromMe} | Texto: ${messageText.substring(0, 50)}`);
 
@@ -818,28 +818,37 @@ export function registerChatRoutes(app: Express): void {
         });
       }
 
-      // 2. Salvar Mensagem
+      // 2. Verificar duplicidade (externalId)
+      const existingMessages = await storage.getChatMessages(conversation.id);
+      const isDuplicate = existingMessages.some(m => m.externalId === messageId);
+      
+      if (isDuplicate) {
+        console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem duplicada ignorada: ${messageId}`);
+        return res.json({ success: true, duplicate: true });
+      }
+
+      // 3. Salvar Mensagem
       await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : customer.id,
         senderType: isFromMe ? 'system' : 'customer',
-        content: messageText,
+        content: messageText || '[Mídia/Outro]',
         messageType: 'text',
-        externalId: data.key.id
+        externalId: messageId
       });
 
-      // 3. Atualizar Conversa
+      // 4. Atualizar Conversa
       await storage.updateChatConversation(conversation.id, {
         updatedAt: new Date(),
-        lastMessage: messageText,
+        lastMessage: messageText || '[Mídia/Outro]',
         status: isFromMe ? conversation.status : 'new'
       });
 
-      console.log(`✅ [WEBHOOK-MIRROR] Sucesso: ${normalizedPhone}`);
+      console.log(`✅ [WEBHOOK-MIRROR] Sucesso total: ${normalizedPhone}`);
       res.json({ success: true });
     } catch (error: any) {
-      console.error("❌ [WEBHOOK-MIRROR] Erro:", error.message);
-      res.status(500).json({ error: error.message });
+      console.error("❌ [WEBHOOK-MIRROR] Erro Crítico:", error.message);
+      res.status(200).json({ error: error.message });
     }
   });
 
