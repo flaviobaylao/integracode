@@ -793,9 +793,8 @@ export function registerChatRoutes(app: Express): void {
 
       // Mapeamento de telefone solicitado pelo usuário
       let targetPhone = phoneNumber;
-      // Normalizar para comparação (remover +, espaços, etc se necessário, mas Evolution API geralmente manda limpo)
       const cleanPhone = phoneNumber.replace(/\D/g, '');
-      if (cleanPhone === '5504884295924') {
+      if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
         targetPhone = '5562996353860';
         console.log(`🔄 [WEBHOOK-MIRROR] Remapeando telefone: ${phoneNumber} -> 5562996353860`);
       }
@@ -882,7 +881,7 @@ export function registerChatRoutes(app: Express): void {
       // Normalizar telefone com MESMA função do webhook
       let targetPhone = phoneNumber;
       const cleanPhone = phoneNumber.replace(/\D/g, '');
-      if (cleanPhone === '5504884295924') {
+      if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
         targetPhone = '5562996353860';
         console.log(`🔄 [WHATSAPP-SEND] Remapeando telefone: ${phoneNumber} -> 5562996353860`);
       }
@@ -2612,6 +2611,95 @@ export function registerChatRoutes(app: Express): void {
         error: error.message || "Erro ao sincronizar contatos", 
         success: false 
       });
+    }
+  });
+
+  // Mutation para sincronizar mensagens do WhatsApp
+  app.post("/api/chat/sync-whatsapp", authenticateUser, async (req, res) => {
+    try {
+      console.log(`🔄 [SYNC-WHATSAPP] Iniciando sincronização solicitada por: ${(req as any).user?.email}`);
+      
+      const config = evolutionAPIService.getConfig();
+      if (!config || !config.instanceName) {
+        return res.status(400).json({ error: "WhatsApp não está configurado" });
+      }
+
+      // 1. Corrigir banco de dados imediatamente (Migração de dados históricos do número errado para o correto)
+      await db.execute(sql`
+        DO $$ 
+        BEGIN
+            -- Garante que o cliente correto existe
+            IF NOT EXISTS (SELECT 1 FROM chat_customers WHERE phone = '5562996353860') THEN
+                INSERT INTO chat_customers (id, phone, name)
+                VALUES (gen_random_uuid(), '5562996353860', 'Honest');
+            END IF;
+
+            -- Migra conversas vinculadas ao número antigo
+            UPDATE chat_conversations 
+            SET customer_phone = '5562996353860',
+                customer_id = (SELECT id FROM chat_customers WHERE phone = '5562996353860')
+            WHERE customer_phone = '5504884295924' OR customer_phone = '04884295924';
+
+            -- Migra mensagens do cliente antigo
+            UPDATE chat_messages 
+            SET sender_id = (SELECT id FROM chat_customers WHERE phone = '5562996353860') 
+            WHERE sender_id IN (SELECT id FROM chat_customers WHERE phone = '5504884295924' OR phone = '04884295924') 
+            AND sender_type = 'customer';
+
+            -- Remove o registro do cliente com número incorreto
+            DELETE FROM chat_customers WHERE phone = '5504884295924' OR phone = '04884295924';
+        END $$;
+      `);
+
+      // 2. Buscar histórico da API externa para o número correto
+      const targetPhone = '5562996353860';
+      const history = await evolutionAPIService.fetchChatHistory(config.instanceName, targetPhone);
+      
+      if (history.success && history.messages) {
+        // Garantir cliente e conversa para o sync
+        let customer = await storage.getChatCustomerByPhone(targetPhone);
+        if (!customer) {
+          customer = await storage.createChatCustomer({ phone: targetPhone, name: 'Honest' });
+        }
+        
+        const conversation = await storage.upsertChatConversation({
+          customerId: customer.id,
+          customerName: customer.name || 'Honest',
+          customerPhone: targetPhone,
+          status: 'new',
+          priority: 'normal'
+        });
+
+        // Importar mensagens faltantes
+        const existingMessages = await storage.getChatMessages(conversation.id);
+        const existingIds = new Set(existingMessages.map(m => m.externalId));
+
+        let importedCount = 0;
+        for (const msg of history.messages) {
+          const messageId = msg.key?.id;
+          if (messageId && !existingIds.has(messageId)) {
+            const isFromMe = msg.key?.fromMe === true;
+            const text = evolutionAPIService.extractMessageText(msg.message) || '';
+            
+            await storage.createChatMessage({
+              conversationId: conversation.id,
+              senderId: isFromMe ? 'system' : customer.id,
+              senderType: isFromMe ? 'system' : 'customer',
+              content: text || '[Mídia/Histórico]',
+              messageType: 'text',
+              externalId: messageId,
+              createdAt: msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : new Date()
+            });
+            importedCount++;
+          }
+        }
+        console.log(`✅ [SYNC-WHATSAPP] Importadas ${importedCount} novas mensagens para ${targetPhone}`);
+      }
+      
+      res.json({ success: true, message: "Sincronização concluída e histórico corrigido", totalChats: history.messages?.length || 0 });
+    } catch (error: any) {
+      console.error("❌ [SYNC-WHATSAPP] Erro crítico:", error.message);
+      res.status(500).json({ error: "Erro ao sincronizar histórico: " + error.message });
     }
   });
 
