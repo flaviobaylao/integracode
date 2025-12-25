@@ -793,9 +793,11 @@ export function registerChatRoutes(app: Express): void {
 
       // Mapeamento de telefone solicitado pelo usuário
       let targetPhone = phoneNumber;
-      if (phoneNumber === '5504884295924') {
+      // Normalizar para comparação (remover +, espaços, etc se necessário, mas Evolution API geralmente manda limpo)
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      if (cleanPhone === '5504884295924') {
         targetPhone = '5562996353860';
-        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando telefone: 5504884295924 -> 5562996353860`);
+        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando telefone: ${phoneNumber} -> 5562996353860`);
       }
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
@@ -879,9 +881,10 @@ export function registerChatRoutes(app: Express): void {
 
       // Normalizar telefone com MESMA função do webhook
       let targetPhone = phoneNumber;
-      if (phoneNumber === '5504884295924') {
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      if (cleanPhone === '5504884295924') {
         targetPhone = '5562996353860';
-        console.log(`🔄 [WHATSAPP-SEND] Remapeando telefone: 5504884295924 -> 5562996353860`);
+        console.log(`🔄 [WHATSAPP-SEND] Remapeando telefone: ${phoneNumber} -> 5562996353860`);
       }
       
       const normalizedPhone = normalizePhoneNumber(targetPhone);
