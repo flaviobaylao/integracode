@@ -795,9 +795,12 @@ export function registerChatRoutes(app: Express): void {
       let targetPhone = phoneNumber;
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       
+      // Bloquear o número de gateway 5550575396912 de ser mapeado para o Flávio
+      const blockedGateway = '5550575396912';
+      
       // Buscar mapeamento no banco de dados (correspondência exata apenas)
       const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
-      if (phoneMapping) {
+      if (phoneMapping && cleanPhone !== blockedGateway && normalizePhoneNumber(cleanPhone) !== blockedGateway) {
         targetPhone = phoneMapping.canonicalPhone;
         console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
       } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
@@ -889,9 +892,12 @@ export function registerChatRoutes(app: Express): void {
       let targetPhone = phoneNumber;
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       
+      // Bloquear o número de gateway de ser remapeado
+      const blockedGateway = '5550575396912';
+      
       // Buscar mapeamento no banco de dados (correspondência exata apenas)
       const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
-      if (phoneMapping) {
+      if (phoneMapping && cleanPhone !== blockedGateway && normalizePhoneNumber(cleanPhone) !== blockedGateway) {
         targetPhone = phoneMapping.canonicalPhone;
         console.log(`🔄 [WHATSAPP-SEND] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
       } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
