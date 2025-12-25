@@ -247,11 +247,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('✅ Evolution API configurada com sucesso para WhatsApp');
 
     // Configure webhook for receiving messages
-    // In development mode, use REPLIT_DEV_DOMAIN because external traffic to REPLIT_DOMAINS 
-    // goes to the Autoscale deployment, not the dev server
+    // Environment detection:
+    // - Development (workspace): use REPLIT_DEV_DOMAIN (external webhooks reach dev server)
+    // - Production (Autoscale): use REPLIT_DOMAIN (singular) or REPLIT_DOMAINS (plural)
     const isDevelopment = process.env.NODE_ENV === 'development';
     const devDomain = process.env.REPLIT_DEV_DOMAIN;
-    const prodDomain = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '');
+    // Autoscale uses REPLIT_DOMAIN (singular), fallback to REPLIT_DOMAINS (plural)
+    const prodDomainSingular = process.env.REPLIT_DOMAIN?.replace('https://', '').replace('http://', '');
+    const prodDomainPlural = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '').replace('http://', '');
+    const prodDomain = prodDomainSingular || prodDomainPlural;
+    
+    console.log('🔍 [WEBHOOK-ENV] NODE_ENV:', process.env.NODE_ENV);
+    console.log('🔍 [WEBHOOK-ENV] REPLIT_DEV_DOMAIN:', devDomain || 'não definido');
+    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAIN (singular):', prodDomainSingular || 'não definido');
+    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAINS (plural):', prodDomainPlural || 'não definido');
     
     let webhookUrl: string;
     if (isDevelopment && devDomain) {
@@ -259,13 +268,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
       console.log('🔧 [WEBHOOK] Modo desenvolvimento - usando REPLIT_DEV_DOMAIN');
     } else if (prodDomain) {
-      // Production: use the production domain
+      // Production: use the production domain (Autoscale)
       webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
-      console.log('🔧 [WEBHOOK] Modo produção - usando REPLIT_DOMAINS');
+      console.log('🔧 [WEBHOOK] Modo produção - usando', prodDomainSingular ? 'REPLIT_DOMAIN' : 'REPLIT_DOMAINS');
     } else {
       // Fallback to localhost
       webhookUrl = 'http://localhost:5000/api/chat/webhook/messages';
-      console.log('🔧 [WEBHOOK] Fallback - usando localhost');
+      console.log('🔧 [WEBHOOK] Fallback - usando localhost (nenhum domínio Replit encontrado)');
     }
     console.log('🔧 [WEBHOOK] URL configurada:', webhookUrl);
 
