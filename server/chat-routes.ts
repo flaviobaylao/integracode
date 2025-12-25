@@ -280,12 +280,12 @@ export function registerChatRoutes(app: Express): void {
   // CHAT CONVERSATIONS CRUD
   // ============================================================
 
-  // Get all conversations - REMOVIDO: use o endpoint sem autenticação na linha 860
-  /*
-  app.get("/api/chat/conversations", authenticateUser, async (req, res) => {
+  // Get all conversations
+  app.get("/api/chat/conversations", async (req, res) => {
     try {
       const { status, agentId } = req.query;
       
+      console.log('🔍 [GET-CONVERSATIONS] Buscando conversas...', { status, agentId });
       let conversations = await storage.getChatConversations();
       
       // Filter on the server side
@@ -296,17 +296,16 @@ export function registerChatRoutes(app: Express): void {
         conversations = conversations.filter(c => c.agentId === agentId);
       }
       
+      console.log(`✅ [GET-CONVERSATIONS] Retornando ${conversations.length} conversas`);
       res.json(conversations);
     } catch (error) {
       console.error("[CHAT] Get conversations error:", error);
       res.status(500).json({ error: "Erro ao buscar conversas" });
     }
   });
-  */
 
-  // Create conversation - comentado em favor do endpoint sem autenticação
-  /*
-  app.post("/api/chat/conversations", authenticateUser, async (req, res) => {
+  // Create conversation
+  app.post("/api/chat/conversations", async (req, res) => {
     try {
       const validatedData = insertChatConversationSchema.parse(req.body);
       const conversation = await storage.createChatConversation(validatedData);
@@ -319,7 +318,6 @@ export function registerChatRoutes(app: Express): void {
       res.status(500).json({ error: "Erro ao criar conversa" });
     }
   });
-  */
 
   // Start new conversation (initiate message to customer)
   app.post("/api/chat/conversations/start", authenticateUser, async (req, res) => {
@@ -763,17 +761,14 @@ export function registerChatRoutes(app: Express): void {
       // Debug: Log COMPLETO para diagnóstico
       console.log(`\n📬 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(`📬 [WEBHOOK-MIRROR] Evento: ${event} | Instância: ${instance}`);
-      console.log(`📬 [WEBHOOK-MIRROR] Payload:`, JSON.stringify(req.body, null, 2).substring(0, 800));
       
-      // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
+      // Suportar múltiplos formatos de webhook
       if (!event && req.body.webhook?.event) {
         event = req.body.webhook.event;
         instance = req.body.webhook.instance;
         data = req.body.webhook.data;
-        console.log(`📬 [WEBHOOK-MIRROR] Detectado formato aninhado: evento=${event}`);
       }
       
-      // Aceitar múltiplos tipos de eventos de mensagem
       const messageEvents = [
         'messages.upsert', 'MESSAGES_UPSERT',
         'send.message', 'SEND_MESSAGE', 
@@ -782,284 +777,75 @@ export function registerChatRoutes(app: Express): void {
         'messages.edited', 'MESSAGES_EDITED'
       ];
       
-      if (!event) {
-        console.warn(`⚠️  [WEBHOOK-MIRROR] Evento não identificado no payload`);
-        console.log(`📬 [WEBHOOK-MIRROR] Keys no body:`, Object.keys(req.body));
-        return res.json({ received: false, reason: 'Evento não identificado' });
-      }
-      
-      if (!messageEvents.includes(event)) {
-        console.log(`⏭️  [WEBHOOK-MIRROR] Evento não é de mensagem: ${event}`);
-        return res.json({ received: false, reason: `Evento ${event} não é de mensagem` });
+      if (!event || !messageEvents.includes(event)) {
+        return res.json({ received: false, reason: 'Evento ignorado' });
       }
 
       if (!data || !data.key) {
-        console.warn(`⚠️  [WEBHOOK-MIRROR] Dados inválidos recebidos`);
-        console.log(`📬 [WEBHOOK-MIRROR] data exist: ${!!data}, key exist: ${data?.key ? 'sim' : 'não'}`);
         return res.json({ received: false, reason: 'Dados inválidos' });
       }
 
-      // Extrair informações da mensagem
       const rawRemoteJid = data.key.remoteJid;
-      console.log(`🔍🔍🔍 [PHONE-DEBUG-CRITICAL] RemoteJid RAW EXATO: "${rawRemoteJid}"`);
-      console.log(`🔍 [PHONE-DEBUG] RemoteJid tipo: ${typeof rawRemoteJid}, length: ${String(rawRemoteJid).length}`);
-      console.log(`🔍 [PHONE-DEBUG] RemoteJid completo JSON: ${JSON.stringify(data.key)}`);  
-      
-      const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
-      console.log(`🔍 [PHONE-DEBUG] PhoneNumber após extract: ${phoneNumber} (length: ${phoneNumber.length})`);
-      
-      const messageText = evolutionAPIService.extractMessageText(data.message);
-      const isFromMe = data.key.fromMe === true; // Mensagem enviada PELO número WhatsApp (celular ou sistema)
-      const messageId = data.key.id;
-      const timestamp = data.messageTimestamp || Math.floor(Date.now() / 1000);
-      const pushName = data.pushName || '';
-
-      console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`📱 [WEBHOOK-MIRROR] RemoteJid RAW: ${rawRemoteJid}`);
-      console.log(`📱 [WEBHOOK-MIRROR] PhoneNumber após extract: ${phoneNumber}`);
-      console.log(`📱 [WEBHOOK-MIRROR] IsFromMe: ${isFromMe}`);
-      console.log(`📱 [WEBHOOK-MIRROR] Direção: ${isFromMe ? '📤 ENVIADA (celular/sistema)' : '📥 RECEBIDA (cliente)'}`);
-      console.log(`📱 [WEBHOOK-MIRROR] Texto: ${messageText?.substring(0, 100) || '(sem texto)'}`);
-      console.log(`📱 [WEBHOOK-MIRROR] MessageId: ${messageId}`);
-      console.log(`📱 [WEBHOOK-MIRROR] PushName: ${pushName}`);
-      console.log(`📱 [WEBHOOK-MIRROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-      // 🪞 ESPELHO COMPLETO: Processar TODAS as mensagens (enviadas E recebidas)
-      // Inclui mensagens de texto, mídia, voz, stickers, etc.
-      if (phoneNumber) {
-        try {
-          // Normalizar telefone
-          console.log(`📞 [NORMALIZE-START] Input para normalização: ${phoneNumber} (length: ${phoneNumber.length})`);
-          let normalizedPhone = normalizePhoneNumber(phoneNumber);
-          console.log(`📞 [NORMALIZE-END] Telefone normalizado: ${normalizedPhone} (length: ${normalizedPhone.length})`);
-
-          // 🔴 CORREÇÃO CRÍTICA: Buscar conversa DIRETAMENTE pelo telefone normalizado
-          // Isso resolve o problema de mensagens que não aparecem por erro na busca de cliente
-          let matchingConv = await storage.getChatConversationByPhone(normalizedPhone);
-          let customer = null;
-
-          if (matchingConv) {
-            customer = await storage.getChatCustomer(matchingConv.customerId);
-          }
-          
-          if (!customer) {
-            customer = await storage.getChatCustomerByPhone(normalizedPhone);
-          }
-          
-          if (!customer) {
-            // ⚠️ Cliente não encontrado pelo normalizedPhone
-            // Tentar variantes (com/sem 9)
-            const phoneVariants = getPhoneVariants(normalizedPhone);
-            for (const variant of phoneVariants) {
-              if (variant !== normalizedPhone) {
-                console.log(`📞 [WEBHOOK-MIRROR] Tentando variante: ${variant}`);
-                customer = await storage.getChatCustomerByPhone(variant);
-                if (customer) {
-                  console.log(`✅ [WEBHOOK-MIRROR] Cliente encontrado com variante! ${variant}`);
-                  normalizedPhone = variant; // Usar a variante encontrada
-                  break;
-                }
-              }
-            }
-            
-            if (!customer && !isFromMe) {
-              console.log(`⚠️  [WEBHOOK-MIRROR] Cliente ${normalizedPhone} não encontrado. Procurando conversa ativa com nossas mensagens...`);
-              try {
-                const allConversations = await storage.getChatConversations();
-                // Ordenar por mais recente (updated)
-                const sortedConvs = allConversations.sort((a: any, b: any) => 
-                  new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                );
-                
-                console.log(`📋 [WEBHOOK-MIRROR] Buscando entre ${sortedConvs.length} conversas...`);
-                
-                // Usar a conversa MAIS RECENTE onde enviamos mensagens
-                // Também verificar se o telefone é uma variante similar
-                for (const conv of sortedConvs) {
-                  const convPhone = conv.customerPhone;
-                  const convPhoneVariants = getPhoneVariants(convPhone);
-                  
-                  // Verificar se normalizedPhone é uma variante do telefone da conversa
-                  if (convPhoneVariants.includes(normalizedPhone)) {
-                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${convPhone} <- Variante: ${normalizedPhone}`);
-                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento fuzzy: ${normalizedPhone} → ${convPhone} (mesma pessoa)`);
-                    matchingConv = conv;
-                    customer = await storage.getChatCustomer(conv.customerId);
-                    normalizedPhone = convPhone; // Usar o número original da conversa
-                    break; // SEMPRE usar a primeira encontrada (mais recente)
-                  }
-                  
-                  const convMessages = await storage.getChatMessages(conv.id);
-                  const hasOurMessage = convMessages.some((m: any) => m.senderType === 'agent');
-                  
-                  if (hasOurMessage) {
-                    console.log(`✅ [WEBHOOK-MIRROR] REUTILIZANDO CONVERSA! ${convPhone} -> Novo número: ${normalizedPhone}`);
-                    console.log(`📞 [WEBHOOK-MIRROR] Mapeamento: ${normalizedPhone} → ${convPhone}`);
-                    matchingConv = conv;
-                    customer = await storage.getChatCustomer(conv.customerId);
-                    normalizedPhone = convPhone; // Usar o número original da conversa
-                    break; // SEMPRE usar a primeira encontrada (mais recente)
-                  }
-                }
-              } catch (err) {
-                console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao procurar conversa ativa:`, err);
-              }
-            }
-            
-            // Se ainda não encontrou conversa, criar novo cliente
-            if (!matchingConv) {
-              const customerName = !isFromMe && pushName ? pushName : `Cliente ${normalizedPhone}`;
-              console.log(`👤 [WEBHOOK-MIRROR] Criando novo cliente: phone=${normalizedPhone}, name=${customerName}`);
-              try {
-                customer = await storage.createChatCustomer({
-                  phone: normalizedPhone,
-                  name: customerName
-                });
-                console.log(`✅ [WEBHOOK-MIRROR] Cliente criado: ${customer.id} - ${customerName}`);
-              } catch (createError: any) {
-                console.error(`❌ [WEBHOOK-MIRROR] ERRO ao criar cliente:`, createError.message);
-                throw createError;
-              }
-            }
-          } else if (!isFromMe && pushName && customer.name?.startsWith('Cliente ')) {
-            // Atualizar nome do cliente se recebemos pushName e o nome atual é genérico
-            await storage.updateChatCustomer(customer.id, { name: pushName });
-            console.log(`✅ [WEBHOOK-MIRROR] Nome do cliente atualizado: ${pushName}`);
-          }
-
-          // Buscar ou criar conversa (com UPSERT para evitar duplicatas)
-          if (!matchingConv) {
-            console.log(`💭 [WEBHOOK-MIRROR] Criando conversa para cliente ${customer!.id}...`);
-            try {
-              matchingConv = await storage.upsertChatConversation({
-                customerId: customer!.id,
-                customerName: customer!.name || `Cliente ${normalizedPhone}`,
-                customerPhone: normalizedPhone,
-                status: 'new' as const,
-                priority: 'normal' as const
-              });
-              console.log(`✅ [WEBHOOK-MIRROR] Conversa criada/atualizada: ${matchingConv.id}`);
-            } catch (convError: any) {
-              console.error(`❌ [WEBHOOK-MIRROR] ERRO ao criar/atualizar conversa:`, convError.message);
-              throw convError;
-            }
-          } else {
-            console.log(`✅ [WEBHOOK-MIRROR] Conversa reutilizada: ${matchingConv.id}`);
-          }
-
-          // Determinar tipo de mensagem e conteúdo
-          let finalContent = messageText || '';
-          let finalMessageType: 'text' | 'image' | 'audio' | 'video' | 'document' | 'location' = 'text';
-          let mediaUrl: string | undefined;
-          
-          // Detectar tipo de mídia a partir do payload
-          const msgData = data.message || {};
-          if (msgData.imageMessage) {
-            finalMessageType = 'image';
-            finalContent = msgData.imageMessage.caption || '[Imagem]';
-            mediaUrl = msgData.imageMessage.url;
-          } else if (msgData.audioMessage || msgData.ptt) {
-            finalMessageType = 'audio';
-            finalContent = '[Áudio]';
-          } else if (msgData.videoMessage) {
-            finalMessageType = 'video';
-            finalContent = msgData.videoMessage.caption || '[Vídeo]';
-            mediaUrl = msgData.videoMessage.url;
-          } else if (msgData.documentMessage) {
-            finalMessageType = 'document';
-            finalContent = msgData.documentMessage.fileName || '[Documento]';
-            mediaUrl = msgData.documentMessage.url;
-          } else if (msgData.stickerMessage) {
-            finalContent = '[Sticker]';
-          } else if (msgData.locationMessage) {
-            finalMessageType = 'location';
-            finalContent = `[Localização: ${msgData.locationMessage.degreesLatitude}, ${msgData.locationMessage.degreesLongitude}]`;
-          } else if (!finalContent) {
-            finalContent = '[Mensagem sem texto]';
-          }
-
-          // Verificar se mensagem já existe (evitar duplicatas por externalId)
-          const existingMessages = await storage.getChatMessages(matchingConv.id);
-          const isDuplicate = existingMessages.some((m: any) => 
-            m.externalId === messageId || 
-            (m.content === finalContent && Math.abs((m.createdAt?.getTime() || 0) - timestamp * 1000) < 3000)
-          );
-
-          if (isDuplicate) {
-            console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem duplicada ignorada: ${messageId}`);
-          } else {
-            // Salvar mensagem com identificação correta do remetente
-            // isFromMe = true: mensagem enviada pelo nosso número (via celular ou sistema)
-            // isFromMe = false: mensagem recebida do cliente
-            console.log(`📝 [WEBHOOK-MIRROR] Salvando mensagem: tipo=${finalMessageType}, conteúdo=${finalContent?.substring(0, 50)}`);
-            try {
-              // 🔴 CORREÇÃO CRÍTICA: Buscar conversa pelo telefone normalizado primeiro
-              // para garantir que estamos salvando na conversa correta
-              let currentMatchingConv = matchingConv;
-              if (!currentMatchingConv) {
-                currentMatchingConv = await storage.upsertChatConversation({
-                  customerId: customer!.id,
-                  customerName: customer!.name || `Cliente ${normalizedPhone}`,
-                  customerPhone: normalizedPhone,
-                  status: 'new' as const,
-                  priority: 'normal' as const
-                });
-              }
-
-              const message = await storage.createChatMessage({
-                conversationId: currentMatchingConv.id,
-                senderId: isFromMe ? 'system' : customer.id,
-                senderType: isFromMe ? 'agent' : 'customer',
-                content: finalContent,
-                messageType: finalMessageType,
-                mediaUrl: mediaUrl,
-                isRead: isFromMe, // Mensagens enviadas por nós já são "lidas"
-                externalId: messageId // Guardar ID externo para evitar duplicatas
-              });
-              console.log(`💬 [WEBHOOK-MIRROR] ✅ Mensagem salva: ${message.id} | Conv: ${currentMatchingConv.id} | Tipo: ${finalMessageType} | Direção: ${isFromMe ? 'ENVIADA' : 'RECEBIDA'}`);
-              
-              // 🟢 Incrementar contador de unread APENAS para mensagens recebidas
-              if (!isFromMe) {
-                try {
-                  await storage.incrementUnreadCount(currentMatchingConv.id);
-                  console.log(`📬 [WEBHOOK-MIRROR] Contador de unread incrementado para conversa ${currentMatchingConv.id}`);
-                } catch (err) {
-                  console.warn(`⚠️  [WEBHOOK-MIRROR] Erro ao incrementar unreadCount:`, err);
-                }
-              }
-            } catch (msgError: any) {
-              console.error(`❌ [WEBHOOK-MIRROR] ERRO ao salvar mensagem:`, msgError.message);
-              console.error(`❌ [WEBHOOK-MIRROR] Stack completo:`, msgError.stack);
-              throw msgError;
-            }
-          }
-
-          console.log(`✅ [WEBHOOK-MIRROR] Processamento concluído com sucesso`);
-        } catch (processError: any) {
-          console.error(`❌ [WEBHOOK-MIRROR] Erro ao processar mensagem:`, processError.message);
-          console.error(`❌ [WEBHOOK-MIRROR] Stack:`, processError.stack);
-          // Não falhar o webhook - sempre retornar 200
-        }
-      } else {
-        console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem sem telefone ignorada`);
+      if (rawRemoteJid.includes('@g.us')) {
+        return res.json({ received: false, reason: 'Grupo ignorado' });
       }
 
-      // Sempre retornar 200 OK para Evolution API não retentar
-      res.status(200).json({ 
-        success: true, 
-        received: true,
-        messageId: messageId,
-        processed: !!(phoneNumber && messageText)
+      const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
+      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+      const isFromMe = data.key.fromMe === true;
+      const messageText = evolutionAPIService.extractMessageText(data.message) || '';
+      
+      console.log(`📱 [WEBHOOK-MIRROR] Processando: ${normalizedPhone} | FromMe: ${isFromMe} | Texto: ${messageText.substring(0, 50)}`);
+
+      // 1. Garantir Cliente e Conversa
+      let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+      let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+
+      if (!customer) {
+        customer = await storage.createChatCustomer({
+          phone: normalizedPhone,
+          name: data.pushName || `Cliente ${normalizedPhone}`
+        });
+      }
+
+      if (!conversation) {
+        conversation = await storage.createChatConversation({
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPhone: normalizedPhone,
+          status: 'new',
+          priority: 'normal'
+        });
+      }
+
+      // 2. Salvar Mensagem
+      await storage.createChatMessage({
+        conversationId: conversation.id,
+        senderId: isFromMe ? 'system' : customer.id,
+        senderType: isFromMe ? 'system' : 'customer',
+        content: messageText,
+        messageType: 'text',
+        externalId: data.key.id
       });
+
+      // 3. Atualizar Conversa
+      await storage.updateChatConversation(conversation.id, {
+        updatedAt: new Date(),
+        lastMessage: messageText,
+        status: isFromMe ? conversation.status : 'new'
+      });
+
+      console.log(`✅ [WEBHOOK-MIRROR] Sucesso: ${normalizedPhone}`);
+      res.json({ success: true });
     } catch (error: any) {
-      console.error(`❌ [WEBHOOK-MIRROR] Erro no webhook:`, error);
-      // Sempre retornar 200 para não retentar
-      res.status(200).json({ 
-        success: false, 
-        error: error.message 
-      });
+      console.error("❌ [WEBHOOK-MIRROR] Erro:", error.message);
+      res.status(500).json({ error: error.message });
     }
   });
+
+  // ============================================================
+  // SDR DIGITAL ROUTES
+  // ============================================================
 
   // Send WhatsApp message via Evolution API
   app.post("/api/chat/send-message", authenticateUser, async (req, res) => {
