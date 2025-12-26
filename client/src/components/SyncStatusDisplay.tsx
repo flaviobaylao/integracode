@@ -1,7 +1,8 @@
 import { useQuery } from "@/lib/queryClient";
-import { Clock } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { Progress } from "@/components/ui/progress";
 
 interface SyncStatus {
   id: string;
@@ -10,6 +11,9 @@ interface SyncStatus {
   status: 'success' | 'error' | 'in_progress';
   message?: string;
   recordsProcessed?: number;
+  totalRecords?: number;
+  currentProgress?: number;
+  lastFinishedAt?: string;
 }
 
 interface SyncStatusDisplayProps {
@@ -20,10 +24,15 @@ interface SyncStatusDisplayProps {
 export function SyncStatusDisplay({ syncType = 'omie_complete', compact = false }: SyncStatusDisplayProps) {
   const { data: statuses, isLoading } = useQuery<SyncStatus[]>({
     queryKey: ['/api/sync-status'],
-    refetchInterval: 30000, // Atualiza a cada 30 segundos
+    refetchInterval: (query) => {
+      // Atualiza mais rápido quando há sincronização em progresso
+      const data = query.state.data as SyncStatus[] | undefined;
+      const hasInProgress = data?.some((s: SyncStatus) => s.status === 'in_progress');
+      return hasInProgress ? 2000 : 30000; // 2s em progresso, 30s normal
+    },
   });
 
-  const syncStatus = statuses?.find(s => s.syncType === syncType);
+  const syncStatus = statuses?.find((s: SyncStatus) => s.syncType === syncType);
 
   // Mostrar loading enquanto carrega
   if (isLoading) {
@@ -68,23 +77,51 @@ export function SyncStatusDisplay({ syncType = 'omie_complete', compact = false 
     );
   }
 
+  const finishedDate = syncStatus.lastFinishedAt 
+    ? format(new Date(syncStatus.lastFinishedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+    : null;
+
   return (
-    <div className="flex flex-col gap-1 text-sm" data-testid="sync-status-full">
+    <div className="flex flex-col gap-2 text-sm" data-testid="sync-status-full">
       <div className="flex items-center gap-2">
-        <Clock className="h-4 w-4 text-muted-foreground" />
-        <span className="text-muted-foreground">Última sincronização:</span>
-        <span className="font-medium">{formattedDate}</span>
-      </div>
-      <div className="flex items-center gap-2 pl-6">
-        <span className={`font-medium ${statusColors[syncStatus.status]}`}>
-          {statusLabels[syncStatus.status]}
-        </span>
-        {syncStatus.recordsProcessed !== undefined && (
-          <span className="text-muted-foreground">
-            ({syncStatus.recordsProcessed} registros)
-          </span>
+        {syncStatus.status === 'in_progress' ? (
+          <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
+        ) : (
+          <Clock className="h-4 w-4 text-muted-foreground" />
         )}
+        <span className="text-muted-foreground">
+          {syncStatus.status === 'in_progress' ? 'Sincronizando...' : 'Última sincronização:'}
+        </span>
+        <span className="font-medium">
+          {syncStatus.status === 'in_progress' && finishedDate ? finishedDate : formattedDate}
+        </span>
       </div>
+      
+      {syncStatus.status === 'in_progress' && syncStatus.currentProgress !== undefined && (
+        <div className="pl-6 space-y-1" data-testid="sync-progress-bar">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Progresso: {syncStatus.currentProgress}%</span>
+            {syncStatus.recordsProcessed !== undefined && syncStatus.totalRecords !== undefined && (
+              <span>{syncStatus.recordsProcessed} / {syncStatus.totalRecords}</span>
+            )}
+          </div>
+          <Progress value={syncStatus.currentProgress} className="h-2" />
+        </div>
+      )}
+      
+      {syncStatus.status !== 'in_progress' && (
+        <div className="flex items-center gap-2 pl-6">
+          <span className={`font-medium ${statusColors[syncStatus.status]}`}>
+            {statusLabels[syncStatus.status]}
+          </span>
+          {syncStatus.recordsProcessed !== undefined && (
+            <span className="text-muted-foreground">
+              ({syncStatus.recordsProcessed} registros)
+            </span>
+          )}
+        </div>
+      )}
+      
       {syncStatus.message && syncStatus.status === 'error' && (
         <div className="pl-6 text-xs text-red-600" data-testid="sync-error-message">
           {syncStatus.message}
