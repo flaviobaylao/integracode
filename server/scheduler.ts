@@ -57,17 +57,53 @@ async function syncComplete(horario: string) {
     // 2. Sincronizar notas fiscais de 2025 (filtro por data de emissão)
     try {
       console.log(`💰 [${horario}] Sincronizando notas fiscais de 2025...`);
-      const billingResult = await (omieService as any).syncBillings();
+      
+      // Atualizar status para "em progresso" antes de iniciar
+      await storage.updateSyncStatus('omie_billings', { 
+        status: 'in_progress', 
+        message: 'Sincronização automática iniciada...',
+        recordsProcessed: 0,
+        currentProgress: 0
+      });
+      
+      const billingResult = await (omieService as any).syncBillings({
+        onProgress: (progress: { processed: number, total: number }) => {
+          // Atualizar progresso em tempo real
+          storage.updateSyncStatus('omie_billings', { 
+            status: 'in_progress', 
+            recordsProcessed: progress.processed,
+            totalRecords: progress.total,
+            currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
+          });
+        }
+      });
+      
       results.billings = {
-        totalProcessed: billingResult.newBillings || 0,
-        imported: billingResult.newBillings || 0,
-        updated: 0
+        totalProcessed: billingResult.totalProcessed || billingResult.newBillings || 0,
+        imported: billingResult.imported || billingResult.newBillings || 0,
+        updated: billingResult.updated || 0
       };
+      
+      // Atualizar status para "sucesso" ao concluir
+      await storage.updateSyncStatus('omie_billings', { 
+        status: 'success', 
+        message: `${results.billings.imported} importados, ${results.billings.updated} atualizados`,
+        recordsProcessed: results.billings.totalProcessed,
+        currentProgress: 100,
+        lastFinishedAt: new Date()
+      });
+      
       console.log(`✅ [${horario}] Notas fiscais: ${results.billings.totalProcessed} processadas`);
     } catch (error: any) {
       const errorMsg = `Erro ao sincronizar notas fiscais: ${error.message}`;
       results.errors.push(errorMsg);
       console.error(`❌ [${horario}] ${errorMsg}`);
+      
+      // Atualizar status para "erro"
+      await storage.updateSyncStatus('omie_billings', { 
+        status: 'error', 
+        message: errorMsg
+      });
     }
 
     // 3. Sincronizar débitos vencidos
