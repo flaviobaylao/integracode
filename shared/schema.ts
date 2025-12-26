@@ -1465,6 +1465,9 @@ export const syncStatus = pgTable("sync_status", {
   status: syncStatusEnum("status").notNull().default('success'),
   message: text("message"),
   recordsProcessed: integer("records_processed"),
+  totalRecords: integer("total_records"), // Total de registros a serem processados
+  currentProgress: integer("current_progress"), // Progresso atual (0-100 ou contagem)
+  lastFinishedAt: timestamp("last_finished_at"), // Data/hora da última conclusão bem-sucedida
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 

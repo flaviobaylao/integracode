@@ -344,6 +344,9 @@ export interface IStorage {
     status: 'success' | 'error' | 'in_progress'; 
     message?: string; 
     recordsProcessed?: number;
+    totalRecords?: number;
+    currentProgress?: number;
+    lastFinishedAt?: Date;
   }): Promise<SyncStatus>;
   
   // Lead operations
@@ -5433,6 +5436,9 @@ export class DatabaseStorage implements IStorage {
     status: 'success' | 'error' | 'in_progress'; 
     message?: string; 
     recordsProcessed?: number;
+    totalRecords?: number;
+    currentProgress?: number;
+    lastFinishedAt?: Date;
   }): Promise<SyncStatus> {
     // Tentar atualizar primeiro
     const [existing] = await db
@@ -5442,30 +5448,42 @@ export class DatabaseStorage implements IStorage {
     
     if (existing) {
       // Atualizar registro existente
+      const updateData: any = {
+        status: data.status,
+        updatedAt: new Date()
+      };
+
+      if (data.message !== undefined) updateData.message = data.message;
+      if (data.recordsProcessed !== undefined) updateData.recordsProcessed = data.recordsProcessed;
+      if (data.totalRecords !== undefined) updateData.totalRecords = data.totalRecords;
+      if (data.currentProgress !== undefined) updateData.currentProgress = data.currentProgress;
+      if (data.lastFinishedAt !== undefined) updateData.lastFinishedAt = data.lastFinishedAt;
+      if (data.status === 'success') updateData.lastSyncAt = new Date();
+
       const [status] = await db
         .update(syncStatus)
-        .set({
-          status: data.status,
-          message: data.message,
-          recordsProcessed: data.recordsProcessed,
-          lastSyncAt: new Date(),
-          updatedAt: new Date(),
-        })
+        .set(updateData)
         .where(eq(syncStatus.syncType, syncType))
         .returning();
       return status;
     } else {
       // Criar novo registro
+      const insertData: any = {
+        syncType,
+        status: data.status,
+        lastSyncAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      if (data.message !== undefined) insertData.message = data.message;
+      if (data.recordsProcessed !== undefined) insertData.recordsProcessed = data.recordsProcessed;
+      if (data.totalRecords !== undefined) insertData.totalRecords = data.totalRecords;
+      if (data.currentProgress !== undefined) insertData.currentProgress = data.currentProgress;
+      if (data.lastFinishedAt !== undefined) insertData.lastFinishedAt = data.lastFinishedAt;
+
       const [status] = await db
         .insert(syncStatus)
-        .values({
-          syncType,
-          status: data.status,
-          message: data.message,
-          recordsProcessed: data.recordsProcessed,
-          lastSyncAt: new Date(),
-          updatedAt: new Date(),
-        })
+        .values(insertData)
         .returning();
       return status;
     }

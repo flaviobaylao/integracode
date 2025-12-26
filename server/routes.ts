@@ -6750,45 +6750,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 SINCRONIZAÇÃO TOTAL: Iniciando em background...`);
       
       // Marcar como "em andamento" imediatamente
-      await storage.upsertSyncStatus({
-        syncType: 'omie_billings_full',
-        lastSyncAt: new Date(),
-        status: 'running',
+      await storage.updateSyncStatus('omie_billings', { 
+        status: 'in_progress', 
         message: 'Sincronização total em andamento...',
-        recordsProcessed: 0
+        recordsProcessed: 0,
+        currentProgress: 0
       });
       
       // Retornar resposta imediatamente (202 Accepted) para evitar timeout
       res.status(202).json({
         success: true,
         message: 'Sincronização total iniciada em background. Acompanhe o progresso pelo status de sincronização.',
-        status: 'running'
+        status: 'in_progress'
       });
       
       // Executar sincronização em background (após responder ao cliente)
       setImmediate(async () => {
         try {
           console.log(`🔄 SINCRONIZAÇÃO TOTAL: Executando em background...`);
-          const result = await omieService.syncBillings({ fullResync: true });
+          const result = await omieService.syncBillings({ 
+            fullResync: true,
+            onProgress: (progress: any) => {
+              storage.updateSyncStatus('omie_billings', {
+                status: 'in_progress',
+                recordsProcessed: progress.processed,
+                totalRecords: progress.total,
+                currentProgress: Math.round((progress.processed / progress.total) * 100)
+              });
+            }
+          });
           
           console.log('✅ Sincronização TOTAL de faturamentos concluída:', result);
           
           // Atualizar status para sucesso
-          await storage.upsertSyncStatus({
-            syncType: 'omie_billings_full',
-            lastSyncAt: new Date(),
-            status: 'success',
+          await storage.updateSyncStatus('omie_billings', { 
+            status: 'success', 
             message: `Concluído: ${result.imported || 0} importados, ${result.updated || 0} atualizados`,
-            recordsProcessed: result.totalProcessed || 0
+            recordsProcessed: result.totalProcessed || 0,
+            currentProgress: 100,
+            lastFinishedAt: new Date()
           });
         } catch (error: any) {
           console.error('❌ Erro na sincronização TOTAL (background):', error);
           
           // Atualizar status para erro
-          await storage.upsertSyncStatus({
-            syncType: 'omie_billings_full',
-            lastSyncAt: new Date(),
-            status: 'error',
+          await storage.updateSyncStatus('omie_billings', { 
+            status: 'error', 
             message: error.message || 'Erro desconhecido',
             recordsProcessed: 0
           });

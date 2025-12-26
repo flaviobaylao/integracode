@@ -291,7 +291,7 @@ export default function Billings() {
   // Agora executa em background - retorna 202 imediatamente
   const fullSyncMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/billings/full-sync', {
+      const response = await fetch('/api/billings/sync-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include'
@@ -308,14 +308,8 @@ export default function Billings() {
       // Agora recebe resposta imediata - sincronização acontece em background
       toast({
         title: 'Sincronização Total Iniciada',
-        description: result.message || 'A sincronização está sendo executada em background. Aguarde alguns minutos e atualize a página.',
+        description: result.message || 'A sincronização está sendo executada em background. Você pode acompanhar o progresso nesta tela.',
       });
-      
-      // Agendar atualização automática após alguns segundos
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      }, 5000);
     },
     onError: (error: any) => {
       toast({
@@ -412,6 +406,21 @@ export default function Billings() {
     </TableHead>
   );
 
+  // Query para buscar status de sincronização
+  const { data: syncStatuses } = useQuery<any[]>({
+    queryKey: ['/api/sync-status'],
+    refetchInterval: (data) => {
+      const isAnyInProgress = data?.some(s => s.status === 'in_progress');
+      return isAnyInProgress ? 2000 : 10000;
+    }
+  });
+
+  const omieBillingsSync = syncStatuses?.find(s => s.syncType === 'omie_billings');
+  // Se não encontrar o tipo padrão, procurar pelo tipo de sincronização total usado anteriormente
+  const omieBillingsFullSync = syncStatuses?.find(s => s.syncType === 'omie_billings_full');
+  
+  const displaySync = omieBillingsSync || omieBillingsFullSync;
+
   return (
     <div className="p-6 space-y-6">
       {/* Back Button */}
@@ -437,80 +446,118 @@ export default function Billings() {
           </p>
         </div>
         
-        <div className="flex gap-2">
-          <SyncButton
-            syncType="omie_billings"
-            onSync={handleSyncOmieBillings}
-            isLoading={syncOmieBillingsMutation.isPending}
-            label="Sincronizar Faturamentos"
-            variant="default"
-            data-testid="button-sync-billings"
-          />
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-2">
+            <SyncButton
+              syncType="omie_billings"
+              onSync={handleSyncOmieBillings}
+              isLoading={syncOmieBillingsMutation.isPending}
+              label="Sincronizar Faturamentos"
+              variant="default"
+              data-testid="button-sync-billings"
+            />
+            
+            <Button 
+              variant="destructive" 
+              onClick={() => {
+                if (window.confirm('ATENÇÃO: Esta ação vai APAGAR todos os faturamentos existentes e reimportar TODAS as NFs do Omie. Isso pode demorar alguns minutos. Deseja continuar?')) {
+                  fullSyncMutation.mutate();
+                }
+              }}
+              disabled={fullSyncMutation.isPending || displaySync?.status === 'in_progress' || displaySync?.status === 'running'}
+              data-testid="button-full-sync"
+              title="Limpa todos os faturamentos e reimporta TODAS as NFs do Omie (sem filtro de data)"
+            >
+              {fullSyncMutation.isPending || displaySync?.status === 'in_progress' || displaySync?.status === 'running' ? (
+                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
+              Sync Total
+            </Button>
+            
+            <Button 
+              variant="secondary" 
+              onClick={() => updateSellerNamesMutation.mutate()}
+              disabled={updateSellerNamesMutation.isPending}
+              data-testid="button-update-sellers"
+              title="Atualizar nomes de vendedores retroativamente"
+            >
+              {updateSellerNamesMutation.isPending ? (
+                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RotateCw className="w-4 h-4 mr-2" />
+              )}
+              Atualizar Vendedores
+            </Button>
+            
+            <Button 
+              variant="destructive" 
+              onClick={() => cleanupCancelledMutation.mutate()}
+              disabled={cleanupCancelledMutation.isPending}
+              data-testid="button-cleanup-cancelled"
+              title="Remover notas fiscais canceladas do banco de dados"
+            >
+              {cleanupCancelledMutation.isPending ? (
+                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4 mr-2" />
+              )}
+              Limpar Canceladas
+            </Button>
+            
+            <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            
+            <Button 
+              variant="outline" 
+              onClick={handleExport} 
+              data-testid="button-export"
+              title="Exportar todos os dados do Omie para Excel"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Exportar Excel
+            </Button>
+          </div>
           
-          <Button 
-            variant="destructive" 
-            onClick={() => {
-              if (window.confirm('ATENÇÃO: Esta ação vai APAGAR todos os faturamentos existentes e reimportar TODAS as NFs do Omie. Isso pode demorar alguns minutos. Deseja continuar?')) {
-                fullSyncMutation.mutate();
-              }
-            }}
-            disabled={fullSyncMutation.isPending}
-            data-testid="button-full-sync"
-            title="Limpa todos os faturamentos e reimporta TODAS as NFs do Omie (sem filtro de data)"
-          >
-            {fullSyncMutation.isPending ? (
-              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4 mr-2" />
+          <div className="text-right">
+            {displaySync?.lastSyncAt && (
+              <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR')}</p>
             )}
-            Sync Total
-          </Button>
-          
-          <Button 
-            variant="secondary" 
-            onClick={() => updateSellerNamesMutation.mutate()}
-            disabled={updateSellerNamesMutation.isPending}
-            data-testid="button-update-sellers"
-            title="Atualizar nomes de vendedores retroativamente"
-          >
-            {updateSellerNamesMutation.isPending ? (
-              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <RotateCw className="w-4 h-4 mr-2" />
+            {displaySync?.lastFinishedAt && (
+              <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR')}</p>
             )}
-            Atualizar Vendedores
-          </Button>
-          
-          <Button 
-            variant="destructive" 
-            onClick={() => cleanupCancelledMutation.mutate()}
-            disabled={cleanupCancelledMutation.isPending}
-            data-testid="button-cleanup-cancelled"
-            title="Remover notas fiscais canceladas do banco de dados"
-          >
-            {cleanupCancelledMutation.isPending ? (
-              <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Trash2 className="w-4 h-4 mr-2" />
-            )}
-            Limpar Canceladas
-          </Button>
-          
-          <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-          
-          <Button 
-            variant="outline" 
-            onClick={handleExport} 
-            data-testid="button-export"
-            title="Exportar todos os dados do Omie para Excel"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Exportar Excel
-          </Button>
+          </div>
         </div>
       </div>
+
+      {(displaySync?.status === 'in_progress' || displaySync?.status === 'running') && (
+        <Card className="border-honest-orange bg-honest-orange/5">
+          <CardContent className="pt-6">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-honest-orange font-medium">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Sincronização Total em Andamento...
+                </div>
+                <div className="text-sm font-bold">
+                  {displaySync.currentProgress || 0}%
+                </div>
+              </div>
+              <div className="h-2 w-full bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-honest-orange transition-all duration-500" 
+                  style={{ width: `${displaySync.currentProgress || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-center text-muted-foreground">
+                Processados: {displaySync.recordsProcessed || 0} de {displaySync.totalRecords || '?'} faturamentos
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Estatísticas */}
       {stats && (
