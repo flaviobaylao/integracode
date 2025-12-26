@@ -9985,14 +9985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🚀 [DRIVER-START] Motorista ${userEmail} iniciando rota ${routeId}`);
       
-      // Buscar o motorista pelo email (via storage)
-      const driver = await storage.getDeliveryDriverByEmail(userEmail);
-      
-      if (!driver) {
-        return res.status(403).json({ message: "Motorista não encontrado" });
-      }
-      
-      // Verificar se o motorista é o responsável pela rota
+      // Verificar se o motorista é o responsável pela rota (via email - mais robusto)
       const route = await db.select().from(deliveryRoutes)
         .where(eq(deliveryRoutes.id, routeId))
         .limit(1);
@@ -10001,7 +9994,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       
-      if (route[0].driverId !== driver.id) {
+      // Verificar permissão pelo email do motorista na rota
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      console.log(`🔐 [DRIVER-START] Verificando permissão: userEmail=${normalizedUserEmail}, routeDriverEmail=${routeDriverEmail}`);
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        console.log(`❌ [DRIVER-START] Permissão negada: emails não correspondem`);
         return res.status(403).json({ message: "Você não tem permissão para iniciar esta rota" });
       }
       
@@ -10028,13 +10028,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📍 [DRIVER-CHECKIN] Motorista ${userEmail} fazendo check-in na parada ${stopId}`);
       
-      // Buscar o motorista pelo email (via storage)
-      const driver = await storage.getDeliveryDriverByEmail(userEmail);
-      
-      if (!driver) {
-        return res.status(403).json({ message: "Motorista não encontrado" });
-      }
-      
       // Verificar se foto foi enviada
       if (!req.file) {
         return res.status(400).json({ message: "Foto obrigatória para check-in" });
@@ -10049,12 +10042,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Parada não encontrada" });
       }
       
-      // Verificar se o motorista pertence à rota
+      // Verificar se o motorista pertence à rota (via driverEmail - mais robusto)
       const route = await db.select().from(deliveryRoutes)
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== driver.id) {
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      // Verificar permissão pelo email do motorista na rota
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      console.log(`🔐 [DRIVER-CHECKIN] Verificando permissão: userEmail=${normalizedUserEmail}, routeDriverEmail=${routeDriverEmail}`);
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        console.log(`❌ [DRIVER-CHECKIN] Permissão negada: emails não correspondem`);
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -10101,13 +10105,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`✅ [DRIVER-CHECKOUT] Motorista ${userEmail} fazendo check-out da parada ${stopId}`);
       
-      // Buscar o motorista pelo email (via storage)
-      const driver = await storage.getDeliveryDriverByEmail(userEmail);
-      
-      if (!driver) {
-        return res.status(403).json({ message: "Motorista não encontrado" });
-      }
-      
       // Verificar se foto foi enviada
       if (!req.file) {
         return res.status(400).json({ message: "Foto obrigatória para check-out" });
@@ -10122,12 +10119,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Parada não encontrada" });
       }
       
-      // Verificar se o motorista pertence à rota
+      // Verificar se o motorista pertence à rota (via driverEmail - mais robusto)
       const route = await db.select().from(deliveryRoutes)
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== driver.id) {
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      // Verificar permissão pelo email do motorista na rota
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      console.log(`🔐 [DRIVER-CHECKOUT] Verificando permissão: userEmail=${normalizedUserEmail}, routeDriverEmail=${routeDriverEmail}`);
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        console.log(`❌ [DRIVER-CHECKOUT] Permissão negada: emails não correspondem`);
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -10196,13 +10204,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📊 [UPDATE-STOP-STATUS] Motorista ${userEmail} atualizando status de ${stopId} para ${status}`);
       
-      // Buscar o motorista pelo email (via storage)
-      const driver = await storage.getDeliveryDriverByEmail(userEmail);
-      
-      if (!driver) {
-        return res.status(403).json({ message: "Motorista não encontrado" });
-      }
-      
       // Buscar a parada
       const stop = await db.select().from(deliveryRouteStops)
         .where(eq(deliveryRouteStops.id, stopId))
@@ -10212,12 +10213,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Parada não encontrada" });
       }
       
-      // Verificar se o motorista pertence à rota
+      // Verificar se o motorista pertence à rota (via driverEmail - mais robusto)
       const route = await db.select().from(deliveryRoutes)
         .where(eq(deliveryRoutes.id, stop[0].routeId))
         .limit(1);
       
-      if (route.length === 0 || route[0].driverId !== driver.id) {
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      // Verificar permissão pelo email do motorista na rota
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      console.log(`🔐 [UPDATE-STOP-STATUS] Verificando permissão: userEmail=${normalizedUserEmail}, routeDriverEmail=${routeDriverEmail}`);
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        console.log(`❌ [UPDATE-STOP-STATUS] Permissão negada: emails não correspondem`);
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
@@ -10531,11 +10543,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const route = routeResult[0];
       
-      // Para motoristas, verificar se é a rota deles
+      // Para motoristas, verificar se é a rota deles (via email - mais robusto)
       if (userRole === 'motorista') {
-        const driver = await storage.getDeliveryDriverByEmail(userEmail);
+        const normalizedUserEmail = userEmail?.toLowerCase().trim();
+        const routeDriverEmail = route.driverEmail?.toLowerCase().trim();
         
-        if (!driver || route.driverId !== driver.id) {
+        if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
           return res.status(403).json({ message: "Você só pode otimizar suas próprias rotas" });
         }
       }
