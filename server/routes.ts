@@ -9673,12 +9673,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[DEBUG] Procurando rotas com: status IN ['rota_enviada', 'em_andamento', 'concluida'], email="${userEmail}", date="${targetDateStr}"`);
       
       // Buscar rotas diretamente por EMAIL + DATA (sem intermediários)
-      // Ajuste: Removendo o cast ::text para garantir compatibilidade com diferentes drivers e tipos de coluna
+      // Ajuste: Usando SQL raw para garantir que a comparação de data funcione independente do tipo (timestamp vs text)
       const routes = await db.select().from(deliveryRoutes)
         .where(
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${userEmail})`,
-            eq(deliveryRoutes.routeDate, targetDateStr),
+            sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDateStr} AS DATE)`,
             inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         )
@@ -9723,14 +9723,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Tenta diferentes variações de query
       const simpleQuery = await db.select().from(deliveryRoutes)
-        .where(eq(deliveryRoutes.routeDate, date));
+        .where(sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`);
       
       console.log(`[DEBUG-ROUTES] Total de rotas em ${date}: ${simpleQuery.length}`);
       
       const withEmail = await db.select().from(deliveryRoutes)
         .where(
           and(
-            eq(deliveryRoutes.routeDate, date),
+            sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`,
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`
           )
         );
@@ -9744,7 +9744,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`,
-            eq(deliveryRoutes.routeDate, date),
+            sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`,
             inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         );
@@ -9773,7 +9773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const routes = await db.select().from(deliveryRoutes)
-        .where(eq(deliveryRoutes.routeDate, date))
+        .where(sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`)
         .orderBy(asc(deliveryRoutes.driverEmail));
       
       return res.json({ 
@@ -9839,7 +9839,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const routesToSend = await db.select().from(deliveryRoutes)
         .where(
           and(
-            eq(deliveryRoutes.routeDate, targetDate),
+            sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDate} AS DATE)`,
             eq(deliveryRoutes.status, 'rota salva')
           )
         );
