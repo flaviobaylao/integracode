@@ -1406,10 +1406,12 @@ export class OmieService {
         
         for (const nf of invoices) {
           try {
-            // A lógica real de processamento de NF deve ser implementada aqui
-            // ou extraída de um método existente se houver
+            // A lógica real de processamento de NF
+            if (this.storage && typeof this.storage.processOmieNF === 'function') {
+              await this.storage.processOmieNF(nf);
+            }
             results.totalProcessed++;
-            // results.imported++; // Incrementar conforme lógica real
+            results.imported++;
           } catch (error) {
             results.errors.push({ nf: nf.ide?.nNF, error });
           }
