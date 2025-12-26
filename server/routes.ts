@@ -9821,6 +9821,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // FIX: Endpoint para corrigir rotas sem email do motorista
+  app.post("/api/delivery-routes/fix-missing-emails", async (req: any, res) => {
+    try {
+      console.log(`🔧 [FIX-EMAILS] Corrigindo rotas sem email de motorista...`);
+      
+      // Buscar rotas sem email
+      const routesWithoutEmail = await db.select().from(deliveryRoutes)
+        .where(sql`${deliveryRoutes.driverEmail} IS NULL OR ${deliveryRoutes.driverEmail} = ''`);
+      
+      console.log(`🔍 [FIX-EMAILS] Encontradas ${routesWithoutEmail.length} rotas sem email`);
+      
+      const fixed: any[] = [];
+      const notFixed: any[] = [];
+      
+      for (const route of routesWithoutEmail) {
+        // Tentar buscar email do driver na tabela deliveryDrivers
+        let driverEmail: string | null = null;
+        
+        if (route.driverId) {
+          const driver = await db.select().from(deliveryDrivers)
+            .where(eq(deliveryDrivers.id, route.driverId))
+            .limit(1);
+          
+          if (driver.length > 0 && driver[0].email) {
+            driverEmail = driver[0].email;
+          }
+        }
+        
+        // Se não encontrou, tentar buscar pelo nome do motorista na tabela users
+        if (!driverEmail && route.driverName) {
+          const allDrivers = await db.select().from(users)
+            .where(eq(users.role, 'motorista'));
+          
+          // Buscar por correspondência de nome (case insensitive) usando firstName
+          const matchingDriver = allDrivers.find(u => {
+            const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+            return fullName.toLowerCase().includes(route.driverName!.toLowerCase()) ||
+                   (u.firstName && u.firstName.toLowerCase().includes(route.driverName!.toLowerCase()));
+          });
+          
+          if (matchingDriver?.email) {
+            driverEmail = matchingDriver.email;
+          }
+        }
+        
+        if (driverEmail) {
+          // Atualizar a rota com o email encontrado
+          await db.update(deliveryRoutes)
+            .set({ driverEmail, updatedAt: new Date() })
+            .where(eq(deliveryRoutes.id, route.id));
+          
+          fixed.push({
+            id: route.id,
+            routeName: route.routeName,
+            driverName: route.driverName,
+            fixedEmail: driverEmail
+          });
+          console.log(`✅ [FIX-EMAILS] Rota ${route.routeName} corrigida com email ${driverEmail}`);
+        } else {
+          notFixed.push({
+            id: route.id,
+            routeName: route.routeName,
+            driverName: route.driverName,
+            driverId: route.driverId
+          });
+          console.log(`❌ [FIX-EMAILS] Não foi possível encontrar email para rota ${route.routeName}`);
+        }
+      }
+      
+      res.json({
+        message: `Correção concluída: ${fixed.length} rotas corrigidas, ${notFixed.length} não corrigidas`,
+        fixed,
+        notFixed
+      });
+    } catch (error: any) {
+      console.error("Error fixing missing emails:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
   // Enviar rota para o motorista (muda status de 'rota salva' para 'rota_enviada')
   app.post("/api/delivery-routes/:routeId/send-to-driver", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
