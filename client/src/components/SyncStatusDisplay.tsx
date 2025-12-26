@@ -26,13 +26,13 @@ export function SyncStatusDisplay({ syncType = 'omie_complete', compact = false 
     queryKey: ['/api/sync-status'],
     refetchInterval: (query) => {
       // Atualiza mais rápido quando há sincronização em progresso
-      const data = query.state.data as SyncStatus[] | undefined;
-      const hasInProgress = data?.some((s: SyncStatus) => s.status === 'in_progress');
+      const data = query.state.data;
+      const hasInProgress = Array.isArray(data) && data.some((s: SyncStatus) => s.status === 'in_progress');
       return hasInProgress ? 2000 : 30000; // 2s em progresso, 30s normal
     },
   });
 
-  const syncStatus = statuses?.find((s: SyncStatus) => s.syncType === syncType);
+  const syncStatus = Array.isArray(statuses) ? statuses.find((s: SyncStatus) => s.syncType === syncType) : undefined;
 
   // Mostrar loading enquanto carrega
   if (isLoading) {
