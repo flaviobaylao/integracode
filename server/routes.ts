@@ -9771,13 +9771,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: routes.length, 
         routes,
         debug: {
-          version: "v3-eq-test",
+          version: "v4-full-debug",
           totalForDate: simpleQuery.length,
           withExactMatch: withExactEmail.length,
           withEmailMatch: withEmail.length,
           withStatus: routes.length,
           queryParams: { date, email },
-          firstRouteEmail: simpleQuery.length > 0 ? simpleQuery[0].driverEmail : null
+          firstRoute: simpleQuery.length > 0 ? {
+            id: simpleQuery[0].id,
+            routeName: simpleQuery[0].routeName,
+            driverEmail: simpleQuery[0].driverEmail,
+            driverName: simpleQuery[0].driverName,
+            routeDate: simpleQuery[0].routeDate,
+            status: simpleQuery[0].status
+          } : null
         }
       });
     } catch (error: any) {
