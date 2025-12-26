@@ -29,20 +29,53 @@ function HotsiteContent() {
   // Carregar produtos ao iniciar
   useEffect(() => {
     loadProducts();
-    // Carregar carrinho do localStorage
+    // Carregar carrinho do localStorage (formato compacto: apenas id, name, price, quantity)
     const savedCart = localStorage.getItem('honest-cart');
     if (savedCart) {
       try {
-        setCart(JSON.parse(savedCart));
+        const parsedCart = JSON.parse(savedCart);
+        // Reconstruir cart items mínimos (sem imagens para economizar espaço)
+        setCart(parsedCart.map((item: any) => ({
+          id: item.id,
+          name: item.name || item.n || '',
+          description: null,
+          details: null,
+          price: item.price || item.p || 0,
+          retailPrice: null,
+          wholesalePrice: null,
+          resaleGoianiaPrice: null,
+          resaleInteriorPrice: null,
+          resaleBrasiliaPrice: null,
+          imageUrl: null, // Não armazenamos imagem no localStorage
+          stock: item.stock || 999,
+          quantity: item.quantity || item.q || 1
+        })));
       } catch (e) {
         console.error('Erro ao carregar carrinho:', e);
+        localStorage.removeItem('honest-cart');
       }
     }
   }, []);
 
-  // Salvar carrinho no localStorage sempre que mudar
+  // Salvar carrinho no localStorage sempre que mudar (formato compacto)
   useEffect(() => {
-    localStorage.setItem('honest-cart', JSON.stringify(cart));
+    try {
+      // Salvar apenas dados essenciais: id, name, price, quantity
+      const compactCart = cart.map(item => ({
+        id: item.id,
+        n: item.name,
+        p: item.price,
+        q: item.quantity
+      }));
+      localStorage.setItem('honest-cart', JSON.stringify(compactCart));
+    } catch (e) {
+      console.error('Erro ao salvar carrinho:', e);
+      // Se ainda der erro de quota, limpar carrinho antigo
+      if ((e as any)?.name === 'QuotaExceededError') {
+        console.warn('Carrinho muito grande, limpando dados antigos');
+        localStorage.removeItem('honest-cart');
+      }
+    }
   }, [cart]);
 
   const loadProducts = async () => {
