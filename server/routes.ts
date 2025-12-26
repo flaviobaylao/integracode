@@ -9753,6 +9753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: routes.length, 
         routes,
         debug: {
+          version: "v2-cast-sql",
           totalForDate: simpleQuery.length,
           withEmailMatch: withEmail.length,
           withStatus: routes.length,
