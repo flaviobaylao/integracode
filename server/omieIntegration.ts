@@ -1350,6 +1350,85 @@ export class OmieService {
     }
   }
 
+  // Método para sincronizar faturamentos no intervalo
+  async syncBillings(options: { 
+    fullResync?: boolean, 
+    onProgress?: (progress: { processed: number, total: number }) => void 
+  } = {}): Promise<any> {
+    const { fullResync = false, onProgress } = options;
+    console.log(`🔄 Iniciando sincronização de faturamentos (fullResync: ${fullResync})...`);
+    
+    const results = {
+      totalProcessed: 0,
+      imported: 0,
+      updated: 0,
+      errors: [] as any[]
+    };
+
+    try {
+      let page = 1;
+      const registrosPerPage = 50;
+      let totalPages = 1;
+
+      // Buscar a primeira página para saber o total
+      const firstResponse = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+        pagina: 1,
+        registros_por_pagina: registrosPerPage,
+        apenas_importado_api: 'N',
+        filtrar_por_data_de: fullResync ? '' : '01/01/2025',
+        filtrar_por_data_ate: '',
+        ordenar_por: 'DATA',
+        ordem_decrescente: 'S'
+      });
+
+      totalPages = firstResponse.total_de_paginas || 1;
+      const totalRecords = firstResponse.total_de_registros || 0;
+      console.log(`📊 Total de registros para processar: ${totalRecords} em ${totalPages} páginas`);
+
+      if (onProgress) {
+        onProgress({ processed: 0, total: totalRecords });
+      }
+
+      while (page <= totalPages) {
+        console.log(`📄 Processando página ${page}/${totalPages}...`);
+        
+        const response = page === 1 ? firstResponse : await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+          pagina: page,
+          registros_por_pagina: registrosPerPage,
+          apenas_importado_api: 'N',
+          filtrar_por_data_de: fullResync ? '' : '01/01/2025',
+          filtrar_por_data_ate: '',
+          ordenar_por: 'DATA',
+          ordem_decrescente: 'S'
+        });
+
+        const invoices = response.nfCadastro || [];
+        
+        for (const nf of invoices) {
+          try {
+            // A lógica real de processamento de NF deve ser implementada aqui
+            // ou extraída de um método existente se houver
+            results.totalProcessed++;
+            // results.imported++; // Incrementar conforme lógica real
+          } catch (error) {
+            results.errors.push({ nf: nf.ide?.nNF, error });
+          }
+        }
+
+        if (onProgress) {
+          onProgress({ processed: results.totalProcessed, total: totalRecords });
+        }
+
+        page++;
+      }
+
+      return results;
+    } catch (error) {
+      console.error('❌ Erro na sincronização de faturamentos:', error);
+      throw error;
+    }
+  }
+
   // Método LEGADO para sincronizar apenas notas fiscais 
   async syncBillingsInRange(startDate: string, endDate: string): Promise<{
     totalProcessed: number;

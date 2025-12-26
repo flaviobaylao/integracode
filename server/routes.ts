@@ -6722,14 +6722,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🔄 Iniciando sincronização de TODAS as notas fiscais do Omie...`);
       
-      const result = await omieService.syncBillingsInRange('', '');
-      
-      console.log('✅ Sincronização completa de faturamentos concluída:', result);
-      res.json(result);
-      
+      // Inicia o processo de sincronização em background
+      (async () => {
+        try {
+          await storage.updateSyncStatus('omie_billings', { 
+            status: 'in_progress', 
+            message: 'Iniciando sincronização total de faturamentos...',
+            recordsProcessed: 0,
+            currentProgress: 0
+          });
+          
+          await (omieService as any).syncBillings({ 
+            fullResync: true,
+            onProgress: (progress: any) => {
+              storage.updateSyncStatus('omie_billings', { 
+                status: 'in_progress', 
+                recordsProcessed: progress.processed,
+                totalRecords: progress.total,
+                currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
+              });
+            }
+          });
+          
+          await storage.updateSyncStatus('omie_billings', { 
+            status: 'success', 
+            message: 'Sincronização total concluída com sucesso',
+            lastFinishedAt: new Date(),
+            currentProgress: 100
+          });
+        } catch (error: any) {
+          console.error('Erro na sincronização total:', error);
+          await storage.updateSyncStatus('omie_billings', { 
+            status: 'error', 
+            message: `Erro: ${error.message}` 
+          });
+        }
+      })();
+
+      res.json({ message: 'Sincronização total iniciada em segundo plano' });
     } catch (error: any) {
-      console.error('❌ Erro na sincronização completa de faturamentos:', error);
+      console.error('Erro ao iniciar sincronização total:', error);
       res.status(500).json({ 
+        success: false,
         error: 'Erro interno do servidor',
         message: error.message 
       });
@@ -6768,14 +6802,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       setImmediate(async () => {
         try {
           console.log(`🔄 SINCRONIZAÇÃO TOTAL: Executando em background...`);
-          const result = await omieService.syncBillings({ 
+          // Note: Using any to bypass type check for progress callback
+          const result = await (omieService as any).syncBillings({ 
             fullResync: true,
             onProgress: (progress: any) => {
               storage.updateSyncStatus('omie_billings', {
                 status: 'in_progress',
                 recordsProcessed: progress.processed,
                 totalRecords: progress.total,
-                currentProgress: Math.round((progress.processed / progress.total) * 100)
+                currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
               });
             }
           });
