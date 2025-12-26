@@ -9727,6 +9727,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`[DEBUG-ROUTES] Total de rotas em ${date}: ${simpleQuery.length}`);
       
+      // Log the first route's email for debugging
+      if (simpleQuery.length > 0) {
+        console.log(`[DEBUG-ROUTES] Primeiro email encontrado: "${simpleQuery[0].driverEmail}"`);
+        console.log(`[DEBUG-ROUTES] Comparando com: "${email}"`);
+        console.log(`[DEBUG-ROUTES] São iguais (case insensitive)? ${simpleQuery[0].driverEmail?.toLowerCase() === String(email).toLowerCase()}`);
+      }
+      
+      // Try with eq() for exact match
+      const withExactEmail = await db.select().from(deliveryRoutes)
+        .where(
+          and(
+            sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`,
+            eq(deliveryRoutes.driverEmail, String(email))
+          )
+        );
+      
+      console.log(`[DEBUG-ROUTES] Rotas com eq() exato: ${withExactEmail.length}`);
+      
       const withEmail = await db.select().from(deliveryRoutes)
         .where(
           and(
@@ -9753,11 +9771,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: routes.length, 
         routes,
         debug: {
-          version: "v2-cast-sql",
+          version: "v3-eq-test",
           totalForDate: simpleQuery.length,
+          withExactMatch: withExactEmail.length,
           withEmailMatch: withEmail.length,
           withStatus: routes.length,
-          queryParams: { date, email }
+          queryParams: { date, email },
+          firstRouteEmail: simpleQuery.length > 0 ? simpleQuery[0].driverEmail : null
         }
       });
     } catch (error: any) {
