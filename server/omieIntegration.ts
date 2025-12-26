@@ -1350,12 +1350,68 @@ export class OmieService {
     }
   }
 
+  // Método LEGADO para sincronizar apenas notas fiscais 
+  async syncBillingsInRange(startDate: string, endDate: string): Promise<{
+    totalProcessed: number;
+    imported: number;
+    updated: number;
+    skipped: number;
+    errors: any[];
+  }> {
+    try {
+      console.log(`🔄 Sincronizando notas fiscais do Omie a partir de 01/01/2025...`);
+      
+      let totalProcessed = 0;
+      let imported = 0;
+      let updated = 0;
+      let skipped = 0;
+      const errors: any[] = [];
+      
+      let page = 1;
+      let hasMorePages = true;
+      
+      const customersCache = new Map<string, any>();
+      if (this.storage) {
+        try {
+          const allCustomers = await this.storage.getCustomers();
+          for (const customer of allCustomers) {
+            if (customer.omieClientCode) {
+              customersCache.set(customer.omieClientCode.toString(), customer);
+            }
+          }
+          console.log(`✅ Cache de clientes carregado: ${customersCache.size} clientes`);
+        } catch (err) {
+          console.log(`⚠️ Não foi possível carregar cache de clientes: ${err}`);
+        }
+      }
+      
+      while (hasMorePages) {
+        try {
+          console.log(`📄 Processando página ${page}...`);
+          
+          const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+            pagina: page,
+            registros_por_pagina: 50,
+            apenas_importado_api: 'N',
+            filtrar_por_data_de: '01/01/2025',
+            filtrar_por_data_ate: '',
+            ordenar_por: 'DATA',
+            ordem_decrescente: 'S'
+          });
+          
+          const invoices = response.nfCadastro || [];
+          console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais`);
+          
+          if (invoices.length === 0) {
+            console.log(`⚠️ Página ${page}: Nenhuma nota fiscal encontrada. Parando sincronização.`);
+            hasMorePages = false;
+            break;
+          }
           
           for (const invoice of invoices) {
             try {
               const billingData = await this.transformInvoiceToBilling(invoice, customersCache);
               if (billingData) {
-                // Usar validação centralizada para salvar no storage
                 const result = await this.storage.saveBillingIfValid(billingData);
                 
                 if (result.success) {
@@ -1366,7 +1422,6 @@ export class OmieService {
                   }
                   totalProcessed++;
                 } else {
-                  // Registro rejeitado pela validação
                   console.log(`⚠️ REJEITADO - NF ${invoice.ide?.nNF}: ${result.reason}`);
                   skipped++;
                   errors.push({ 
@@ -1388,7 +1443,6 @@ export class OmieService {
           
           page++;
           
-          // Limite para evitar loop infinito
           if (page > 1000) {
             console.log('⚠️ Limite de 1000 páginas atingido, parando sincronização');
             hasMorePages = false;
@@ -1396,7 +1450,6 @@ export class OmieService {
           
         } catch (error: any) {
           console.error(`❌ Erro na página ${page}:`, error);
-          console.error(`❌ Stack trace:`, error.stack);
           errors.push({ 
             page, 
             error: error.message,
@@ -3247,7 +3300,10 @@ export class OmieService {
   }
 
   // Método para sincronizar faturamentos/notas fiscais do Omie
-  async syncBillings(options?: { fullResync?: boolean }): Promise<{
+  async syncBillings(options?: { 
+    fullResync?: boolean;
+    onProgress?: (progress: { processed: number; total: number }) => void;
+  }): Promise<{
     totalProcessed: number;
     imported: number;
     updated: number;
@@ -3602,6 +3658,13 @@ export class OmieService {
           
           // Log de progresso
           console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
+          
+          // Chamar callback de progresso se fornecido
+          if (options?.onProgress) {
+            const totalPages = response.total_de_paginas || 1;
+            const totalRecords = response.total_de_registros || (totalPages * 50);
+            options.onProgress({ processed: totalProcessed, total: totalRecords });
+          }
           
         } catch (pageError) {
           console.error(`❌ Erro ao processar página ${page}:`, pageError);
