@@ -827,6 +827,14 @@ export function registerChatRoutes(app: Express): void {
       
       console.log(`📱 [WEBHOOK-MIRROR] Processando: ${normalizedPhone} | FromMe: ${isFromMe} | Texto: ${messageText.substring(0, 50)}`);
 
+      // 🔍 Buscar contato na agenda (Phonebook) para identificação prioritária
+      const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
+      const identifiedName = phonebookContact?.name || data.pushName || `Cliente ${normalizedPhone}`;
+      
+      if (phonebookContact) {
+        console.log(`📖 [WEBHOOK-MIRROR] Contato identificado na agenda: ${identifiedName}`);
+      }
+
       // 1. Garantir Cliente e Conversa
       let conversation = await storage.getChatConversationByPhone(normalizedPhone);
       let customer = await storage.getChatCustomerByPhone(normalizedPhone);
@@ -834,18 +842,24 @@ export function registerChatRoutes(app: Express): void {
       if (!customer) {
         customer = await storage.createChatCustomer({
           phone: normalizedPhone,
-          name: data.pushName || `Cliente ${normalizedPhone}`
+          name: identifiedName
         });
+      } else if (phonebookContact && customer.name !== identifiedName) {
+        // Atualizar nome do cliente se mudou na agenda
+        await storage.updateChatCustomer(customer.id, { name: identifiedName });
       }
 
       if (!conversation) {
         conversation = await storage.createChatConversation({
           customerId: customer.id,
-          customerName: customer.name,
+          customerName: identifiedName,
           customerPhone: normalizedPhone,
           status: 'new',
           priority: 'normal'
         });
+      } else if (phonebookContact && conversation.customerName !== identifiedName) {
+        // Atualizar nome na conversa se mudou na agenda
+        await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
       }
 
       // 2. Verificar duplicidade (externalId)
