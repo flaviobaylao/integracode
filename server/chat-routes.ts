@@ -1321,6 +1321,95 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Endpoint para FORÇAR reconfiguração do webhook de PRODUÇÃO
+  // Use este endpoint quando precisar garantir que o webhook aponte para produção
+  app.post("/api/chat/webhook/force-production", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+      const prodDomain = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '').replace('http://', '');
+      
+      if (!prodDomain) {
+        return res.status(400).json({ 
+          error: "REPLIT_DOMAINS não encontrado", 
+          message: "Não foi possível determinar o domínio de produção" 
+        });
+      }
+      
+      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      console.log(`🔧 [FORCE-PROD] Forçando webhook para produção: ${webhookUrl}`);
+      
+      const webhookEvents = [
+        'MESSAGES_UPSERT',
+        'SEND_MESSAGE',
+        'MESSAGES_UPDATE',
+        'MESSAGES_SET',
+        'MESSAGES_EDITED'
+      ];
+      
+      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl, webhookEvents);
+      
+      if (result.success) {
+        console.log(`✅ [FORCE-PROD] Webhook reconfigurado com sucesso para produção`);
+        res.json({ 
+          success: true, 
+          message: "Webhook reconfigurado para produção com sucesso",
+          url: webhookUrl,
+          events: webhookEvents
+        });
+      } else {
+        console.error(`❌ [FORCE-PROD] Erro:`, result.error);
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error: any) {
+      console.error('[FORCE-PROD] Erro:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Endpoint para FORÇAR reconfiguração do webhook de DESENVOLVIMENTO (apenas para testes)
+  app.post("/api/chat/webhook/force-dev-config", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+      const devDomain = process.env.REPLIT_DEV_DOMAIN;
+      
+      if (!devDomain) {
+        return res.status(400).json({ 
+          error: "REPLIT_DEV_DOMAIN não encontrado", 
+          message: "Este endpoint só funciona no ambiente de desenvolvimento" 
+        });
+      }
+      
+      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
+      console.log(`🔧 [FORCE-DEV] Forçando webhook para desenvolvimento: ${webhookUrl}`);
+      
+      const webhookEvents = [
+        'MESSAGES_UPSERT',
+        'SEND_MESSAGE',
+        'MESSAGES_UPDATE',
+        'MESSAGES_SET',
+        'MESSAGES_EDITED'
+      ];
+      
+      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl, webhookEvents);
+      
+      if (result.success) {
+        console.log(`✅ [FORCE-DEV] Webhook reconfigurado para desenvolvimento`);
+        res.json({ 
+          success: true, 
+          message: "Webhook reconfigurado para desenvolvimento com sucesso",
+          url: webhookUrl,
+          warning: "ATENÇÃO: O webhook agora aponta para desenvolvimento. Mensagens de produção NÃO serão recebidas!"
+        });
+      } else {
+        console.error(`❌ [FORCE-DEV] Erro:`, result.error);
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error: any) {
+      console.error('[FORCE-DEV] Erro:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Endpoint para conectar instância ao WhatsApp (gerar QR Code)
   app.get("/api/chat/webhook/connect", async (req, res) => {
     try {

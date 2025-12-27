@@ -247,66 +247,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('✅ Evolution API configurada com sucesso para WhatsApp');
 
     // Configure webhook for receiving messages
+    // IMPORTANT: Only reconfigure webhook in PRODUCTION mode to avoid overwriting production URL
     // Environment detection:
-    // - Development (workspace): use REPLIT_DEV_DOMAIN (external webhooks reach dev server)
-    // - Production (Autoscale): use REPLIT_DOMAIN (singular) or REPLIT_DOMAINS (plural)
+    // - Development (workspace): DON'T reconfigure webhook - let production handle it
+    // - Production (Autoscale): use REPLIT_DOMAINS (the public domain)
     const isDevelopment = process.env.NODE_ENV === 'development';
     const devDomain = process.env.REPLIT_DEV_DOMAIN;
-    // Autoscale uses REPLIT_DOMAIN (singular), fallback to REPLIT_DOMAINS (plural)
-    const prodDomainSingular = process.env.REPLIT_DOMAIN?.replace('https://', '').replace('http://', '');
+    // Autoscale/Production uses REPLIT_DOMAINS (e.g., "integrahonest.replit.app")
     const prodDomainPlural = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '').replace('http://', '');
-    const prodDomain = prodDomainSingular || prodDomainPlural;
     
     console.log('🔍 [WEBHOOK-ENV] NODE_ENV:', process.env.NODE_ENV);
     console.log('🔍 [WEBHOOK-ENV] REPLIT_DEV_DOMAIN:', devDomain || 'não definido');
-    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAIN (singular):', prodDomainSingular || 'não definido');
-    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAINS (plural):', prodDomainPlural || 'não definido');
+    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAINS:', prodDomainPlural || 'não definido');
     
-    let webhookUrl: string;
+    // In development mode, skip webhook reconfiguration to preserve production webhook
     if (isDevelopment && devDomain) {
-      // Development: use the dev domain so external webhooks reach the dev server
-      webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
-      console.log('🔧 [WEBHOOK] Modo desenvolvimento - usando REPLIT_DEV_DOMAIN');
-    } else if (prodDomain) {
-      // Production: use the production domain (Autoscale)
-      webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
-      console.log('🔧 [WEBHOOK] Modo produção - usando', prodDomainSingular ? 'REPLIT_DOMAIN' : 'REPLIT_DOMAINS');
-    } else {
-      // Fallback to localhost
-      webhookUrl = 'http://localhost:5000/api/chat/webhook/messages';
-      console.log('🔧 [WEBHOOK] Fallback - usando localhost (nenhum domínio Replit encontrado)');
-    }
-    console.log('🔧 [WEBHOOK] URL configurada:', webhookUrl);
+      console.log('⚠️  [WEBHOOK] Modo desenvolvimento detectado - NÃO reconfigurando webhook');
+      console.log('⚠️  [WEBHOOK] O webhook de produção será mantido para receber mensagens');
+      console.log('💡 [WEBHOOK] Para testar webhooks em dev, use: POST /api/chat/webhook/force-dev-config');
+    } else if (prodDomainPlural) {
+      // Production: configure webhook to use production domain
+      const webhookUrl = `https://${prodDomainPlural}/api/chat/webhook/messages`;
+      console.log('🔧 [WEBHOOK] Modo PRODUÇÃO - configurando webhook para:', webhookUrl);
 
-    try {
-      // 🪞 ESPELHO COMPLETO DO WHATSAPP - Configurar webhook para capturar TODAS as mensagens
-      // Incluindo mensagens enviadas via celular (fromMe = true) e recebidas (fromMe = false)
-      // Eventos válidos do Evolution API: MESSAGES_UPSERT, SEND_MESSAGE, MESSAGES_UPDATE, MESSAGES_SET, MESSAGES_EDITED
-      const webhookEvents = [
-        'MESSAGES_UPSERT',      // Mensagens novas (recebidas E enviadas via celular - principal)
-        'SEND_MESSAGE',         // Mensagens enviadas via API
-        'MESSAGES_UPDATE',      // Atualizações de status (lido, entregue, etc)
-        'MESSAGES_SET',         // Sincronização em lote
-        'MESSAGES_EDITED'       // Mensagens editadas
-      ];
-      
-      console.log('🪞 [WEBHOOK-CONFIG] Configurando espelho completo do WhatsApp...');
-      console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
-      
-      const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, webhookEvents);
-      if (webhookResult.success) {
-        console.log('✅ Webhook configurado com sucesso para ESPELHO COMPLETO do WhatsApp');
-        console.log('✅ Eventos configurados:', webhookEvents.join(', '));
-        // Verificar status depois de configurar
-        setTimeout(async () => {
-          const webhookStatus = await evolutionAPIService.getWebhook(evolutionInstanceName);
-          console.log('📡 Status do webhook após configuração:', webhookStatus);
-        }, 2000);
-      } else {
-        console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
+      try {
+        // 🪞 ESPELHO COMPLETO DO WHATSAPP - Configurar webhook para capturar TODAS as mensagens
+        const webhookEvents = [
+          'MESSAGES_UPSERT',      // Mensagens novas (recebidas E enviadas via celular - principal)
+          'SEND_MESSAGE',         // Mensagens enviadas via API
+          'MESSAGES_UPDATE',      // Atualizações de status (lido, entregue, etc)
+          'MESSAGES_SET',         // Sincronização em lote
+          'MESSAGES_EDITED'       // Mensagens editadas
+        ];
+        
+        console.log('🪞 [WEBHOOK-CONFIG] Configurando espelho completo do WhatsApp...');
+        console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
+        
+        const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, webhookEvents);
+        if (webhookResult.success) {
+          console.log('✅ Webhook configurado com sucesso para PRODUÇÃO');
+          console.log('✅ URL:', webhookUrl);
+          console.log('✅ Eventos configurados:', webhookEvents.join(', '));
+          // Verificar status depois de configurar
+          setTimeout(async () => {
+            const webhookStatus = await evolutionAPIService.getWebhook(evolutionInstanceName);
+            console.log('📡 Status do webhook após configuração:', webhookStatus);
+          }, 2000);
+        } else {
+          console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
+        }
+      } catch (err) {
+        console.warn('⚠️  Erro ao tentar configurar webhook:', err);
       }
-    } catch (err) {
-      console.warn('⚠️  Erro ao tentar configurar webhook:', err);
+    } else {
+      console.warn('⚠️  [WEBHOOK] Nenhum domínio de produção encontrado - webhook não configurado');
     }
   } else {
     console.warn('⚠️  Evolution API não completamente configurada. Verifique as secrets:', {
