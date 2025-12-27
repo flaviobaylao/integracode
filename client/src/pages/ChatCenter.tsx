@@ -103,7 +103,7 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
           </div>
         </div>
       </button>
-      <div className="flex items-center gap-1 mt-1">
+      <div className="flex items-center gap-2 mt-1">
         <p className="text-xs text-gray-500 truncate">
           {conv.customerPhone}
         </p>
@@ -112,11 +112,11 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
             e.stopPropagation();
             onAddToPhonebook(conv.customerName, conv.customerPhone);
           }}
-          className="p-1 rounded hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors"
+          className="p-1.5 rounded-full bg-green-50 hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors border border-green-200"
           title="Adicionar à agenda"
           data-testid={`button-add-phonebook-${conv.id}`}
         >
-          <UserPlus className="h-3 w-3" />
+          <UserPlus className="h-4 w-4" />
         </button>
       </div>
       <div className="flex items-center gap-2 mt-2">
