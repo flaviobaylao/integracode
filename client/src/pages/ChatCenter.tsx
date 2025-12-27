@@ -56,10 +56,9 @@ interface Agent {
 }
 
 // Componente Auxiliar para Item de Conversa
-function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime }: any) {
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook }: any) {
   return (
-    <button
-      onClick={() => setSelectedConversation(conv.id)}
+    <div
       className={`w-full text-left p-3 rounded-lg transition-colors ${
         selectedConversation === conv.id
           ? "bg-green-100 border-2 border-green-600 shadow-sm"
@@ -67,51 +66,70 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
             ? "bg-white border-l-4 border-l-red-500 shadow-md hover:bg-gray-50" 
             : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
       }`}
-      data-testid={`button-conversation-${conv.id}`}
+      data-testid={`conversation-item-${conv.id}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className={`font-semibold text-sm truncate ${conv.hasUnread ? "text-red-600" : "text-gray-900"}`}>
-              {conv.customerName}
+      <button
+        onClick={() => setSelectedConversation(conv.id)}
+        className="w-full text-left"
+        data-testid={`button-conversation-${conv.id}`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className={`font-semibold text-sm truncate ${conv.hasUnread ? "text-red-600" : "text-gray-900"}`}>
+                {conv.customerName}
+              </p>
+              {conv.hasUnread && conv.unreadCount! > 0 && (
+                <Badge className="bg-red-500 text-white text-[10px] px-1.5 h-4 min-w-4 flex items-center justify-center rounded-full border-none animate-pulse">
+                  {conv.unreadCount}
+                </Badge>
+              )}
+              {conv.priority === "urgent" && (
+                <Badge variant="destructive" className="text-[10px] h-4">
+                  Urgente
+                </Badge>
+              )}
+            </div>
+          </div>
+          <div className="text-right">
+            <p className={`text-[10px] font-medium whitespace-nowrap ${conv.hasUnread ? "text-red-500" : "text-gray-400"}`}>
+              {formatLastMessageTime(conv.lastMessageTime)}
             </p>
-            {conv.hasUnread && conv.unreadCount! > 0 && (
-              <Badge className="bg-red-500 text-white text-[10px] px-1.5 h-4 min-w-4 flex items-center justify-center rounded-full border-none animate-pulse">
-                {conv.unreadCount}
-              </Badge>
-            )}
-            {conv.priority === "urgent" && (
-              <Badge variant="destructive" className="text-[10px] h-4">
-                Urgente
-              </Badge>
+            {conv.hasUnread && (
+               <div className="mt-1 flex justify-end">
+                 <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
+               </div>
             )}
           </div>
-          <p className="text-xs text-gray-500 truncate mt-1">
-            {conv.customerPhone}
-          </p>
-          <div className="flex items-center gap-2 mt-2">
-            <Badge className={`text-[10px] ${getStatusColor(conv.status)}`}>
-              {conv.status === 'new' ? 'Nova' : 
-               conv.status === 'assigned' ? 'Atribuída' :
-               conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
-            </Badge>
-            <span className="text-[10px] text-gray-400 truncate">
-              Atendente: {conv.agentName || "Ninguém"}
-            </span>
-          </div>
         </div>
-        <div className="text-right">
-          <p className={`text-[10px] font-medium whitespace-nowrap ${conv.hasUnread ? "text-red-500" : "text-gray-400"}`}>
-            {formatLastMessageTime(conv.lastMessageTime)}
-          </p>
-          {conv.hasUnread && (
-             <div className="mt-1 flex justify-end">
-               <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
-             </div>
-          )}
-        </div>
+      </button>
+      <div className="flex items-center gap-1 mt-1">
+        <p className="text-xs text-gray-500 truncate">
+          {conv.customerPhone}
+        </p>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddToPhonebook(conv.customerName, conv.customerPhone);
+          }}
+          className="p-1 rounded hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors"
+          title="Adicionar à agenda"
+          data-testid={`button-add-phonebook-${conv.id}`}
+        >
+          <UserPlus className="h-3 w-3" />
+        </button>
       </div>
-    </button>
+      <div className="flex items-center gap-2 mt-2">
+        <Badge className={`text-[10px] ${getStatusColor(conv.status)}`}>
+          {conv.status === 'new' ? 'Nova' : 
+           conv.status === 'assigned' ? 'Atribuída' :
+           conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
+        </Badge>
+        <span className="text-[10px] text-gray-400 truncate">
+          Atendente: {conv.agentName || "Ninguém"}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -678,6 +696,7 @@ export default function ChatCenter() {
                                       setSelectedConversation={setSelectedConversation}
                                       getStatusColor={getStatusColor}
                                       formatLastMessageTime={formatLastMessageTime}
+                                      onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                     />
                                   ))}
                                 </div>
@@ -697,6 +716,7 @@ export default function ChatCenter() {
                                     setSelectedConversation={setSelectedConversation}
                                     getStatusColor={getStatusColor}
                                     formatLastMessageTime={formatLastMessageTime}
+                                    onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                   />
                                 ))}
                               </div>
