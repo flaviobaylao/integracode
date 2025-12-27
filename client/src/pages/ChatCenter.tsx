@@ -10,7 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PhonebookPanel } from "@/components/PhonebookPanel";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
@@ -404,6 +406,20 @@ export default function ChatCenter() {
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
 
+  // Mutation para adicionar contato à agenda
+  const addToPhonebookMutation = useMutation({
+    mutationFn: async ({ name, phone }: { name: string; phone: string }) => {
+      return apiRequest('POST', '/api/phonebook-contacts', { name, phone });
+    },
+    onSuccess: () => {
+      toast({ title: "Sucesso", description: "Contato adicionado à agenda" });
+      queryClient.invalidateQueries({ queryKey: ['/api/phonebook-contacts'] });
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Não foi possível adicionar à agenda", variant: "destructive" });
+    }
+  });
+
   // Mutation para obter sugestão de resposta da IA (Grok/GPT)
   const aiSuggestionMutation = useMutation({
     mutationFn: async () => {
@@ -718,6 +734,32 @@ export default function ChatCenter() {
                         <div className="flex items-center gap-2 mt-2">
                           <Phone className="w-4 h-4 text-gray-600" />
                           <span className="text-sm text-gray-600">{selectedChat.customerPhone}</span>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                  onClick={() => addToPhonebookMutation.mutate({
+                                    name: selectedChat.customerName,
+                                    phone: selectedChat.customerPhone
+                                  })}
+                                  disabled={addToPhonebookMutation.isPending}
+                                  data-testid="button-add-to-phonebook"
+                                >
+                                  {addToPhonebookMutation.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <UserPlus className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Adicionar à agenda</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                         <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
                           <User className="w-3 h-3" />
