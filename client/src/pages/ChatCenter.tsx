@@ -10,7 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PhonebookPanel } from "@/components/PhonebookPanel";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -601,79 +603,101 @@ export default function ChatCenter() {
             </div>
           )}
           
-          {/* Lista de Conversas */}
+          {/* Lista de Conversas + Agenda Telefônica */}
           <div className="lg:col-span-2 flex flex-col" style={{ height: 'calc(100vh - 200px)' }}>
-            <Card className="h-full flex flex-col overflow-hidden">
-              <CardHeader className="shrink-0">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg">Conversas</CardTitle>
-                    <CardDescription>{conversations.length} conversas</CardDescription>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => setShowNewConversation(true)}
-                    className="bg-green-600 hover:bg-green-700"
-                    data-testid="button-new-conversation"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                <div className="h-full overflow-y-auto pr-2">
-                  <div className="space-y-2">
-                    {convLoading ? (
-                      <div className="text-center py-4 text-gray-500">Carregando...</div>
-                    ) : conversations.length === 0 ? (
-                      <div className="text-center py-4 text-gray-500">Nenhuma conversa</div>
-                    ) : (
-                      <div className="space-y-6">
-                        {/* Seção de Não Respondidas */}
-                        {conversations.some(c => c.hasUnread) && (
-                          <div className="space-y-3">
-                            <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
-                              <AlertCircle className="w-3 h-3" />
-                              Mensagens Não Respondidas
-                            </h3>
-                            <div className="space-y-2">
-                              {conversations.filter(c => c.hasUnread).map((conv) => (
-                                <ConversationItem 
-                                  key={conv.id} 
-                                  conv={conv} 
-                                  selectedConversation={selectedConversation}
-                                  setSelectedConversation={setSelectedConversation}
-                                  getStatusColor={getStatusColor}
-                                  formatLastMessageTime={formatLastMessageTime}
-                                />
-                              ))}
+            <Tabs defaultValue="conversas" className="h-full flex flex-col">
+              <div className="flex items-center justify-between px-4 pt-4 pb-2">
+                <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
+                  <TabsTrigger value="conversas" className="gap-1" data-testid="tab-conversas">
+                    <Phone className="w-4 h-4" />
+                    Conversas
+                  </TabsTrigger>
+                  <TabsTrigger value="agenda" className="gap-1" data-testid="tab-agenda">
+                    <BookOpen className="w-4 h-4" />
+                    Agenda
+                  </TabsTrigger>
+                </TabsList>
+                <Button
+                  size="sm"
+                  onClick={() => setShowNewConversation(true)}
+                  className="bg-green-600 hover:bg-green-700"
+                  data-testid="button-new-conversation"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <TabsContent value="conversas" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                <Card className="h-full flex flex-col overflow-hidden">
+                  <CardHeader className="shrink-0 py-2">
+                    <CardDescription>{conversations.length} conversas ativas</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                    <div className="h-full overflow-y-auto pr-2">
+                      <div className="space-y-2">
+                        {convLoading ? (
+                          <div className="text-center py-4 text-gray-500">Carregando...</div>
+                        ) : conversations.length === 0 ? (
+                          <div className="text-center py-4 text-gray-500">Nenhuma conversa</div>
+                        ) : (
+                          <div className="space-y-6">
+                            {/* Seção de Não Respondidas */}
+                            {conversations.some(c => c.hasUnread) && (
+                              <div className="space-y-3">
+                                <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  Mensagens Não Respondidas
+                                </h3>
+                                <div className="space-y-2">
+                                  {conversations.filter(c => c.hasUnread).map((conv) => (
+                                    <ConversationItem 
+                                      key={conv.id} 
+                                      conv={conv} 
+                                      selectedConversation={selectedConversation}
+                                      setSelectedConversation={setSelectedConversation}
+                                      getStatusColor={getStatusColor}
+                                      formatLastMessageTime={formatLastMessageTime}
+                                    />
+                                  ))}
+                                </div>
+                                <div className="my-6 border-b border-gray-100" />
+                              </div>
+                            )}
+
+                            {/* Seção de Todas as Conversas */}
+                            <div className="space-y-3">
+                              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Histórico de Conversas</h3>
+                              <div className="space-y-2">
+                                {conversations.filter(c => !c.hasUnread).map((conv) => (
+                                  <ConversationItem 
+                                    key={conv.id} 
+                                    conv={conv} 
+                                    selectedConversation={selectedConversation}
+                                    setSelectedConversation={setSelectedConversation}
+                                    getStatusColor={getStatusColor}
+                                    formatLastMessageTime={formatLastMessageTime}
+                                  />
+                                ))}
+                              </div>
                             </div>
-                            <div className="my-6 border-b border-gray-100" />
                           </div>
                         )}
-
-                        {/* Seção de Todas as Conversas */}
-                        <div className="space-y-3">
-                          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Histórico de Conversas</h3>
-                          <div className="space-y-2">
-                            {conversations.filter(c => !c.hasUnread).map((conv) => (
-                              <ConversationItem 
-                                key={conv.id} 
-                                conv={conv} 
-                                selectedConversation={selectedConversation}
-                                setSelectedConversation={setSelectedConversation}
-                                getStatusColor={getStatusColor}
-                                formatLastMessageTime={formatLastMessageTime}
-                              />
-                            ))}
-                          </div>
-                        </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="agenda" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                <PhonebookPanel 
+                  onStartConversation={(phone, name) => {
+                    setNewPhoneNumber(phone);
+                    setNewCustomerName(name);
+                    setShowNewConversation(true);
+                  }}
+                />
+              </TabsContent>
+            </Tabs>
           </div>
 
           {/* Chat */}
