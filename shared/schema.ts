@@ -2157,3 +2157,43 @@ export const insertChatAiLogSchema = createInsertSchema(chatAiLogs).omit({
 export type ChatAiLog = typeof chatAiLogs.$inferSelect;
 export type InsertChatAiLog = z.infer<typeof insertChatAiLogSchema>;
 
+// ============================================================================
+// PHONEBOOK CONTACTS - Agenda telefônica da central de atendimento
+// ============================================================================
+
+export const phonebookContacts = pgTable("phonebook_contacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  phone: varchar("phone").notNull(),
+  notes: text("notes"),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: 'set null' }),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+  lastContactedAt: timestamp("last_contacted_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_phonebook_contacts_phone").on(table.phone),
+  index("idx_phonebook_contacts_name").on(table.name),
+  index("idx_phonebook_contacts_customer").on(table.customerId),
+]);
+
+export const phonebookContactsRelations = relations(phonebookContacts, ({ one }) => ({
+  customer: one(customers, {
+    fields: [phonebookContacts.customerId],
+    references: [customers.id],
+  }),
+  createdBy: one(users, {
+    fields: [phonebookContacts.createdByUserId],
+    references: [users.id],
+  }),
+}));
+
+export const insertPhonebookContactSchema = createInsertSchema(phonebookContacts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type PhonebookContact = typeof phonebookContacts.$inferSelect;
+export type InsertPhonebookContact = z.infer<typeof insertPhonebookContactSchema>;
+
