@@ -606,32 +606,37 @@ export default function ChatCenter() {
           {/* Lista de Conversas + Agenda Telefônica */}
           <div className="lg:col-span-2 flex flex-col" style={{ height: 'calc(100vh - 200px)' }}>
             <Tabs defaultValue="conversas" className="h-full flex flex-col">
-              <div className="flex items-center justify-between px-4 pt-4 pb-2">
-                <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
-                  <TabsTrigger value="conversas" className="gap-1" data-testid="tab-conversas">
-                    <Phone className="w-4 h-4" />
-                    Conversas
-                  </TabsTrigger>
-                  <TabsTrigger value="agenda" className="gap-1" data-testid="tab-agenda">
-                    <BookOpen className="w-4 h-4" />
-                    Agenda
-                  </TabsTrigger>
-                </TabsList>
-                <Button
-                  size="sm"
-                  onClick={() => setShowNewConversation(true)}
-                  className="bg-green-600 hover:bg-green-700"
-                  data-testid="button-new-conversation"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
+              <Card className="h-full flex flex-col overflow-hidden">
+                <CardHeader className="shrink-0 pb-3">
+                  <div className="flex items-center justify-between mb-3">
+                    <TabsList className="grid w-full grid-cols-2 max-w-[240px]">
+                      <TabsTrigger value="conversas" className="gap-1 text-xs" data-testid="tab-conversas">
+                        <Phone className="w-3 h-3" />
+                        Conversas
+                      </TabsTrigger>
+                      <TabsTrigger value="agenda" className="gap-1 text-xs" data-testid="tab-agenda">
+                        <BookOpen className="w-3 h-3" />
+                        Agenda
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
+                </CardHeader>
 
-              <TabsContent value="conversas" className="flex-1 overflow-hidden m-0 px-4 pb-4">
-                <Card className="h-full flex flex-col overflow-hidden">
-                  <CardHeader className="shrink-0 py-2">
-                    <CardDescription>{conversations.length} conversas ativas</CardDescription>
-                  </CardHeader>
+                <TabsContent value="conversas" className="flex-1 overflow-hidden m-0">
+                  <div className="px-4 pb-2 flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-lg">Conversas</CardTitle>
+                      <CardDescription>{conversations.length} conversas</CardDescription>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => setShowNewConversation(true)}
+                      className="bg-green-600 hover:bg-green-700"
+                      data-testid="button-new-conversation"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
                   <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
                     <div className="h-full overflow-y-auto pr-2">
                       <div className="space-y-2">
@@ -685,18 +690,18 @@ export default function ChatCenter() {
                       </div>
                     </div>
                   </CardContent>
-                </Card>
-              </TabsContent>
+                </TabsContent>
 
-              <TabsContent value="agenda" className="flex-1 overflow-hidden m-0 px-4 pb-4">
-                <PhonebookPanel 
-                  onStartConversation={(phone, name) => {
-                    setNewPhoneNumber(phone);
-                    setNewCustomerName(name);
-                    setShowNewConversation(true);
-                  }}
-                />
-              </TabsContent>
+                <TabsContent value="agenda" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                  <PhonebookPanel 
+                    onStartConversation={(phone, name) => {
+                      setNewPhoneNumber(phone);
+                      setNewCustomerName(name);
+                      setShowNewConversation(true);
+                    }}
+                  />
+                </TabsContent>
+              </Card>
             </Tabs>
           </div>
 
