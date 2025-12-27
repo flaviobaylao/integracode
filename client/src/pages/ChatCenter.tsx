@@ -110,7 +110,7 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onAddToPhonebook(conv.customerName, conv.customerPhone);
+            setPhonebookData({ name: conv.customerName, phone: conv.customerPhone });
           }}
           className="p-1.5 rounded-full bg-green-50 hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors border border-green-200"
           title="Adicionar à agenda"
@@ -424,6 +424,8 @@ export default function ChatCenter() {
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
 
+  const [phonebookData, setPhonebookData] = useState<{ name: string; phone: string } | null>(null);
+
   // Mutation para adicionar contato à agenda
   const addToPhonebookMutation = useMutation({
     mutationFn: async ({ name, phone }: { name: string; phone: string }) => {
@@ -432,6 +434,7 @@ export default function ChatCenter() {
     onSuccess: () => {
       toast({ title: "Sucesso", description: "Contato adicionado à agenda" });
       queryClient.invalidateQueries({ queryKey: ['/api/phonebook-contacts'] });
+      setPhonebookData(null);
     },
     onError: () => {
       toast({ title: "Erro", description: "Não foi possível adicionar à agenda", variant: "destructive" });
@@ -581,6 +584,57 @@ export default function ChatCenter() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50 p-4 md:p-8">
+      {/* Modal para Adicionar à Agenda com Edição de Nome */}
+      <Dialog open={!!phonebookData} onOpenChange={(open) => !open && setPhonebookData(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Adicionar à Agenda</DialogTitle>
+            <DialogDescription>
+              Confirme ou edite o nome do cliente antes de salvar na agenda.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Nome do Cliente</label>
+              <Input 
+                value={phonebookData?.name || ""} 
+                onChange={(e) => setPhonebookData(prev => prev ? { ...prev, name: e.target.value } : null)}
+                placeholder="Nome completo"
+                data-testid="input-edit-phonebook-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Telefone</label>
+              <Input 
+                value={phonebookData?.phone || ""} 
+                disabled 
+                className="bg-gray-100"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setPhonebookData(null)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={() => {
+                if (phonebookData) {
+                  addToPhonebookMutation.mutate({ 
+                    name: phonebookData.name, 
+                    phone: phonebookData.phone 
+                  });
+                }
+              }}
+              disabled={addToPhonebookMutation.isPending}
+              className="bg-green-600 hover:bg-green-700"
+              data-testid="button-confirm-phonebook"
+            >
+              {addToPhonebookMutation.isPending ? "Salvando..." : "Salvar na Agenda"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">
