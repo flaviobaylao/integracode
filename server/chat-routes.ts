@@ -1326,7 +1326,8 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/webhook/force-production", authenticateUser, requireRole(["admin"]), async (req, res) => {
     try {
       const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-      const prodDomain = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '').replace('http://', '');
+      const domains = process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',') : [];
+      const prodDomain = domains[0]?.replace('https://', '').replace('http://', '');
       
       if (!prodDomain) {
         return res.status(400).json({ 

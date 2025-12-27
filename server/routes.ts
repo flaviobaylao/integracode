@@ -254,7 +254,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const isDevelopment = process.env.NODE_ENV === 'development';
     const devDomain = process.env.REPLIT_DEV_DOMAIN;
     // Autoscale/Production uses REPLIT_DOMAINS (e.g., "integrahonest.replit.app")
-    const prodDomainPlural = process.env.REPLIT_DOMAINS?.split(',')[0].replace('https://', '').replace('http://', '');
+    const domainsArray = process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',') : [];
+    const prodDomainPlural = domainsArray[0]?.replace('https://', '').replace('http://', '');
     
     console.log('🔍 [WEBHOOK-ENV] NODE_ENV:', process.env.NODE_ENV);
     console.log('🔍 [WEBHOOK-ENV] REPLIT_DEV_DOMAIN:', devDomain || 'não definido');
