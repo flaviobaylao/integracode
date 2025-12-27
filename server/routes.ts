@@ -15679,6 +15679,142 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // PHONEBOOK CONTACTS - Agenda telefônica da central de atendimento
+  // ============================================================================
+
+  // Listar contatos da agenda
+  app.get('/api/phonebook-contacts', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'telemarketing', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { search, customerId } = req.query;
+      const contacts = await storage.getPhonebookContacts({ 
+        search: search as string, 
+        customerId: customerId as string 
+      });
+      
+      res.json(contacts);
+    } catch (error: any) {
+      console.error('Erro ao buscar contatos:', error);
+      res.status(500).json({ message: 'Erro ao buscar contatos', error: error.message });
+    }
+  });
+
+  // Obter contato específico
+  app.get('/api/phonebook-contacts/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'telemarketing', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { id } = req.params;
+      const contact = await storage.getPhonebookContact(id);
+      
+      if (!contact) {
+        return res.status(404).json({ message: 'Contato não encontrado' });
+      }
+      
+      res.json(contact);
+    } catch (error: any) {
+      console.error('Erro ao buscar contato:', error);
+      res.status(500).json({ message: 'Erro ao buscar contato', error: error.message });
+    }
+  });
+
+  // Criar novo contato
+  app.post('/api/phonebook-contacts', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'telemarketing', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { name, phone, notes, customerId } = req.body;
+      
+      if (!name || !phone) {
+        return res.status(400).json({ message: 'Nome e telefone são obrigatórios' });
+      }
+
+      const cleanPhone = phone.replace(/\D/g, '');
+      
+      const contact = await storage.createPhonebookContact({
+        name,
+        phone: cleanPhone,
+        notes: notes || null,
+        customerId: customerId || null,
+        createdByUserId: user.id
+      });
+      
+      res.status(201).json(contact);
+    } catch (error: any) {
+      console.error('Erro ao criar contato:', error);
+      res.status(500).json({ message: 'Erro ao criar contato', error: error.message });
+    }
+  });
+
+  // Atualizar contato
+  app.patch('/api/phonebook-contacts/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'telemarketing', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { id } = req.params;
+      const { name, phone, notes, customerId } = req.body;
+      
+      const existing = await storage.getPhonebookContact(id);
+      if (!existing) {
+        return res.status(404).json({ message: 'Contato não encontrado' });
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (phone !== undefined) updateData.phone = phone.replace(/\D/g, '');
+      if (notes !== undefined) updateData.notes = notes;
+      if (customerId !== undefined) updateData.customerId = customerId || null;
+      
+      const contact = await storage.updatePhonebookContact(id, updateData);
+      res.json(contact);
+    } catch (error: any) {
+      console.error('Erro ao atualizar contato:', error);
+      res.status(500).json({ message: 'Erro ao atualizar contato', error: error.message });
+    }
+  });
+
+  // Deletar contato
+  app.delete('/api/phonebook-contacts/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      
+      if (!['admin', 'telemarketing', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+
+      const { id } = req.params;
+      
+      const existing = await storage.getPhonebookContact(id);
+      if (!existing) {
+        return res.status(404).json({ message: 'Contato não encontrado' });
+      }
+
+      await storage.deletePhonebookContact(id);
+      res.json({ message: 'Contato removido com sucesso' });
+    } catch (error: any) {
+      console.error('Erro ao remover contato:', error);
+      res.status(500).json({ message: 'Erro ao remover contato', error: error.message });
+    }
+  });
+
   // Recalcular métricas das rotas baseado em checkpoints existentes (ADMIN ONLY)
   app.post('/api/admin/recalculate-route-metrics', authenticateUser, async (req: any, res) => {
     try {
