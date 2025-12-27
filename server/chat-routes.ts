@@ -792,32 +792,15 @@ export function registerChatRoutes(app: Express): void {
       const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       
-      // BLOQUEIO TOTAL E ABSOLUTO do gateway genérico 5550575396912
-      // Este número NUNCA deve ser remapeado para o Flávio.
-      // Ele deve criar sua própria conversa como "Gateway WhatsApp"
-      const blockedGateway = '5550575396912';
-      
       // Mapeamento de telefone solicitado pelo usuário
       let targetPhone = phoneNumber;
       
-      // Se for o gateway bloqueado, forçamos ele a ser ele mesmo e NUNCA o Flávio
-      if (cleanPhone === blockedGateway || cleanPhone.endsWith('50575396912')) {
-        console.log(`🚫 [WEBHOOK-MIRROR] Gateway genérico detectado. Impedindo associação ao Flávio.`);
-        targetPhone = blockedGateway;
-        // Garantir que o nome não seja Flávio para este número específico
-        data.pushName = "Gateway WhatsApp";
-      } else {
-        // Buscar mapeamento no banco de dados (correspondência exata apenas)
-        const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
-        
-        if (phoneMapping) {
-          targetPhone = phoneMapping.canonicalPhone;
-          console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
-        } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
-          // Fallback: mapeamentos hardcoded EXATOS (apenas o número antigo do Flávio)
-          targetPhone = '5562996353860';
-          console.log(`🔄 [WEBHOOK-MIRROR] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
-        }
+      // Buscar mapeamento no banco de dados (correspondência exata apenas)
+      const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
+      
+      if (phoneMapping) {
+        targetPhone = phoneMapping.canonicalPhone;
+        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
       }
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
@@ -913,27 +896,16 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Mensagem é obrigatória" });
       }
 
-      // Normalizar telefone com MESMA função do webhook
+      // Normalizar telefone
       let targetPhone = phoneNumber;
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       
-      // BLOQUEIO TOTAL do gateway genérico
-      const blockedGateway = '5550575396912';
+      // Buscar mapeamento no banco de dados (correspondência exata apenas)
+      const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
       
-      if (cleanPhone === blockedGateway || cleanPhone.endsWith('50575396912')) {
-        targetPhone = blockedGateway;
-      } else {
-        // Buscar mapeamento no banco de dados (correspondência exata apenas)
-        const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
-        
-        if (phoneMapping) {
-          targetPhone = phoneMapping.canonicalPhone;
-          console.log(`🔄 [WHATSAPP-SEND] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
-        } else if (cleanPhone === '5504884295924' || cleanPhone === '04884295924') {
-          // Fallback: mapeamentos hardcoded EXATOS
-          targetPhone = '5562996353860';
-          console.log(`🔄 [WHATSAPP-SEND] Remapeando hardcoded: ${phoneNumber} -> 5562996353860`);
-        }
+      if (phoneMapping) {
+        targetPhone = phoneMapping.canonicalPhone;
+        console.log(`🔄 [WHATSAPP-SEND] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
       }
       
       const normalizedPhone = normalizePhoneNumber(targetPhone);
