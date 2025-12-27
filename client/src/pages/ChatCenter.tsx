@@ -56,7 +56,7 @@ interface Agent {
 }
 
 // Componente Auxiliar para Item de Conversa
-function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook }: any) {
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData }: any) {
   return (
     <div
       className={`w-full text-left p-3 rounded-lg transition-colors ${
@@ -751,6 +751,7 @@ export default function ChatCenter() {
                                       getStatusColor={getStatusColor}
                                       formatLastMessageTime={formatLastMessageTime}
                                       onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
+                                      setPhonebookData={setPhonebookData}
                                     />
                                   ))}
                                 </div>
@@ -771,6 +772,7 @@ export default function ChatCenter() {
                                     getStatusColor={getStatusColor}
                                     formatLastMessageTime={formatLastMessageTime}
                                     onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
+                                    setPhonebookData={setPhonebookData}
                                   />
                                 ))}
                               </div>
@@ -815,7 +817,7 @@ export default function ChatCenter() {
                                   size="icon"
                                   variant="ghost"
                                   className="h-6 w-6 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                  onClick={() => addToPhonebookMutation.mutate({
+                                  onClick={() => setPhonebookData({
                                     name: selectedChat.customerName,
                                     phone: selectedChat.customerPhone
                                   })}
