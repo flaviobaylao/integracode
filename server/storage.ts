@@ -110,6 +110,9 @@ import {
   type ChatAiLog,
   type InsertChatAiLog,
   insertSystemSettingSchema,
+  phonebookContacts,
+  type PhonebookContact,
+  type InsertPhonebookContact,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -436,6 +439,14 @@ export interface IStorage {
   updateActiveCustomerUpload(id: string, upload: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload>;
   getCustomerByDocument(document: string): Promise<Customer | undefined>;
   isCustomerInActiveList(customerId: string): Promise<boolean>;
+
+  // Phonebook contacts operations
+  getPhonebookContacts(filters?: { search?: string; customerId?: string }): Promise<PhonebookContact[]>;
+  getPhonebookContact(id: string): Promise<PhonebookContact | undefined>;
+  getPhonebookContactByPhone(phone: string): Promise<PhonebookContact | undefined>;
+  createPhonebookContact(contact: InsertPhonebookContact): Promise<PhonebookContact>;
+  updatePhonebookContact(id: string, contact: Partial<InsertPhonebookContact>): Promise<PhonebookContact>;
+  deletePhonebookContact(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -6953,6 +6964,63 @@ export class DatabaseStorage implements IStorage {
       console.error(`⚠️ [getPhoneMappingBySource] Erro ao buscar mapeamento:`, err);
       return undefined;
     }
+  }
+
+  // Phonebook contacts operations
+  async getPhonebookContacts(filters?: { search?: string; customerId?: string }): Promise<PhonebookContact[]> {
+    let query = db.select().from(phonebookContacts);
+    
+    const conditions: any[] = [];
+    
+    if (filters?.search) {
+      const searchPattern = `%${filters.search}%`;
+      conditions.push(
+        or(
+          like(phonebookContacts.name, searchPattern),
+          like(phonebookContacts.phone, searchPattern)
+        )
+      );
+    }
+    
+    if (filters?.customerId) {
+      conditions.push(eq(phonebookContacts.customerId, filters.customerId));
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    
+    return await (query.orderBy(asc(phonebookContacts.name)) as any);
+  }
+
+  async getPhonebookContact(id: string): Promise<PhonebookContact | undefined> {
+    const [contact] = await db.select().from(phonebookContacts).where(eq(phonebookContacts.id, id));
+    return contact;
+  }
+
+  async getPhonebookContactByPhone(phone: string): Promise<PhonebookContact | undefined> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const [contact] = await db.select().from(phonebookContacts)
+      .where(like(phonebookContacts.phone, `%${cleanPhone}%`));
+    return contact;
+  }
+
+  async createPhonebookContact(contact: InsertPhonebookContact): Promise<PhonebookContact> {
+    const [newContact] = await db.insert(phonebookContacts).values(contact).returning();
+    return newContact;
+  }
+
+  async updatePhonebookContact(id: string, contact: Partial<InsertPhonebookContact>): Promise<PhonebookContact> {
+    const [updated] = await db
+      .update(phonebookContacts)
+      .set({ ...contact, updatedAt: new Date() })
+      .where(eq(phonebookContacts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePhonebookContact(id: string): Promise<void> {
+    await db.delete(phonebookContacts).where(eq(phonebookContacts.id, id));
   }
 }
 
