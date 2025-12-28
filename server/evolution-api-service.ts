@@ -72,7 +72,9 @@ class EvolutionAPIService {
       console.log(`🔧 [WEBHOOK-INIT] Configurando para desenvolvimento: ${webhookUrl}`);
       this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
     } else if (!isDev && prodDomain) {
-      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      // Priorizar REPLIT_DOMAIN para Autoscale (singular)
+      const primaryDomain = process.env.REPLIT_DOMAIN || (Array.isArray(prodDomain) ? prodDomain[0] : prodDomain.split(',')[0]);
+      const webhookUrl = `https://${primaryDomain}/api/chat/webhook/messages`;
       console.log(`🚀 [WEBHOOK-INIT] Configurando para produção: ${webhookUrl}`);
       this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
     }
