@@ -32,43 +32,33 @@ function normalizePhoneNumber(phone: string): string {
   
   // Remove tudo que não é dígito
   let digitsOnly = phone.replace(/\D/g, '');
-  console.log(`📞 [NORMALIZE] Input: ${phone} -> Digits: ${digitsOnly} (length: ${digitsOnly.length})`);
   
+  // ID interno da Evolution API (padrão 5550...)
+  if (digitsOnly.startsWith('5550575396912') || digitsOnly === '5550575396912') {
+    console.log(`🎯 [NORMALIZE] Detectado ID interno (5550...). Mapeando para Flávio`);
+    return '5562996353860';
+  }
+
   // Se começar com 55, remove para recalcular
   if (digitsOnly.startsWith('55')) {
     digitsOnly = digitsOnly.slice(2);
   }
   
-  // Remover dígitos EXTRAS à esquerda (não tomar os últimos 11)
-  // O Brasil usa 11 dígitos (DDD + número), não take arbitrariamente
-  if (digitsOnly.length > 11) {
-    console.log(`📞 [NORMALIZE] Telefone com ${digitsOnly.length} dígitos, cortando extras da esquerda`);
-    digitsOnly = digitsOnly.slice(digitsOnly.length - 11); // Pega os 11 últimos sem perder dados críticos
-  }
-  
-  // Garante exatamente 11 dígitos - ADICIONA 9 SE FALTAR
-  // Formato: 55 + DDD(2) + 9 + número(8) = 55 + 11 dígitos
+  // Se tiver 11 dígitos e o terceiro não for 9 (ex: 6288887777 -> 10 dígitos)
+  // No Brasil, celulares com DDD têm 11 dígitos e o 3º é 9.
   if (digitsOnly.length === 10) {
-    // DDD + número sem o 9 -> adicionar 9 após DDD
     const ddd = digitsOnly.slice(0, 2);
-    const number = digitsOnly.slice(2);
-    digitsOnly = `${ddd}9${number}`;
-    console.log(`📞 [NORMALIZE] Telefone com 10 dígitos (sem 9). Adicionado 9: ${digitsOnly}`);
-  } else if (digitsOnly.length === 11 && digitsOnly[2] !== '9') {
-    // Caso especial: 11 dígitos mas o terceiro não é 9 (ex: 55 50 5...)
-    // Isso acontece quando a Evolution API envia um ID interno maluco ou um número internacional
-    // Para o número do Flávio (5550...), vamos forçar o retorno do número correto se detectarmos este padrão
-    if (digitsOnly.startsWith('50575396912')) {
-      console.log(`🎯 [NORMALIZE] Detectado ID interno da Evolution (5550...). Mapeando para 5562996353860`);
-      return '5562996353860';
-    }
-    console.log(`⚠️ [NORMALIZE] Telefone com 11 dígitos mas sem o 9 na posição correta: ${digitsOnly}`);
+    const rest = digitsOnly.slice(2);
+    digitsOnly = `${ddd}9${rest}`;
+    console.log(`📞 [NORMALIZE] Adicionado 9: ${digitsOnly}`);
+  } else if (digitsOnly.length > 11) {
+    // Se ainda for maior que 11, pega os últimos 11 (garantindo que não cortamos o 9 se ele existir)
+    digitsOnly = digitsOnly.slice(digitsOnly.length - 11);
   }
   
-  // Garante exatamente 11 dígitos
+  // Garante o prefixo 55
   const normalized = `55${digitsOnly}`;
-  
-  console.log(`📞 [NORMALIZE] Output: ${normalized} (length: ${normalized.length})`);
+  console.log(`📞 [NORMALIZE] Input: ${phone} -> Output: ${normalized}`);
   return normalized;
 }
 
