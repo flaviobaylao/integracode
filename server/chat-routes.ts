@@ -30,13 +30,14 @@ function normalizePhoneNumber(phone: string): string {
     return '';
   }
   
-  // Remove tudo que não é dígito
-  let digitsOnly = phone.replace(/\D/g, '');
+  // Remove tudo que não é dígito e o sufixo @lid/@s.whatsapp.net se vier na string
+  let digitsOnly = phone.split('@')[0].replace(/\D/g, '');
   
   // IDs internos da Evolution API (padrão 5550...) ou números problemáticos conhecidos
   const mappings: { [key: string]: string } = {
     '5550575396912': '5562996353860',
-    '5504884295924': '5562995782812'
+    '5504884295924': '5562995782812',
+    '173250575396912': '5562996353860'
   };
 
   if (mappings[digitsOnly]) {
@@ -44,21 +45,20 @@ function normalizePhoneNumber(phone: string): string {
     return mappings[digitsOnly];
   }
 
-  // Se começar com 55, remove para recalcular
-  if (digitsOnly.startsWith('55')) {
+  // Se começar com 55 e tiver 12 ou 13 dígitos, remove o 55 para normalizar o resto
+  if (digitsOnly.startsWith('55') && (digitsOnly.length === 12 || digitsOnly.length === 13)) {
     digitsOnly = digitsOnly.slice(2);
   }
   
-  // Se tiver 10 dígitos e o terceiro não for 9 (ex: 6288887777 -> 10 dígitos)
-  // No Brasil, celulares com DDD têm 11 dígitos e o 3º é 9.
+  // No Brasil, celulares têm 11 dígitos (DDD + 9 + número) ou 10 dígitos (DDD + número)
   if (digitsOnly.length === 10) {
     const ddd = digitsOnly.slice(0, 2);
     const rest = digitsOnly.slice(2);
     digitsOnly = `${ddd}9${rest}`;
     console.log(`📞 [NORMALIZE] Adicionado 9: ${digitsOnly}`);
   } else if (digitsOnly.length > 11) {
-    // Se ainda for maior que 11, pega os últimos 11 (garantindo que não cortamos o 9 se ele existir)
-    digitsOnly = digitsOnly.slice(digitsOnly.length - 11);
+    // Se ainda for maior que 11, pega os últimos 11
+    digitsOnly = digitsOnly.slice(-11);
   }
   
   // Garante o prefixo 55
