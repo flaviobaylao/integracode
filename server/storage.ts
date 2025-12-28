@@ -368,6 +368,8 @@ export interface IStorage {
   closeInactiveConversations(): Promise<number>;
   getConversationsCountByAgent(): Promise<Array<{ agentId: string | null; agentName: string | null; count: number; conversations: ChatConversation[] }>>;
   transferConversation(conversationId: string, newAgentId: string): Promise<ChatConversation>;
+  getChatAiSettings(): Promise<ChatAiSettings | null>;
+  updateChatAiSettings(settings: Partial<InsertChatAiSettings>): Promise<ChatAiSettings>;
   
   // Chat Customers operations
   getChatCustomers(): Promise<ChatCustomer[]>;
@@ -6867,6 +6869,26 @@ export class DatabaseStorage implements IStorage {
       const [created] = await db
         .insert(chatAiSettings)
         .values(data)
+        .returning();
+      return created;
+    }
+  }
+
+  async updateChatAiSettings(settings: Partial<InsertChatAiSettings>): Promise<ChatAiSettings> {
+    const existing = await this.getChatAiSettings();
+    
+    if (existing) {
+      const [updated] = await db
+        .update(chatAiSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(chatAiSettings.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      // Se não existir, criar com os dados fornecidos
+      const [created] = await db
+        .insert(chatAiSettings)
+        .values(settings as InsertChatAiSettings)
         .returning();
       return created;
     }
