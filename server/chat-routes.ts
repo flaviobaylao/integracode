@@ -37,7 +37,9 @@ function normalizePhoneNumber(phone: string): string {
   const mappings: { [key: string]: string } = {
     '5550575396912': '5562996353860',
     '5504884295924': '5562995782812',
-    '173250575396912': '5562996353860'
+    '173250575396912': '5562996353860',
+    '50575396912': '5562996353860',
+    '04884295924': '5562995782812'
   };
 
   if (mappings[digitsOnly]) {
@@ -47,7 +49,12 @@ function normalizePhoneNumber(phone: string): string {
 
   // Se começar com 55 e tiver 12 ou 13 dígitos, remove o 55 para normalizar o resto
   if (digitsOnly.startsWith('55') && (digitsOnly.length === 12 || digitsOnly.length === 13)) {
-    digitsOnly = digitsOnly.slice(2);
+    const candidate = digitsOnly.slice(2);
+    if (mappings[candidate]) {
+      console.log(`🎯 [NORMALIZE] Mapeando ID conhecido (sem 55) ${candidate} para ${mappings[candidate]}`);
+      return mappings[candidate];
+    }
+    digitsOnly = candidate;
   }
   
   // No Brasil, celulares têm 11 dígitos (DDD + 9 + número) ou 10 dígitos (DDD + número)
