@@ -33,10 +33,15 @@ function normalizePhoneNumber(phone: string): string {
   // Remove tudo que não é dígito
   let digitsOnly = phone.replace(/\D/g, '');
   
-  // ID interno da Evolution API (padrão 5550...)
-  if (digitsOnly.startsWith('5550575396912') || digitsOnly === '5550575396912') {
-    console.log(`🎯 [NORMALIZE] Detectado ID interno (5550...). Mapeando para Flávio`);
-    return '5562996353860';
+  // IDs internos da Evolution API (padrão 5550...) ou números problemáticos conhecidos
+  const mappings: { [key: string]: string } = {
+    '5550575396912': '5562996353860',
+    '5504884295924': '5562995782812'
+  };
+
+  if (mappings[digitsOnly]) {
+    console.log(`🎯 [NORMALIZE] Mapeando ID conhecido ${digitsOnly} para ${mappings[digitsOnly]}`);
+    return mappings[digitsOnly];
   }
 
   // Se começar com 55, remove para recalcular
@@ -44,7 +49,7 @@ function normalizePhoneNumber(phone: string): string {
     digitsOnly = digitsOnly.slice(2);
   }
   
-  // Se tiver 11 dígitos e o terceiro não for 9 (ex: 6288887777 -> 10 dígitos)
+  // Se tiver 10 dígitos e o terceiro não for 9 (ex: 6288887777 -> 10 dígitos)
   // No Brasil, celulares com DDD têm 11 dígitos e o 3º é 9.
   if (digitsOnly.length === 10) {
     const ddd = digitsOnly.slice(0, 2);
