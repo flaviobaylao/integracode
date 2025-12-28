@@ -858,7 +858,7 @@ export function registerChatRoutes(app: Express): void {
       // 3. Salvar Mensagem
       await storage.createChatMessage({
         conversationId: conversation.id,
-        senderId: isFromMe ? 'system' : customer.id,
+        senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
         content: messageText || '[Mídia/Outro]',
         messageType: 'text',
@@ -963,6 +963,7 @@ export function registerChatRoutes(app: Express): void {
           senderType: "system",
           content: message,
           messageType: "text",
+          externalId: result.messageId
         });
         console.log(`💬 [WHATSAPP-SEND] Mensagem salva`);
       } catch (err) {
