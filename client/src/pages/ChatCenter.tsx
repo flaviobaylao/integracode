@@ -170,12 +170,17 @@ export default function ChatCenter() {
     queryKey: ["/api/chat/conversations"],
     refetchInterval: 500,
     select: (data: Conversation[]) => {
+      // DEBUG log para verificar dados recebidos (ajuda na depuração remota)
+      if (data && data.length > 0) {
+        // console.log('DEBUG CONVS:', data.slice(0, 3).map(c => ({ name: c.customerName, lastMsg: c.lastMessageTime, unread: c.hasUnread })));
+      }
       return [...data].sort((a, b) => {
         // 1. Prioridade absoluta para mensagens não lidas
         if (a.hasUnread && !b.hasUnread) return -1;
         if (!a.hasUnread && b.hasUnread) return 1;
         
         // 2. Por tempo da última mensagem (mais recente primeiro)
+        // Usar getTime() para garantir comparação numérica precisa
         const timeA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
         const timeB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
         
@@ -183,10 +188,16 @@ export default function ChatCenter() {
            return timeB - timeA;
         }
         
-        // 3. Fallback para data de criação (ou atualização) se não houver mensagens
-        const createA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const createB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        // 3. Fallback para data de atualização (ou criação) se não houver mensagens
+        const updateA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const updateB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         
+        if (updateA !== updateB) {
+          return updateB - updateA;
+        }
+
+        const createA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return createB - createA;
       });
     }
