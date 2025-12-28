@@ -55,10 +55,10 @@ class EvolutionPollingService {
     // Run immediately
     this.poll();
 
-    // Then schedule periodic polling
+    // schedule periodic polling
     this.state.intervalId = setInterval(() => {
       this.poll();
-    }, intervalMs);
+    }, 30000); // Changed to 30s to match scheduler and avoid overlapping logic
   }
 
   /**
@@ -249,8 +249,7 @@ class EvolutionPollingService {
       }
 
       // 2. Check for duplicate (by externalId in database)
-      const existingMessages = await storage.getChatMessages(conversation.id);
-      const isDuplicate = existingMessages.some(m => m.externalId === messageId);
+      const isDuplicate = await storage.getChatMessageByExternalId(messageId);
       
       if (isDuplicate) {
         return false; // Already exists

@@ -384,53 +384,24 @@ cron.schedule('*/30 * * * * *', async () => {
 
       for (const chat of chatsToProcess) {
         try {
-          const phoneNumber = evolutionAPIService.extractPhoneNumber(chat.remoteJid || chat.id || '');
+          const rawJid = chat.remoteJid || chat.id || '';
+          const phoneNumber = evolutionAPIService.extractPhoneNumber(rawJid);
           
+          // Use processIncomingMessage for consistent handling (normalized phone, mapping, etc)
           const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
 
           if (result.success && result.messages && result.messages.length > 0) {
             for (const msg of result.messages) {
               try {
                 const msgId = msg.key?.id;
-                const msgPhone = evolutionAPIService.extractPhoneNumber(msg.key?.remoteJid || '');
-                const isFromMe = msg.key?.fromMe === true;
-                const msgContent = evolutionAPIService.extractMessageText(msg.message || {}) || '';
-
-                if (!msgId || !msgPhone) continue;
-
-                // Buscar ou criar cliente
-                let customer = await storage.getChatCustomerByPhone(msgPhone);
-                if (!customer) {
-                  customer = await storage.createChatCustomer({
-                    phone: msgPhone,
-                    name: msg.pushName || `Cliente ${msgPhone}`
-                  });
-                }
-
-                // Buscar ou criar conversa
-                let conversation = await storage.getChatConversationByPhone(msgPhone);
-                if (!conversation) {
-                  conversation = await storage.createChatConversation({
-                    customerId: customer.id,
-                    customerName: customer.name,
-                    customerPhone: msgPhone,
-                    status: 'new',
-                    priority: 'normal'
-                  });
-                }
+                if (!msgId) continue;
 
                 // Check for duplicates using externalId (indexed lookup via storage)
                 const existingMsg = await storage.getChatMessageByExternalId(msgId);
                 
                 if (!existingMsg) {
-                  await storage.createChatMessage({
-                    conversationId: conversation.id,
-                    senderId: isFromMe ? 'system' : customer.id,
-                    senderType: isFromMe ? 'system' : 'customer',
-                    content: msgContent || '[Mídia/Outro]',
-                    messageType: 'text',
-                    externalId: msgId
-                  });
+                  const { processIncomingMessage } = await import('./chat-routes');
+                  await processIncomingMessage(msg, phoneNumber);
                   newMessages++;
                 }
               } catch (msgError) {
