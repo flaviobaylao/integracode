@@ -5,6 +5,7 @@ import { db } from "./db";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
+import { evolutionPollingService } from "./evolution-polling-service";
 import {
   insertChatAgentSchema,
   insertChatConversationSchema,
@@ -1638,6 +1639,64 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[WEBHOOK-TEST-BATCH] Erro:", error);
       res.status(500).json({ error: "Erro no teste em batch" });
+    }
+  });
+
+  // ============================================================
+  // POLLING SERVICE - ALTERNATIVA AO WEBHOOK
+  // ============================================================
+
+  // GET /api/chat/polling/status - Status do serviço de polling
+  app.get("/api/chat/polling/status", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      const status = evolutionPollingService.getStatus();
+      res.json(status);
+    } catch (error: any) {
+      console.error("[POLLING] Erro ao buscar status:", error);
+      res.status(500).json({ error: "Erro ao buscar status do polling" });
+    }
+  });
+
+  // POST /api/chat/polling/start - Iniciar serviço de polling
+  app.post("/api/chat/polling/start", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      const { intervalMs = 15000 } = req.body; // Default 15 seconds
+      evolutionPollingService.start(intervalMs);
+      res.json({ 
+        success: true, 
+        message: `Polling iniciado a cada ${intervalMs / 1000}s`
+      });
+    } catch (error: any) {
+      console.error("[POLLING] Erro ao iniciar:", error);
+      res.status(500).json({ error: "Erro ao iniciar polling" });
+    }
+  });
+
+  // POST /api/chat/polling/stop - Parar serviço de polling
+  app.post("/api/chat/polling/stop", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      evolutionPollingService.stop();
+      res.json({ success: true, message: "Polling parado" });
+    } catch (error: any) {
+      console.error("[POLLING] Erro ao parar:", error);
+      res.status(500).json({ error: "Erro ao parar polling" });
+    }
+  });
+
+  // POST /api/chat/polling/phone - Polling manual para um telefone específico
+  app.post("/api/chat/polling/phone", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+      
+      if (!phoneNumber) {
+        return res.status(400).json({ error: "Número de telefone é obrigatório" });
+      }
+      
+      const result = await evolutionPollingService.pollForPhone(phoneNumber);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[POLLING] Erro no polling manual:", error);
+      res.status(500).json({ error: "Erro no polling manual" });
     }
   });
 
