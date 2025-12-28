@@ -598,121 +598,156 @@ class EvolutionAPIService {
       return { success: false, error: 'Número de contato inválido' };
     }
 
-    // Format phone number with @s.whatsapp.net suffix if not present
+    // Format phone number - try multiple variations to match Evolution API
     let cleanPhone = contactPhone.replace(/\D/g, ''); // Remove tudo que não é dígito
     console.log(`🔍 [FETCH-HISTORY] Telefone recebido: ${contactPhone} -> Dígitos: ${cleanPhone} (length: ${cleanPhone.length})`);
     
-    // Se começar com 55, remove (será re-adicionado)
+    // Build list of phone variations to try
+    // Brazilian numbers can be 12 digits (55 + DDD + 8) or 13 digits (55 + DDD + 9 + 8)
+    const phoneVariations: string[] = [];
+    
+    // Add original format
     if (cleanPhone.startsWith('55')) {
-      cleanPhone = cleanPhone.slice(2);
-      console.log(`🔍 [FETCH-HISTORY] Removido prefixo 55 -> ${cleanPhone} (length: ${cleanPhone.length})`);
-    }
-    
-    // Garante exatamente 11 dígitos (DDD + número)
-    if (cleanPhone.length > 11) {
-      console.log(`🔍 [FETCH-HISTORY] ⚠️ Telefone com ${cleanPhone.length} dígitos, pegando últimos 11`);
-      cleanPhone = cleanPhone.slice(cleanPhone.length - 11);
-    }
-    
-    const remoteJid = `55${cleanPhone}@s.whatsapp.net`;
-    
-    console.log(`🔍 Buscando mensagens para: ${contactPhone} -> ${remoteJid}`);
-
-    try {
-      // Fetch first page to get total pages
-      const requestBody = {
-        where: {
-          key: {
-            remoteJid: remoteJid
-          }
-        },
-        page: 1
-      };
+      phoneVariations.push(cleanPhone);
       
-      console.log(`📤 Request body:`, JSON.stringify(requestBody));
-      
-      const response = await fetch(`${this.config!.apiUrl}/chat/findMessages/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': this.config!.apiKey
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      const firstPageData = await response.json();
-      console.log(`📡 Status: ${response.status}, Response:`, JSON.stringify(firstPageData).substring(0, 200));
-
-      if (!response.ok) {
-        console.error('❌ Erro ao buscar histórico de chat (HTTP):', response.status, firstPageData);
-        return { success: false, error: firstPageData.message || `HTTP ${response.status}` };
+      // If 13 digits, also try removing the 9 (position 4 after 55)
+      if (cleanPhone.length === 13) {
+        const without9 = cleanPhone.slice(0, 4) + cleanPhone.slice(5);
+        phoneVariations.push(without9);
       }
+      // If 12 digits, also try adding the 9
+      else if (cleanPhone.length === 12) {
+        const with9 = cleanPhone.slice(0, 4) + '9' + cleanPhone.slice(4);
+        phoneVariations.push(with9);
+      }
+    } else if (cleanPhone.length >= 10 && cleanPhone.length <= 11) {
+      // Número nacional sem código de país
+      phoneVariations.push(`55${cleanPhone}`);
+      if (cleanPhone.length === 11) {
+        // Try without 9
+        const without9 = cleanPhone.slice(0, 2) + cleanPhone.slice(3);
+        phoneVariations.push(`55${without9}`);
+      } else if (cleanPhone.length === 10) {
+        // Try with 9
+        const with9 = cleanPhone.slice(0, 2) + '9' + cleanPhone.slice(2);
+        phoneVariations.push(`55${with9}`);
+      }
+    } else {
+      phoneVariations.push(cleanPhone);
+    }
+    
+    console.log(`🔍 [FETCH-HISTORY] Variações a tentar: ${phoneVariations.join(', ')}`);
+    
+    // Try each variation until we find messages
+    for (const phoneVar of phoneVariations) {
+      const remoteJid = `${phoneVar}@s.whatsapp.net`;
+      console.log(`🔍 Buscando mensagens para: ${contactPhone} -> ${remoteJid}`);
 
-      // Parse the pagination info
-      let allMessages: any[] = [];
-      
-      if (firstPageData.messages && firstPageData.messages.records) {
-        const { total, pages, records } = firstPageData.messages;
-        allMessages = [...records];
+      try {
+        // Fetch first page to get total pages
+        const requestBody = {
+          where: {
+            key: {
+              remoteJid: remoteJid
+            }
+          },
+          page: 1
+        };
         
-        console.log(`📊 Total de mensagens: ${total}, Páginas: ${pages}`);
+        const response = await fetch(`${this.config!.apiUrl}/chat/findMessages/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': this.config!.apiKey
+          },
+          body: JSON.stringify(requestBody)
+        });
+
+        const firstPageData = await response.json();
+
+        if (!response.ok) {
+          console.error('❌ Erro ao buscar histórico de chat (HTTP):', response.status, firstPageData);
+          continue; // Try next variation
+        }
+
+        // Parse the pagination info
+        let allMessages: any[] = [];
         
-        // Limit the number of messages to fetch
-        const maxMessages = Math.min(total, limit);
-        const maxPages = Math.min(pages, Math.ceil(maxMessages / 50)); // Assuming 50 per page
-        
-        // Fetch remaining pages (limit to avoid overload)
-        if (maxPages > 1) {
-          console.log(`📥 Buscando páginas 2-${maxPages}...`);
+        if (firstPageData.messages && firstPageData.messages.records) {
+          const { total, pages, records } = firstPageData.messages;
           
-          for (let page = 2; page <= maxPages; page++) {
-            try {
-              const pageResponse = await fetch(`${this.config!.apiUrl}/chat/findMessages/${instanceName}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': this.config!.apiKey
-                },
-                body: JSON.stringify({
-                  where: {
-                    key: {
-                      remoteJid: remoteJid
-                    }
+          // If no messages found, try next variation
+          if (total === 0) {
+            console.log(`⚪ Nenhuma mensagem para ${remoteJid}, tentando próxima variação...`);
+            continue;
+          }
+          
+          allMessages = [...records];
+          console.log(`📊 Total de mensagens: ${total}, Páginas: ${pages} (usando ${phoneVar})`);
+          
+          // Limit the number of messages to fetch
+          const maxMessages = Math.min(total, limit);
+          const maxPages = Math.min(pages, Math.ceil(maxMessages / 50)); // Assuming 50 per page
+          
+          // Fetch remaining pages (limit to avoid overload)
+          if (maxPages > 1) {
+            console.log(`📥 Buscando páginas 2-${maxPages}...`);
+            
+            for (let page = 2; page <= maxPages; page++) {
+              try {
+                const pageResponse = await fetch(`${this.config!.apiUrl}/chat/findMessages/${instanceName}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': this.config!.apiKey
                   },
-                  page: page
-                })
-              });
+                  body: JSON.stringify({
+                    where: {
+                      key: {
+                        remoteJid: remoteJid
+                      }
+                    },
+                    page: page
+                  })
+                });
 
-              if (pageResponse.ok) {
-                const pageData = await pageResponse.json();
-                if (pageData.messages && pageData.messages.records) {
-                  allMessages = [...allMessages, ...pageData.messages.records];
+                if (pageResponse.ok) {
+                  const pageData = await pageResponse.json();
+                  if (pageData.messages && pageData.messages.records) {
+                    allMessages = [...allMessages, ...pageData.messages.records];
+                  }
                 }
+              } catch (pageError) {
+                console.error(`⚠️  Erro ao buscar página ${page}:`, pageError);
               }
-            } catch (pageError) {
-              console.error(`⚠️  Erro ao buscar página ${page}:`, pageError);
             }
           }
+          
+          console.log(`✅ Total de mensagens obtidas: ${allMessages.length}`);
+          return { success: true, messages: allMessages };
+          
+        } else if (Array.isArray(firstPageData) && firstPageData.length > 0) {
+          // Old format - direct array
+          console.log(`✅ Total de mensagens obtidas: ${firstPageData.length}`);
+          return { success: true, messages: firstPageData };
+        } else if (firstPageData.data && Array.isArray(firstPageData.data) && firstPageData.data.length > 0) {
+          // Another format - data field
+          console.log(`✅ Total de mensagens obtidas: ${firstPageData.data.length}`);
+          return { success: true, messages: firstPageData.data };
         }
-      } else if (Array.isArray(firstPageData)) {
-        // Old format - direct array
-        allMessages = firstPageData;
-      } else if (firstPageData.data) {
-        // Another format - data field
-        allMessages = Array.isArray(firstPageData.data) ? firstPageData.data : [];
-      } else {
-        // Empty or unexpected format
+        
+        // No messages in this format, try next variation
         console.log(`⚪ Nenhuma mensagem encontrada para ${remoteJid}`);
-        allMessages = [];
+        
+      } catch (error: any) {
+        console.error(`❌ Erro ao buscar para ${phoneVar}:`, error.message);
+        continue; // Try next variation
       }
-      
-      console.log(`✅ Total de mensagens obtidas: ${allMessages.length}`);
-      
-      return { success: true, messages: allMessages };
-    } catch (error: any) {
-      console.error('❌ Erro ao buscar histórico de chat:', error.message);
-      return { success: false, error: error.message };
     }
+    
+    // None of the variations found messages
+    console.log(`⚪ Nenhuma mensagem encontrada para nenhuma variação de ${contactPhone}`);
+    return { success: true, messages: [] };
   }
 
   // Fetch all chats from the instance

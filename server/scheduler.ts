@@ -358,55 +358,94 @@ cron.schedule('*/30 * * * * *', async () => {
       return;
     }
 
-    const conversations = await storage.getChatConversations();
+    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
     let newMessages = 0;
     let errors = 0;
 
-    // Buscar mensagens para cada conversa
-    for (const conv of conversations) {
-      if (!conv.customerPhone) continue;
+    // 1. Buscar todos os chats ativos da Evolution API (para pegar novos contatos também)
+    const chatsResult = await evolutionAPIService.fetchAllChats(instanceName);
+    
+    if (chatsResult.success && chatsResult.chats) {
+      // Filtrar apenas chats individuais (não grupos)
+      const individualChats = chatsResult.chats.filter((chat: any) => {
+        const jid = chat.remoteJid || chat.id || '';
+        return jid.includes('@s.whatsapp.net') && !jid.includes('@g.us');
+      });
 
-      try {
-        const result = await evolutionAPIService.fetchChatHistory(
-          process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST',
-          conv.customerPhone,
-          50 // Limitar a últimas 50 mensagens por conversa
-        );
+      // Sort by updatedAt (most recent first) and take top 10 chats
+      // Don't rely solely on unreadCount as it may be reset by Evolution/Web clients
+      const chatsToProcess = individualChats
+        .sort((a: any, b: any) => {
+          const aTime = new Date(a.updatedAt || 0).getTime();
+          const bTime = new Date(b.updatedAt || 0).getTime();
+          return bTime - aTime; // Most recent first
+        })
+        .slice(0, 10); // Limitar a 10 chats por ciclo
 
-        if (result.success && result.messages && result.messages.length > 0) {
-          // Processar cada mensagem
-          for (const msg of result.messages) {
-            try {
-              // Verificar se mensagem já existe
-              const existingMessages = await storage.getChatMessagesByConversationId(conv.id);
-              const messageExists = existingMessages.some(m => m.senderId === msg.key?.id);
-              
-              if (!messageExists && !msg.key?.fromMe && msg.message?.conversation) {
-                // Salvar mensagem recebida
-                await storage.createChatMessage({
-                  conversationId: conv.id,
-                  senderId: msg.key?.remoteJid || "unknown",
-                  senderType: "customer",
-                  content: msg.message.conversation || "[Mídia ou mensagem especial]",
-                  messageType: "text"
-                });
-                newMessages++;
+      for (const chat of chatsToProcess) {
+        try {
+          const phoneNumber = evolutionAPIService.extractPhoneNumber(chat.remoteJid || chat.id || '');
+          
+          const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
+
+          if (result.success && result.messages && result.messages.length > 0) {
+            for (const msg of result.messages) {
+              try {
+                const msgId = msg.key?.id;
+                const msgPhone = evolutionAPIService.extractPhoneNumber(msg.key?.remoteJid || '');
+                const isFromMe = msg.key?.fromMe === true;
+                const msgContent = evolutionAPIService.extractMessageText(msg.message || {}) || '';
+
+                if (!msgId || !msgPhone) continue;
+
+                // Buscar ou criar cliente
+                let customer = await storage.getChatCustomerByPhone(msgPhone);
+                if (!customer) {
+                  customer = await storage.createChatCustomer({
+                    phone: msgPhone,
+                    name: msg.pushName || `Cliente ${msgPhone}`
+                  });
+                }
+
+                // Buscar ou criar conversa
+                let conversation = await storage.getChatConversationByPhone(msgPhone);
+                if (!conversation) {
+                  conversation = await storage.createChatConversation({
+                    customerId: customer.id,
+                    customerName: customer.name,
+                    customerPhone: msgPhone,
+                    status: 'new',
+                    priority: 'normal'
+                  });
+                }
+
+                // Check for duplicates using externalId (indexed lookup via storage)
+                const existingMsg = await storage.getChatMessageByExternalId(msgId);
+                
+                if (!existingMsg) {
+                  await storage.createChatMessage({
+                    conversationId: conversation.id,
+                    senderId: isFromMe ? 'system' : customer.id,
+                    senderType: isFromMe ? 'system' : 'customer',
+                    content: msgContent || '[Mídia/Outro]',
+                    messageType: 'text',
+                    externalId: msgId
+                  });
+                  newMessages++;
+                }
+              } catch (msgError) {
+                errors++;
               }
-            } catch (msgError) {
-              errors++;
             }
           }
+        } catch (convError) {
+          errors++;
         }
-      } catch (convError) {
-        errors++;
       }
     }
 
     if (newMessages > 0) {
       console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
-    }
-    if (errors > 0) {
-      console.log(`⚠️ [POLLING] ${errors} erro(s) durante sincronização`);
     }
   } catch (error: any) {
     console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
