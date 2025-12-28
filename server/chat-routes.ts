@@ -54,6 +54,12 @@ function normalizePhoneNumber(phone: string): string {
     const number = digitsOnly.slice(2);
     digitsOnly = `${ddd}9${number}`;
     console.log(`📞 [NORMALIZE] Telefone com 10 dígitos (sem 9). Adicionado 9: ${digitsOnly}`);
+  } else if (digitsOnly.length === 11 && digitsOnly[2] !== '9') {
+    // Caso especial: 11 dígitos mas o terceiro não é 9 (ex: 55 50 5...)
+    // Isso acontece quando a Evolution API envia um ID interno maluco ou um número internacional
+    // Se o DDD for brasileiro (11-99) e tiver 11 dígitos, o 3º DEVE ser 9.
+    // Se não for, pode ser um ID de sistema da Evolution
+    console.log(`⚠️ [NORMALIZE] Telefone com 11 dígitos mas sem o 9 na posição correta: ${digitsOnly}`);
   }
   
   // Garante exatamente 11 dígitos
