@@ -183,12 +183,10 @@ export default function ChatCenter() {
            return timeB - timeA;
         }
         
-        // 3. Fallback para data de criação se não houver mensagens (ex: nova conversa iniciada sem mensagem ainda)
-        const createA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const createB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        // 3. Fallback para data de criação (ou atualização) se não houver mensagens
+        const createA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const createB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         
-        // Adicionando um log interno simulado via comentário para garantir unicidade do edit se necessário
-        // Ordem: Não lidas -> Última Mensagem -> Criação
         return createB - createA;
       });
     }
