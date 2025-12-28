@@ -348,81 +348,79 @@ cron.schedule('*/5 6-23 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Polling fallback: Buscar mensagens da Evolution API a cada 30 segundos (segurança)
-// Isso garante que mesmo se o webhook falhar, as mensagens serão sincronizadas
-cron.schedule('*/30 * * * * *', async () => {
-  try {
-    const { evolutionAPIService } = await import('./evolution-api-service');
-    
-    if (!evolutionAPIService.isConfigured()) {
-      return;
-    }
-
-    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-    let newMessages = 0;
-    let errors = 0;
-
-    // 1. Buscar todos os chats ativos da Evolution API (para pegar novos contatos também)
-    const chatsResult = await evolutionAPIService.fetchAllChats(instanceName);
-    
-    if (chatsResult.success && chatsResult.chats) {
-      // Filtrar apenas chats individuais (não grupos)
-      const individualChats = chatsResult.chats.filter((chat: any) => {
-        const jid = chat.remoteJid || chat.id || '';
-        return jid.includes('@s.whatsapp.net') && !jid.includes('@g.us');
-      });
-
-      // Sort by updatedAt (most recent first) and take top 10 chats
-      // Don't rely solely on unreadCount as it may be reset by Evolution/Web clients
-      const chatsToProcess = individualChats
-        .sort((a: any, b: any) => {
-          const aTime = new Date(a.updatedAt || 0).getTime();
-          const bTime = new Date(b.updatedAt || 0).getTime();
-          return bTime - aTime; // Most recent first
-        })
-        .slice(0, 10); // Limitar a 10 chats por ciclo
-
-      for (const chat of chatsToProcess) {
-        try {
-          const rawJid = chat.remoteJid || chat.id || '';
-          const phoneNumber = evolutionAPIService.extractPhoneNumber(rawJid);
-          
-          // Use processIncomingMessage for consistent handling (normalized phone, mapping, etc)
-          const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
-
-          if (result.success && result.messages && result.messages.length > 0) {
-            for (const msg of result.messages) {
-              try {
-                const msgId = msg.key?.id;
-                if (!msgId) continue;
-
-                // Check for duplicates using externalId (indexed lookup via storage)
-                const existingMsg = await storage.getChatMessageByExternalId(msgId);
-                
-                if (!existingMsg) {
-                  const { processIncomingMessage } = await import('./chat-routes');
-                  await processIncomingMessage(msg, phoneNumber);
-                  newMessages++;
-                }
-              } catch (msgError) {
-                errors++;
-              }
-            }
-          }
-        } catch (convError) {
-          errors++;
-        }
-      }
-    }
-
-    if (newMessages > 0) {
-      console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
-    }
-  } catch (error: any) {
-    console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
-  }
-});
-
+/* Polling fallback desativado permanentemente a pedido do usuário para voltar ao webhook puro */
+// cron.schedule('*/30 * * * * *', async () => {
+//   try {
+//     const { evolutionAPIService } = await import('./evolution-api-service');
+//     
+//     if (!evolutionAPIService.isConfigured()) {
+//       return;
+//     }
+//
+//     const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+//     let newMessages = 0;
+//     let errors = 0;
+//
+//     // 1. Buscar todos os chats ativos da Evolution API (para pegar novos contatos também)
+//     const chatsResult = await evolutionAPIService.fetchAllChats(instanceName);
+//     
+//     if (chatsResult.success && chatsResult.chats) {
+//       // Filtrar apenas chats individuais (não grupos)
+//       const individualChats = chatsResult.chats.filter((chat: any) => {
+//         const jid = chat.remoteJid || chat.id || '';
+//         return jid.includes('@s.whatsapp.net') && !jid.includes('@g.us');
+//       });
+//
+//       // Sort by updatedAt (most recent first) and take top 10 chats
+//       // Don't rely solely on unreadCount as it may be reset by Evolution/Web clients
+//       const chatsToProcess = individualChats
+//         .sort((a: any, b: any) => {
+//           const aTime = new Date(a.updatedAt || 0).getTime();
+//           const bTime = new Date(b.updatedAt || 0).getTime();
+//           return bTime - aTime; // Most recent first
+//         })
+//         .slice(0, 10); // Limitar a 10 chats por ciclo
+//
+//       for (const chat of chatsToProcess) {
+//         try {
+//           const rawJid = chat.remoteJid || chat.id || '';
+//           const phoneNumber = evolutionAPIService.extractPhoneNumber(rawJid);
+//           
+//           // Use processIncomingMessage for consistent handling (normalized phone, mapping, etc)
+//           const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
+//
+//           if (result.success && result.messages && result.messages.length > 0) {
+//             for (const msg of result.messages) {
+//               try {
+//                 const msgId = msg.key?.id;
+//                 if (!msgId) continue;
+//
+//                 // Check for duplicates using externalId (indexed lookup via storage)
+//                 const existingMsg = await storage.getChatMessageByExternalId(msgId);
+//                 
+//                 if (!existingMsg) {
+//                   const { processIncomingMessage } = await import('./chat-routes');
+//                   await processIncomingMessage(msg, phoneNumber);
+//                   newMessages++;
+//                 }
+//               } catch (msgError) {
+//                 errors++;
+//               }
+//             }
+//           }
+//         } catch (convError) {
+//           errors++;
+//         }
+//       }
+//     }
+//
+//     if (newMessages > 0) {
+//       console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
+//     }
+//   } catch (error: any) {
+//     console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
+//   }
+// });
 // Geração automática de próximas 3 visitas para clientes ativos
 cron.schedule('0 0 * * *', async () => {
   console.log('📅 [SCHEDULER] Iniciando geração de próximas 3 visitas para clientes ativos às 00:00h...');

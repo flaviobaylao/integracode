@@ -1327,12 +1327,11 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/webhook/force-production", authenticateUser, requireRole(["admin"]), async (req, res) => {
     try {
       const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-      const domains = process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',') : [];
-      const prodDomain = domains[0]?.replace('https://', '').replace('http://', '');
+      const prodDomain = process.env.REPLIT_DOMAIN || (process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',')[0] : null);
       
       if (!prodDomain) {
         return res.status(400).json({ 
-          error: "REPLIT_DOMAINS não encontrado", 
+          error: "Domínio de produção não encontrado", 
           message: "Não foi possível determinar o domínio de produção" 
         });
       }
@@ -1340,23 +1339,14 @@ export function registerChatRoutes(app: Express): void {
       const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
       console.log(`🔧 [FORCE-PROD] Forçando webhook para produção: ${webhookUrl}`);
       
-      const webhookEvents = [
-        'MESSAGES_UPSERT',
-        'SEND_MESSAGE',
-        'MESSAGES_UPDATE',
-        'MESSAGES_SET',
-        'MESSAGES_EDITED'
-      ];
-      
-      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl, webhookEvents);
+      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl);
       
       if (result.success) {
         console.log(`✅ [FORCE-PROD] Webhook reconfigurado com sucesso para produção`);
         res.json({ 
           success: true, 
           message: "Webhook reconfigurado para produção com sucesso",
-          url: webhookUrl,
-          events: webhookEvents
+          url: webhookUrl
         });
       } else {
         console.error(`❌ [FORCE-PROD] Erro:`, result.error);
@@ -1384,15 +1374,7 @@ export function registerChatRoutes(app: Express): void {
       const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
       console.log(`🔧 [FORCE-DEV] Forçando webhook para desenvolvimento: ${webhookUrl}`);
       
-      const webhookEvents = [
-        'MESSAGES_UPSERT',
-        'SEND_MESSAGE',
-        'MESSAGES_UPDATE',
-        'MESSAGES_SET',
-        'MESSAGES_EDITED'
-      ];
-      
-      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl, webhookEvents);
+      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl);
       
       if (result.success) {
         console.log(`✅ [FORCE-DEV] Webhook reconfigurado para desenvolvimento`);

@@ -60,6 +60,22 @@ class EvolutionAPIService {
   public configure(config: EvolutionAPIConfig): void {
     this.config = config;
     console.log('✅ Evolution API configurada:', config.apiUrl);
+
+    // Auto-configurar webhook na inicialização
+    const instanceName = config.instanceName || process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+    const isDev = process.env.NODE_ENV === 'development';
+    const devDomain = process.env.REPLIT_DEV_DOMAIN;
+    const prodDomain = process.env.REPLIT_DOMAIN || process.env.REPLIT_DOMAINS;
+
+    if (isDev && devDomain) {
+      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
+      console.log(`🔧 [WEBHOOK-INIT] Configurando para desenvolvimento: ${webhookUrl}`);
+      this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
+    } else if (!isDev && prodDomain) {
+      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      console.log(`🚀 [WEBHOOK-INIT] Configurando para produção: ${webhookUrl}`);
+      this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
+    }
   }
 
   public isConfigured(): boolean {
@@ -446,7 +462,7 @@ class EvolutionAPIService {
   }
 
   // Set webhook for receiving messages
-  public async setWebhook(instanceName: string, webhookUrl: string, events: string[] = ['messages.upsert']): Promise<{ success: boolean; error?: string; data?: any }> {
+  public async setWebhook(instanceName: string, webhookUrl: string, events: string[] = ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE', 'MESSAGES_SET', 'MESSAGES_EDITED']): Promise<{ success: boolean; error?: string; data?: any }> {
     if (!this.isConfigured()) {
       return { success: false, error: 'Evolution API não está configurada' };
     }
