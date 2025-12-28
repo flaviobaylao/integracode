@@ -876,11 +876,13 @@ export function registerChatRoutes(app: Express): void {
         externalId: messageId
       });
 
-      // 4. Atualizar Conversa
+      // 4. Atualizar Conversa - CORREÇÃO: Forçar lastMessageTime para ordenação
       await storage.updateChatConversation(conversation.id, {
         updatedAt: new Date(),
+        lastMessageTime: new Date(),
         lastMessage: messageText || '[Mídia/Outro]',
-        status: isFromMe ? conversation.status : 'new'
+        status: isFromMe ? conversation.status : 'new',
+        hasUnread: !isFromMe
       });
 
       console.log(`✅ [WEBHOOK-MIRROR] Sucesso total: ${normalizedPhone}`);
@@ -963,7 +965,9 @@ export function registerChatRoutes(app: Express): void {
           customerName: customer.name || `Cliente ${normalizedPhone}`,
           customerPhone: normalizedPhone,
           status: 'new' as const,
-          priority: 'normal' as const
+          priority: 'normal' as const,
+          lastMessageTime: new Date(),
+          updatedAt: new Date()
         });
         console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
 

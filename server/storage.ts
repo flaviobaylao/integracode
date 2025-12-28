@@ -5824,6 +5824,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertChatConversation(conversationData: InsertChatConversation): Promise<ChatConversation> {
+    const now = new Date();
     // Se customerPhone está definido, tenta buscar conversa existente
     if (conversationData.customerPhone) {
       const existing = await db
@@ -5837,7 +5838,8 @@ export class DatabaseStorage implements IStorage {
           .update(chatConversations)
           .set({
             ...conversationData,
-            updatedAt: new Date()
+            updatedAt: now,
+            lastMessageTime: conversationData.lastMessageTime || now
           })
           .where(eq(chatConversations.customerPhone, conversationData.customerPhone))
           .returning();
@@ -5846,7 +5848,12 @@ export class DatabaseStorage implements IStorage {
     }
     
     // Criar nova conversa
-    const [conversation] = await db.insert(chatConversations).values(conversationData).returning();
+    const [conversation] = await db.insert(chatConversations).values({
+      ...conversationData,
+      createdAt: now,
+      updatedAt: now,
+      lastMessageTime: conversationData.lastMessageTime || now
+    }).returning();
     return conversation;
   }
   
