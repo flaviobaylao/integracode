@@ -5832,6 +5832,19 @@ export class DatabaseStorage implements IStorage {
       // 🔧 UNIFICAÇÃO: Buscar por variações do número (com/sem 9)
       const phone = conversationData.customerPhone;
       let digitsOnly = phone.replace(/\D/g, '');
+      
+      // IDs conhecidos que devem ser mapeados ANTES da busca
+      const idMappings: { [key: string]: string } = {
+        '5504884295924': '5562995782812',
+        '5550575396912': '5562996353860'
+      };
+      
+      let targetPhone = phone;
+      if (idMappings[digitsOnly]) {
+        targetPhone = idMappings[digitsOnly];
+        digitsOnly = targetPhone.replace(/\D/g, '');
+      }
+      
       if (digitsOnly.startsWith('55')) digitsOnly = digitsOnly.slice(2);
       
       const variants = [
@@ -5847,7 +5860,7 @@ export class DatabaseStorage implements IStorage {
         variants.push(`55${digitsOnly.slice(0, 2)}9${digitsOnly.slice(2)}`);
       }
 
-      console.log(`🔍 [UPSERT-CONV] Buscando variantes de ${phone}:`, variants);
+      console.log(`🔍 [UPSERT-CONV] Buscando variantes de ${phone} (target: ${targetPhone}):`, variants);
 
       const existing = await db
         .select()
