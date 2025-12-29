@@ -180,7 +180,7 @@ export default function ChatCenter() {
         if (!a.hasUnread && b.hasUnread) return 1;
         
         // 2. Por tempo da última mensagem (mais recente primeiro)
-        // Usar getTime() para garantir comparação numérica precisa
+        // Usar timestamps numéricos para comparação robusta
         const timeA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
         const timeB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
         
@@ -189,8 +189,9 @@ export default function ChatCenter() {
         }
         
         // 3. Fallback para data de atualização (ou criação) se não houver mensagens
-        const updateA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const updateB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        // Garantir que estamos acessando propriedades que existem no objeto
+        const updateA = (a as any).updatedAt ? new Date((a as any).updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const updateB = (b as any).updatedAt ? new Date((b as any).updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         
         if (updateA !== updateB) {
           return updateB - updateA;
