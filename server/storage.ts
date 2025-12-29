@@ -5798,7 +5798,7 @@ export class DatabaseStorage implements IStorage {
 
   // Chat Conversations operations
   async getChatConversations(): Promise<ChatConversation[]> {
-    return await db.select().from(chatConversations).orderBy(desc(chatConversations.lastMessageTime), desc(chatConversations.updatedAt));
+    return await db.select().from(chatConversations).orderBy(desc(chatConversations.lastMessageTime));
   }
   
   async getChatConversation(id: string): Promise<ChatConversation | undefined> {

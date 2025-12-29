@@ -148,6 +148,7 @@ export default function ChatCenter() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
   useEffect(() => {
@@ -204,6 +205,12 @@ export default function ChatCenter() {
     }
   });
   const conversations = (conversationsData as Conversation[]) || [];
+
+  // Filtrar conversas por termo de busca
+  const filteredConversations = conversations.filter(conv => 
+    conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
+  );
 
   // Fetch messages para a conversa selecionada - CORREÇÃO: polling cada 300ms
   const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
@@ -720,39 +727,47 @@ export default function ChatCenter() {
                   </div>
                 </CardHeader>
 
-                <TabsContent value="conversas" className="flex-1 overflow-hidden m-0">
-                  <div className="px-4 pb-2 flex items-center justify-between">
-                    <div>
+                <TabsContent value="conversas" className="flex-1 overflow-hidden m-0 flex flex-col">
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
+                    <div className="flex-1">
                       <CardTitle className="text-lg">Conversas</CardTitle>
-                      <CardDescription>{conversations.length} conversas</CardDescription>
+                      <CardDescription>{filteredConversations.length} conversas</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 flex-1 max-w-[200px]">
+                      <Input 
+                        placeholder="Buscar..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="h-8 text-xs"
+                      />
                     </div>
                     <Button
                       size="sm"
                       onClick={() => setShowNewConversation(true)}
-                      className="bg-green-600 hover:bg-green-700"
+                      className="bg-green-600 hover:bg-green-700 shrink-0"
                       data-testid="button-new-conversation"
                     >
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
                   <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <div className="h-full overflow-y-auto pr-2">
+                    <ScrollArea className="h-full pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
-                        ) : conversations.length === 0 ? (
-                          <div className="text-center py-4 text-gray-500">Nenhuma conversa</div>
+                        ) : filteredConversations.length === 0 ? (
+                          <div className="text-center py-4 text-gray-500">Nenhuma conversa encontrada</div>
                         ) : (
                           <div className="space-y-6">
                             {/* Seção de Não Respondidas */}
-                            {conversations.some(c => c.hasUnread) && (
+                            {filteredConversations.some(c => c.hasUnread) && (
                               <div className="space-y-3">
                                 <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
                                   <AlertCircle className="w-3 h-3" />
                                   Mensagens Não Respondidas
                                 </h3>
                                 <div className="space-y-2">
-                                  {conversations.filter(c => c.hasUnread).map((conv) => (
+                                  {filteredConversations.filter(c => c.hasUnread).map((conv) => (
                                     <ConversationItem 
                                       key={conv.id} 
                                       conv={conv} 
@@ -770,10 +785,10 @@ export default function ChatCenter() {
                             )}
 
                             {/* Seção de Todas as Conversas */}
-                            <div className="space-y-3">
+                            <div className="space-y-3 pb-8">
                               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Histórico de Conversas</h3>
                               <div className="space-y-2">
-                                {conversations.filter(c => !c.hasUnread).map((conv) => (
+                                {filteredConversations.filter(c => !c.hasUnread).map((conv) => (
                                   <ConversationItem 
                                     key={conv.id} 
                                     conv={conv} 
@@ -790,7 +805,7 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </ScrollArea>
                   </CardContent>
                 </TabsContent>
 
