@@ -5829,21 +5829,43 @@ export class DatabaseStorage implements IStorage {
     const now = new Date();
     // Se customerPhone está definido, tenta buscar conversa existente
     if (conversationData.customerPhone) {
+      // 🔧 UNIFICAÇÃO: Buscar por variações do número (com/sem 9)
+      const phone = conversationData.customerPhone;
+      let digitsOnly = phone.replace(/\D/g, '');
+      if (digitsOnly.startsWith('55')) digitsOnly = digitsOnly.slice(2);
+      
+      const variants = [
+        `55${digitsOnly}`, // Original
+      ];
+      
+      // Se tem 11 dígitos (DDD + 9 + número), adicionar variante sem o 9
+      if (digitsOnly.length === 11 && digitsOnly[2] === '9') {
+        variants.push(`55${digitsOnly.slice(0, 2)}${digitsOnly.slice(3)}`);
+      } 
+      // Se tem 10 dígitos (DDD + número), adicionar variante com o 9
+      else if (digitsOnly.length === 10) {
+        variants.push(`55${digitsOnly.slice(0, 2)}9${digitsOnly.slice(2)}`);
+      }
+
+      console.log(`🔍 [UPSERT-CONV] Buscando variantes de ${phone}:`, variants);
+
       const existing = await db
         .select()
         .from(chatConversations)
-        .where(eq(chatConversations.customerPhone, conversationData.customerPhone));
+        .where(inArray(chatConversations.customerPhone, variants))
+        .limit(1);
       
       if (existing.length > 0) {
-        // Atualizar conversa existente
+        // Atualizar conversa existente (usando o ID original para manter o diálogo)
         const [updated] = await db
           .update(chatConversations)
           .set({
             ...conversationData,
+            customerPhone: existing[0].customerPhone, // Mantém o telefone que já estava no banco para evitar trocas
             updatedAt: now,
             lastMessageTime: conversationData.lastMessageTime || now
           })
-          .where(eq(chatConversations.customerPhone, conversationData.customerPhone))
+          .where(eq(chatConversations.id, existing[0].id))
           .returning();
         return updated;
       }

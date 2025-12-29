@@ -39,7 +39,9 @@ function normalizePhoneNumber(phone: string): string {
     '5504884295924': '5562995782812',
     '173250575396912': '5562996353860',
     '50575396912': '5562996353860',
-    '04884295924': '5562995782812'
+    '04884295924': '5562995782812',
+    '5550575396012': '5562996353860',
+    '5504884295924': '5562995782812'
   };
 
   if (mappings[digitsOnly]) {
@@ -64,8 +66,16 @@ function normalizePhoneNumber(phone: string): string {
     digitsOnly = `${ddd}9${rest}`;
     console.log(`📞 [NORMALIZE] Adicionado 9: ${digitsOnly}`);
   } else if (digitsOnly.length > 11) {
-    // Se ainda for maior que 11, pega os últimos 11
+    // Se ainda for maior que 11, pega os últimos 11 (removendo prefixo 55 se houver)
     digitsOnly = digitsOnly.slice(-11);
+    
+    // Se após pegar os últimos 11, o número não tiver o 9 (ex: 628744073357 -> 28744073357)
+    // Precisamos garantir que o 9 esteja lá se for celular brasileiro
+    if (digitsOnly.length === 10) {
+      const ddd = digitsOnly.slice(0, 2);
+      const rest = digitsOnly.slice(2);
+      digitsOnly = `${ddd}9${rest}`;
+    }
   }
   
   // Garante o prefixo 55
