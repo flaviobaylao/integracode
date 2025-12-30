@@ -852,6 +852,17 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
+      
+      // 🔍 DEBUG: Registrar todos os dados para diagnóstico
+      try {
+        await db.execute(sql`
+          INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to)
+          VALUES (${JSON.stringify(req.body).substring(0, 5000)}, ${rawRemoteJid}, ${cleanPhone}, ${normalizedPhone}, ${!!phoneMapping}, ${phoneMapping?.canonicalPhone || null})
+        `);
+        console.log(`🔍 [WEBHOOK-DEBUG] Registrado: ${rawRemoteJid} -> ${cleanPhone} -> ${normalizedPhone} (mapping: ${!!phoneMapping})`);
+      } catch (dbErr) {
+        console.error(`⚠️ [WEBHOOK-DEBUG] Erro ao registrar debug:`, dbErr);
+      }
       const isFromMe = data.key.fromMe === true;
       const messageText = evolutionAPIService.extractMessageText(data.message) || '';
       const messageId = data.key.id;
@@ -3057,6 +3068,41 @@ export function registerChatRoutes(app: Express): void {
       });
     } catch (error: any) {
       console.error("[FIX-PHONES] Erro:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // ============================================================================
+  // ADMIN: DEBUG WEBHOOK LOGS
+  // ============================================================================
+  
+  // GET /api/chat/admin/webhook-debug - Ver logs de debug do webhook (ADMIN ONLY)
+  app.get("/api/chat/admin/webhook-debug", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const result = await db.execute(sql`
+        SELECT id, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to, created_at,
+               LEFT(raw_payload, 500) as payload_preview
+        FROM webhook_debug_log
+        ORDER BY created_at DESC
+        LIMIT 50
+      `);
+      res.json({ 
+        success: true, 
+        logs: result.rows,
+        count: result.rows.length,
+        message: "Últimos 50 registros de debug do webhook"
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // DELETE /api/chat/admin/webhook-debug - Limpar logs de debug do webhook (ADMIN ONLY)
+  app.delete("/api/chat/admin/webhook-debug", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      await db.execute(sql`DELETE FROM webhook_debug_log`);
+      res.json({ success: true, message: "Logs de debug limpos" });
+    } catch (error: any) {
       res.status(500).json({ error: error.message, success: false });
     }
   });
