@@ -947,7 +947,40 @@ export function registerChatRoutes(app: Express): void {
       // Determinar conteúdo e tipo com base na mídia
       const finalContent = messageText || (mediaInfo.messageType !== 'text' ? '[Mensagem de mídia]' : '');
       const finalMessageType = mediaInfo.messageType;
-      const finalMediaUrl = mediaInfo.mediaUrl;
+      let finalMediaUrl = mediaInfo.mediaUrl;
+      
+      // 🖼️ Se for mídia sem URL, tentar baixar via API
+      if (mediaInfo.messageType !== 'text' && !finalMediaUrl) {
+        console.log(`📥 [WEBHOOK-MEDIA] Mídia sem URL, tentando baixar via API...`);
+        debugInfo.steps.push('9a-download-media');
+        
+        try {
+          const config = evolutionAPIService.getConfig();
+          if (config?.instanceName) {
+            const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
+              config.instanceName,
+              messageId
+            );
+            
+            if (mediaResult.success && mediaResult.base64) {
+              // Criar data URL para exibição
+              const mimeType = mediaResult.mimetype || 
+                (mediaInfo.messageType === 'image' ? 'image/jpeg' : 
+                 mediaInfo.messageType === 'audio' ? 'audio/ogg' :
+                 mediaInfo.messageType === 'video' ? 'video/mp4' : 'application/octet-stream');
+              finalMediaUrl = `data:${mimeType};base64,${mediaResult.base64}`;
+              debugInfo.mediaDownloaded = true;
+              console.log(`✅ [WEBHOOK-MEDIA] Mídia baixada e convertida para data URL`);
+            } else {
+              debugInfo.mediaDownloadError = mediaResult.error;
+              console.log(`⚠️ [WEBHOOK-MEDIA] Não foi possível baixar mídia: ${mediaResult.error}`);
+            }
+          }
+        } catch (mediaErr: any) {
+          debugInfo.mediaDownloadError = mediaErr.message;
+          console.error(`❌ [WEBHOOK-MEDIA] Erro ao baixar mídia:`, mediaErr.message);
+        }
+      }
       
       console.log(`📎 [WEBHOOK-MEDIA] Tipo: ${finalMessageType} | URL: ${finalMediaUrl ? 'SIM' : 'NÃO'} | Conteúdo: ${finalContent.substring(0, 30)}`);
       

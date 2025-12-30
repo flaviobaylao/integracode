@@ -881,6 +881,58 @@ class EvolutionAPIService {
     }
   }
 
+  // Download media as base64 from Evolution API
+  public async getBase64FromMediaMessage(
+    instanceName: string,
+    messageId: string
+  ): Promise<{ success: boolean; base64?: string; mimetype?: string; error?: string }> {
+    if (!this.isConfigured()) {
+      return { success: false, error: 'Evolution API não está configurada' };
+    }
+
+    try {
+      console.log(`📥 [EVOLUTION] Baixando mídia da mensagem: ${messageId}`);
+      
+      const response = await fetch(`${this.config!.apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': this.config!.apiKey
+        },
+        body: JSON.stringify({
+          message: {
+            key: {
+              id: messageId
+            }
+          },
+          convertToMp4: true
+        }),
+        signal: AbortSignal.timeout(60000) // 60 segundos para downloads grandes
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error(`❌ [EVOLUTION] Erro ao baixar mídia:`, data);
+        return { success: false, error: data.message || 'Erro ao baixar mídia' };
+      }
+
+      if (data.base64) {
+        console.log(`✅ [EVOLUTION] Mídia baixada com sucesso (${data.mimetype || 'unknown'})`);
+        return { 
+          success: true, 
+          base64: data.base64,
+          mimetype: data.mimetype
+        };
+      }
+
+      return { success: false, error: 'Resposta sem base64' };
+    } catch (error: any) {
+      console.error(`❌ [EVOLUTION] Erro ao baixar mídia:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Extract message text from Evolution API message object
   public extractMessageText(message: any): string {
     if (message.conversation) {
