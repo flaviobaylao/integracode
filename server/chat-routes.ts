@@ -89,15 +89,27 @@ function getPhoneVariants(normalizedPhone: string): string[] {
   // Retorna variações do telefone (com/sem o 9 obrigatório)
   const variants = [normalizedPhone];
   
-  // Se tem 13 dígitos (55 + 11): tentar remover o 9
+  // Se tem 13 dígitos (55 + 11): tentar remover o 9 após o 55XX
   if (normalizedPhone.length === 13 && normalizedPhone.startsWith('55')) {
-    const withoutNine = normalizedPhone.slice(0, 3) + normalizedPhone.slice(4); // Remove o 9
+    const ddd = normalizedPhone.slice(2, 4);
+    const rest = normalizedPhone.slice(5);
+    const withoutNine = `55${ddd}${rest}`;
     if (!variants.includes(withoutNine)) {
       variants.push(withoutNine);
-      console.log(`📞 [VARIANTS] ${normalizedPhone} -> Variantes: [${variants.join(', ')}]`);
     }
   }
   
+  // Se tem 12 dígitos (55 + 10): tentar adicionar o 9 após o 55XX
+  if (normalizedPhone.length === 12 && normalizedPhone.startsWith('55')) {
+    const ddd = normalizedPhone.slice(2, 4);
+    const rest = normalizedPhone.slice(4);
+    const withNine = `55${ddd}9${rest}`;
+    if (!variants.includes(withNine)) {
+      variants.push(withNine);
+    }
+  }
+  
+  console.log(`📞 [VARIANTS] ${normalizedPhone} -> Variantes: [${variants.join(', ')}]`);
   return variants;
 }
 
@@ -457,22 +469,16 @@ export function registerChatRoutes(app: Express): void {
           const conversation = await storage.getChatConversation(message.conversationId);
           if (!conversation || !conversation.customerPhone) {
             console.warn(`⚠️  [CHAT-MESSAGE] Conversa ou telefone não encontrados`);
-            return res.json(message); // Still return success, message saved to DB
+            return res.json(message); 
           }
           
-          const config = {
-            instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST',
-            apiUrl: process.env.EVOLUTION_API_BASE_URL || 'https://api.bothonest.com.br',
-            apiKey: process.env.EVOLUTION_API_KEY || ''
-          };
-          
-          if (!config.apiKey) {
-            console.warn(`⚠️  [CHAT-MESSAGE] Evolution API não configurada`);
+          const config = evolutionAPIService.getConfig();
+          if (!config || !config.apiKey) {
+            console.warn(`⚠️  [CHAT-MESSAGE] Evolution API não configurada no service`);
             return res.json(message);
           }
           
-          console.log(`📱 [CHAT-MESSAGE] Telefone do cliente: ${conversation.customerPhone}, Tipo: ${typeof conversation.customerPhone}`);
-          console.log(`📱 [CHAT-MESSAGE] Instância: ${config.instanceName}, URL: ${config.apiUrl}`);
+          console.log(`📱 [CHAT-MESSAGE] Telefone do cliente: ${conversation.customerPhone}`);
           
           const sendResult = await evolutionAPIService.sendTextMessage(
             config.instanceName,
@@ -484,11 +490,9 @@ export function registerChatRoutes(app: Express): void {
             console.log(`✅ [CHAT-MESSAGE] Mensagem entregue via WhatsApp! ID:`, sendResult.messageId);
           } else {
             console.warn(`⚠️  [CHAT-MESSAGE] Erro ao enviar via WhatsApp:`, sendResult.error);
-            // Still return success to user - message is saved
           }
         } catch (sendError: any) {
           console.error(`❌ [CHAT-MESSAGE] Erro ao enviar mensagem:`, sendError.message);
-          // Don't fail the request - message is already saved
         }
       }
       

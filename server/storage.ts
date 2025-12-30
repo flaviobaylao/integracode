@@ -5835,8 +5835,13 @@ export class DatabaseStorage implements IStorage {
       
       // IDs conhecidos que devem ser mapeados ANTES da busca
       const idMappings: { [key: string]: string } = {
+        '5550575396912': '5562996353860',
         '5504884295924': '5562995782812',
-        '5550575396912': '5562996353860'
+        '5504884295924@s.whatsapp.net': '5562995782812',
+        '173250575396912': '5562996353860',
+        '50575396912': '5562996353860',
+        '04884295924': '5562995782812',
+        '5550575396012': '5562996353860'
       };
       
       let targetPhone = phone;
