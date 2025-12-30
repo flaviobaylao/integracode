@@ -998,6 +998,36 @@ export function registerChatRoutes(app: Express): void {
         unreadCount: 0
       });
 
+      // 🤖 NOVO: Acionar resposta automática do ChatGPT se estiver habilitado
+      if (!isFromMe) {
+        debugInfo.steps.push('10a-ai-trigger');
+        try {
+          const aiSettings = await storage.getChatAiSettings();
+          if (aiSettings && aiSettings.isEnabled && aiSettings.mode !== 'disabled') {
+            console.log(`🤖 [WEBHOOK-AI] Acionando IA para conversa: ${conversation.id} (${normalizedPhone})`);
+            
+            // Importar dinamicamente para evitar dependência circular se houver
+            const { handleIncomingMessage } = await import("./chatgpt-service");
+            
+            // Executar em background para não atrasar o webhook
+            handleIncomingMessage(
+              {
+                id: conversation.id,
+                customerName: identifiedName,
+                customerPhone: normalizedPhone
+              },
+              {
+                content: finalContent,
+                timestamp: new Date()
+              },
+              aiSettings
+            ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
+          }
+        } catch (aiErr: any) {
+          console.error(`⚠️ [WEBHOOK-AI] Erro ao verificar configurações de IA:`, aiErr.message);
+        }
+      }
+
       debugInfo.steps.push('11-complete');
       console.log(`✅ [WEBHOOK-MIRROR] Sucesso total: ${normalizedPhone}`);
       res.json({ success: true, debug: debugInfo });
