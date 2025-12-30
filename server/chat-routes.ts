@@ -777,8 +777,15 @@ export function registerChatRoutes(app: Express): void {
   // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
+    const debugInfo: any = { 
+      timestamp: new Date().toISOString(),
+      steps: [],
+      env: process.env.NODE_ENV
+    };
+    
     try {
       let { event, instance, data } = req.body;
+      debugInfo.steps.push('1-parse-body');
       
       // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
       if (!event && req.body.webhook?.event) {
@@ -802,30 +809,40 @@ export function registerChatRoutes(app: Express): void {
         'messages.edited', 'MESSAGES_EDITED'
       ];
       
+      debugInfo.event = event;
+      
       if (!event || !messageEvents.includes(event)) {
-        return res.json({ received: false, reason: 'Evento ignorado' });
+        return res.json({ received: false, reason: 'Evento ignorado', debug: debugInfo });
       }
 
       if (!data || !data.key) {
-        return res.json({ received: false, reason: 'Dados inválidos' });
+        return res.json({ received: false, reason: 'Dados inválidos', debug: debugInfo });
       }
 
       const rawRemoteJid = data.key.remoteJid;
+      debugInfo.rawRemoteJid = rawRemoteJid;
+      
       if (rawRemoteJid.includes('@g.us')) {
-        return res.json({ received: false, reason: 'Grupo ignorado' });
+        return res.json({ received: false, reason: 'Grupo ignorado', debug: debugInfo });
       }
 
       const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
       const cleanPhone = phoneNumber.replace(/\D/g, '');
+      debugInfo.phoneNumber = phoneNumber;
+      debugInfo.cleanPhone = cleanPhone;
+      debugInfo.steps.push('2-extract-phone');
       
       // Mapeamento de telefone solicitado pelo usuário
       let targetPhone = phoneNumber;
       
       // Buscar mapeamento no banco de dados (correspondência exata apenas)
+      debugInfo.steps.push('3-lookup-mapping');
       const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
+      debugInfo.phoneMappingFound = !!phoneMapping;
       
       if (phoneMapping) {
         targetPhone = phoneMapping.canonicalPhone;
+        debugInfo.mappedTo = targetPhone;
         console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
       }
 
@@ -834,31 +851,44 @@ export function registerChatRoutes(app: Express): void {
       const messageText = evolutionAPIService.extractMessageText(data.message) || '';
       const messageId = data.key.id;
       
+      debugInfo.normalizedPhone = normalizedPhone;
+      debugInfo.isFromMe = isFromMe;
+      debugInfo.messageText = messageText.substring(0, 50);
+      debugInfo.steps.push('4-normalize-phone');
+      
       console.log(`📱 [WEBHOOK-MIRROR] Processando: ${normalizedPhone} | FromMe: ${isFromMe} | Texto: ${messageText.substring(0, 50)}`);
 
       // 🔍 Buscar contato na agenda (Phonebook) para identificação prioritária
+      debugInfo.steps.push('5-lookup-phonebook');
       const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
       const identifiedName = phonebookContact?.name || data.pushName || `Cliente ${normalizedPhone}`;
+      debugInfo.identifiedName = identifiedName;
       
       if (phonebookContact) {
         console.log(`📖 [WEBHOOK-MIRROR] Contato identificado na agenda: ${identifiedName}`);
       }
 
       // 1. Garantir Cliente e Conversa
+      debugInfo.steps.push('6-get-customer-conversation');
       let conversation = await storage.getChatConversationByPhone(normalizedPhone);
       let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+      debugInfo.existingCustomer = !!customer;
+      debugInfo.existingConversation = !!conversation;
 
       if (!customer) {
+        debugInfo.steps.push('7a-create-customer');
         customer = await storage.createChatCustomer({
           phone: normalizedPhone,
           name: identifiedName
         });
+        debugInfo.createdCustomerId = customer.id;
       } else if (phonebookContact && customer.name !== identifiedName) {
         // Atualizar nome do cliente se mudou na agenda
         await storage.updateChatCustomer(customer.id, { name: identifiedName });
       }
 
       if (!conversation) {
+        debugInfo.steps.push('7b-create-conversation');
         conversation = await storage.createChatConversation({
           customerId: customer.id,
           customerName: identifiedName,
@@ -866,21 +896,25 @@ export function registerChatRoutes(app: Express): void {
           status: 'new',
           priority: 'normal'
         });
+        debugInfo.createdConversationId = conversation.id;
       } else if (phonebookContact && conversation.customerName !== identifiedName) {
         // Atualizar nome na conversa se mudou na agenda
         await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
       }
 
       // 2. Verificar duplicidade (externalId)
+      debugInfo.steps.push('8-check-duplicate');
       const existingMessages = await storage.getChatMessages(conversation.id);
       const isDuplicate = existingMessages.some(m => m.externalId === messageId);
+      debugInfo.messageCount = existingMessages.length;
       
       if (isDuplicate) {
         console.log(`⏭️  [WEBHOOK-MIRROR] Mensagem duplicada ignorada: ${messageId}`);
-        return res.json({ success: true, duplicate: true });
+        return res.json({ success: true, duplicate: true, debug: debugInfo });
       }
 
       // 3. Salvar Mensagem
+      debugInfo.steps.push('9-save-message');
       await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
@@ -891,6 +925,7 @@ export function registerChatRoutes(app: Express): void {
       });
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação e incrementar contador de não-lidas
+      debugInfo.steps.push('10-update-conversation');
       await storage.updateChatConversation(conversation.id, {
         updatedAt: new Date(),
         lastMessageTime: new Date(),
@@ -898,11 +933,14 @@ export function registerChatRoutes(app: Express): void {
         unreadCount: isFromMe ? conversation.unreadCount : (conversation.unreadCount || 0) + 1
       });
 
+      debugInfo.steps.push('11-complete');
       console.log(`✅ [WEBHOOK-MIRROR] Sucesso total: ${normalizedPhone}`);
-      res.json({ success: true });
+      res.json({ success: true, debug: debugInfo });
     } catch (error: any) {
+      debugInfo.error = error.message;
+      debugInfo.stack = error.stack?.split('\n').slice(0, 5);
       console.error("❌ [WEBHOOK-MIRROR] Erro Crítico:", error.message);
-      res.status(200).json({ error: error.message });
+      res.status(200).json({ error: error.message, debug: debugInfo });
     }
   });
 
