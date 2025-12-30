@@ -52,8 +52,7 @@ export default function BulkMessage() {
       
       const response = await fetch("/api/chat/bulk-message/parse", {
         method: "POST",
-        body: formData,
-        credentials: "include"
+        body: formData
       });
       
       if (!response.ok) {
