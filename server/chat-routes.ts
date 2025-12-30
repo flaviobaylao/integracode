@@ -1157,7 +1157,15 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const XLSX = await import("xlsx");
-      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      let workbook;
+      
+      if (req.file.buffer) {
+        workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      } else if (req.file.path) {
+        workbook = XLSX.readFile(req.file.path);
+      } else {
+        return res.status(400).json({ error: "Dados do arquivo não encontrados" });
+      }
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { header: 1 });
