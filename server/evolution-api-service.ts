@@ -935,23 +935,29 @@ class EvolutionAPIService {
 
   // Extract message text from Evolution API message object
   public extractMessageText(message: any): string {
-    if (message.conversation) {
-      return message.conversation;
+    // Evolution API v2 can wrap message in 'message' or send it directly
+    const msg = message?.message || message;
+    
+    // Check for nested message object (v2 can double wrap)
+    const deepMsg = msg?.message || msg;
+
+    if (deepMsg?.conversation) {
+      return deepMsg.conversation;
     }
-    if (message.extendedTextMessage?.text) {
-      return message.extendedTextMessage.text;
+    if (deepMsg?.extendedTextMessage?.text) {
+      return deepMsg.extendedTextMessage.text;
     }
-    if (message.imageMessage?.caption) {
-      return message.imageMessage.caption;
+    if (deepMsg?.imageMessage?.caption) {
+      return deepMsg.imageMessage.caption;
     }
-    if (message.videoMessage?.caption) {
-      return message.videoMessage.caption;
+    if (deepMsg?.videoMessage?.caption) {
+      return deepMsg.videoMessage.caption;
     }
-    if (message.audioMessage) {
+    if (deepMsg?.audioMessage) {
       return '[Áudio]';
     }
-    if (message.documentMessage?.fileName) {
-      return message.documentMessage.fileName;
+    if (deepMsg?.documentMessage?.fileName) {
+      return deepMsg.documentMessage.fileName;
     }
     return '[Mensagem de mídia]';
   }
@@ -967,51 +973,62 @@ class EvolutionAPIService {
     // Evolution API v2 can wrap message in 'message' or send it directly
     const msg = message?.message || message;
     
-    // Check for direct base64 in the message object (Evolution API v2 feature)
-    const base64Data = msg?.base64 || message?.base64;
-    const mimeType = msg?.mimetype || message?.mimetype;
+    // Check for nested message object (v2 can double wrap)
+    const deepMsg = msg?.message || msg;
+    
+    // Check for direct base64 in any level of the message object
+    const base64Data = deepMsg?.base64 || msg?.base64 || message?.base64;
+    const mimeType = deepMsg?.mimetype || msg?.mimetype || message?.mimetype;
 
     // Image
-    if (msg?.imageMessage) {
+    if (deepMsg?.imageMessage || deepMsg?.image) {
+      const img = deepMsg.imageMessage || deepMsg.image;
+      const imgBase64 = img?.base64 || base64Data;
       return {
         messageType: 'image',
-        mediaUrl: msg.imageMessage.url || (base64Data ? `data:${mimeType || 'image/jpeg'};base64,${base64Data}` : undefined),
-        mediaType: msg.imageMessage.mimetype || mimeType || 'image/jpeg',
-        mediaSize: msg.imageMessage.fileLength,
+        mediaUrl: img?.url || (imgBase64 ? `data:${img?.mimetype || mimeType || 'image/jpeg'};base64,${imgBase64}` : undefined),
+        mediaType: img?.mimetype || mimeType || 'image/jpeg',
+        mediaSize: img?.fileLength,
         mediaFilename: 'image.jpg'
       };
     }
     
     // Video
-    if (msg?.videoMessage) {
+    if (deepMsg?.videoMessage || deepMsg?.video) {
+      const vid = deepMsg.videoMessage || deepMsg.video;
+      const vidBase64 = vid?.base64 || base64Data;
       return {
         messageType: 'video',
-        mediaUrl: msg.videoMessage.url || (base64Data ? `data:${mimeType || 'video/mp4'};base64,${base64Data}` : undefined),
-        mediaType: msg.videoMessage.mimetype || mimeType || 'video/mp4',
-        mediaSize: msg.videoMessage.fileLength,
+        mediaUrl: vid?.url || (vidBase64 ? `data:${vid?.mimetype || mimeType || 'video/mp4'};base64,${vidBase64}` : undefined),
+        mediaType: vid?.mimetype || mimeType || 'video/mp4',
+        mediaSize: vid?.fileLength,
         mediaFilename: 'video.mp4'
       };
     }
     
     // Audio
-    if (msg?.audioMessage) {
+    if (deepMsg?.audioMessage || deepMsg?.audio) {
+      const aud = deepMsg.audioMessage || deepMsg.audio;
+      const audBase64 = aud?.base64 || base64Data;
       return {
         messageType: 'audio',
-        mediaUrl: msg.audioMessage.url || (base64Data ? `data:${mimeType || 'audio/ogg'};base64,${base64Data}` : undefined),
-        mediaType: msg.audioMessage.mimetype || mimeType || 'audio/ogg',
-        mediaSize: msg.audioMessage.fileLength,
+        mediaUrl: aud?.url || (audBase64 ? `data:${aud?.mimetype || mimeType || 'audio/ogg'};base64,${audBase64}` : undefined),
+        mediaType: aud?.mimetype || mimeType || 'audio/ogg',
+        mediaSize: aud?.fileLength,
         mediaFilename: 'audio.ogg'
       };
     }
     
     // Document
-    if (msg?.documentMessage) {
+    if (deepMsg?.documentMessage || deepMsg?.document) {
+      const doc = deepMsg.documentMessage || deepMsg.document;
+      const docBase64 = doc?.base64 || base64Data;
       return {
         messageType: 'document',
-        mediaUrl: msg.documentMessage.url || (base64Data ? `data:${mimeType || 'application/pdf'};base64,${base64Data}` : undefined),
-        mediaType: msg.documentMessage.mimetype || mimeType || 'application/pdf',
-        mediaSize: msg.documentMessage.fileLength,
-        mediaFilename: msg.documentMessage.fileName || 'document'
+        mediaUrl: doc?.url || (docBase64 ? `data:${doc?.mimetype || mimeType || 'application/pdf'};base64,${docBase64}` : undefined),
+        mediaType: doc?.mimetype || mimeType || 'application/pdf',
+        mediaSize: doc?.fileLength,
+        mediaFilename: doc?.fileName || 'document'
       };
     }
     

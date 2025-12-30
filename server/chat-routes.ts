@@ -861,13 +861,19 @@ export function registerChatRoutes(app: Express): void {
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
       
-      // 🔍 DEBUG: Registrar todos os dados para diagnóstico
+    // 🔍 DEBUG: Registrar todos os dados para diagnóstico
       try {
+        const debugPayload = JSON.stringify(req.body);
         await db.execute(sql`
           INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to)
-          VALUES (${JSON.stringify(req.body).substring(0, 5000)}, ${rawRemoteJid}, ${cleanPhone}, ${normalizedPhone}, ${!!phoneMapping}, ${phoneMapping?.canonicalPhone || null})
+          VALUES (${debugPayload.substring(0, 8000)}, ${rawRemoteJid}, ${cleanPhone}, ${normalizedPhone}, ${!!phoneMapping}, ${phoneMapping?.canonicalPhone || null})
         `);
         console.log(`🔍 [WEBHOOK-DEBUG] Registrado: ${rawRemoteJid} -> ${cleanPhone} -> ${normalizedPhone} (fonte: ${phoneSource})`);
+        
+        // Log específico para mídias
+        if (debugPayload.includes('Message') && (debugPayload.includes('url') || debugPayload.includes('base64'))) {
+          console.log(`📎 [WEBHOOK-DEBUG-MEDIA] Detectada possível mídia no payload de ${normalizedPhone}`);
+        }
       } catch (dbErr) {
         console.error(`⚠️ [WEBHOOK-DEBUG] Erro ao registrar debug:`, dbErr);
       }
@@ -879,14 +885,24 @@ export function registerChatRoutes(app: Express): void {
       const mediaInfo = evolutionAPIService.extractMediaInfo(data.message);
       debugInfo.mediaInfo = mediaInfo;
       
-      // 🎯 NOVO: Se o webhookBase64 estiver desativado, a Evolution API pode enviar a mídia em data.message.base64 ou data.base64
+      // 🎯 NOVO: Suporte a estrutura de mídia da Evolution API v2 (pode estar em msg.message ou msg direto)
       if (mediaInfo.messageType !== 'text' && !mediaInfo.mediaUrl) {
-        const base64Source = data.message?.base64 || data.base64;
-        const mimeSource = data.message?.mimetype || data.mimetype;
+        const msg = data.message?.message || data.message;
+        const deepMsg = msg?.message || msg;
+        const base64Source = deepMsg?.base64 || msg?.base64 || data.message?.base64 || data.base64 || 
+                           deepMsg?.imageMessage?.base64 || deepMsg?.audioMessage?.base64 || 
+                           deepMsg?.videoMessage?.base64 || deepMsg?.documentMessage?.base64 ||
+                           deepMsg?.image?.base64 || deepMsg?.audio?.base64 ||
+                           deepMsg?.video?.base64 || deepMsg?.document?.base64;
+        const mimeSource = deepMsg?.mimetype || msg?.mimetype || data.message?.mimetype || data.mimetype ||
+                          deepMsg?.imageMessage?.mimetype || deepMsg?.audioMessage?.mimetype ||
+                          deepMsg?.videoMessage?.mimetype || deepMsg?.documentMessage?.mimetype ||
+                          deepMsg?.image?.mimetype || deepMsg?.audio?.mimetype ||
+                          deepMsg?.video?.mimetype || deepMsg?.document?.mimetype;
         
         if (base64Source) {
           mediaInfo.mediaUrl = `data:${mimeSource || 'image/jpeg'};base64,${base64Source}`;
-          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload`);
+          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada no payload (v2 structure detected)`);
         }
       }
       
