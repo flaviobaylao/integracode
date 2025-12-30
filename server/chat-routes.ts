@@ -875,6 +875,10 @@ export function registerChatRoutes(app: Express): void {
       const messageText = evolutionAPIService.extractMessageText(data.message) || '';
       const messageId = data.key.id;
       
+      // 🖼️ Extrair informações de mídia
+      const mediaInfo = evolutionAPIService.extractMediaInfo(data.message);
+      debugInfo.mediaInfo = mediaInfo;
+      
       debugInfo.normalizedPhone = normalizedPhone;
       debugInfo.isFromMe = isFromMe;
       debugInfo.messageText = messageText.substring(0, 50);
@@ -937,14 +941,23 @@ export function registerChatRoutes(app: Express): void {
         return res.json({ success: true, duplicate: true, debug: debugInfo });
       }
 
-      // 3. Salvar Mensagem
+      // 3. Salvar Mensagem (com suporte a mídia)
       debugInfo.steps.push('9-save-message');
+      
+      // Determinar conteúdo e tipo com base na mídia
+      const finalContent = messageText || (mediaInfo.messageType !== 'text' ? '[Mensagem de mídia]' : '');
+      const finalMessageType = mediaInfo.messageType;
+      const finalMediaUrl = mediaInfo.mediaUrl;
+      
+      console.log(`📎 [WEBHOOK-MEDIA] Tipo: ${finalMessageType} | URL: ${finalMediaUrl ? 'SIM' : 'NÃO'} | Conteúdo: ${finalContent.substring(0, 30)}`);
+      
       await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
-        content: messageText || '[Mídia/Outro]',
-        messageType: 'text',
+        content: finalContent,
+        messageType: finalMessageType,
+        mediaUrl: finalMediaUrl,
         externalId: messageId
       });
 
