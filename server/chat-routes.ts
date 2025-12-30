@@ -2374,6 +2374,9 @@ export function registerChatRoutes(app: Express): void {
                 
                 // Convert local file to base64 if it's a local upload path
                 let finalMediaUrl = mediaUrl;
+                let detectedMimetype: string | undefined;
+                let detectedFileName: string | undefined;
+                
                 if (mediaUrl.startsWith('/uploads/')) {
                   try {
                     const uploadDir = path.join(process.cwd(), "uploads", "chat");
@@ -2403,10 +2406,11 @@ export function registerChatRoutes(app: Express): void {
                         '.xls': 'application/vnd.ms-excel',
                         '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                       };
-                      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+                      detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
+                      detectedFileName = filename;
                       
-                      finalMediaUrl = `data:${mimeType};base64,${base64Data}`;
-                      console.log(`📤 [SEND-WHATSAPP] Convertido para base64: ${mimeType} (${Math.round(base64Data.length / 1024)}KB)`);
+                      finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+                      console.log(`📤 [SEND-WHATSAPP] Convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
                     } else {
                       console.error(`❌ [SEND-WHATSAPP] Arquivo não encontrado: ${filePath}`);
                     }
@@ -2420,7 +2424,9 @@ export function registerChatRoutes(app: Express): void {
                   phoneFormatted,
                   finalMediaUrl,
                   mediaCaption || content || undefined,
-                  messageType as 'image' | 'audio' | 'video' | 'document'
+                  messageType as 'image' | 'audio' | 'video' | 'document',
+                  3,
+                  { mimetype: detectedMimetype, fileName: detectedFileName }
                 );
               } else {
                 sendResult = { success: false, error: 'Tipo de mensagem não suportado' };

@@ -363,7 +363,8 @@ class EvolutionAPIService {
     mediaUrl: string, 
     caption?: string,
     mediaType?: 'image' | 'audio' | 'video' | 'document',
-    retries = 3
+    retries = 3,
+    options?: { mimetype?: string; fileName?: string }
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.isConfigured()) {
       return { success: false, error: 'Evolution API não está configurada' };
@@ -384,10 +385,10 @@ class EvolutionAPIService {
       }
     }
 
-    // Determine endpoint based on media type
-    const endpoint = mediaType === 'audio' ? 'sendWhatsAppAudio' : 
-                    mediaType === 'video' ? 'sendMedia' :
-                    mediaType === 'document' ? 'sendMedia' : 'sendMedia';
+    // Determine endpoint based on media type (Evolution API v2 endpoints)
+    const endpoint = mediaType === 'audio' ? 'sendAudio' : 
+                    mediaType === 'video' ? 'sendVideo' :
+                    mediaType === 'document' ? 'sendDocument' : 'sendMedia';
 
     console.log(`📤 [EVOLUTION-MEDIA] Preparando envio: tipo=${mediaType}, endpoint=${endpoint}, destino=${formattedNumber}`);
 
@@ -401,21 +402,31 @@ class EvolutionAPIService {
         };
 
         // Add media-specific properties based on type and format
+        // Evolution API uses 'base64' for base64 data and 'mediaUrl' for URLs
         if (isBase64) {
-          // Extract mimetype and base64 data
-          const matches = mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
-          if (matches) {
-            payload.media = matches[2];
-            payload.mimetype = matches[1];
+          // Extract mimetype and base64 data from data URI
+          const dataUriMatch = mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (dataUriMatch) {
+            payload.base64 = dataUriMatch[2];
+            payload.mimetype = options?.mimetype || dataUriMatch[1];
           } else {
-            payload.media = mediaUrl.replace(/^data:[^;]+;base64,/, '');
-            payload.mimetype = this.getMimeTypeFromMediaType(mediaType);
+            payload.base64 = mediaUrl.replace(/^data:[^;]+;base64,/, '');
+            payload.mimetype = options?.mimetype || this.getDefaultMimetype(mediaType);
           }
-          console.log(`📤 [EVOLUTION-MEDIA] Enviando como base64, mimetype: ${payload.mimetype}`);
+          console.log(`📤 [EVOLUTION-MEDIA] Enviando como base64 (${Math.round(payload.base64.length / 1024)}KB, mimetype: ${payload.mimetype})`);
         } else {
           // URL-based media
-          payload.mediatype = mediaType || 'image';
-          payload.media = mediaUrl;
+          payload.mediaUrl = mediaUrl;
+          // Include mimetype if provided or derivable from URL
+          if (options?.mimetype) {
+            payload.mimetype = options.mimetype;
+          } else {
+            // Try to derive mimetype from URL extension
+            const urlMimetype = this.getMimetypeFromUrl(mediaUrl);
+            if (urlMimetype) {
+              payload.mimetype = urlMimetype;
+            }
+          }
           console.log(`📤 [EVOLUTION-MEDIA] Enviando como URL: ${mediaUrl.substring(0, 50)}...`);
         }
 
@@ -424,9 +435,12 @@ class EvolutionAPIService {
           payload.caption = caption;
         }
 
-        // For documents, add filename
-        if (mediaType === 'document') {
-          payload.fileName = caption || 'document';
+        // Derive filename from options, URL, or use defaults
+        const derivedFileName = options?.fileName || this.getFileNameFromUrl(mediaUrl) || this.getDefaultFileName(mediaType);
+
+        // Add fileName for document, video, and audio (required by Evolution API)
+        if (mediaType === 'document' || mediaType === 'video' || mediaType === 'audio') {
+          payload.fileName = derivedFileName;
         }
 
         const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
@@ -466,14 +480,76 @@ class EvolutionAPIService {
     return { success: false, error: 'Falha ao enviar mídia após múltiplas tentativas' };
   }
 
-  // Helper to get mimetype from media type
-  private getMimeTypeFromMediaType(mediaType?: string): string {
+  // Helper to get default mimetype for media type
+  private getDefaultMimetype(mediaType?: string): string {
     switch (mediaType) {
       case 'image': return 'image/jpeg';
-      case 'audio': return 'audio/ogg; codecs=opus';
+      case 'audio': return 'audio/ogg';
       case 'video': return 'video/mp4';
       case 'document': return 'application/pdf';
-      default: return 'image/jpeg';
+      default: return 'application/octet-stream';
+    }
+  }
+
+  // Helper to derive mimetype from URL extension
+  private getMimetypeFromUrl(url: string): string | null {
+    try {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname.toLowerCase();
+      const extensionMatch = pathname.match(/\.([a-z0-9]+)$/);
+      if (!extensionMatch) return null;
+      
+      const ext = extensionMatch[1];
+      const mimeMap: Record<string, string> = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'mp4': 'video/mp4',
+        'webm': 'video/webm',
+        'mp3': 'audio/mpeg',
+        'ogg': 'audio/ogg',
+        'wav': 'audio/wav',
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      };
+      
+      return mimeMap[ext] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper to derive filename from URL
+  private getFileNameFromUrl(url: string): string | null {
+    try {
+      // Skip if it's a data URI
+      if (url.startsWith('data:')) return null;
+      
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const filenameMatch = pathname.match(/\/([^\/]+\.[a-z0-9]+)$/i);
+      if (filenameMatch) {
+        return filenameMatch[1];
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper to get default filename for media type
+  private getDefaultFileName(mediaType?: string): string {
+    switch (mediaType) {
+      case 'image': return 'image.jpg';
+      case 'audio': return 'audio.ogg';
+      case 'video': return 'video.mp4';
+      case 'document': return 'document.pdf';
+      default: return 'file';
     }
   }
 
