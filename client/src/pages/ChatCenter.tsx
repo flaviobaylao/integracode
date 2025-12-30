@@ -123,7 +123,7 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
 
 export default function ChatCenter() {
   const { toast } = useToast();
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
