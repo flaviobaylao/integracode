@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -16,6 +17,10 @@ import {
   insertChatDeliverySchema,
   insertWhatsappConversationAnalysisSchema,
   phoneNumberMappings,
+  chatMessages,
+  chatConversations,
+  chatCustomers,
+  chatAiLogs,
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
