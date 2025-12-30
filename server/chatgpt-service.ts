@@ -6,6 +6,106 @@ import { grokService } from "./grok";
 
 // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
 
+/**
+ * Lógica central para processar mensagens de entrada e gerar respostas
+ */
+export async function handleIncomingMessage(
+  conversation: { id: string; customerName: string; customerPhone: string },
+  message: { content: string; timestamp: Date },
+  settings: ChatAiSettings
+) {
+  try {
+    console.log(`🤖 [AI-SERVICE] Processando mensagem de ${conversation.customerName} (${conversation.customerPhone})`);
+    
+    // 1. Buscar histórico recente
+    const messages = await storage.getChatMessages(conversation.id);
+    const recentMessages = messages.slice(-10).map((msg: any) => ({
+      role: (msg.senderType === 'customer' ? 'customer' : (msg.senderId === 'system' ? 'bot' : 'agent')) as 'customer' | 'agent' | 'bot',
+      content: msg.content || '',
+      timestamp: new Date(msg.createdAt || msg.timestamp || Date.now())
+    }));
+
+    // 2. Gerar resposta
+    const result = await generateAutoResponse({
+      customerName: conversation.customerName,
+      customerPhone: conversation.customerPhone,
+      conversationId: conversation.id,
+      recentMessages
+    }, settings);
+
+    console.log(`✨ [AI-SERVICE] Resposta gerada: "${result.response.reply.substring(0, 50)}..."`);
+
+    // 3. Salvar log de auditoria
+    await storage.createChatAiLog({
+      conversationId: conversation.id,
+      customerPhone: conversation.customerPhone,
+      prompt: message.content,
+      response: result.response.reply,
+      provider: (settings as any).aiProvider || 'openai',
+      model: settings.gptModel || 'gpt-4o-mini',
+      tokensUsed: result.tokensUsed,
+      responseTimeMs: result.responseTimeMs,
+      status: 'success'
+    });
+
+    // 4. Se a IA decidir que deve transferir, apenas atualizar status da conversa
+    if (result.response.shouldTransfer) {
+      console.log(`🔀 [AI-SERVICE] IA solicitou transferência: ${result.response.transferReason}`);
+      await storage.updateChatConversation(conversation.id, {
+        status: 'new' // Volta para a fila de atendimento humano
+      });
+    }
+
+    // 5. Enviar resposta via WhatsApp (Evolution API)
+    const { evolutionAPIService } = await import("./evolution-api-service");
+    const config = evolutionAPIService.getConfig();
+    
+    if (config && config.instanceName) {
+      const sendResult = await evolutionAPIService.sendTextMessage(
+        config.instanceName,
+        conversation.customerPhone,
+        result.response.reply
+      );
+
+      if (sendResult.success) {
+        // 6. Registrar a mensagem enviada pela IA no banco local
+        await storage.createChatMessage({
+          conversationId: conversation.id,
+          senderId: 'system',
+          senderType: 'agent',
+          content: result.response.reply,
+          messageType: 'text',
+          externalId: sendResult.messageId || `ai_${Date.now()}`,
+          isRead: true
+        });
+        
+        console.log(`✅ [AI-SERVICE] Resposta enviada e registrada com sucesso!`);
+      } else {
+        console.error(`❌ [AI-SERVICE] Erro ao enviar via Evolution API:`, sendResult.error);
+      }
+    } else {
+      console.error(`❌ [AI-SERVICE] Evolution API não configurada para enviar resposta`);
+    }
+
+  } catch (error: any) {
+    console.error(`❌ [AI-SERVICE] Erro crítico ao processar mensagem:`, error.message);
+    
+    // Registrar erro no log
+    try {
+      await storage.createChatAiLog({
+        conversationId: conversation.id,
+        customerPhone: conversation.customerPhone,
+        prompt: message.content,
+        response: null,
+        error: error.message,
+        status: 'error'
+      });
+    } catch (logErr) {
+      console.error(`⚠️ [AI-SERVICE] Erro ao registrar log de erro:`, logErr);
+    }
+  }
+}
+
 export class ChatGPTService {
   private openai: OpenAI;
   private assistantId: string = "asst_4AM6M50fsOXKXlz5Ijc7IA9k"; // Fixed Assistant ID
