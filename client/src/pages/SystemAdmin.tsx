@@ -6,8 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Trash2, MessageSquare } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface RecalculateResult {
@@ -28,18 +31,85 @@ interface RecalculateResult {
   errorDetails?: any[];
 }
 
+interface ClearChatResult {
+  success: boolean;
+  message: string;
+  deletedCounts?: {
+    messages: number;
+    conversations: number;
+    customers: number;
+    aiLogs: number;
+  };
+  executedBy?: string;
+  executedAt?: string;
+  error?: string;
+}
+
 export default function SystemAdmin() {
   const { user, isLoading } = useAuth();
   const [, setLocation] = useLocation();
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [isDryRun, setIsDryRun] = useState(true);
   const [result, setResult] = useState<RecalculateResult | null>(null);
+  
+  // Estados para limpar chat
+  const [isClearingChat, setIsClearingChat] = useState(false);
+  const [clearChatResult, setClearChatResult] = useState<ClearChatResult | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [showClearDialog, setShowClearDialog] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
       setLocation('/');
     }
   }, [user, isLoading, setLocation]);
+
+  const handleClearAllChat = async () => {
+    if (confirmText !== "CONFIRMAR") {
+      toast({
+        title: "Texto de confirmação incorreto",
+        description: "Digite 'CONFIRMAR' para prosseguir com a limpeza.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsClearingChat(true);
+    setClearChatResult(null);
+    
+    try {
+      const response = await apiRequest('POST', '/api/chat/admin/clear-all', {}) as ClearChatResult;
+      setClearChatResult(response);
+      
+      // Invalidar caches relacionados ao chat
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/messages'] });
+      
+      toast({
+        title: "Chat limpo com sucesso!",
+        description: `${response.deletedCounts?.messages || 0} mensagens, ${response.deletedCounts?.conversations || 0} conversas removidas.`,
+      });
+      
+      setShowClearDialog(false);
+      setConfirmText("");
+    } catch (error: any) {
+      console.error('Erro ao limpar chat:', error);
+      setClearChatResult({
+        success: false,
+        message: error.message || 'Erro desconhecido',
+        error: error.message
+      });
+      toast({
+        title: "Erro ao limpar chat",
+        description: error.message || 'Erro desconhecido',
+        variant: "destructive",
+      });
+    } finally {
+      setIsClearingChat(false);
+    }
+  };
 
   const handleRecalculate = async (dryRun: boolean) => {
     setIsRecalculating(true);
@@ -238,6 +308,125 @@ export default function SystemAdmin() {
                         </div>
                       ))}
                     </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Card para Limpar Histórico de Chat */}
+      <Card className="border-red-200 bg-red-50/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-red-700">
+            <MessageSquare className="h-5 w-5" />
+            Limpar Histórico de Conversas WhatsApp
+          </CardTitle>
+          <CardDescription className="text-red-600">
+            <strong>ATENÇÃO:</strong> Esta ação irá remover TODAS as conversas, mensagens, clientes de chat e logs de IA.
+            Use apenas para resolver problemas de números de telefone incorretos ou reiniciar o sistema de chat.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Ação Irreversível!</strong> Todos os dados de chat serão permanentemente deletados.
+              O histórico não poderá ser recuperado após a execução.
+            </AlertDescription>
+          </Alert>
+
+          <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+            <AlertDialogTrigger asChild>
+              <Button 
+                variant="destructive" 
+                className="w-full"
+                data-testid="button-open-clear-dialog"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Limpar Todas as Conversas
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="text-red-600">
+                  Confirmar Limpeza Total do Chat
+                </AlertDialogTitle>
+                <AlertDialogDescription className="space-y-3">
+                  <p>
+                    Esta ação irá <strong>remover permanentemente</strong>:
+                  </p>
+                  <ul className="list-disc list-inside text-sm space-y-1">
+                    <li>Todas as conversas do WhatsApp</li>
+                    <li>Todas as mensagens recebidas e enviadas</li>
+                    <li>Todos os clientes de chat cadastrados</li>
+                    <li>Todos os logs de IA (ChatGPT)</li>
+                  </ul>
+                  <p className="font-semibold text-red-600 mt-4">
+                    Digite "CONFIRMAR" para prosseguir:
+                  </p>
+                  <Input
+                    placeholder="Digite CONFIRMAR"
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
+                    className="mt-2"
+                    data-testid="input-confirm-clear"
+                  />
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel 
+                  onClick={() => setConfirmText("")}
+                  data-testid="button-cancel-clear"
+                >
+                  Cancelar
+                </AlertDialogCancel>
+                <Button
+                  variant="destructive"
+                  onClick={handleClearAllChat}
+                  disabled={isClearingChat || confirmText !== "CONFIRMAR"}
+                  data-testid="button-confirm-clear"
+                >
+                  {isClearingChat ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Limpando...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Limpar Tudo
+                    </>
+                  )}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {clearChatResult && (
+            <div className="mt-4 space-y-3">
+              {clearChatResult.success ? (
+                <Alert className="bg-green-50 border-green-200">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-800">
+                    <strong>Limpeza concluída com sucesso!</strong>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                      <div>Mensagens: {clearChatResult.deletedCounts?.messages || 0}</div>
+                      <div>Conversas: {clearChatResult.deletedCounts?.conversations || 0}</div>
+                      <div>Clientes: {clearChatResult.deletedCounts?.customers || 0}</div>
+                      <div>Logs IA: {clearChatResult.deletedCounts?.aiLogs || 0}</div>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Executado em: {clearChatResult.executedAt}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Erro:</strong> {clearChatResult.error || clearChatResult.message}
                   </AlertDescription>
                 </Alert>
               )}

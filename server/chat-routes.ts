@@ -3057,6 +3057,67 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // ============================================================================
+  // ADMIN: CLEAR ALL CHAT DATA (NUCLEAR OPTION)
+  // ============================================================================
+  
+  // POST /api/chat/admin/clear-all - Limpar TODOS os dados de chat (ADMIN ONLY)
+  app.post("/api/chat/admin/clear-all", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const userEmail = (req.user as any)?.email;
+      
+      console.log(`⚠️ [ADMIN-CLEAR] Iniciando limpeza TOTAL de chat por: ${userEmail} (${userId})`);
+      console.log(`⚠️ [ADMIN-CLEAR] Timestamp: ${new Date().toISOString()}`);
+      
+      // Contagem antes da limpeza
+      const beforeCounts = {
+        messages: await db.select({ count: sql<number>`count(*)` }).from(chatMessages).then(r => Number(r[0].count)),
+        conversations: await db.select({ count: sql<number>`count(*)` }).from(chatConversations).then(r => Number(r[0].count)),
+        customers: await db.select({ count: sql<number>`count(*)` }).from(chatCustomers).then(r => Number(r[0].count)),
+        aiLogs: await db.select({ count: sql<number>`count(*)` }).from(chatAiLogs).then(r => Number(r[0].count)),
+      };
+      
+      console.log("📊 [ADMIN-CLEAR] Registros antes da limpeza:", beforeCounts);
+      
+      // Ordem correta para evitar FK failures: logs -> messages -> conversations -> customers
+      const deletedAiLogs = await db.delete(chatAiLogs).returning();
+      console.log(`🗑️ [ADMIN-CLEAR] AI Logs deletados: ${deletedAiLogs.length}`);
+      
+      const deletedMessages = await db.delete(chatMessages).returning();
+      console.log(`🗑️ [ADMIN-CLEAR] Mensagens deletadas: ${deletedMessages.length}`);
+      
+      const deletedConversations = await db.delete(chatConversations).returning();
+      console.log(`🗑️ [ADMIN-CLEAR] Conversas deletadas: ${deletedConversations.length}`);
+      
+      const deletedCustomers = await db.delete(chatCustomers).returning();
+      console.log(`🗑️ [ADMIN-CLEAR] Clientes de chat deletados: ${deletedCustomers.length}`);
+      
+      const result = {
+        success: true,
+        message: "Todos os dados de chat foram limpos com sucesso!",
+        deletedCounts: {
+          messages: deletedMessages.length,
+          conversations: deletedConversations.length,
+          customers: deletedCustomers.length,
+          aiLogs: deletedAiLogs.length,
+        },
+        executedBy: userEmail,
+        executedAt: new Date().toISOString(),
+      };
+      
+      console.log("✅ [ADMIN-CLEAR] Limpeza concluída:", result);
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("❌ [ADMIN-CLEAR] Erro ao limpar dados:", error);
+      res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  });
+
+  // ============================================================================
   // CHATGPT AUTO-ATTENDANCE SETTINGS ROUTES
   // ============================================================================
 
