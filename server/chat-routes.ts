@@ -874,10 +874,14 @@ export function registerChatRoutes(app: Express): void {
                           deepMsg?.video?.mimetype || deepMsg?.document?.mimetype;
         
         if (base64Source) {
-          mediaInfo.mediaUrl = `data:${mimeSource || 'image/jpeg'};base64,${base64Source}`;
+          mediaInfo.mediaUrl = base64Source.startsWith('data:') ? base64Source : `data:${mimeSource || 'image/jpeg'};base64,${base64Source}`;
           console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada no payload (v2 structure detected)`);
         }
       }
+
+      const finalMessageType = mediaInfo.messageType || 'text';
+      const finalMediaUrl = mediaInfo.mediaUrl || null;
+      const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
       
       debugInfo.normalizedPhone = normalizedPhone;
       debugInfo.isFromMe = isFromMe;

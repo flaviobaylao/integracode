@@ -380,7 +380,32 @@ class EvolutionAPIService {
       try {
         console.log(`📤 Tentativa ${attempt}/${retries} de enviar mídia (${mediaType}) para ${formattedNumber}`);
         
+          if (mediaType === 'image' || mediaType === 'video' || mediaType === 'document') {
+        const isBase64 = mediaUrl.startsWith('data:');
+        const payload: any = {
+          number: formattedNumber,
+          caption: caption || ''
+        };
+
+        if (isBase64) {
+          payload.base64 = mediaUrl.split(',')[1] || mediaUrl;
+        } else {
+          payload.mediaUrl = mediaUrl;
+        }
+
         const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': this.config!.apiKey
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000)
+        });
+        // ... rest of the fetch logic
+      }
+
+      const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
