@@ -2967,6 +2967,95 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/fix-phone-numbers - Corrigir números errados em registros existentes
+  app.post("/api/chat/fix-phone-numbers", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      console.log("🔧 [FIX-PHONES] Iniciando correção de números de telefone...");
+      
+      // Mapeamentos conhecidos de IDs Evolution API para números reais
+      const knownMappings: { [key: string]: string } = {
+        '5504884295924': '5562995782812',
+        '5550575396912': '5562996353860',
+        '04884295924': '5562995782812',
+        '50575396912': '5562996353860',
+      };
+      
+      const results = {
+        customersUpdated: 0,
+        conversationsUpdated: 0,
+        mappingsCreated: 0,
+        errors: [] as string[]
+      };
+      
+      // 1. Buscar todos os clientes e conversas
+      const allConversations = await storage.getChatConversations();
+      
+      for (const conv of allConversations) {
+        const cleanPhone = conv.customerPhone?.replace(/\D/g, '') || '';
+        
+        // Verificar se o telefone precisa ser corrigido
+        for (const [wrongPhone, correctPhone] of Object.entries(knownMappings)) {
+          if (cleanPhone === wrongPhone || cleanPhone.includes(wrongPhone)) {
+            try {
+              // Atualizar conversa
+              await storage.updateChatConversation(conv.id, {
+                customerPhone: correctPhone
+              });
+              results.conversationsUpdated++;
+              console.log(`✅ [FIX-PHONES] Conversa ${conv.id}: ${cleanPhone} -> ${correctPhone}`);
+              
+              // Atualizar cliente se existir
+              if (conv.customerId) {
+                const customer = await storage.getChatCustomer(conv.customerId);
+                if (customer && customer.phone !== correctPhone) {
+                  await storage.updateChatCustomer(customer.id, {
+                    phone: correctPhone
+                  });
+                  results.customersUpdated++;
+                  console.log(`✅ [FIX-PHONES] Cliente ${customer.id}: ${customer.phone} -> ${correctPhone}`);
+                }
+              }
+            } catch (err: any) {
+              results.errors.push(`Erro ao atualizar ${conv.id}: ${err.message}`);
+            }
+            break;
+          }
+        }
+      }
+      
+      // 2. Garantir que os mapeamentos existam no banco
+      for (const [sourcePhone, canonicalPhone] of Object.entries(knownMappings)) {
+        try {
+          const existingMapping = await storage.getPhoneMappingBySource(sourcePhone);
+          if (!existingMapping) {
+            await db.insert(phoneNumberMappings).values({
+              canonicalPhone: canonicalPhone,
+              alternativePhone: sourcePhone,
+              description: `Mapeamento automático - ${new Date().toISOString()}`
+            });
+            results.mappingsCreated++;
+            console.log(`✅ [FIX-PHONES] Mapeamento criado: ${sourcePhone} -> ${canonicalPhone}`);
+          }
+        } catch (err: any) {
+          // Ignorar erro de duplicata
+          if (!err.message.includes('duplicate')) {
+            results.errors.push(`Erro ao criar mapeamento ${sourcePhone}: ${err.message}`);
+          }
+        }
+      }
+      
+      console.log("🔧 [FIX-PHONES] Correção concluída:", results);
+      res.json({ 
+        success: true, 
+        message: `Correção concluída: ${results.conversationsUpdated} conversas, ${results.customersUpdated} clientes atualizados, ${results.mappingsCreated} mapeamentos criados`,
+        ...results 
+      });
+    } catch (error: any) {
+      console.error("[FIX-PHONES] Erro:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
   // ============================================================================
   // CHATGPT AUTO-ATTENDANCE SETTINGS ROUTES
   // ============================================================================
