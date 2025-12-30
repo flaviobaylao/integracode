@@ -605,44 +605,43 @@ class EvolutionAPIService {
 
   /**
    * Resolve o número de telefone CANÔNICO a partir do payload do webhook.
-   * Busca em múltiplos campos procurando por @s.whatsapp.net (número real)
+   * Faz busca RECURSIVA em todo o payload procurando por @s.whatsapp.net (número real)
    * antes de usar @lid (ID interno).
-   * 
-   * Prioridade:
-   * 1. Qualquer campo com @s.whatsapp.net (número real)
-   * 2. data.key.participant se disponível
-   * 3. message.extendedTextMessage.contextInfo.participant
-   * 4. Fallback para data.key.remoteJid
    */
   public resolveCanonicalPhone(data: any): { phone: string; source: string } {
     const candidates: { jid: string; source: string }[] = [];
 
-    // Função auxiliar para adicionar candidato se válido
-    const addCandidate = (jid: any, source: string) => {
-      if (jid && typeof jid === 'string' && jid.includes('@')) {
-        candidates.push({ jid, source });
+    // 🔍 BUSCA RECURSIVA: Encontrar TODOS os JIDs em qualquer nível do payload
+    const findAllJids = (obj: any, path: string = '') => {
+      if (!obj || typeof obj !== 'object') return;
+      
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        const currentPath = path ? `${path}.${key}` : key;
+        
+        if (typeof value === 'string' && value.includes('@')) {
+          // Encontrou um JID!
+          candidates.push({ jid: value, source: currentPath });
+        } else if (typeof value === 'object' && value !== null) {
+          // Continuar buscando recursivamente
+          findAllJids(value, currentPath);
+        }
       }
     };
 
-    // Coletar todos os possíveis JIDs do payload
-    addCandidate(data?.key?.remoteJid, 'key.remoteJid');
-    addCandidate(data?.key?.participant, 'key.participant');
-    addCandidate(data?.message?.extendedTextMessage?.contextInfo?.participant, 'contextInfo.participant');
-    addCandidate(data?.message?.conversation?.contextInfo?.participant, 'conversation.contextInfo.participant');
-    addCandidate(data?.participant, 'data.participant');
-    
-    // Se tiver messageContextInfo, extrair também
-    if (data?.message?.messageContextInfo?.deviceListMetadataVersion) {
-      // Alguns payloads têm info extra aqui
-    }
+    // Executar busca recursiva em todo o payload
+    findAllJids(data);
 
-    console.log(`🔍 [RESOLVE-PHONE] Candidatos encontrados:`, candidates.map(c => `${c.source}: ${c.jid}`));
+    console.log(`🔍 [RESOLVE-PHONE] TODOS os JIDs encontrados no payload:`);
+    candidates.forEach(c => console.log(`   📍 ${c.source}: ${c.jid}`));
 
-    // PRIORIDADE 1: Procurar por @s.whatsapp.net (número real)
-    const realNumber = candidates.find(c => c.jid.includes('@s.whatsapp.net'));
+    // PRIORIDADE 1: Procurar por @s.whatsapp.net (número real) - EXCLUINDO grupos
+    const realNumber = candidates.find(c => 
+      c.jid.includes('@s.whatsapp.net') && !c.jid.includes('@g.us')
+    );
     if (realNumber) {
       const phone = this.extractPhoneNumber(realNumber.jid);
-      console.log(`✅ [RESOLVE-PHONE] Número real encontrado: ${phone} (fonte: ${realNumber.source})`);
+      console.log(`✅ [RESOLVE-PHONE] NÚMERO REAL encontrado: ${phone} (fonte: ${realNumber.source})`);
       return { phone, source: realNumber.source };
     }
 
@@ -654,11 +653,11 @@ class EvolutionAPIService {
       return { phone, source: oldFormat.source };
     }
 
-    // FALLBACK: Usar @lid (ID interno - precisará de mapeamento)
+    // FALLBACK: Usar @lid (ID interno - precisará de mapeamento se não houver número real)
     const lidFormat = candidates.find(c => c.jid.includes('@lid'));
     if (lidFormat) {
       const phone = this.extractPhoneNumber(lidFormat.jid);
-      console.log(`⚠️ [RESOLVE-PHONE] Apenas @lid disponível: ${phone} (fonte: ${lidFormat.source}) - pode precisar de mapeamento`);
+      console.log(`⚠️ [RESOLVE-PHONE] Apenas @lid disponível: ${phone} (fonte: ${lidFormat.source})`);
       return { phone, source: `${lidFormat.source} (@lid)` };
     }
 
