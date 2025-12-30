@@ -879,6 +879,17 @@ export function registerChatRoutes(app: Express): void {
       const mediaInfo = evolutionAPIService.extractMediaInfo(data.message);
       debugInfo.mediaInfo = mediaInfo;
       
+      // 🎯 NOVO: Se o webhookBase64 estiver desativado, a Evolution API pode enviar a mídia em data.message.base64 ou data.base64
+      if (mediaInfo.messageType !== 'text' && !mediaInfo.mediaUrl) {
+        if (data.message?.base64) {
+          mediaInfo.mediaUrl = `data:${data.message.mimetype || 'image/jpeg'};base64,${data.message.base64}`;
+          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload (message.base64)`);
+        } else if (data.base64) {
+          mediaInfo.mediaUrl = `data:${data.mimetype || 'image/jpeg'};base64,${data.base64}`;
+          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload (data.base64)`);
+        }
+      }
+      
       debugInfo.normalizedPhone = normalizedPhone;
       debugInfo.isFromMe = isFromMe;
       debugInfo.messageText = messageText.substring(0, 50);

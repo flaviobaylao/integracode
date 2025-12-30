@@ -948,15 +948,15 @@ export default function ChatCenter() {
                                   <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
                                     <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
                                   </div>
-                                ) : msg.mediaUrl ? (
+                                ) : (msg.mediaUrl || (msg.messageType !== 'text' && msg.content && msg.content.startsWith('data:'))) ? (
                                   <div className="mb-2">
-                                    {msg.messageType === 'image' && <img src={msg.mediaUrl} alt="mídia" className="max-w-sm rounded" />}
-                                    {msg.messageType === 'audio' && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
-                                    {msg.messageType === 'video' && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
-                                    {msg.messageType === 'document' && <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="underline">📄 {msg.content || 'Documento'}</a>}
+                                    {msg.messageType === 'image' && <img src={msg.mediaUrl || msg.content} alt="mídia" className="max-w-sm rounded" />}
+                                    {msg.messageType === 'audio' && <audio src={msg.mediaUrl || msg.content} controls className="max-w-sm" />}
+                                    {msg.messageType === 'video' && <video src={msg.mediaUrl || msg.content} controls className="max-w-sm rounded" />}
+                                    {msg.messageType === 'document' && <a href={msg.mediaUrl || msg.content} target="_blank" rel="noopener noreferrer" className="underline">📄 {msg.content && !msg.content.startsWith('data:') ? msg.content : 'Documento'}</a>}
                                   </div>
                                 ) : null}
-                                {msg.messageType !== 'location' && <p className="text-sm">{msg.content}</p>}
+                                {msg.messageType !== 'location' && (!msg.content?.startsWith('data:') || msg.messageType === 'text') && <p className="text-sm">{msg.content}</p>}
                                   <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>

@@ -964,12 +964,16 @@ class EvolutionAPIService {
     mediaSize?: number;
     mediaFilename?: string;
   } {
+    // Check for direct base64 in the message object (Evolution API v2 feature)
+    const base64Data = message.base64;
+    const mimeType = message.mimetype;
+
     // Image
     if (message.imageMessage) {
       return {
         messageType: 'image',
-        mediaUrl: message.imageMessage.url,
-        mediaType: message.imageMessage.mimetype || 'image/jpeg',
+        mediaUrl: message.imageMessage.url || (base64Data ? `data:${mimeType || 'image/jpeg'};base64,${base64Data}` : undefined),
+        mediaType: message.imageMessage.mimetype || mimeType || 'image/jpeg',
         mediaSize: message.imageMessage.fileLength,
         mediaFilename: 'image.jpg'
       };
@@ -979,8 +983,8 @@ class EvolutionAPIService {
     if (message.videoMessage) {
       return {
         messageType: 'video',
-        mediaUrl: message.videoMessage.url,
-        mediaType: message.videoMessage.mimetype || 'video/mp4',
+        mediaUrl: message.videoMessage.url || (base64Data ? `data:${mimeType || 'video/mp4'};base64,${base64Data}` : undefined),
+        mediaType: message.videoMessage.mimetype || mimeType || 'video/mp4',
         mediaSize: message.videoMessage.fileLength,
         mediaFilename: 'video.mp4'
       };
@@ -990,8 +994,8 @@ class EvolutionAPIService {
     if (message.audioMessage) {
       return {
         messageType: 'audio',
-        mediaUrl: message.audioMessage.url,
-        mediaType: message.audioMessage.mimetype || 'audio/ogg',
+        mediaUrl: message.audioMessage.url || (base64Data ? `data:${mimeType || 'audio/ogg'};base64,${base64Data}` : undefined),
+        mediaType: message.audioMessage.mimetype || mimeType || 'audio/ogg',
         mediaSize: message.audioMessage.fileLength,
         mediaFilename: 'audio.ogg'
       };
@@ -1001,8 +1005,8 @@ class EvolutionAPIService {
     if (message.documentMessage) {
       return {
         messageType: 'document',
-        mediaUrl: message.documentMessage.url,
-        mediaType: message.documentMessage.mimetype || 'application/pdf',
+        mediaUrl: message.documentMessage.url || (base64Data ? `data:${mimeType || 'application/pdf'};base64,${base64Data}` : undefined),
+        mediaType: message.documentMessage.mimetype || mimeType || 'application/pdf',
         mediaSize: message.documentMessage.fileLength,
         mediaFilename: message.documentMessage.fileName || 'document'
       };
