@@ -976,39 +976,6 @@ export function registerChatRoutes(app: Express): void {
       const finalMessageType = mediaInfo.messageType;
       let finalMediaUrl = mediaInfo.mediaUrl;
       
-      // 🖼️ Se for mídia sem URL, tentar baixar via API
-      if (mediaInfo.messageType !== 'text' && !finalMediaUrl) {
-        console.log(`📥 [WEBHOOK-MEDIA] Mídia sem URL, tentando baixar via API...`);
-        debugInfo.steps.push('9a-download-media');
-        
-        try {
-          const config = evolutionAPIService.getConfig();
-          if (config?.instanceName) {
-            const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
-              config.instanceName,
-              messageId
-            );
-            
-            if (mediaResult.success && mediaResult.base64) {
-              // Criar data URL para exibição
-              const mimeType = mediaResult.mimetype || 
-                (mediaInfo.messageType === 'image' ? 'image/jpeg' : 
-                 mediaInfo.messageType === 'audio' ? 'audio/ogg' :
-                 mediaInfo.messageType === 'video' ? 'video/mp4' : 'application/octet-stream');
-              finalMediaUrl = `data:${mimeType};base64,${mediaResult.base64}`;
-              debugInfo.mediaDownloaded = true;
-              console.log(`✅ [WEBHOOK-MEDIA] Mídia baixada e convertida para data URL`);
-            } else {
-              debugInfo.mediaDownloadError = mediaResult.error;
-              console.log(`⚠️ [WEBHOOK-MEDIA] Não foi possível baixar mídia: ${mediaResult.error}`);
-            }
-          }
-        } catch (mediaErr: any) {
-          debugInfo.mediaDownloadError = mediaErr.message;
-          console.error(`❌ [WEBHOOK-MEDIA] Erro ao baixar mídia:`, mediaErr.message);
-        }
-      }
-      
       console.log(`📎 [WEBHOOK-MEDIA] Tipo: ${finalMessageType} | URL: ${finalMediaUrl ? 'SIM' : 'NÃO'} | Conteúdo: ${finalContent.substring(0, 30)}`);
       
       await storage.createChatMessage({
@@ -1018,16 +985,17 @@ export function registerChatRoutes(app: Express): void {
         content: finalContent,
         messageType: finalMessageType,
         mediaUrl: finalMediaUrl,
-        externalId: messageId
+        externalId: messageId,
+        isRead: true
       });
 
-      // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação e incrementar contador de não-lidas
+      // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
       debugInfo.steps.push('10-update-conversation');
       await storage.updateChatConversation(conversation.id, {
         updatedAt: new Date(),
         lastMessageTime: new Date(),
         status: isFromMe ? conversation.status : 'new',
-        unreadCount: isFromMe ? conversation.unreadCount : (conversation.unreadCount || 0) + 1
+        unreadCount: 0
       });
 
       debugInfo.steps.push('11-complete');
@@ -1942,8 +1910,6 @@ export function registerChatRoutes(app: Express): void {
         const agent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
         
-        // 🟢 Usar unreadCount do banco de dados
-        const unreadCount = conv.unreadCount || 0;
         return {
           id: conv.id,
           customerId: conv.customerId,
@@ -1955,15 +1921,13 @@ export function registerChatRoutes(app: Express): void {
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
           createdAt: conv.createdAt,
-          unreadCount: unreadCount,
-          hasUnread: unreadCount > 0
+          unreadCount: 0,
+          hasUnread: false
         };
       });
 
-      // 🔴 ORDENAÇÃO: conversas com unread no TOPO, depois por data
+      // 🔴 ORDENAÇÃO: por data da última mensagem
       enrichedConversations.sort((a: any, b: any) => {
-        if (a.hasUnread && !b.hasUnread) return -1;
-        if (!a.hasUnread && b.hasUnread) return 1;
         return new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime();
       });
 
@@ -2030,7 +1994,8 @@ export function registerChatRoutes(app: Express): void {
         };
       });
       
-      // 🟢 Marcar mensagens de clientes como lidas ao abrir a conversa
+      // Marcar mensagens de clientes como lidas ao abrir a conversa (DESATIVADO)
+      /*
       const unreadMessages = messages.filter((m: any) => m.senderType === "customer" && !m.isRead);
       if (unreadMessages.length > 0) {
         console.log(`📖 [CONVERSATION-GET] Marcando ${unreadMessages.length} mensagens como lidas...`);
@@ -2039,6 +2004,7 @@ export function registerChatRoutes(app: Express): void {
         }
         await storage.resetUnreadCount(conversationId);
       }
+      */
       
       console.log(`📊 [CONVERSATION-GET] Conversa ${conversationId}: ${enrichedMessages.length} mensagens retornadas em ordem cronológica`);
       
@@ -2177,7 +2143,8 @@ export function registerChatRoutes(app: Express): void {
       const { conversationId } = req.params;
       const messages = await storage.getChatMessages(conversationId) || [];
       
-      // 🟢 Marcar TODAS as mensagens de clientes como lidas ao abrir a conversa
+      // Marcar TODAS as mensagens de clientes como lidas ao abrir a conversa (DESATIVADO)
+      /*
       const unreadMessages = messages.filter(m => m.senderType === "customer" && !m.isRead);
       if (unreadMessages.length > 0) {
         console.log(`📖 [UNREAD-MARK] Marcando ${unreadMessages.length} mensagens como lidas...`);
@@ -2193,6 +2160,7 @@ export function registerChatRoutes(app: Express): void {
           console.warn(`⚠️  [UNREAD-RESET] Erro ao resetar contador:`, err);
         }
       }
+      */
       
       // Buscar mensagens novamente após marcar como lidas
       const updatedMessages = await storage.getChatMessages(conversationId) || [];

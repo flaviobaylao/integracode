@@ -62,9 +62,7 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
       className={`w-full text-left p-3 rounded-lg transition-colors ${
         selectedConversation === conv.id
           ? "bg-green-100 border-2 border-green-600 shadow-sm"
-          : conv.hasUnread 
-            ? "bg-white border-l-4 border-l-red-500 shadow-md hover:bg-gray-50" 
-            : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
+          : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
       }`}
       data-testid={`conversation-item-${conv.id}`}
     >
@@ -76,14 +74,9 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <p className={`font-semibold text-sm truncate ${conv.hasUnread ? "text-red-600" : "text-gray-900"}`}>
+              <p className="font-semibold text-sm truncate text-gray-900">
                 {conv.customerName}
               </p>
-              {conv.hasUnread && conv.unreadCount! > 0 && (
-                <Badge className="bg-red-500 text-white text-[10px] px-1.5 h-4 min-w-4 flex items-center justify-center rounded-full border-none animate-pulse">
-                  {conv.unreadCount}
-                </Badge>
-              )}
               {conv.priority === "urgent" && (
                 <Badge variant="destructive" className="text-[10px] h-4">
                   Urgente
@@ -92,14 +85,9 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
             </div>
           </div>
           <div className="text-right">
-            <p className={`text-[10px] font-medium whitespace-nowrap ${conv.hasUnread ? "text-red-500" : "text-gray-400"}`}>
+            <p className="text-[10px] font-medium whitespace-nowrap text-gray-400">
               {formatLastMessageTime(conv.lastMessageTime)}
             </p>
-            {conv.hasUnread && (
-               <div className="mt-1 flex justify-end">
-                 <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
-               </div>
-            )}
           </div>
         </div>
       </button>
@@ -176,11 +164,7 @@ export default function ChatCenter() {
         // console.log('DEBUG CONVS:', data.slice(0, 3).map(c => ({ name: c.customerName, lastMsg: c.lastMessageTime, unread: c.hasUnread })));
       }
       return [...data].sort((a, b) => {
-        // 1. Prioridade absoluta para mensagens não lidas
-        if (a.hasUnread && !b.hasUnread) return -1;
-        if (!a.hasUnread && b.hasUnread) return 1;
-        
-        // 2. Por tempo da última mensagem (mais recente primeiro)
+        // Por tempo da última mensagem (mais recente primeiro)
         // Usar timestamps numéricos para comparação robusta
         const timeA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
         const timeB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
@@ -262,14 +246,16 @@ export default function ChatCenter() {
     }
   });
 
-  // Marcar conversa como lida quando selecionada
+  // Marcar conversa como lida quando selecionada (DESATIVADO)
   useEffect(() => {
+    /* 
     if (selectedConversation) {
       const conv = conversations.find(c => c.id === selectedConversation);
       if (conv?.hasUnread) {
         markAsReadMutation.mutate(selectedConversation);
       }
     }
+    */
   }, [selectedConversation]);
 
   // Mutation para sincronizar mensagens do WhatsApp
@@ -933,12 +919,6 @@ export default function ChatCenter() {
                                       : "bg-gray-200 text-gray-900"
                                   }`}
                                 >
-                                  {!msg.isRead && msg.senderType !== "agent" && (
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <span className="inline-block h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
-                                      <span className="text-xs font-bold text-blue-700">NÃO LIDA</span>
-                                    </div>
-                                  )}
                                 {msg.senderType !== "agent" && (
                                   <div className="text-xs font-semibold mb-1 opacity-80">
                                     👤 {sellerName}
@@ -961,11 +941,6 @@ export default function ChatCenter() {
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>
                                 </div>
-                                {!msg.isRead && msg.senderType !== "agent" && (
-                                  <Badge className="bg-green-500 text-white text-xs whitespace-nowrap mb-2" data-testid={`badge-unread-${msg.id}`}>
-                                    🟢 Não Lida
-                                  </Badge>
-                                )}
                               </div>
                             </div>
                           ))
