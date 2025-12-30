@@ -603,6 +603,77 @@ class EvolutionAPIService {
       .split(':')[0]; // Remove device suffix like :40
   }
 
+  /**
+   * Resolve o número de telefone CANÔNICO a partir do payload do webhook.
+   * Busca em múltiplos campos procurando por @s.whatsapp.net (número real)
+   * antes de usar @lid (ID interno).
+   * 
+   * Prioridade:
+   * 1. Qualquer campo com @s.whatsapp.net (número real)
+   * 2. data.key.participant se disponível
+   * 3. message.extendedTextMessage.contextInfo.participant
+   * 4. Fallback para data.key.remoteJid
+   */
+  public resolveCanonicalPhone(data: any): { phone: string; source: string } {
+    const candidates: { jid: string; source: string }[] = [];
+
+    // Função auxiliar para adicionar candidato se válido
+    const addCandidate = (jid: any, source: string) => {
+      if (jid && typeof jid === 'string' && jid.includes('@')) {
+        candidates.push({ jid, source });
+      }
+    };
+
+    // Coletar todos os possíveis JIDs do payload
+    addCandidate(data?.key?.remoteJid, 'key.remoteJid');
+    addCandidate(data?.key?.participant, 'key.participant');
+    addCandidate(data?.message?.extendedTextMessage?.contextInfo?.participant, 'contextInfo.participant');
+    addCandidate(data?.message?.conversation?.contextInfo?.participant, 'conversation.contextInfo.participant');
+    addCandidate(data?.participant, 'data.participant');
+    
+    // Se tiver messageContextInfo, extrair também
+    if (data?.message?.messageContextInfo?.deviceListMetadataVersion) {
+      // Alguns payloads têm info extra aqui
+    }
+
+    console.log(`🔍 [RESOLVE-PHONE] Candidatos encontrados:`, candidates.map(c => `${c.source}: ${c.jid}`));
+
+    // PRIORIDADE 1: Procurar por @s.whatsapp.net (número real)
+    const realNumber = candidates.find(c => c.jid.includes('@s.whatsapp.net'));
+    if (realNumber) {
+      const phone = this.extractPhoneNumber(realNumber.jid);
+      console.log(`✅ [RESOLVE-PHONE] Número real encontrado: ${phone} (fonte: ${realNumber.source})`);
+      return { phone, source: realNumber.source };
+    }
+
+    // PRIORIDADE 2: Procurar por @c.us (formato antigo, mas ainda real)
+    const oldFormat = candidates.find(c => c.jid.includes('@c.us'));
+    if (oldFormat) {
+      const phone = this.extractPhoneNumber(oldFormat.jid);
+      console.log(`✅ [RESOLVE-PHONE] Número @c.us encontrado: ${phone} (fonte: ${oldFormat.source})`);
+      return { phone, source: oldFormat.source };
+    }
+
+    // FALLBACK: Usar @lid (ID interno - precisará de mapeamento)
+    const lidFormat = candidates.find(c => c.jid.includes('@lid'));
+    if (lidFormat) {
+      const phone = this.extractPhoneNumber(lidFormat.jid);
+      console.log(`⚠️ [RESOLVE-PHONE] Apenas @lid disponível: ${phone} (fonte: ${lidFormat.source}) - pode precisar de mapeamento`);
+      return { phone, source: `${lidFormat.source} (@lid)` };
+    }
+
+    // Último recurso: primeiro candidato disponível
+    if (candidates.length > 0) {
+      const phone = this.extractPhoneNumber(candidates[0].jid);
+      console.log(`⚠️ [RESOLVE-PHONE] Fallback para primeiro candidato: ${phone}`);
+      return { phone, source: candidates[0].source };
+    }
+
+    // Nenhum candidato
+    console.error(`❌ [RESOLVE-PHONE] Nenhum JID encontrado no payload`);
+    return { phone: '', source: 'none' };
+  }
+
   // Fetch chat history for a specific contact (all pages)
   public async fetchChatHistory(
     instanceName: string, 

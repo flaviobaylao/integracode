@@ -831,24 +831,32 @@ export function registerChatRoutes(app: Express): void {
         return res.json({ received: false, reason: 'Grupo ignorado', debug: debugInfo });
       }
 
-      const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
-      const cleanPhone = phoneNumber.replace(/\D/g, '');
-      debugInfo.phoneNumber = phoneNumber;
+      // 🎯 NOVO: Usar resolveCanonicalPhone para buscar número real automaticamente
+      const { phone: resolvedPhone, source: phoneSource } = evolutionAPIService.resolveCanonicalPhone(data);
+      const cleanPhone = resolvedPhone.replace(/\D/g, '');
+      debugInfo.phoneNumber = resolvedPhone;
       debugInfo.cleanPhone = cleanPhone;
-      debugInfo.steps.push('2-extract-phone');
+      debugInfo.phoneSource = phoneSource;
+      debugInfo.steps.push('2-resolve-canonical-phone');
       
-      // Mapeamento de telefone solicitado pelo usuário
-      let targetPhone = phoneNumber;
+      // Mapeamento de telefone como fallback (apenas para @lid sem número real)
+      let targetPhone = resolvedPhone;
       
-      // Buscar mapeamento no banco de dados (correspondência exata apenas)
+      // Buscar mapeamento no banco de dados APENAS se for @lid
       debugInfo.steps.push('3-lookup-mapping');
-      const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
-      debugInfo.phoneMappingFound = !!phoneMapping;
-      
-      if (phoneMapping) {
-        targetPhone = phoneMapping.canonicalPhone;
-        debugInfo.mappedTo = targetPhone;
-        console.log(`🔄 [WEBHOOK-MIRROR] Remapeando via DB: ${phoneNumber} -> ${targetPhone}`);
+      let phoneMapping = null;
+      if (phoneSource.includes('@lid')) {
+        phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
+        debugInfo.phoneMappingFound = !!phoneMapping;
+        
+        if (phoneMapping) {
+          targetPhone = phoneMapping.canonicalPhone;
+          debugInfo.mappedTo = targetPhone;
+          console.log(`🔄 [WEBHOOK-MIRROR] Remapeando @lid via DB: ${resolvedPhone} -> ${targetPhone}`);
+        }
+      } else {
+        debugInfo.phoneMappingFound = false;
+        console.log(`✅ [WEBHOOK-MIRROR] Número real encontrado, sem necessidade de mapeamento: ${resolvedPhone}`);
       }
 
       const normalizedPhone = normalizePhoneNumber(targetPhone);
@@ -859,7 +867,7 @@ export function registerChatRoutes(app: Express): void {
           INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to)
           VALUES (${JSON.stringify(req.body).substring(0, 5000)}, ${rawRemoteJid}, ${cleanPhone}, ${normalizedPhone}, ${!!phoneMapping}, ${phoneMapping?.canonicalPhone || null})
         `);
-        console.log(`🔍 [WEBHOOK-DEBUG] Registrado: ${rawRemoteJid} -> ${cleanPhone} -> ${normalizedPhone} (mapping: ${!!phoneMapping})`);
+        console.log(`🔍 [WEBHOOK-DEBUG] Registrado: ${rawRemoteJid} -> ${cleanPhone} -> ${normalizedPhone} (fonte: ${phoneSource})`);
       } catch (dbErr) {
         console.error(`⚠️ [WEBHOOK-DEBUG] Erro ao registrar debug:`, dbErr);
       }
