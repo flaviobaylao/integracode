@@ -168,12 +168,29 @@ export default function ChatCenter() {
       }
     };
 
-    const sendOffline = async () => {
+    const sendOffline = () => {
       try {
-        // Use sendBeacon for reliable delivery on page unload
-        navigator.sendBeacon('/api/chat/agents/offline', JSON.stringify({}));
+        // Use synchronous XMLHttpRequest for reliable delivery on page unload
+        // This is one of the few legitimate uses of sync XHR
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/chat/agents/offline', false); // false = synchronous
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.withCredentials = true;
+        xhr.send(JSON.stringify({}));
       } catch (error) {
         console.warn('⚠️ [OFFLINE] Erro ao enviar offline:', error);
+      }
+    };
+
+    const sendOfflineAsync = async () => {
+      try {
+        await fetch('/api/chat/agents/offline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include'
+        });
+      } catch (error) {
+        console.warn('⚠️ [OFFLINE] Erro ao enviar offline async:', error);
       }
     };
 
@@ -187,6 +204,9 @@ export default function ChatCenter() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         sendHeartbeat();
+      } else if (document.visibilityState === 'hidden') {
+        // Tentar enviar offline quando a aba fica oculta
+        sendOfflineAsync();
       }
     };
 
@@ -203,8 +223,8 @@ export default function ChatCenter() {
       clearInterval(heartbeatInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      // Tentar enviar offline ao desmontar componente
-      sendOffline();
+      // Tentar enviar offline ao desmontar componente (navegação interna)
+      sendOfflineAsync();
     };
   }, []);
 
