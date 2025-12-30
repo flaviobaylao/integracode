@@ -154,6 +154,60 @@ export default function ChatCenter() {
     }
   }, [location]);
 
+  // 🟢 HEARTBEAT - Enviar presença a cada 30 segundos quando ChatCenter estiver aberto
+  useEffect(() => {
+    const sendHeartbeat = async () => {
+      try {
+        await fetch('/api/chat/agents/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include'
+        });
+      } catch (error) {
+        console.warn('⚠️ [HEARTBEAT] Erro ao enviar heartbeat:', error);
+      }
+    };
+
+    const sendOffline = async () => {
+      try {
+        // Use sendBeacon for reliable delivery on page unload
+        navigator.sendBeacon('/api/chat/agents/offline', JSON.stringify({}));
+      } catch (error) {
+        console.warn('⚠️ [OFFLINE] Erro ao enviar offline:', error);
+      }
+    };
+
+    // Enviar heartbeat imediatamente ao abrir
+    sendHeartbeat();
+
+    // Configurar intervalo de 30 segundos
+    const heartbeatInterval = setInterval(sendHeartbeat, 30000);
+
+    // Lidar com visibilidade da página
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        sendHeartbeat();
+      }
+    };
+
+    // Lidar com fechamento da página
+    const handleBeforeUnload = () => {
+      sendOffline();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Cleanup: enviar offline e limpar listeners
+    return () => {
+      clearInterval(heartbeatInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Tentar enviar offline ao desmontar componente
+      sendOffline();
+    };
+  }, []);
+
   // Fetch conversations - CORREÇÃO: polling cada 500ms para real-time melhor
   const { data: conversationsData, isLoading: convLoading, refetch: refetchConversations } = useQuery({
     queryKey: ["/api/chat/conversations"],
