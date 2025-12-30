@@ -948,11 +948,6 @@ export function registerChatRoutes(app: Express): void {
       // 3. Salvar Mensagem (com suporte a mídia)
       debugInfo.steps.push('9-save-message');
       
-      // Determinar conteúdo e tipo com base na mídia
-      const finalContent = messageText || (mediaInfo.messageType !== 'text' ? '[Mensagem de mídia]' : '');
-      const finalMessageType = mediaInfo.messageType;
-      let finalMediaUrl = mediaInfo.mediaUrl;
-      
       console.log(`📎 [WEBHOOK-MEDIA] Tipo: ${finalMessageType} | URL: ${finalMediaUrl ? 'SIM' : 'NÃO'} | Conteúdo: ${finalContent.substring(0, 30)}`);
       
       await storage.createChatMessage({
@@ -2376,10 +2371,54 @@ export function registerChatRoutes(app: Express): void {
                 );
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
+                
+                // Convert local file to base64 if it's a local upload path
+                let finalMediaUrl = mediaUrl;
+                if (mediaUrl.startsWith('/uploads/')) {
+                  try {
+                    const uploadDir = path.join(process.cwd(), "uploads", "chat");
+                    const filename = path.basename(mediaUrl);
+                    const filePath = path.join(uploadDir, filename);
+                    
+                    if (fs.existsSync(filePath)) {
+                      const fileBuffer = fs.readFileSync(filePath);
+                      const base64Data = fileBuffer.toString('base64');
+                      
+                      // Detect mimetype from extension
+                      const ext = path.extname(filename).toLowerCase();
+                      const mimeTypes: Record<string, string> = {
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.png': 'image/png',
+                        '.gif': 'image/gif',
+                        '.webp': 'image/webp',
+                        '.mp4': 'video/mp4',
+                        '.webm': 'video/webm',
+                        '.mp3': 'audio/mpeg',
+                        '.ogg': 'audio/ogg',
+                        '.wav': 'audio/wav',
+                        '.pdf': 'application/pdf',
+                        '.doc': 'application/msword',
+                        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        '.xls': 'application/vnd.ms-excel',
+                        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                      };
+                      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+                      
+                      finalMediaUrl = `data:${mimeType};base64,${base64Data}`;
+                      console.log(`📤 [SEND-WHATSAPP] Convertido para base64: ${mimeType} (${Math.round(base64Data.length / 1024)}KB)`);
+                    } else {
+                      console.error(`❌ [SEND-WHATSAPP] Arquivo não encontrado: ${filePath}`);
+                    }
+                  } catch (fileErr: any) {
+                    console.error(`❌ [SEND-WHATSAPP] Erro ao converter arquivo para base64:`, fileErr.message);
+                  }
+                }
+                
                 sendResult = await evolutionAPIService.sendMediaMessage(
                   config.instanceName,
                   phoneFormatted,
-                  mediaUrl,
+                  finalMediaUrl,
                   mediaCaption || content || undefined,
                   messageType as 'image' | 'audio' | 'video' | 'document'
                 );

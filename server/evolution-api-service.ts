@@ -369,28 +369,64 @@ class EvolutionAPIService {
       return { success: false, error: 'Evolution API não está configurada' };
     }
 
-    const formattedNumber = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    // Format phone number for WhatsApp
+    let formattedNumber: string;
+    if (to.includes('@')) {
+      formattedNumber = to;
+    } else {
+      let digitsOnly = to.replace(/\D/g, '');
+      if (digitsOnly.startsWith('55') && digitsOnly.length >= 12) {
+        formattedNumber = `${digitsOnly}@s.whatsapp.net`;
+      } else if (digitsOnly.length === 11 || digitsOnly.length === 10) {
+        formattedNumber = `55${digitsOnly}@s.whatsapp.net`;
+      } else {
+        formattedNumber = `${digitsOnly}@s.whatsapp.net`;
+      }
+    }
 
     // Determine endpoint based on media type
-    const endpoint = mediaType === 'audio' ? 'sendAudio' : 
-                    mediaType === 'video' ? 'sendVideo' :
-                    mediaType === 'document' ? 'sendDocument' : 'sendMedia';
+    const endpoint = mediaType === 'audio' ? 'sendWhatsAppAudio' : 
+                    mediaType === 'video' ? 'sendMedia' :
+                    mediaType === 'document' ? 'sendMedia' : 'sendMedia';
+
+    console.log(`📤 [EVOLUTION-MEDIA] Preparando envio: tipo=${mediaType}, endpoint=${endpoint}, destino=${formattedNumber}`);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`📤 Tentativa ${attempt}/${retries} de enviar mídia (${mediaType}) para ${formattedNumber}`);
+        console.log(`📤 [EVOLUTION-MEDIA] Tentativa ${attempt}/${retries} de enviar mídia (${mediaType})`);
         
-          if (mediaType === 'image' || mediaType === 'video' || mediaType === 'document') {
         const isBase64 = mediaUrl.startsWith('data:');
         const payload: any = {
           number: formattedNumber,
-          caption: caption || ''
         };
 
+        // Add media-specific properties based on type and format
         if (isBase64) {
-          payload.base64 = mediaUrl.split(',')[1] || mediaUrl;
+          // Extract mimetype and base64 data
+          const matches = mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            payload.media = matches[2];
+            payload.mimetype = matches[1];
+          } else {
+            payload.media = mediaUrl.replace(/^data:[^;]+;base64,/, '');
+            payload.mimetype = this.getMimeTypeFromMediaType(mediaType);
+          }
+          console.log(`📤 [EVOLUTION-MEDIA] Enviando como base64, mimetype: ${payload.mimetype}`);
         } else {
-          payload.mediaUrl = mediaUrl;
+          // URL-based media
+          payload.mediatype = mediaType || 'image';
+          payload.media = mediaUrl;
+          console.log(`📤 [EVOLUTION-MEDIA] Enviando como URL: ${mediaUrl.substring(0, 50)}...`);
+        }
+
+        // Add caption for non-audio types
+        if (mediaType !== 'audio' && caption) {
+          payload.caption = caption;
+        }
+
+        // For documents, add filename
+        if (mediaType === 'document') {
+          payload.fileName = caption || 'document';
         }
 
         const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
@@ -400,42 +436,27 @@ class EvolutionAPIService {
             'apikey': this.config!.apiKey
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(30000)
-        });
-        // ... rest of the fetch logic
-      }
-
-      const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': this.config!.apiKey
-          },
-          body: JSON.stringify({
-            number: formattedNumber,
-            mediaUrl: mediaUrl,
-            caption: caption || ''
-          }),
-          signal: AbortSignal.timeout(30000) // 30 segundos
+          signal: AbortSignal.timeout(60000) // 60 segundos para uploads grandes
         });
 
         const data = await response.json();
+        console.log(`📤 [EVOLUTION-MEDIA] Response status: ${response.status}`, data);
 
         if (!response.ok) {
-          console.error(`❌ Erro (tentativa ${attempt}):`, data);
+          console.error(`❌ [EVOLUTION-MEDIA] Erro (tentativa ${attempt}):`, data);
           if (attempt === retries) {
-            return { success: false, error: data.message || 'Erro ao enviar mídia' };
+            return { success: false, error: data.message || data.error || 'Erro ao enviar mídia' };
           }
           await new Promise(resolve => setTimeout(resolve, 2000));
           continue;
         }
 
-        console.log(`✅ Mídia enviada via Evolution API (${mediaType})`);
+        console.log(`✅ [EVOLUTION-MEDIA] Mídia enviada com sucesso (${mediaType})`);
         return { success: true, messageId: data.key?.id };
       } catch (error: any) {
-        console.error(`❌ Erro na tentativa ${attempt}:`, error.message);
+        console.error(`❌ [EVOLUTION-MEDIA] Erro na tentativa ${attempt}:`, error.message);
         if (attempt === retries) {
-          console.error('❌ Todas as tentativas falharam:', error);
+          console.error('❌ [EVOLUTION-MEDIA] Todas as tentativas falharam:', error);
           return { success: false, error: error.message };
         }
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -443,6 +464,17 @@ class EvolutionAPIService {
     }
 
     return { success: false, error: 'Falha ao enviar mídia após múltiplas tentativas' };
+  }
+
+  // Helper to get mimetype from media type
+  private getMimeTypeFromMediaType(mediaType?: string): string {
+    switch (mediaType) {
+      case 'image': return 'image/jpeg';
+      case 'audio': return 'audio/ogg; codecs=opus';
+      case 'video': return 'video/mp4';
+      case 'document': return 'application/pdf';
+      default: return 'image/jpeg';
+    }
   }
 
   // Send location message
