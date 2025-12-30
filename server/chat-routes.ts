@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql } from "drizzle-orm";
+import { sql, and, eq } from "drizzle-orm";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -2350,6 +2350,35 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CHAT-STATUS] Erro:", error);
       res.status(500).json({ error: "Erro ao atualizar status" });
+    }
+  });
+
+  // POST /api/chat/conversations/:conversationId/mark-read - Marcar conversa como lida
+  app.post("/api/chat/conversations/:conversationId/mark-read", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+
+      // Zerar unreadCount da conversa
+      const updatedConv = await storage.updateChatConversation(conversationId, {
+        unreadCount: 0
+      });
+
+      // Marcar todas as mensagens do cliente como lidas
+      await db.update(chatMessages)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(chatMessages.conversationId, conversationId),
+            eq(chatMessages.senderType, 'customer'),
+            eq(chatMessages.isRead, false)
+          )
+        );
+
+      console.log(`✅ [MARK-READ] Conversa ${conversationId} marcada como lida`);
+      res.json({ success: true, conversation: updatedConv });
+    } catch (error: any) {
+      console.error("[MARK-READ] Erro:", error);
+      res.status(500).json({ error: "Erro ao marcar como lida" });
     }
   });
 

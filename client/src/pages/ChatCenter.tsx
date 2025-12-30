@@ -246,6 +246,32 @@ export default function ChatCenter() {
   });
   const agentStats = (agentStatsData as any[]) || [];
 
+  // Mutation para marcar conversa como lida
+  const markAsReadMutation = useMutation({
+    mutationFn: async (conversationId: string) => {
+      const response = await fetch(`/api/chat/conversations/${conversationId}/mark-read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      if (!response.ok) throw new Error('Falha ao marcar como lida');
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchConversations();
+    }
+  });
+
+  // Marcar conversa como lida quando selecionada
+  useEffect(() => {
+    if (selectedConversation) {
+      const conv = conversations.find(c => c.id === selectedConversation);
+      if (conv?.hasUnread) {
+        markAsReadMutation.mutate(selectedConversation);
+      }
+    }
+  }, [selectedConversation]);
+
   // Mutation para sincronizar mensagens do WhatsApp
   const syncWhatsAppMutation = useMutation({
     mutationFn: async () => {
@@ -881,10 +907,10 @@ export default function ChatCenter() {
                   </CardHeader>
                 </Card>
 
-                {/* Área de Chat */}
-                <Card className="flex flex-col min-h-screen">
+                {/* Área de Chat + Input de Mensagem - Tudo junto */}
+                <Card className="flex flex-col h-[500px]">
                   <CardContent className="flex-1 overflow-hidden p-4">
-                    <ScrollArea ref={scrollRef} className="h-full">
+                    <ScrollArea ref={scrollRef} className="h-[300px]">
                       <div className="space-y-4">
                         {messagesLoading ? (
                           <div className="text-center py-8 text-gray-500">Carregando mensagens...</div>
@@ -946,65 +972,9 @@ export default function ChatCenter() {
                         )}
                       </div>
                     </ScrollArea>
-                  </CardContent>
-                </Card>
-
-                {/* Controles */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Atribuição e Status</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Atribua a um agente</label>
-                        <Select value={selectedChat.agentId || ""} onValueChange={setAssignedAgent}>
-                          <SelectTrigger data-testid="select-agent">
-                            <SelectValue placeholder="Selecione..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {agents.map((agent) => (
-                              <SelectItem key={agent.id} value={agent.id}>
-                                {agent.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Status</label>
-                        <Select value={selectedChat.status} onValueChange={(status) => updateStatusMutation.mutate(status)}>
-                          <SelectTrigger data-testid="select-status">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="new">Novo</SelectItem>
-                            <SelectItem value="assigned">Atribuído</SelectItem>
-                            <SelectItem value="in-progress">Em andamento</SelectItem>
-                            <SelectItem value="resolved">Resolvido</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    {assignedAgent && (
-                      <Button 
-                        onClick={() => assignConversationMutation.mutate(assignedAgent)}
-                        disabled={assignConversationMutation.isPending}
-                        data-testid="button-assign"
-                        className="w-full"
-                      >
-                        Atribuir Conversa
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Input de Mensagem com Templates */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Escrever Mensagem</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
+                    
+                    {/* Input de Mensagem - Junto com as mensagens */}
+                    <div className="border-t mt-3 pt-3 space-y-2">
                     {templates.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {templates.slice(0, 4).map((template: any) => (
@@ -1117,6 +1087,55 @@ export default function ChatCenter() {
                         )}
                       </div>
                     </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Controles de Atribuição e Status */}
+                <Card className="mt-2">
+                  <CardContent className="p-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs font-medium text-gray-700">Atribuir a</label>
+                        <Select value={selectedChat.agentId || ""} onValueChange={setAssignedAgent}>
+                          <SelectTrigger data-testid="select-agent" className="h-8 text-xs">
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {agents.map((agent) => (
+                              <SelectItem key={agent.id} value={agent.id}>
+                                {agent.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700">Status</label>
+                        <Select value={selectedChat.status} onValueChange={(status) => updateStatusMutation.mutate(status)}>
+                          <SelectTrigger data-testid="select-status" className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="new">Novo</SelectItem>
+                            <SelectItem value="assigned">Atribuído</SelectItem>
+                            <SelectItem value="in-progress">Em andamento</SelectItem>
+                            <SelectItem value="resolved">Resolvido</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    {assignedAgent && (
+                      <Button 
+                        onClick={() => assignConversationMutation.mutate(assignedAgent)}
+                        disabled={assignConversationMutation.isPending}
+                        data-testid="button-assign"
+                        className="w-full mt-2 h-8 text-xs"
+                        size="sm"
+                      >
+                        Atribuir Conversa
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               </>
