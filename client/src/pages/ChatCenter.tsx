@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -672,6 +672,16 @@ export default function ChatCenter() {
             <p className="text-gray-600">Gerencie conversas e atenda clientes em tempo real</p>
           </div>
           <div className="flex gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLocation('/telemarketing/ai-settings')}
+              className="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+              data-testid="button-ai-settings"
+            >
+              <Bot className="h-4 w-4" />
+              Configurar IA
+            </Button>
             {isAdmin && (
               <Button
                 onClick={() => syncWhatsAppMutation.mutate()}

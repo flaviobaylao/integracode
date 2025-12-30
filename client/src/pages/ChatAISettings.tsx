@@ -68,6 +68,64 @@ const AI_PROVIDERS = [
   { value: 'grok', label: 'xAI Grok', icon: '🔮' },
 ];
 
+function AILogsTable() {
+  const { data: logsData, isLoading } = useQuery<{ success: boolean; logs: any[] }>({
+    queryKey: ['/api/chat/ai-logs'],
+    refetchInterval: 10000,
+  });
+
+  if (isLoading) return <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin text-honest-orange" /></div>;
+
+  const logs = logsData?.logs || [];
+
+  return (
+    <div className="rounded-md border">
+      <div className="relative w-full overflow-auto">
+        <table className="w-full caption-bottom text-sm">
+          <thead className="[&_tr]:border-b bg-gray-50/50">
+            <tr className="border-b transition-colors">
+              <th className="h-10 px-4 text-left align-middle font-medium">Data/Hora</th>
+              <th className="h-10 px-4 text-left align-middle font-medium">Cliente</th>
+              <th className="h-10 px-4 text-left align-middle font-medium">Mensagem</th>
+              <th className="h-10 px-4 text-left align-middle font-medium">Resposta IA</th>
+              <th className="h-10 px-4 text-left align-middle font-medium text-right">Tokens</th>
+            </tr>
+          </thead>
+          <tbody className="[&_tr:last-child]:border-0">
+            {logs.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="p-8 text-center text-muted-foreground">Nenhum log encontrado</td>
+              </tr>
+            ) : (
+              logs.map((log) => (
+                <tr key={log.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="p-4 align-middle whitespace-nowrap">
+                    {format(new Date(log.createdAt), 'dd/MM HH:mm', { locale: ptBR })}
+                  </td>
+                  <td className="p-4 align-middle font-medium">
+                    {log.customerPhone}
+                  </td>
+                  <td className="p-4 align-middle">
+                    <div className="max-w-[200px] truncate" title={log.messageContent}>
+                      {log.messageContent}
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle">
+                    <div className="max-w-[300px] truncate" title={log.responseContent}>
+                      {log.responseContent}
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle text-right">{log.tokensUsed || '-'}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function ChatAISettings() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -258,6 +316,10 @@ export default function ChatAISettings() {
           <TabsTrigger value="prompts" data-testid="tab-prompts">
             <MessageSquare className="h-4 w-4 mr-2" />
             Prompts
+          </TabsTrigger>
+          <TabsTrigger value="logs" data-testid="tab-logs">
+            <Clock className="h-4 w-4 mr-2" />
+            Atividade
           </TabsTrigger>
           <TabsTrigger value="test" data-testid="tab-test">
             <Zap className="h-4 w-4 mr-2" />
@@ -571,6 +633,20 @@ export default function ChatAISettings() {
                 className="font-mono text-sm"
                 data-testid="textarea-company-context"
               />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="logs" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Log de Atividade da IA</CardTitle>
+              <CardDescription>
+                Últimas interações do atendimento automático
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AILogsTable />
             </CardContent>
           </Card>
         </TabsContent>
