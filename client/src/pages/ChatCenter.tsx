@@ -1017,7 +1017,7 @@ export default function ChatCenter() {
                         }}
                         data-testid="textarea-message"
                         className="resize-none"
-                        rows={8}
+                        rows={3}
                         disabled={!!selectedFile}
                       />
                       <div className="flex flex-col gap-2 self-end">
@@ -1091,53 +1091,43 @@ export default function ChatCenter() {
                   </CardContent>
                 </Card>
 
-                {/* Controles de Atribuição e Status */}
-                <Card className="mt-2">
-                  <CardContent className="p-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs font-medium text-gray-700">Atribuir a</label>
-                        <Select value={selectedChat.agentId || ""} onValueChange={setAssignedAgent}>
-                          <SelectTrigger data-testid="select-agent" className="h-8 text-xs">
-                            <SelectValue placeholder="Selecione..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {agents.map((agent) => (
-                              <SelectItem key={agent.id} value={agent.id}>
-                                {agent.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-gray-700">Status</label>
-                        <Select value={selectedChat.status} onValueChange={(status) => updateStatusMutation.mutate(status)}>
-                          <SelectTrigger data-testid="select-status" className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="new">Novo</SelectItem>
-                            <SelectItem value="assigned">Atribuído</SelectItem>
-                            <SelectItem value="in-progress">Em andamento</SelectItem>
-                            <SelectItem value="resolved">Resolvido</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    {assignedAgent && (
-                      <Button 
-                        onClick={() => assignConversationMutation.mutate(assignedAgent)}
-                        disabled={assignConversationMutation.isPending}
-                        data-testid="button-assign"
-                        className="w-full mt-2 h-8 text-xs"
-                        size="sm"
-                      >
-                        Atribuir Conversa
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
+                {/* Controles de Atribuição e Status - Barra compacta */}
+                <div className="flex items-center gap-2 mt-1 p-2 bg-gray-50 rounded border">
+                  <Select value={selectedChat.agentId || ""} onValueChange={setAssignedAgent}>
+                    <SelectTrigger data-testid="select-agent" className="h-7 text-xs w-40">
+                      <SelectValue placeholder="Atribuir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedChat.status} onValueChange={(status) => updateStatusMutation.mutate(status)}>
+                    <SelectTrigger data-testid="select-status" className="h-7 text-xs w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new">Novo</SelectItem>
+                      <SelectItem value="assigned">Atribuído</SelectItem>
+                      <SelectItem value="in-progress">Em andamento</SelectItem>
+                      <SelectItem value="resolved">Resolvido</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {assignedAgent && (
+                    <Button 
+                      onClick={() => assignConversationMutation.mutate(assignedAgent)}
+                      disabled={assignConversationMutation.isPending}
+                      data-testid="button-assign"
+                      className="h-7 text-xs"
+                      size="sm"
+                    >
+                      Atribuir
+                    </Button>
+                  )}
+                </div>
               </>
             ) : (
               <Card className="h-full flex items-center justify-center">
