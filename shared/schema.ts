@@ -1555,6 +1555,7 @@ export const chatAgents = pgTable("chat_agents", {
   status: text("status").notNull().default("offline"), // online, offline, busy
   avatar: text("avatar"),
   isActive: boolean("is_active").notNull().default(true),
+  lastSeenAt: timestamp("last_seen_at"), // 🟢 Última vez que o agente foi visto online (heartbeat)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

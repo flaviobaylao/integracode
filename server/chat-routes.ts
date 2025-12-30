@@ -289,6 +289,74 @@ export function registerChatRoutes(app: Express): void {
   );
 
   // ============================================================
+  // AGENT PRESENCE / HEARTBEAT
+  // ============================================================
+
+  // Heartbeat endpoint - called periodically when ChatCenter is open
+  app.post("/api/chat/agents/heartbeat", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      if (!currentUser?.email) {
+        return res.status(401).json({ error: "Usuário não autenticado" });
+      }
+
+      // Find the agent by user email and update their status to online
+      const agents = await storage.getChatAgents();
+      const agent = agents.find(a => a.email === currentUser.email);
+
+      if (agent) {
+        await storage.updateChatAgentPresence(agent.id, "online");
+        console.log(`🟢 [HEARTBEAT] Agent ${currentUser.email} is online`);
+      }
+
+      res.json({ success: true, status: "online" });
+    } catch (error) {
+      console.error("[CHAT] Heartbeat error:", error);
+      res.status(500).json({ error: "Erro ao atualizar presença" });
+    }
+  });
+
+  // Set agent offline - called when ChatCenter is closed
+  app.post("/api/chat/agents/offline", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      if (!currentUser?.email) {
+        return res.status(401).json({ error: "Usuário não autenticado" });
+      }
+
+      // Find the agent by user email and update their status to offline
+      const agents = await storage.getChatAgents();
+      const agent = agents.find(a => a.email === currentUser.email);
+
+      if (agent) {
+        await storage.updateChatAgentPresence(agent.id, "offline");
+        console.log(`⚫ [OFFLINE] Agent ${currentUser.email} is offline`);
+      }
+
+      res.json({ success: true, status: "offline" });
+    } catch (error) {
+      console.error("[CHAT] Offline error:", error);
+      res.status(500).json({ error: "Erro ao atualizar presença" });
+    }
+  });
+
+  // Get online agents
+  app.get("/api/chat/agents/online", authenticateUser, async (req, res) => {
+    try {
+      const agents = await storage.getChatAgents();
+      // Consider an agent online if lastSeenAt is within the last 2 minutes
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+      const onlineAgents = agents.filter(a => 
+        a.status === "online" && a.lastSeenAt && new Date(a.lastSeenAt) > twoMinutesAgo
+      );
+      res.json(onlineAgents);
+    } catch (error) {
+      console.error("[CHAT] Get online agents error:", error);
+      res.status(500).json({ error: "Erro ao buscar agentes online" });
+    }
+  });
+
+  // ============================================================
   // CHAT CONVERSATIONS CRUD
   // ============================================================
 

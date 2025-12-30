@@ -365,6 +365,7 @@ export interface IStorage {
   createChatAgent(agent: InsertChatAgent): Promise<ChatAgent>;
   deleteChatAgent(id: string): Promise<void>;
   updateChatAgentStatus(id: string, status: string): Promise<ChatAgent>;
+  updateChatAgentPresence(id: string, status: string): Promise<ChatAgent>;
   syncUsersAsAgents(): Promise<void>;
   closeInactiveConversations(): Promise<number>;
   getConversationsCountByAgent(): Promise<Array<{ agentId: string | null; agentName: string | null; count: number; conversations: ChatConversation[] }>>;
@@ -5564,7 +5565,16 @@ export class DatabaseStorage implements IStorage {
   async updateChatAgentStatus(id: string, status: string): Promise<ChatAgent> {
     const [agent] = await db
       .update(chatAgents)
-      .set({ status, lastActivity: new Date() })
+      .set({ status, updatedAt: new Date() })
+      .where(eq(chatAgents.id, id))
+      .returning();
+    return agent;
+  }
+
+  async updateChatAgentPresence(id: string, status: string): Promise<ChatAgent> {
+    const [agent] = await db
+      .update(chatAgents)
+      .set({ status, lastSeenAt: new Date(), updatedAt: new Date() })
       .where(eq(chatAgents.id, id))
       .returning();
     return agent;
