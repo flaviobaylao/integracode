@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ConversationWithCustomer, MessageWithSender } from "@shared/schema";
+import type { ChatConversation, ChatMessage, ChatAiSettings } from "@shared/schema";
 import { storage } from "./storage";
 import { whatsappAnalysisService } from "./whatsapp-analysis-service";
 import { grokService } from "./grok";
@@ -38,9 +38,8 @@ export async function handleIncomingMessage(
     // 3. Salvar log de auditoria
     await storage.createChatAiLog({
       conversationId: conversation.id,
-      customerPhone: conversation.customerPhone,
-      prompt: message.content,
-      response: result.response.reply,
+      customerMessage: message.content,
+      botResponse: result.response.reply,
       provider: (settings as any).aiProvider || 'openai',
       model: settings.gptModel || 'gpt-4o-mini',
       tokensUsed: result.tokensUsed,
@@ -94,10 +93,9 @@ export async function handleIncomingMessage(
     try {
       await storage.createChatAiLog({
         conversationId: conversation.id,
-        customerPhone: conversation.customerPhone,
-        prompt: message.content,
-        response: null,
-        error: error.message,
+        customerMessage: message.content,
+        botResponse: null,
+        errorMessage: error.message,
         status: 'error'
       });
     } catch (logErr) {
@@ -120,7 +118,7 @@ export class ChatGPTService {
 
   async generateResponse(
     customerMessage: string,
-    conversationHistory: MessageWithSender[],
+    conversationHistory: ChatMessage[],
     customer: { name: string; phone: string }
   ): Promise<{ response: string; shouldTransferToHuman: boolean }> {
     try {
@@ -153,7 +151,8 @@ export class ChatGPTService {
       }
 
       // Load latest knowledge base
-      const latestKnowledge = await storage.getLatestKnowledgeBase();
+      const knowledge = await storage.getKnowledgeBase();
+      const latestKnowledge = knowledge[knowledge.length - 1];
       if (!latestKnowledge) {
         return null;
       }
@@ -239,7 +238,7 @@ export class ChatGPTService {
 
   private async generateAssistantResponse(
     customerMessage: string,
-    conversationHistory: MessageWithSender[],
+    conversationHistory: ChatMessage[],
     customer: { name: string; phone: string }
   ): Promise<{ response: string; shouldTransferToHuman: boolean }> {
     try {
@@ -254,7 +253,7 @@ export class ChatGPTService {
         const role = msg.senderType === 'customer' ? 'user' : 'assistant';
         await this.openai.beta.threads.messages.create(thread.id, {
           role: role,
-          content: msg.content,
+          content: msg.content || '',
         });
       }
 
@@ -406,7 +405,7 @@ export const chatGPTService = new ChatGPTService();
 
 import pLimit from "p-limit";
 import pRetry from "p-retry";
-import { ChatAiSettings, BusinessHoursConfig } from "@shared/schema";
+import { type ChatAiSettings } from "@shared/schema";
 
 // Rate limiter para evitar exceder limites da API
 const limit = pLimit(2);
@@ -628,13 +627,7 @@ Se precisar transferir para humano, use:
           retries: 3,
           minTimeout: 1000,
           maxTimeout: 10000,
-          factor: 2,
-          onFailedAttempt: (error) => {
-            if (!isRateLimitError(error)) {
-              throw new pRetry.AbortError(error as Error);
-            }
-            console.log(`🔄 [CHATGPT-AUTO] Retry attempt ${error.attemptNumber} devido a rate limit`);
-          }
+          factor: 2
         }
       )
     );
@@ -731,7 +724,7 @@ function isWithinBusinessHours(
     const currentDay = dayMap[currentTime.getDay()];
     
     // Verificar se é um dia configurado
-    if (!config.weekdays.includes(currentDay)) {
+    if (config.weekdays && !config.weekdays.includes(currentDay)) {
       return false;
     }
 
@@ -740,26 +733,20 @@ function isWithinBusinessHours(
     const currentMinute = currentTime.getMinutes();
     const currentTimeMinutes = currentHour * 60 + currentMinute;
 
-    const [startHour, startMin] = config.startTime.split(':').map(Number);
-    const [endHour, endMin] = config.endTime.split(':').map(Number);
+    const [startH, startM] = config.startTime.split(':').map(Number);
+    const [endH, endM] = config.endTime.split(':').map(Number);
     
-    const startTimeMinutes = startHour * 60 + startMin;
-    const endTimeMinutes = endHour * 60 + endMin;
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
 
-    // Se horário de fim é menor que início, significa que cruza a meia-noite
-    if (endTimeMinutes < startTimeMinutes) {
-      // Ex: 18:00 às 08:00 - ativo das 18h até meia-noite E de meia-noite até 8h
-      return currentTimeMinutes >= startTimeMinutes || currentTimeMinutes < endTimeMinutes;
-    } else {
-      return currentTimeMinutes >= startTimeMinutes && currentTimeMinutes < endTimeMinutes;
-    }
-  } catch (error) {
-    console.error('❌ [CHATGPT-AUTO] Erro ao verificar horário:', error);
+    return currentTimeMinutes >= startMinutes && currentTimeMinutes <= endMinutes;
+  } catch (e) {
+    console.error("Error parsing business hours:", e);
     return false;
   }
 }
 
-// Verificar se OpenAI está configurada
+// Check if OpenAI API is configured
 export function isOpenAIConfigured(): boolean {
   return !!process.env.OPENAI_API_KEY;
 }
