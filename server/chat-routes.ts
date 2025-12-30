@@ -890,13 +890,12 @@ export function registerChatRoutes(app: Express): void {
         externalId: messageId
       });
 
-      // 4. Atualizar Conversa - CORREÇÃO: Forçar lastMessageTime para ordenação
+      // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação e incrementar contador de não-lidas
       await storage.updateChatConversation(conversation.id, {
         updatedAt: new Date(),
         lastMessageTime: new Date(),
-        lastMessage: messageText || '[Mídia/Outro]',
         status: isFromMe ? conversation.status : 'new',
-        hasUnread: !isFromMe
+        unreadCount: isFromMe ? conversation.unreadCount : (conversation.unreadCount || 0) + 1
       });
 
       console.log(`✅ [WEBHOOK-MIRROR] Sucesso total: ${normalizedPhone}`);

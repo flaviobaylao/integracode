@@ -599,6 +599,7 @@ class EvolutionAPIService {
     return jid
       .replace('@s.whatsapp.net', '')
       .replace('@c.us', '')
+      .replace('@lid', '')  // Evolution API internal ID suffix
       .split(':')[0]; // Remove device suffix like :40
   }
 

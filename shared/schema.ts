@@ -1786,9 +1786,13 @@ export const updateChatCustomerSchema = createInsertSchema(chatCustomers).pick({
 export const insertChatConversationSchema = createInsertSchema(chatConversations).omit({
   id: true,
   createdAt: true,
-  updatedAt: true,
-  lastMessageTime: true,
 });
+
+// Extended schema for updating conversations (allows updatedAt and lastMessageTime)
+export const updateChatConversationSchema = createInsertSchema(chatConversations).omit({
+  id: true,
+  createdAt: true,
+}).partial();
 
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
   id: true,
@@ -1859,6 +1863,7 @@ export type UpdateChatCustomer = z.infer<typeof updateChatCustomerSchema>;
 
 export type ChatConversation = typeof chatConversations.$inferSelect;
 export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
+export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;

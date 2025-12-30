@@ -80,6 +80,7 @@ import {
   type UpdateChatCustomer,
   type ChatConversation,
   type InsertChatConversation,
+  type UpdateChatConversation,
   type ChatMessage,
   type InsertChatMessage,
   type ChatReport,
@@ -382,7 +383,7 @@ export interface IStorage {
   getChatConversation(id: string): Promise<ChatConversation | undefined>;
   getChatConversationByPhone(phone: string): Promise<ChatConversation | undefined>;
   createChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
-  updateChatConversation(id: string, conversation: Partial<InsertChatConversation>): Promise<ChatConversation>;
+  updateChatConversation(id: string, conversation: UpdateChatConversation): Promise<ChatConversation>;
   upsertChatConversation(conversation: InsertChatConversation): Promise<ChatConversation>;
   
   // Phone Mapping operations
@@ -5816,7 +5817,7 @@ export class DatabaseStorage implements IStorage {
     return conversation;
   }
   
-  async updateChatConversation(id: string, conversationData: Partial<InsertChatConversation>): Promise<ChatConversation> {
+  async updateChatConversation(id: string, conversationData: UpdateChatConversation): Promise<ChatConversation> {
     const [conversation] = await db
       .update(chatConversations)
       .set(conversationData)
