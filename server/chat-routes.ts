@@ -195,34 +195,7 @@ export function registerChatRoutes(app: Express): void {
     storage: storageConfig,
     limits: {
       fileSize: 16 * 1024 * 1024, // 16MB limit
-    },
-    fileFilter: (req, file, cb) => {
-      // Accept images, audio, video, and documents
-      const allowedMimes = [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-        "audio/mpeg",
-        "audio/ogg",
-        "audio/wav",
-        "audio/mp4",
-        "video/mp4",
-        "video/mpeg",
-        "video/quicktime",
-        "application/pdf",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ];
-
-      if (allowedMimes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error(`Tipo de arquivo não suportado: ${file.mimetype}`));
-      }
-    },
+    }
   });
 
   // ============================================================
@@ -1152,19 +1125,46 @@ export function registerChatRoutes(app: Express): void {
   // Upload spreadsheet and parse phone numbers
   app.post("/api/chat/bulk-message/parse", upload.single("file"), async (req, res) => {
     try {
+      console.log(`[BULK] Parsing spreadsheet...`, req.file ? { 
+        filename: req.file.filename, 
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        path: req.file.path,
+        hasBuffer: !!req.file.buffer
+      } : "No file");
+
       if (!req.file) {
         return res.status(400).json({ error: "Nenhum arquivo enviado" });
+      }
+
+      // Check if file exists on disk
+      if (req.file.path && !fs.existsSync(req.file.path)) {
+        console.error(`[BULK] Multer reported path ${req.file.path} but file does not exist on disk`);
+        return res.status(500).json({ error: "Arquivo temporário não encontrado no servidor" });
       }
 
       const XLSX = await import("xlsx");
       let workbook;
       
-      if (req.file.buffer) {
+      // Since we use diskStorage, req.file.path should be populated
+      if (req.file.path) {
+        console.log(`[BULK] Reading file from path: ${req.file.path}`);
+        try {
+          // Force a small delay to ensure OS file system has settled (sometimes helps with 500s on rapid uploads)
+          await new Promise(resolve => setTimeout(resolve, 100));
+          workbook = XLSX.readFile(req.file.path);
+        } catch (readErr: any) {
+          console.error(`[BULK] Error reading file via XLSX.readFile:`, readErr.message);
+          // Fallback to reading as buffer
+          const fileBuffer = fs.readFileSync(req.file.path);
+          workbook = XLSX.read(fileBuffer, { type: "buffer" });
+        }
+      } else if (req.file.buffer) {
+        console.log(`[BULK] Reading file from buffer`);
         workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-      } else if (req.file.path) {
-        workbook = XLSX.readFile(req.file.path);
       } else {
-        return res.status(400).json({ error: "Dados do arquivo não encontrados" });
+        console.error(`[BULK] No file path or buffer found`);
+        return res.status(400).json({ error: "Dados do arquivo não encontrados no servidor" });
       }
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
@@ -1205,15 +1205,21 @@ export function registerChatRoutes(app: Express): void {
 
       for (let i = 1; i < data.length; i++) {
         const row = data[i] as any[];
-        if (!row || !row[colIndex]) continue;
+        if (!row || row.length === 0) continue;
 
-        const rawPhone = String(row[colIndex]).trim();
-        const name = nameColIndex !== -1 && row[nameColIndex] ? String(row[nameColIndex]).trim() : '';
+        const rawValue = row[colIndex];
+        if (rawValue === undefined || rawValue === null) continue;
+        
+        const rawPhone = String(rawValue).trim();
+        if (!rawPhone) continue;
+
+        const nameValue = nameColIndex !== -1 ? row[nameColIndex] : null;
+        const name = nameValue ? String(nameValue).trim() : '';
         
         // Clean phone number
         const digitsOnly = rawPhone.replace(/\D/g, '');
         
-        if (digitsOnly.length >= 10 && digitsOnly.length <= 15) {
+        if (digitsOnly.length >= 8) {
           const normalized = normalizePhoneNumber(digitsOnly);
           
           if (!seen.has(normalized)) {
@@ -1221,7 +1227,7 @@ export function registerChatRoutes(app: Express): void {
             contacts.push({
               phone: normalized,
               name: name || `Contato ${i}`,
-              valid: digitsOnly.length >= 10
+              valid: true
             });
           }
         }
@@ -1250,6 +1256,12 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/bulk-message/send", async (req, res) => {
     try {
       const { contacts, message, delaySeconds = 3 } = req.body;
+
+      console.log(`[BULK] Starting message blast...`, { 
+        contactsCount: contacts?.length,
+        messagePreview: message?.substring(0, 30),
+        delaySeconds 
+      });
 
       if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
         return res.status(400).json({ error: "Lista de contatos é obrigatória" });
