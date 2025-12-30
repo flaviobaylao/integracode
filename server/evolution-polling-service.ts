@@ -6,12 +6,54 @@
 import { evolutionAPIService } from './evolution-api-service';
 import { storage } from './storage';
 
+// 🔧 FUNÇÃO DE NORMALIZAÇÃO DE TELEFONE - INCLUI MAPEAMENTOS CONHECIDOS
 function normalizePhoneNumber(phone: string): string {
-  let digitsOnly = phone.replace(/\D/g, '');
-  if (digitsOnly.startsWith('55') && digitsOnly.length === 13) {
-    return digitsOnly;
-  } else if (digitsOnly.length === 11) {
+  if (!phone) {
+    console.warn(`⚠️  [POLLING-NORMALIZE] Telefone vazio recebido`);
+    return '';
+  }
+  
+  // Remove tudo que não é dígito e o sufixo @lid/@s.whatsapp.net se vier na string
+  let digitsOnly = phone.split('@')[0].replace(/\D/g, '');
+  
+  // IDs internos da Evolution API (padrão 5550...) ou números problemáticos conhecidos
+  const mappings: { [key: string]: string } = {
+    '5550575396912': '5562996353860',
+    '5504884295924': '5562995782812',
+    '173250575396912': '5562996353860',
+    '50575396912': '5562996353860',
+    '04884295924': '5562995782812',
+    '5550575396012': '5562996353860',
+    '5504884295924@s.whatsapp.net': '5562995782812'
+  };
+
+  if (mappings[digitsOnly]) {
+    console.log(`🎯 [POLLING-NORMALIZE] Mapeando ID conhecido ${digitsOnly} para ${mappings[digitsOnly]}`);
+    return mappings[digitsOnly];
+  }
+
+  // Se começar com 55 e tiver 12 ou 13 dígitos, remove o 55 para normalizar o resto
+  if (digitsOnly.startsWith('55') && (digitsOnly.length === 12 || digitsOnly.length === 13)) {
+    const candidate = digitsOnly.slice(2);
+    if (mappings[candidate]) {
+      console.log(`🎯 [POLLING-NORMALIZE] Mapeando ID conhecido (sem 55) ${candidate} para ${mappings[candidate]}`);
+      return mappings[candidate];
+    }
+  }
+  
+  // No Brasil, celulares têm 11 dígitos (DDD + 9 + número) ou 10 dígitos (DDD + número)
+  if (digitsOnly.length === 10) {
+    const ddd = digitsOnly.slice(0, 2);
+    const rest = digitsOnly.slice(2);
+    digitsOnly = `${ddd}9${rest}`;
+    console.log(`📞 [POLLING-NORMALIZE] Adicionado 9: ${digitsOnly}`);
+  }
+  
+  // Adicionar prefixo 55 para formato brasileiro completo
+  if (digitsOnly.length === 11) {
     return `55${digitsOnly}`;
+  } else if (digitsOnly.startsWith('55') && digitsOnly.length === 13) {
+    return digitsOnly;
   } else if (digitsOnly.startsWith('55')) {
     return digitsOnly;
   } else {
