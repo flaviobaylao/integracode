@@ -881,12 +881,12 @@ export function registerChatRoutes(app: Express): void {
       
       // 🎯 NOVO: Se o webhookBase64 estiver desativado, a Evolution API pode enviar a mídia em data.message.base64 ou data.base64
       if (mediaInfo.messageType !== 'text' && !mediaInfo.mediaUrl) {
-        if (data.message?.base64) {
-          mediaInfo.mediaUrl = `data:${data.message.mimetype || 'image/jpeg'};base64,${data.message.base64}`;
-          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload (message.base64)`);
-        } else if (data.base64) {
-          mediaInfo.mediaUrl = `data:${data.mimetype || 'image/jpeg'};base64,${data.base64}`;
-          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload (data.base64)`);
+        const base64Source = data.message?.base64 || data.base64;
+        const mimeSource = data.message?.mimetype || data.mimetype;
+        
+        if (base64Source) {
+          mediaInfo.mediaUrl = `data:${mimeSource || 'image/jpeg'};base64,${base64Source}`;
+          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada diretamente no payload`);
         }
       }
       
@@ -1103,13 +1103,14 @@ export function registerChatRoutes(app: Express): void {
         });
         console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
 
-        // 3. Salvar mensagem ENVIADA
+      // 3. Salvar mensagem ENVIADA
         await storage.createChatMessage({
           conversationId: conversation.id,
           senderId: (req as any).user?.id || "system",
           senderType: "system",
-          content: message,
-          messageType: "text",
+          content: message || caption || (messageType !== 'text' ? '[Mídia enviada]' : ''),
+          messageType: messageType as any,
+          mediaUrl: mediaUrl,
           externalId: result.messageId
         });
         console.log(`💬 [WHATSAPP-SEND] Mensagem salva`);
