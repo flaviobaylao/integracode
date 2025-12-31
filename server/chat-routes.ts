@@ -995,20 +995,34 @@ export function registerChatRoutes(app: Express): void {
       if (mediaInfo.messageType !== 'text' && !mediaInfo.mediaUrl) {
         const msg = data.message?.message || data.message;
         const deepMsg = msg?.message || msg;
+        
+        // Check for base64 in various possible locations in Evolution API payload
         const base64Source = deepMsg?.base64 || msg?.base64 || data.message?.base64 || data.base64 || 
                            deepMsg?.imageMessage?.base64 || deepMsg?.audioMessage?.base64 || 
                            deepMsg?.videoMessage?.base64 || deepMsg?.documentMessage?.base64 ||
                            deepMsg?.image?.base64 || deepMsg?.audio?.base64 ||
-                           deepMsg?.video?.base64 || deepMsg?.document?.base64;
+                           deepMsg?.video?.base64 || deepMsg?.document?.base64 ||
+                           data.message?.image?.base64 || data.message?.video?.base64;
+
         const mimeSource = deepMsg?.mimetype || msg?.mimetype || data.message?.mimetype || data.mimetype ||
                           deepMsg?.imageMessage?.mimetype || deepMsg?.audioMessage?.mimetype ||
                           deepMsg?.videoMessage?.mimetype || deepMsg?.documentMessage?.mimetype ||
                           deepMsg?.image?.mimetype || deepMsg?.audio?.mimetype ||
-                          deepMsg?.video?.mimetype || deepMsg?.document?.mimetype;
+                          deepMsg?.video?.mimetype || deepMsg?.document?.mimetype ||
+                          data.message?.image?.mimetype || data.message?.video?.mimetype;
         
         if (base64Source) {
           mediaInfo.mediaUrl = base64Source.startsWith('data:') ? base64Source : `data:${mimeSource || 'image/jpeg'};base64,${base64Source}`;
-          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada no payload (v2 structure detected)`);
+          
+          // Identify message type if it wasn't already
+          if (!mediaInfo.messageType || mediaInfo.messageType === 'text') {
+            if (mimeSource?.startsWith('image/')) mediaInfo.messageType = 'image';
+            else if (mimeSource?.startsWith('audio/')) mediaInfo.messageType = 'audio';
+            else if (mimeSource?.startsWith('video/')) mediaInfo.messageType = 'video';
+            else mediaInfo.messageType = 'document';
+          }
+          
+          console.log(`✅ [WEBHOOK-MEDIA] Mídia encontrada no payload (v2 structure detected, type: ${mediaInfo.messageType})`);
         }
       }
 
@@ -2527,15 +2541,19 @@ export function registerChatRoutes(app: Express): void {
                 let detectedMimetype: string | undefined;
                 let detectedFileName: string | undefined;
                 
-                if (mediaUrl.startsWith('/uploads/')) {
+                // Handle both /uploads/chat/ and @assets/ styles if they appear
+                if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
                   try {
-                    const uploadDir = path.join(process.cwd(), "uploads", "chat");
-                    const filename = path.basename(mediaUrl);
-                    const filePath = path.join(uploadDir, filename);
+                    // Try to resolve path. If it's a relative web path, map to absolute filesystem path
+                    let filePath = mediaUrl;
+                    if (mediaUrl.startsWith('/uploads/')) {
+                      filePath = path.join(process.cwd(), mediaUrl.substring(1));
+                    }
                     
                     if (fs.existsSync(filePath)) {
                       const fileBuffer = fs.readFileSync(filePath);
                       const base64Data = fileBuffer.toString('base64');
+                      const filename = path.basename(filePath);
                       
                       // Detect mimetype from extension
                       const ext = path.extname(filename).toLowerCase();
@@ -2569,12 +2587,18 @@ export function registerChatRoutes(app: Express): void {
                   }
                 }
                 
+                // Map frontend messageType to Evolution API expected mediaType
+                let evolutionMediaType: 'image' | 'audio' | 'video' | 'document' = 'document';
+                if (messageType === 'image') evolutionMediaType = 'image';
+                else if (messageType === 'audio') evolutionMediaType = 'audio';
+                else if (messageType === 'video') evolutionMediaType = 'video';
+                
                 sendResult = await evolutionAPIService.sendMediaMessage(
                   config.instanceName,
                   phoneFormatted,
                   finalMediaUrl,
                   mediaCaption || content || undefined,
-                  messageType as 'image' | 'audio' | 'video' | 'document',
+                  evolutionMediaType,
                   3,
                   { mimetype: detectedMimetype, fileName: detectedFileName }
                 );
