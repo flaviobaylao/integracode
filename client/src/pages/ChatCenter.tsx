@@ -387,6 +387,34 @@ export default function ChatCenter() {
     }
   });
 
+  const reconfigureWebhookMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/chat/webhook/force-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Falha ao reconfigurar webhook');
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "✅ Webhook Reconfigurado",
+        description: data.message
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
   // Seller info will be fetched later after selectedChat is determined
 
   // Mutation para fazer upload de arquivo
@@ -806,6 +834,18 @@ export default function ChatCenter() {
                 >
                   <RefreshCw className={`w-4 h-4 ${syncWhatsAppMutation.isPending ? 'animate-spin' : ''}`} />
                   {syncWhatsAppMutation.isPending ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
+                </Button>
+
+                <Button
+                  onClick={() => reconfigureWebhookMutation.mutate()}
+                  disabled={reconfigureWebhookMutation.isPending}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-red-200 text-red-600 hover:bg-red-50"
+                  title="Forçar Reconfiguração de Webhook"
+                >
+                  <MapPin className={`w-4 h-4 ${reconfigureWebhookMutation.isPending ? 'animate-spin' : ''}`} />
+                  {reconfigureWebhookMutation.isPending ? 'Configurando...' : 'Fix Webhook'}
                 </Button>
               </div>
             )}

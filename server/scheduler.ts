@@ -1,3 +1,5 @@
+import { evolutionAPIService } from './evolution-api-service';
+import { whatsappService } from './whatsapp-service';
 import cron from 'node-cron';
 import { getOmieService } from './omieIntegration';
 import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
@@ -372,55 +374,81 @@ cron.schedule('*/5 6-23 * * *', async () => {
 //       });
 //
 //       // Sort by updatedAt (most recent first) and take top 10 chats
-//       // Don't rely solely on unreadCount as it may be reset by Evolution/Web clients
-//       const chatsToProcess = individualChats
-//         .sort((a: any, b: any) => {
-//           const aTime = new Date(a.updatedAt || 0).getTime();
-//           const bTime = new Date(b.updatedAt || 0).getTime();
-//           return bTime - aTime; // Most recent first
-//         })
-//         .slice(0, 10); // Limitar a 10 chats por ciclo
-//
-//       for (const chat of chatsToProcess) {
-//         try {
-//           const rawJid = chat.remoteJid || chat.id || '';
-//           const phoneNumber = evolutionAPIService.extractPhoneNumber(rawJid);
-//           
-//           // Use processIncomingMessage for consistent handling (normalized phone, mapping, etc)
-//           const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
-//
-//           if (result.success && result.messages && result.messages.length > 0) {
-//             for (const msg of result.messages) {
-//               try {
-//                 const msgId = msg.key?.id;
-//                 if (!msgId) continue;
-//
-//                 // Check for duplicates using externalId (indexed lookup via storage)
-//                 const existingMsg = await storage.getChatMessageByExternalId(msgId);
-//                 
-//                 if (!existingMsg) {
-//                   const { processIncomingMessage } = await import('./chat-routes');
-//                   await processIncomingMessage(msg, phoneNumber);
-//                   newMessages++;
-//                 }
-//               } catch (msgError) {
-//                 errors++;
-//               }
-//             }
-//           }
-//         } catch (convError) {
-//           errors++;
-//         }
-//       }
-//     }
-//
-//     if (newMessages > 0) {
-//       console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
-//     }
-//   } catch (error: any) {
-//     console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
-//   }
-// });
+// Fallback Polling - Sincroniza mensagens se o webhook falhar
+cron.schedule('*/30 * * * * *', async () => {
+  try {
+    const isConfigured = evolutionAPIService.isConfigured();
+    if (!isConfigured) return;
+
+    const config = evolutionAPIService.getConfig();
+    if (!config) return;
+
+    const instanceName = config.instanceName;
+    const chatsResult = await evolutionAPIService.fetchAllChats(instanceName);
+
+    if (chatsResult.success && chatsResult.chats) {
+      const chats = chatsResult.chats;
+      const individualChats = chats.filter((chat: any) => {
+        const jid = chat.id || chat.jid || chat.remoteJid || '';
+        return jid.includes('@s.whatsapp.net') && !jid.includes('@g.us');
+      });
+
+      let newMessages = 0;
+      let errors = 0;
+
+      // Don't rely solely on unreadCount as it may be reset by Evolution/Web clients
+      const chatsToProcess = individualChats
+        .sort((a: any, b: any) => {
+          const aTime = new Date(a.updatedAt || 0).getTime();
+          const bTime = new Date(b.updatedAt || 0).getTime();
+          return bTime - aTime; // Most recent first
+        })
+        .slice(0, 10); // Limitar a 10 chats por ciclo
+
+      for (const chat of chatsToProcess) {
+        try {
+          const rawJid = chat.remoteJid || chat.id || '';
+          const phoneNumber = evolutionAPIService.extractPhoneNumber(rawJid);
+          
+            // Use fetchChatHistory and process manually for reliability
+          const result = await evolutionAPIService.fetchChatHistory(instanceName, phoneNumber, 20);
+
+          if (result.success && result.messages && result.messages.length > 0) {
+            const chatRoutes = await import('./chat-routes');
+            for (const msg of result.messages) {
+              try {
+                const msgId = msg.key?.id;
+                if (!msgId) continue;
+
+                // Check for duplicates using externalId
+                const existingMsg = await storage.getChatMessageByExternalId(msgId);
+                
+                if (!existingMsg) {
+                  // @ts-ignore - processIncomingMessage is exported but dynamic import typing is tricky
+                  if (typeof chatRoutes.processIncomingMessage === 'function') {
+                    // @ts-ignore
+                    await chatRoutes.processIncomingMessage(msg, phoneNumber);
+                    newMessages++;
+                  }
+                }
+              } catch (msgError) {
+                errors++;
+              }
+            }
+          }
+        } catch (convError) {
+          errors++;
+        }
+      }
+
+      if (newMessages > 0) {
+        console.log(`📲 [POLLING] ${newMessages} mensagens sincronizadas via polling fallback`);
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
+  }
+});
 // Geração automática de próximas 3 visitas para clientes ativos
 cron.schedule('0 0 * * *', async () => {
   console.log('📅 [SCHEDULER] Iniciando geração de próximas 3 visitas para clientes ativos às 00:00h...');

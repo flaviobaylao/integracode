@@ -118,6 +118,91 @@ function getPhoneVariants(normalizedPhone: string): string[] {
   return variants;
 }
 
+// 🔧 FUNÇÃO PARA PROCESSAR MENSAGEM RECEBIDA (WEBHOOK OU POLLING)
+export async function processIncomingMessage(data: any, originalPhone: string): Promise<boolean> {
+  try {
+    const rawRemoteJid = data.key?.remoteJid;
+    if (!rawRemoteJid || rawRemoteJid.includes('@g.us')) {
+      return false; // Ignorar grupos
+    }
+
+    const phoneNumber = evolutionAPIService.extractPhoneNumber(rawRemoteJid);
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+
+    // Busca mapeamento de telefone
+    let targetPhone = phoneNumber;
+    const phoneMapping = await storage.getPhoneMappingBySource(cleanPhone);
+    
+    if (phoneMapping) {
+      targetPhone = phoneMapping.canonicalPhone;
+      console.log(`🔄 [PROCESS] Remapeando: ${phoneNumber} -> ${targetPhone}`);
+    }
+
+    const normalizedPhone = normalizePhoneNumber(targetPhone);
+    const isFromMe = data.key?.fromMe === true;
+    const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
+    const messageId = data.key?.id;
+
+    // Busca contato na agenda
+    const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
+    const identifiedName = phonebookContact?.name || data.pushName || `Cliente ${normalizedPhone}`;
+
+    // 1. Garante que o cliente e conversa existam
+    let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+    let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+
+    if (!customer) {
+      customer = await storage.createChatCustomer({
+        phone: normalizedPhone,
+        name: identifiedName
+      });
+    } else if (phonebookContact && customer.name !== identifiedName) {
+      await storage.updateChatCustomer(customer.id, { name: identifiedName });
+    }
+
+    if (!conversation) {
+      conversation = await storage.createChatConversation({
+        customerId: customer.id,
+        customerName: identifiedName,
+        customerPhone: normalizedPhone,
+        status: 'new',
+        priority: 'normal'
+      });
+    } else if (phonebookContact && conversation.customerName !== identifiedName) {
+      await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
+    }
+
+    // 2. Verifica duplicata (pelo externalId no banco)
+    const isDuplicate = await storage.getChatMessageByExternalId(messageId);
+    
+    if (isDuplicate) {
+      return false; // Já existe
+    }
+
+    // 3. Salva a mensagem
+    await storage.createChatMessage({
+      conversationId: conversation.id,
+      senderId: isFromMe ? 'system' : customer.id,
+      senderType: isFromMe ? 'system' : 'customer',
+      content: messageText || '[Mídia/Outro]',
+      messageType: 'text',
+      externalId: messageId
+    });
+
+    // 4. Atualiza a conversa (lastMessage e status são tratados pela camada de storage)
+    await storage.updateChatConversation(conversation.id, {
+      status: isFromMe ? conversation.status : 'new'
+    });
+
+    console.log(`✅ [PROCESS] Mensagem salva: ${normalizedPhone} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
+    return true;
+
+  } catch (error: any) {
+    console.error('❌ [PROCESS] Erro ao processar mensagem:', error.message);
+    return false;
+  }
+}
+
 // 🔧 FUNÇÃO PARA CONSOLIDAR CONVERSAS DUPLICADAS POR TELEFONE
 async function consolidateDuplicateConversations(storage: any): Promise<{ consolidated: number; merged: number }> {
   const conversations = await storage.getChatConversations();
@@ -2673,7 +2758,43 @@ export function registerChatRoutes(app: Express): void {
 
   // DEBUG: Test apenas 3 primeiros chats com logging detalhado
 
-  // 🔄 Rota para sincronizar atendentes ativos
+    // 🔄 Rota para reconfigurar webhook (Modo Dev ou Emergência)
+  app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const isDev = process.env.NODE_ENV === 'development';
+      const devDomain = process.env.REPLIT_DEV_DOMAIN;
+      const prodDomain = process.env.REPLIT_DOMAIN || (process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',')[0] : null);
+      
+      if (!prodDomain && !devDomain) {
+        throw new Error("Domínio não configurado no ambiente");
+      }
+
+      let webhookUrl = `https://${prodDomain}/api/chat/webhook`;
+      
+      // Prioridade absoluta para o domínio de dev se estivermos em dev
+      if (isDev && devDomain) {
+        webhookUrl = `https://${devDomain}/api/chat/webhook`;
+      }
+      
+      console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook para: ${webhookUrl}`);
+      
+      const config = evolutionAPIService.getConfig();
+      if (!config) throw new Error("Evolution API não configurada");
+      
+      const result = await evolutionAPIService.configureWebhook(config.instanceName, webhookUrl);
+      
+      if (result.success) {
+        res.json({ success: true, message: `Webhook reconfigurado com sucesso para: ${webhookUrl}` });
+      } else {
+        res.status(500).json({ error: result.error || "Falha ao configurar na Evolution API" });
+      }
+    } catch (error: any) {
+      console.error("❌ [WEBHOOK-FORCE] Erro:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+// 🔄 Rota para sincronizar atendentes ativos
   app.post("/api/chat/agents/sync", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       await storage.syncUsersAsAgents();
