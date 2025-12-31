@@ -2792,8 +2792,15 @@ export function registerChatRoutes(app: Express): void {
   });
 
 // 🔄 Rota para sincronizar atendentes ativos
-  app.post("/api/chat/agents/sync", authenticateUser, requireRole(['admin']), async (req, res) => {
+  app.post("/api/chat/agents/sync", authenticateUser, async (req, res) => {
     try {
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Acesso negado. Apenas administradores podem sincronizar atendentes." });
+      }
+
       await storage.syncUsersAsAgents();
       res.json({ success: true, message: "Lista de atendentes sincronizada com sucesso" });
     } catch (error: any) {
