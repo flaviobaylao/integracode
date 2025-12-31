@@ -7,6 +7,7 @@ import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
 import { evolutionPollingService } from "./evolution-polling-service";
+import { getAgentColor } from "./chat-distribution-service";
 import {
   insertChatAgentSchema,
   insertChatConversationSchema,
@@ -179,13 +180,26 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       return false; // Já existe
     }
 
-    // 3. Salva a mensagem
+    // 3. Extrair informações de mídia usando extractMediaInfo
+    const mediaInfo = evolutionAPIService.extractMediaInfo(data.message || data);
+    
+    // 4. Garantir fallback para 'text' se messageType for undefined
+    const finalMessageType = mediaInfo.messageType || 'text';
+    const finalContent = messageText || (finalMessageType !== 'text' ? `[${finalMessageType}]` : '[Mensagem]');
+    
+    // 5. Salva a mensagem com tipo correto (schema: messageType, mediaUrl, metadata)
     await storage.createChatMessage({
       conversationId: conversation.id,
       senderId: isFromMe ? 'system' : customer.id,
       senderType: isFromMe ? 'system' : 'customer',
-      content: messageText || '[Mídia/Outro]',
-      messageType: 'text',
+      content: finalContent,
+      messageType: finalMessageType,
+      mediaUrl: mediaInfo.mediaUrl,
+      metadata: mediaInfo.mediaType || mediaInfo.mediaFilename ? { 
+        mediaType: mediaInfo.mediaType, 
+        mediaFilename: mediaInfo.mediaFilename,
+        mediaSize: mediaInfo.mediaSize 
+      } : undefined,
       externalId: messageId
     });
 
@@ -2241,11 +2255,18 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "agentId é obrigatório" });
       }
 
+      // 🎨 Obter cor do agente para visualização
+      const agentColor = await getAgentColor(agentId);
+
       const updatedConv = await storage.updateChatConversation(conversationId, {
         agentId,
+        assignedAgentId: agentId,
+        assignedAgentColor: agentColor,
+        lastAttendedAt: new Date(),
         status: 'assigned'
       });
 
+      console.log(`✅ [ASSIGN] Conversa ${conversationId} atribuída a ${agentId} com cor ${agentColor}`);
       res.json(updatedConv);
     } catch (error: any) {
       console.error("[CONVERSATION-ASSIGN] Erro:", error);
@@ -2381,17 +2402,6 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CHAT-MESSAGES] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar mensagens" });
-    }
-  });
-
-  // GET /api/chat/agents - Lista de agentes
-  app.get("/api/chat/agents", async (req, res) => {
-    try {
-      const agents = await storage.getChatAgents() || [];
-      res.json(agents);
-    } catch (error: any) {
-      console.error("[CHAT-AGENTS] Erro:", error);
-      res.status(500).json({ error: "Erro ao buscar agentes" });
     }
   });
 
@@ -2635,11 +2645,18 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "agentId é obrigatório" });
       }
 
+      // 🎨 Obter cor do agente para visualização
+      const agentColor = await getAgentColor(agentId);
+
       const updatedConv = await storage.updateChatConversation(conversationId, {
         agentId,
+        assignedAgentId: agentId,
+        assignedAgentColor: agentColor,
+        lastAttendedAt: new Date(),
         status: 'assigned'
       });
 
+      console.log(`✅ [CHAT-ASSIGN] Conversa ${conversationId} atribuída a ${agentId} com cor ${agentColor}`);
       res.json(updatedConv);
     } catch (error: any) {
       console.error("[CHAT-ASSIGN] Erro:", error);
