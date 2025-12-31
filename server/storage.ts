@@ -5584,49 +5584,29 @@ export class DatabaseStorage implements IStorage {
   // Sincronizar usuários ativos como agentes de chat
   async syncUsersAsAgents(): Promise<void> {
     try {
+      // 🗑️ Limpar agentes existentes para garantir carga limpa
+      await db.delete(chatAgents);
+      console.log(`🧹 [SYNC-AGENTS] Agentes existentes removidos para nova carga`);
+
       const allUsers = await this.getUsers();
       let synced = 0;
-      let deactivated = 0;
       
-      for (const user of allUsers) {
-        const [existingAgent] = await db.select().from(chatAgents).where(eq(chatAgents.userId, user.id));
-        
-        if (!existingAgent) {
-          // Só criar agente se o usuário estiver ativo e tiver um papel relevante
-          const relevantRoles = ['admin', 'coordinator', 'telemarketing', 'administrative'];
-          if (user.isActive && relevantRoles.includes(user.role)) {
-            await db.insert(chatAgents).values({
-              userId: user.id,
-              name: user.name || user.email,
-              email: user.email,
-              phone: user.phone,
-              status: 'offline',
-              isActive: true
-            }).onConflictDoNothing();
-            synced++;
-          }
-        } else {
-          // Atualizar dados do agente existente
-          const relevantRoles = ['admin', 'coordinator', 'telemarketing', 'administrative'];
-          const shouldBeActive = user.isActive && relevantRoles.includes(user.role);
-          
-          await db.update(chatAgents)
-            .set({ 
-              isActive: shouldBeActive, 
-              name: user.name || user.email,
-              email: user.email,
-              phone: user.phone,
-              updatedAt: new Date() 
-            })
-            .where(eq(chatAgents.id, existingAgent.id));
-          
-          if (existingAgent.isActive && !shouldBeActive) deactivated++;
-          else if (!existingAgent.isActive && shouldBeActive) synced++;
-        }
+      const relevantRoles = ['admin', 'coordinator', 'telemarketing', 'administrative'];
+      const activeUsers = allUsers.filter(u => u.isActive && relevantRoles.includes(u.role));
+
+      for (const user of activeUsers) {
+        await db.insert(chatAgents).values({
+          userId: user.id,
+          name: user.name || user.email,
+          email: user.email,
+          phone: user.phone,
+          status: 'offline',
+          isActive: true
+        }).onConflictDoNothing();
+        synced++;
       }
       
-      const activeCount = allUsers.filter(u => u.isActive).length;
-      console.log(`✅ [SYNC-AGENTS] Sincronizados ${activeCount} usuários ativos como agentes (${synced} novos, ${deactivated} desativados)`);
+      console.log(`✅ [SYNC-AGENTS] Sincronizados ${synced} usuários ativos como agentes`);
     } catch (error) {
       console.error(`❌ [SYNC-AGENTS] Erro ao sincronizar agentes:`, error);
     }
