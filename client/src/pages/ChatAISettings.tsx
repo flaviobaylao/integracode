@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Bot, Clock, Calendar, Power, Play, Zap, Settings, MessageSquare, AlertCircle, CheckCircle } from "lucide-react";
+import { Loader2, Bot, Clock, Calendar, Power, Play, Zap, Settings, MessageSquare, AlertCircle, CheckCircle, RefreshCw, Database } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -217,6 +217,18 @@ export default function ChatAISettings() {
     }
   });
 
+  const refreshReportsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('POST', '/api/chat/ai-reports/refresh');
+    },
+    onSuccess: () => {
+      toast({ title: 'Relatórios atualizados!', description: 'Os dados de clientes, débitos e faturamentos foram regenerados.' });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Erro ao atualizar relatórios', description: error.message, variant: 'destructive' });
+    }
+  });
+
   const handleSave = () => {
     updateMutation.mutate(settings);
   };
@@ -278,6 +290,20 @@ export default function ChatAISettings() {
           </p>
         </div>
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refreshReportsMutation.mutate()}
+            disabled={refreshReportsMutation.isPending}
+            data-testid="refresh-reports-button"
+          >
+            {refreshReportsMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Atualizar Dados
+          </Button>
           <div className="flex items-center gap-2">
             <Badge 
               variant={settings.isEnabled ? "default" : "secondary"}

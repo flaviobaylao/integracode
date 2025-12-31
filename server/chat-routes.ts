@@ -3612,6 +3612,23 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // POST /api/chat/ai-reports/refresh - Regenerar relatórios de IA manualmente
+  app.post("/api/chat/ai-reports/refresh", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      console.log(`🔄 [AI-REPORTS] Regeneração manual solicitada por usuário ${userId}`);
+      
+      const { generateAndSaveAllReports } = await import("./ai-reports-service");
+      await generateAndSaveAllReports();
+      
+      console.log(`✅ [AI-REPORTS] Relatórios regenerados com sucesso por usuário ${userId}`);
+      res.json({ success: true, message: "Relatórios regenerados com sucesso" });
+    } catch (error: any) {
+      console.error("[AI-REPORTS] Erro ao regenerar relatórios:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
   // GET /api/chat/ai-logs - Obter logs de atendimento automático
   app.get("/api/chat/ai-logs", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
