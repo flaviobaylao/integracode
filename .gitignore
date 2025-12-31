@@ -4,3 +4,15 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Large development files - not needed in production
+attached_assets/
+uploads/
+whatsapp-session/
+telegram-session/
+.local/
+
+# Temporary files
+*.log
+tmp/
+.cache/
