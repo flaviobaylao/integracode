@@ -1602,6 +1602,9 @@ export const chatConversations = pgTable("chat_conversations", {
   customerName: varchar("customer_name"),
   customerPhone: varchar("customer_phone"),
   agentId: varchar("agent_id"),
+  assignedAgentId: varchar("assigned_agent_id"), // 🔄 Atendente atribuído via round-robin
+  assignedAgentColor: varchar("assigned_agent_color"), // 🎨 Cor do atendente para visualização
+  lastAttendedAt: timestamp("last_attended_at"), // ⏱️ Última interação do atendente
   status: chatConversationStatusEnum("status").notNull().default("new"),
   priority: chatPriorityEnum("priority").notNull().default("normal"),
   lastMessageTime: timestamp("last_message_time").defaultNow(),
@@ -2075,6 +2078,7 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   
   // Configuração principal de ativação
   isEnabled: boolean("is_enabled").notNull().default(false),
+  isStandby: boolean("is_standby").notNull().default(true), // 🔄 Modo standby - ativa quando nenhum atendente disponível
   mode: chatGptModeEnum("mode").notNull().default("disabled"),
   
   // Provedor de IA (openai ou grok)
@@ -2181,6 +2185,30 @@ export const insertChatAiLogSchema = createInsertSchema(chatAiLogs).omit({
 
 export type ChatAiLog = typeof chatAiLogs.$inferSelect;
 export type InsertChatAiLog = z.infer<typeof insertChatAiLogSchema>;
+
+// Tabela de controle de distribuição round-robin de atendentes
+export const chatDistributionState = pgTable("chat_distribution_state", {
+  id: varchar("id").primaryKey().default("singleton"), // Sempre "singleton" - apenas um registro
+  lastAssignedAgentId: varchar("last_assigned_agent_id"), // Último atendente que recebeu mensagem
+  lastAssignedAt: timestamp("last_assigned_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type ChatDistributionState = typeof chatDistributionState.$inferSelect;
+
+// Cores disponíveis para atendentes (para identificação visual)
+export const AGENT_COLORS = [
+  "#FF6B6B", // Vermelho coral
+  "#4ECDC4", // Turquesa
+  "#45B7D1", // Azul claro
+  "#96CEB4", // Verde menta
+  "#FFEAA7", // Amarelo suave
+  "#DDA0DD", // Lilás
+  "#98D8C8", // Verde água
+  "#F7DC6F", // Amarelo
+  "#BB8FCE", // Roxo
+  "#85C1E9", // Azul céu
+] as const;
 
 // ============================================================================
 // PHONEBOOK CONTACTS - Agenda telefônica da central de atendimento

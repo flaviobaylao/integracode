@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -39,14 +39,18 @@ interface Conversation {
   customerPhone: string;
   agentId?: string;
   agentName?: string;
+  assignedAgentId?: string;
+  assignedAgentName?: string;
+  assignedAgentColor?: string;
+  lastAttendedAt?: string;
   status: "new" | "assigned" | "in-progress" | "resolved";
   priority: "normal" | "urgent";
   lastMessageTime: string;
   messageCount: number;
-  unreadCount?: number; // 🟢 Número de mensagens não lidas
-  hasUnread?: boolean; // 🟢 Flag para mostrar indicador
+  unreadCount?: number;
+  hasUnread?: boolean;
   messages?: ChatMessage[];
-  createdAt?: string; // Data de criação da conversa
+  createdAt?: string;
 }
 
 interface Agent {
@@ -56,16 +60,23 @@ interface Agent {
 }
 
 // Componente Auxiliar para Item de Conversa
-function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData }: any) {
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData, isAdmin }: any) {
   return (
     <div
-      className={`w-full text-left p-3 rounded-lg transition-colors ${
+      className={`w-full text-left p-3 rounded-lg transition-colors relative ${
         selectedConversation === conv.id
           ? "bg-green-100 border-2 border-green-600 shadow-sm"
           : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
       }`}
       data-testid={`conversation-item-${conv.id}`}
     >
+      {isAdmin && conv.assignedAgentColor && (
+        <div 
+          className="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg"
+          style={{ backgroundColor: conv.assignedAgentColor }}
+          title={`Atribuída a: ${conv.assignedAgentName || 'ChatGPT'}`}
+        />
+      )}
       <button
         onClick={() => setSelectedConversation(conv.id)}
         className="w-full text-left"
@@ -113,9 +124,22 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
            conv.status === 'assigned' ? 'Atribuída' :
            conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
         </Badge>
-        <span className="text-[10px] text-gray-400 truncate">
-          Atendente: {conv.agentName || "Ninguém"}
-        </span>
+        {isAdmin && conv.assignedAgentName && (
+          <span 
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+            style={{ 
+              backgroundColor: conv.assignedAgentColor ? `${conv.assignedAgentColor}20` : '#e5e7eb',
+              color: conv.assignedAgentColor || '#6b7280'
+            }}
+          >
+            {conv.assignedAgentName}
+          </span>
+        )}
+        {!isAdmin && (
+          <span className="text-[10px] text-gray-400 truncate">
+            Atendente: {conv.assignedAgentName || conv.agentName || "Ninguém"}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -137,6 +161,32 @@ export default function ChatCenter() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [transferToAgent, setTransferToAgent] = useState<string>("");
+
+  // Query para buscar agentes online para transferência
+  const { data: onlineAgentsData } = useQuery<{ success: boolean; agents: { id: string; name: string; email: string; status: string }[] }>({
+    queryKey: ['/api/chat/agents/online'],
+    refetchInterval: 30000,
+  });
+  const onlineAgents = onlineAgentsData?.agents || [];
+
+  // Mutation para transferir conversa
+  const transferMutation = useMutation({
+    mutationFn: async ({ conversationId, toAgentId }: { conversationId: string; toAgentId: string }) => {
+      const response = await apiRequest('POST', `/api/chat/conversations/${conversationId}/transfer`, { toAgentId });
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Conversa transferida com sucesso" });
+      setShowTransferDialog(false);
+      setTransferToAgent("");
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao transferir conversa", description: error.message, variant: "destructive" });
+    }
+  });
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
   useEffect(() => {
@@ -955,6 +1005,7 @@ export default function ChatCenter() {
                                       formatLastMessageTime={formatLastMessageTime}
                                       onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                       setPhonebookData={setPhonebookData}
+                                      isAdmin={isAdmin}
                                     />
                                   ))}
                                 </div>
@@ -976,6 +1027,7 @@ export default function ChatCenter() {
                                     formatLastMessageTime={formatLastMessageTime}
                                     onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                     setPhonebookData={setPhonebookData}
+                                    isAdmin={isAdmin}
                                   />
                                 ))}
                               </div>
@@ -1050,11 +1102,45 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                      <Badge className={getStatusColor(selectedChat.status)}>
-                        {selectedChat.status === "new" ? "Novo" : 
-                         selectedChat.status === "assigned" ? "Atribuído" :
-                         selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
-                      </Badge>
+                      <div className="flex flex-col gap-2 items-end">
+                        <Badge className={getStatusColor(selectedChat.status)}>
+                          {selectedChat.status === "new" ? "Novo" : 
+                           selectedChat.status === "assigned" ? "Atribuído" :
+                           selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
+                        </Badge>
+                        {isAdmin && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-xs"
+                                  onClick={() => setShowTransferDialog(true)}
+                                  data-testid="button-transfer-conversation"
+                                >
+                                  <ArrowRightLeft className="h-3 w-3 mr-1" />
+                                  Transferir
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Transferir conversa para outro atendente</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                        {isAdmin && selectedChat.assignedAgentName && (
+                          <span 
+                            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                            style={{ 
+                              backgroundColor: selectedChat.assignedAgentColor ? `${selectedChat.assignedAgentColor}20` : '#e5e7eb',
+                              color: selectedChat.assignedAgentColor || '#6b7280'
+                            }}
+                          >
+                            {selectedChat.assignedAgentName}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </CardHeader>
                 </Card>
@@ -1339,6 +1425,64 @@ export default function ChatCenter() {
                   data-testid="button-start-conversation"
                 >
                   {startConversationMutation.isPending ? "Iniciando..." : "Iniciar"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog para transferir conversa */}
+        <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Transferir Conversa</DialogTitle>
+              <DialogDescription>Selecione o atendente ou ChatGPT para transferir esta conversa</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Transferir para:</label>
+                <Select value={transferToAgent} onValueChange={setTransferToAgent}>
+                  <SelectTrigger data-testid="select-transfer-agent">
+                    <SelectValue placeholder="Selecione um atendente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {onlineAgents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name} {agent.id === 'chatgpt' ? '🤖' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowTransferDialog(false);
+                    setTransferToAgent("");
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (selectedConversation && transferToAgent) {
+                      transferMutation.mutate({ 
+                        conversationId: selectedConversation, 
+                        toAgentId: transferToAgent 
+                      });
+                    }
+                  }}
+                  disabled={transferMutation.isPending || !transferToAgent}
+                  className="bg-green-600 hover:bg-green-700"
+                  data-testid="button-confirm-transfer"
+                >
+                  {transferMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Transferindo...
+                    </>
+                  ) : "Transferir"}
                 </Button>
               </div>
             </div>

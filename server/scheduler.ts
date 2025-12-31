@@ -6,6 +6,7 @@ import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleServic
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
 import { generateAndSaveAllReports } from './ai-reports-service';
+import { redistributeTimedOutConversations } from './chat-distribution-service';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -44,6 +45,18 @@ cron.schedule('*/5 * * * *', async () => {
     await storage.closeInactiveConversations();
   } catch (error) {
     console.error('❌ Erro ao encerrar conversas inativas:', error);
+  }
+});
+
+// Job para redistribuir conversas sem atendimento a cada 2 minutos
+cron.schedule('*/2 * * * *', async () => {
+  try {
+    const count = await redistributeTimedOutConversations();
+    if (count > 0) {
+      console.log(`🔄 [REDISTRIBUTION] ${count} conversa(s) redistribuída(s) por timeout`);
+    }
+  } catch (error) {
+    console.error('❌ Erro ao redistribuir conversas:', error);
   }
 });
 

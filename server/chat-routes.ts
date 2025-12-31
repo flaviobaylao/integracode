@@ -2093,23 +2093,26 @@ export function registerChatRoutes(app: Express): void {
         console.error("[CHAT] Error getting customers:", e);
       }
 
-      // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas
+      // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas atribuídas
       let filteredConversations = conversations;
       if (!isAdmin && currentUser?.id) {
         // Buscar agente ligado ao usuário
         const userAgent = agents.find(a => a.userId === currentUser.id);
         if (userAgent) {
-          // Filtrar conversas atribuídas a este agente
-          filteredConversations = conversations.filter(c => c.agentId === userAgent.id);
+          // Filtrar conversas atribuídas a este agente (usando assignedAgentId)
+          filteredConversations = conversations.filter(c => 
+            c.assignedAgentId === userAgent.id || c.agentId === userAgent.id
+          );
         } else {
           // Usuário sem agente - vê conversas não atribuídas
-          filteredConversations = conversations.filter(c => !c.agentId);
+          filteredConversations = conversations.filter(c => !c.assignedAgentId && !c.agentId);
         }
       }
 
       // Enriquecer conversas com dados relacionados
       const enrichedConversations = filteredConversations.map((conv: any) => {
-        const agent = agents.find(a => a.id === conv.agentId);
+        const assignedAgent = agents.find(a => a.id === conv.assignedAgentId);
+        const creatorAgent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
         
         return {
@@ -2118,7 +2121,11 @@ export function registerChatRoutes(app: Express): void {
           customerName: customer?.name || conv.customerName || "Desconhecido",
           customerPhone: conv.customerPhone || customer?.phone || "-",
           agentId: conv.agentId,
-          agentName: agent?.name,
+          agentName: creatorAgent?.name,
+          assignedAgentId: conv.assignedAgentId,
+          assignedAgentName: conv.assignedAgentId === 'chatgpt' ? 'ChatGPT' : assignedAgent?.name || null,
+          assignedAgentColor: conv.assignedAgentColor || null,
+          lastAttendedAt: conv.lastAttendedAt,
           status: conv.status,
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
@@ -3608,6 +3615,95 @@ export function registerChatRoutes(app: Express): void {
       res.json({ success: true, settings, enabled: newEnabled });
     } catch (error: any) {
       console.error("[AI-SETTINGS] Erro ao alternar:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // POST /api/chat/ai-settings/standby - Alternar modo standby do ChatGPT
+  app.post("/api/chat/ai-settings/standby", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const currentSettings = await storage.getChatAiSettings();
+      const newStandby = !(currentSettings?.isStandby ?? true);
+      
+      const settings = await storage.upsertChatAiSettings({
+        ...currentSettings,
+        isStandby: newStandby,
+        updatedBy: userId
+      } as any);
+      
+      console.log(`✅ [AI-SETTINGS] Modo standby ${newStandby ? 'ATIVADO' : 'DESATIVADO'} por usuário ${userId}`);
+      res.json({ success: true, settings, standby: newStandby });
+    } catch (error: any) {
+      console.error("[AI-SETTINGS] Erro ao alternar standby:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // POST /api/chat/conversations/:id/transfer - Transferir conversa para outro atendente
+  app.post("/api/chat/conversations/:id/transfer", authenticateUser, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { toAgentId } = req.body;
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      
+      if (!toAgentId) {
+        return res.status(400).json({ error: "toAgentId é obrigatório" });
+      }
+      
+      // Buscar agente do usuário atual
+      const agents = await storage.getChatAgents() || [];
+      const userAgent = agents.find(a => a.userId === currentUser?.id);
+      const fromAgentId = userAgent?.id || "";
+      
+      const { transferConversation } = await import("./chat-distribution-service");
+      const result = await transferConversation(id, fromAgentId, toAgentId, currentUser?.id, isAdmin);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+      
+      res.json({ success: true, message: "Conversa transferida com sucesso" });
+    } catch (error: any) {
+      console.error("[TRANSFER] Erro ao transferir conversa:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // GET /api/chat/agents/online - Listar atendentes online para transferência
+  app.get("/api/chat/agents/online", authenticateUser, async (req, res) => {
+    try {
+      const { getOnlineTelemarketingAgents } = await import("./chat-distribution-service");
+      const onlineAgents = await getOnlineTelemarketingAgents();
+      
+      // Adicionar ChatGPT como opção
+      const agents = [
+        ...onlineAgents.map(a => ({
+          id: a.id,
+          name: a.name,
+          email: a.email,
+          status: a.status
+        })),
+        { id: "chatgpt", name: "ChatGPT (IA)", email: "", status: "online" }
+      ];
+      
+      res.json({ success: true, agents });
+    } catch (error: any) {
+      console.error("[AGENTS-ONLINE] Erro ao buscar atendentes:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+
+  // POST /api/chat/conversations/:id/attend - Marcar atendimento (atualiza lastAttendedAt)
+  app.post("/api/chat/conversations/:id/attend", authenticateUser, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { updateLastAttendedTime } = await import("./chat-distribution-service");
+      await updateLastAttendedTime(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("[ATTEND] Erro ao marcar atendimento:", error);
       res.status(500).json({ error: error.message, success: false });
     }
   });
