@@ -1222,9 +1222,18 @@ export function registerChatRoutes(app: Express): void {
 
       console.log(`📨 [WHATSAPP-SEND] Enviando mensagem para ${normalizedPhone} via ${messageType}`);
 
+      // Determinar tipo de mídia real e normalizar
+      const isMediaMessage = ['media', 'image', 'audio', 'video', 'document'].includes(messageType);
+      const actualMediaType = messageType === 'media' ? 'image' : messageType as 'text' | 'image' | 'audio' | 'video' | 'document';
+      
+      // Validar que mídia tem mediaUrl
+      if (isMediaMessage && !mediaUrl) {
+        return res.status(400).json({ error: "mediaUrl é obrigatório para envio de mídia" });
+      }
+
       let result;
-      if (messageType === 'media' && mediaUrl) {
-        result = await evolutionAPIService.sendMediaMessage(config.instanceName, normalizedPhone, mediaUrl, caption, 'image');
+      if (isMediaMessage && mediaUrl) {
+        result = await evolutionAPIService.sendMediaMessage(config.instanceName, normalizedPhone, mediaUrl, caption, actualMediaType as 'image' | 'audio' | 'video' | 'document');
       } else if (messageType === 'location' && req.body.latitude && req.body.longitude) {
         result = await evolutionAPIService.sendLocationMessage(config.instanceName, normalizedPhone, req.body.latitude, req.body.longitude, caption);
       } else {
@@ -1260,13 +1269,13 @@ export function registerChatRoutes(app: Express): void {
         });
         console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
 
-      // 3. Salvar mensagem ENVIADA
+      // 3. Salvar mensagem ENVIADA com tipo normalizado
         await storage.createChatMessage({
           conversationId: conversation.id,
           senderId: (req as any).user?.id || "system",
           senderType: "system",
-          content: message || caption || (messageType !== 'text' ? '[Mídia enviada]' : ''),
-          messageType: messageType as any,
+          content: message || caption || (actualMediaType !== 'text' ? `[${actualMediaType}]` : ''),
+          messageType: actualMediaType as any,
           mediaUrl: mediaUrl,
           externalId: result.messageId
         });
