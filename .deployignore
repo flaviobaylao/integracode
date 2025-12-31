@@ -1,0 +1,29 @@
+# Arquivos a serem excluídos do deploy/publicação
+# Criado para resolver erro na fase de provision
+
+# Dependencies (reinstalled during build)
+node_modules/
+
+# Development files
+*.log
+.git/
+.gitignore
+
+# Large asset directories not needed in production
+attached_assets/
+uploads/
+whatsapp-session/
+telegram-session/
+
+# Temporary files
+tmp/
+.cache/
+*.tmp
+
+# IDE/Editor files
+.vscode/
+.idea/
+
+# Build artifacts that will be regenerated
+dist/
+.tsbuildinfo
