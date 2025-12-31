@@ -9,6 +9,7 @@ import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCar
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
+import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import OpenAI from 'openai';
 import {
@@ -320,6 +321,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     next();
   });
+
+  // Register Object Storage routes for file uploads
+  registerObjectStorageRoutes(app);
+  console.log('✅ Object Storage routes registered');
 
   // Version endpoint
   app.get('/api/version', (req, res) => {

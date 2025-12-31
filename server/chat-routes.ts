@@ -1121,13 +1121,45 @@ export function registerChatRoutes(app: Express): void {
       
       console.log(`📎 [WEBHOOK-MEDIA] Tipo: ${finalMessageType} | URL: ${finalMediaUrl ? 'SIM' : 'NÃO'} | Conteúdo: ${finalContent.substring(0, 30)}`);
       
+      // 🗄️ NOVO: Salvar mídia no Object Storage externo se houver
+      let storedMediaUrl = finalMediaUrl;
+      if (finalMediaUrl && finalMessageType !== 'text') {
+        try {
+          debugInfo.steps.push('9a-upload-media-to-storage');
+          const { uploadWhatsAppMediaToStorage, uploadMediaFromBase64 } = await import("./whatsapp-media-storage");
+          
+          if (finalMediaUrl.startsWith('data:')) {
+            // É base64, extrair e fazer upload
+            const mimeMatch = finalMediaUrl.match(/data:([^;]+);base64,/);
+            const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+            const base64Data = finalMediaUrl.replace(/^data:[^;]+;base64,/, '');
+            
+            const uploadResult = await uploadMediaFromBase64(base64Data, mimeType);
+            if (uploadResult.success && uploadResult.objectPath) {
+              storedMediaUrl = uploadResult.objectPath;
+              console.log(`✅ [WEBHOOK-MEDIA] Mídia base64 salva no Object Storage: ${storedMediaUrl}`);
+            }
+          } else if (finalMediaUrl.startsWith('http')) {
+            // É URL externa, baixar e fazer upload
+            const uploadResult = await uploadWhatsAppMediaToStorage(finalMediaUrl, mediaInfo.mediaType || 'image/jpeg', mediaInfo.mediaFilename);
+            if (uploadResult.success && uploadResult.objectPath) {
+              storedMediaUrl = uploadResult.objectPath;
+              console.log(`✅ [WEBHOOK-MEDIA] Mídia URL salva no Object Storage: ${storedMediaUrl}`);
+            }
+          }
+        } catch (uploadErr: any) {
+          console.error(`⚠️ [WEBHOOK-MEDIA] Erro ao salvar mídia no Object Storage:`, uploadErr.message);
+          // Continua com a URL original se houver erro
+        }
+      }
+      
       await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
         content: finalContent,
         messageType: finalMessageType,
-        mediaUrl: finalMediaUrl,
+        mediaUrl: storedMediaUrl,
         externalId: messageId,
         isRead: true
       });
