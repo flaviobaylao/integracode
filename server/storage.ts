@@ -112,6 +112,7 @@ import {
   type InsertChatAiLog,
   insertSystemSettingSchema,
   phonebookContacts,
+  AGENT_COLORS,
   type PhonebookContact,
   type InsertPhonebookContact,
 } from "@shared/schema";
@@ -126,6 +127,7 @@ export interface IStorage {
     name: string; 
     email: string;
     status: string;
+    color: string;
     lastActivity?: Date;
     messagesAnswered: number;
     messagesToRespond: number;
@@ -5777,6 +5779,7 @@ export class DatabaseStorage implements IStorage {
     name: string; 
     email: string;
     status: string;
+    color: string;
     lastActivity?: Date;
     messagesAnswered: number;
     messagesToRespond: number;
@@ -5786,7 +5789,7 @@ export class DatabaseStorage implements IStorage {
     const conversations = await db.select().from(chatConversations);
     const messages = await db.select().from(chatMessages);
 
-    return agents.map(agent => {
+    return agents.map((agent, index) => {
       // 🔍 Buscar conversas atribuídas ao agente
       const agentConversations = conversations.filter(c => c.agentId === agent.id);
       const agentConvIds = agentConversations.map(c => c.id);
@@ -5805,11 +5808,15 @@ export class DatabaseStorage implements IStorage {
         agentConvIds.includes(m.conversationId)
       );
 
+      // 🎨 Cor do atendente baseada no índice (consistente com chat-distribution-service)
+      const agentColor = AGENT_COLORS[index % AGENT_COLORS.length];
+
       return {
         id: agent.id,
         name: agent.name,
         email: agent.email,
         status: agent.status === 'online' ? 'online' : 'offline',
+        color: agentColor,
         lastActivity: agent.lastActivity,
         messagesAnswered: agentMessages.length,
         messagesToRespond: unreadMessages.length

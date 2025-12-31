@@ -918,9 +918,13 @@ export default function ChatCenter() {
                       <div className="text-center py-8 text-gray-500 text-xs">Carregando...</div>
                     ) : (
                       agentStats.map((agent: any) => (
-                        <div key={agent.id} className="border rounded-lg p-2 mb-2 bg-gray-50 hover:bg-gray-100 transition">
+                        <div 
+                          key={agent.id} 
+                          className="border rounded-lg p-2 mb-2 bg-gray-50 hover:bg-gray-100 transition relative"
+                          style={{ borderLeftWidth: '4px', borderLeftColor: agent.color || '#9ca3af' }}
+                        >
                           <div className="flex items-center gap-2 mb-1">
-                            <span className={`inline-block w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+                            <span className={`inline-block w-3 h-3 rounded-full ring-2 ring-white shadow-sm ${agent.status === 'online' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></span>
                             <p className="text-xs font-semibold truncate flex-1">{agent.name}</p>
                           </div>
                           <div className="text-xs text-gray-600 space-y-0.5 ml-3">
