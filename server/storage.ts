@@ -5550,7 +5550,8 @@ export class DatabaseStorage implements IStorage {
   
   // Chat Agents operations
   async getChatAgents(): Promise<ChatAgent[]> {
-    return await db.select().from(chatAgents);
+    // Retornar apenas agentes ativos (cadastrados e ativos no Integra)
+    return await db.select().from(chatAgents).where(eq(chatAgents.isActive, true));
   }
   
   async createChatAgent(agentData: InsertChatAgent): Promise<ChatAgent> {
@@ -5580,24 +5581,43 @@ export class DatabaseStorage implements IStorage {
     return agent;
   }
 
-  // Sincronizar todos os usuários como agentes de chat
+  // Sincronizar usuários ativos como agentes de chat
   async syncUsersAsAgents(): Promise<void> {
     try {
       const allUsers = await this.getUsers();
+      let synced = 0;
+      let deactivated = 0;
+      
       for (const user of allUsers) {
         const existing = await db.select().from(chatAgents).where(eq(chatAgents.userId, user.id));
+        
         if (!existing.length) {
-          await db.insert(chatAgents).values({
-            userId: user.id,
-            name: user.name || user.email,
-            email: user.email,
-            phone: user.phone,
-            status: 'offline',
-            isActive: true
-          }).onConflictDoNothing();
+          // Só criar agente se o usuário estiver ativo
+          if (user.isActive) {
+            await db.insert(chatAgents).values({
+              userId: user.id,
+              name: user.name || user.email,
+              email: user.email,
+              phone: user.phone,
+              status: 'offline',
+              isActive: true
+            }).onConflictDoNothing();
+            synced++;
+          }
+        } else {
+          // Atualizar isActive do agente baseado no status do usuário
+          const agent = existing[0];
+          if (agent.isActive !== user.isActive) {
+            await db.update(chatAgents)
+              .set({ isActive: user.isActive, updatedAt: new Date() })
+              .where(eq(chatAgents.id, agent.id));
+            if (!user.isActive) deactivated++;
+          }
         }
       }
-      console.log(`✅ [SYNC-AGENTS] Sincronizados ${allUsers.length} usuários como agentes`);
+      
+      const activeCount = allUsers.filter(u => u.isActive).length;
+      console.log(`✅ [SYNC-AGENTS] Sincronizados ${activeCount} usuários ativos como agentes (${synced} novos, ${deactivated} desativados)`);
     } catch (error) {
       console.error(`❌ [SYNC-AGENTS] Erro ao sincronizar agentes:`, error);
     }
@@ -5762,7 +5782,7 @@ export class DatabaseStorage implements IStorage {
     return conversation;
   }
 
-  // Obter stats detalhados de todos os agentes
+  // Obter stats detalhados de todos os agentes ATIVOS
   async getAgentDetailedStats(): Promise<Array<{ 
     id: string; 
     name: string; 
@@ -5772,7 +5792,8 @@ export class DatabaseStorage implements IStorage {
     messagesAnswered: number;
     messagesToRespond: number;
   }>> {
-    const agents = await db.select().from(chatAgents);
+    // Apenas agentes ativos (cadastrados e ativos no Integra)
+    const agents = await db.select().from(chatAgents).where(eq(chatAgents.isActive, true));
     const conversations = await db.select().from(chatConversations);
     const messages = await db.select().from(chatMessages);
 
