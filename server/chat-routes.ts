@@ -390,8 +390,15 @@ export function registerChatRoutes(app: Express): void {
       const agent = agents.find(a => a.email === currentUser.email);
 
       if (agent) {
+        const wasOffline = agent.status !== "online";
         await storage.updateChatAgentPresence(agent.id, "online");
-        console.log(`🟢 [HEARTBEAT] Agent ${currentUser.email} is online`);
+        
+        // Se o agente estava offline e agora está online, desativar standby do ChatGPT
+        if (wasOffline) {
+          console.log(`🟢 [HEARTBEAT] Agent ${currentUser.email} is now online`);
+          const { deactivateChatGPTStandby } = await import("./chat-distribution-service");
+          await deactivateChatGPTStandby();
+        }
       }
 
       res.json({ success: true, status: "online" });
@@ -416,6 +423,15 @@ export function registerChatRoutes(app: Express): void {
       if (agent) {
         await storage.updateChatAgentPresence(agent.id, "offline");
         console.log(`⚫ [OFFLINE] Agent ${currentUser.email} is offline`);
+        
+        // Verificar se ainda há agentes online - se não houver, ativar standby
+        const { getOnlineTelemarketingAgents, activateChatGPTStandby } = await import("./chat-distribution-service");
+        const onlineAgents = await getOnlineTelemarketingAgents();
+        
+        if (onlineAgents.length === 0) {
+          console.log('🤖 [STANDBY] Nenhum agente online - ativando standby do ChatGPT');
+          await activateChatGPTStandby();
+        }
       }
 
       res.json({ success: true, status: "offline" });
@@ -3640,25 +3656,28 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // POST /api/chat/conversations/:id/transfer - Transferir conversa para outro atendente
-  app.post("/api/chat/conversations/:id/transfer", authenticateUser, async (req, res) => {
+  // POST /api/chat/conversations/:id/transfer - Transferir conversa para outro atendente (apenas admin)
+  app.post("/api/chat/conversations/:id/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const { id } = req.params;
       const { toAgentId } = req.body;
       const currentUser = (req as any).currentUser;
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
       
       if (!toAgentId) {
         return res.status(400).json({ error: "toAgentId é obrigatório" });
       }
       
-      // Buscar agente do usuário atual
-      const agents = await storage.getChatAgents() || [];
-      const userAgent = agents.find(a => a.userId === currentUser?.id);
-      const fromAgentId = userAgent?.id || "";
+      // Verificar se agente destino existe (ou é ChatGPT)
+      if (toAgentId !== 'chatgpt') {
+        const agents = await storage.getChatAgents() || [];
+        const targetAgent = agents.find(a => a.id === toAgentId);
+        if (!targetAgent) {
+          return res.status(400).json({ error: "Agente de destino não encontrado" });
+        }
+      }
       
       const { transferConversation } = await import("./chat-distribution-service");
-      const result = await transferConversation(id, fromAgentId, toAgentId, currentUser?.id, isAdmin);
+      const result = await transferConversation(id, "", toAgentId, currentUser?.id, true);
       
       if (!result.success) {
         return res.status(400).json({ error: result.error });
@@ -3677,7 +3696,11 @@ export function registerChatRoutes(app: Express): void {
       const { getOnlineTelemarketingAgents } = await import("./chat-distribution-service");
       const onlineAgents = await getOnlineTelemarketingAgents();
       
-      // Adicionar ChatGPT como opção
+      // Buscar configurações de AI para verificar se standby está habilitado
+      const aiSettings = await storage.getChatAiSettings();
+      const isAiEnabled = aiSettings?.isEnabled && aiSettings?.isStandby;
+      
+      // Adicionar ChatGPT como opção se AI estiver habilitada
       const agents = [
         ...onlineAgents.map(a => ({
           id: a.id,
@@ -3685,7 +3708,7 @@ export function registerChatRoutes(app: Express): void {
           email: a.email,
           status: a.status
         })),
-        { id: "chatgpt", name: "ChatGPT (IA)", email: "", status: "online" }
+        ...(isAiEnabled || onlineAgents.length === 0 ? [{ id: "chatgpt", name: "ChatGPT (IA)", email: "", status: "standby" }] : [])
       ];
       
       res.json({ success: true, agents });

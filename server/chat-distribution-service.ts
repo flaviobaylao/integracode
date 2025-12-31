@@ -232,3 +232,50 @@ export async function updateLastAttendedTime(conversationId: string): Promise<vo
     })
     .where(eq(chatConversations.id, conversationId));
 }
+
+export async function activateChatGPTStandby(): Promise<void> {
+  const aiSettings = await db.select().from(chatAiSettings).limit(1);
+  
+  if (aiSettings.length === 0) {
+    console.log('⚠️ [STANDBY] Configurações de IA não encontradas - não é possível ativar standby');
+    return;
+  }
+  
+  if (!aiSettings[0].isEnabled) {
+    console.log('⚠️ [STANDBY] ChatGPT não está habilitado nas configurações - não ativando standby');
+    return;
+  }
+  
+  if (aiSettings[0].isStandby) {
+    console.log('ℹ️ [STANDBY] Modo standby já está ativo');
+    return;
+  }
+  
+  await db
+    .update(chatAiSettings)
+    .set({
+      isStandby: true,
+      updatedAt: new Date()
+    })
+    .where(eq(chatAiSettings.id, aiSettings[0].id));
+  
+  console.log('🤖 [STANDBY] Modo standby do ChatGPT ativado automaticamente - nenhum atendente online');
+}
+
+export async function deactivateChatGPTStandby(): Promise<void> {
+  const aiSettings = await db.select().from(chatAiSettings).limit(1);
+  
+  if (aiSettings.length === 0 || !aiSettings[0].isStandby) {
+    return;
+  }
+  
+  await db
+    .update(chatAiSettings)
+    .set({
+      isStandby: false,
+      updatedAt: new Date()
+    })
+    .where(eq(chatAiSettings.id, aiSettings[0].id));
+  
+  console.log('👤 [STANDBY] Modo standby do ChatGPT desativado - atendentes online disponíveis');
+}
