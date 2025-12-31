@@ -441,49 +441,13 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Get online agents
-  app.get("/api/chat/agents/online", authenticateUser, async (req, res) => {
-    try {
-      const agents = await storage.getChatAgents();
-      // Consider an agent online if lastSeenAt is within the last 2 minutes
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
-      const onlineAgents = agents.filter(a => 
-        a.status === "online" && a.lastSeenAt && new Date(a.lastSeenAt) > twoMinutesAgo
-      );
-      res.json(onlineAgents);
-    } catch (error) {
-      console.error("[CHAT] Get online agents error:", error);
-      res.status(500).json({ error: "Erro ao buscar agentes online" });
-    }
-  });
+  // ⚠️ GET /api/chat/agents/online movido para linha 3672 com ChatGPT standby incluído
 
   // ============================================================
   // CHAT CONVERSATIONS CRUD
   // ============================================================
 
-  // Get all conversations
-  app.get("/api/chat/conversations", async (req, res) => {
-    try {
-      const { status, agentId } = req.query;
-      
-      console.log('🔍 [GET-CONVERSATIONS] Buscando conversas...', { status, agentId });
-      let conversations = await storage.getChatConversations();
-      
-      // Filter on the server side
-      if (status) {
-        conversations = conversations.filter(c => c.status === status);
-      }
-      if (agentId) {
-        conversations = conversations.filter(c => c.agentId === agentId);
-      }
-      
-      console.log(`✅ [GET-CONVERSATIONS] Retornando ${conversations.length} conversas`);
-      res.json(conversations);
-    } catch (error) {
-      console.error("[CHAT] Get conversations error:", error);
-      res.status(500).json({ error: "Erro ao buscar conversas" });
-    }
-  });
+  // ⚠️ GET /api/chat/conversations movido para linha 2085 com autenticação e filtragem por role
 
   // Create conversation
   app.post("/api/chat/conversations", async (req, res) => {
@@ -1098,6 +1062,16 @@ export function registerChatRoutes(app: Express): void {
           priority: 'normal'
         });
         debugInfo.createdConversationId = conversation.id;
+        
+        // 🔄 Distribuir nova conversa para atendente disponível (round-robin)
+        try {
+          debugInfo.steps.push('7c-distribute-conversation');
+          const { distributeNewConversation } = await import("./chat-distribution-service");
+          await distributeNewConversation(conversation.id);
+          console.log(`🔄 [WEBHOOK] Nova conversa ${conversation.id} distribuída via round-robin`);
+        } catch (distErr: any) {
+          console.error(`⚠️ [WEBHOOK] Erro ao distribuir conversa:`, distErr.message);
+        }
       } else if (phonebookContact && conversation.customerName !== identifiedName) {
         // Atualizar nome na conversa se mudou na agenda
         await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
