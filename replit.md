@@ -29,6 +29,17 @@
     - **Development (workspace)**: Uses `REPLIT_DEV_DOMAIN` because external traffic to `REPLIT_DOMAINS` routes to Autoscale, not the dev server
     - **Production (Autoscale)**: Uses `REPLIT_DOMAIN` (singular) or falls back to `REPLIT_DOMAINS` (plural)
 - **WhatsApp Chat Center**: Complete conversational system at `/telemarketing/atendimento` with real-time conversation management, agent assignment, message read/unread tracking, automatic conversation creation from sales modals, quick template insertion, and status tracking (new → assigned → in-progress → resolved). Includes synchronization for conversations and historical messages.
+  - **Conversation Distribution System**: Intelligent round-robin distribution of incoming conversations among online telemarketing agents
+    - Round-robin algorithm with `chatDistributionState` singleton tracking `lastAssignedAgentId`
+    - Color-coded agent indicators (`AGENT_COLORS` palette of 10 colors) for visual identification
+    - Admin users see ALL conversations with color-coded assigned agent; telemarketing users only see their own
+    - Automatic ChatGPT standby activation when no human agents are online
+    - Automatic ChatGPT standby deactivation when a human agent comes online
+    - 5-minute timeout auto-redistribution job (runs every 2 minutes) for unattended conversations
+    - Transfer functionality: Admin-only endpoint `POST /api/chat/conversations/:id/transfer` with `toAgentId` (including 'chatgpt')
+    - Online agents list: `GET /api/chat/agents/online` includes ChatGPT when standby is active
+    - Fields: `assignedAgentId`, `assignedAgentColor`, `lastAttendedAt` on conversations
+    - Service file: `server/chat-distribution-service.ts` with round-robin, transfer, and standby functions
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), and **strict abbreviated weekday format (Seg, Ter, Qua, Qui, Sex, Sab, Dom) throughout system** with robust error handling that never breaks on invalid formats.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Sales cards are accessible by sellers based on creation or customer assignment. Order release workflow allows admins to approve any blocked order.
 - **Delivery & Route Optimization**:
