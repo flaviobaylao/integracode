@@ -5589,11 +5589,12 @@ export class DatabaseStorage implements IStorage {
       let deactivated = 0;
       
       for (const user of allUsers) {
-        const existing = await db.select().from(chatAgents).where(eq(chatAgents.userId, user.id));
+        const [existingAgent] = await db.select().from(chatAgents).where(eq(chatAgents.userId, user.id));
         
-        if (!existing.length) {
-          // Só criar agente se o usuário estiver ativo
-          if (user.isActive) {
+        if (!existingAgent) {
+          // Só criar agente se o usuário estiver ativo e tiver um papel relevante
+          const relevantRoles = ['admin', 'coordinator', 'telemarketing', 'administrative'];
+          if (user.isActive && relevantRoles.includes(user.role)) {
             await db.insert(chatAgents).values({
               userId: user.id,
               name: user.name || user.email,
@@ -5605,14 +5606,22 @@ export class DatabaseStorage implements IStorage {
             synced++;
           }
         } else {
-          // Atualizar isActive do agente baseado no status do usuário
-          const agent = existing[0];
-          if (agent.isActive !== user.isActive) {
-            await db.update(chatAgents)
-              .set({ isActive: user.isActive, updatedAt: new Date() })
-              .where(eq(chatAgents.id, agent.id));
-            if (!user.isActive) deactivated++;
-          }
+          // Atualizar dados do agente existente
+          const relevantRoles = ['admin', 'coordinator', 'telemarketing', 'administrative'];
+          const shouldBeActive = user.isActive && relevantRoles.includes(user.role);
+          
+          await db.update(chatAgents)
+            .set({ 
+              isActive: shouldBeActive, 
+              name: user.name || user.email,
+              email: user.email,
+              phone: user.phone,
+              updatedAt: new Date() 
+            })
+            .where(eq(chatAgents.id, existingAgent.id));
+          
+          if (existingAgent.isActive && !shouldBeActive) deactivated++;
+          else if (!existingAgent.isActive && shouldBeActive) synced++;
         }
       }
       
