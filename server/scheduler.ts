@@ -5,8 +5,33 @@ import { getOmieService } from './omieIntegration';
 import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
+import { generateAndSaveAllReports } from './ai-reports-service';
 
 console.log('Inicializando agendador de tarefas...');
+
+// Gerar relatórios de IA na inicialização (async, não bloqueia)
+(async () => {
+  try {
+    console.log('📊 [SCHEDULER] Gerando relatórios de IA iniciais...');
+    await generateAndSaveAllReports();
+    console.log('✅ [SCHEDULER] Relatórios de IA gerados com sucesso!');
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Erro ao gerar relatórios de IA iniciais:', error.message);
+  }
+})();
+
+// Job para regenerar relatórios de IA diariamente às 6h (horário de Brasília)
+cron.schedule('0 6 * * *', async () => {
+  console.log('📊 [SCHEDULER] Iniciando geração automática de relatórios de IA às 06:00h...');
+  try {
+    await generateAndSaveAllReports();
+    console.log('✅ [SCHEDULER] Relatórios de IA atualizados com sucesso!');
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Erro na geração de relatórios de IA:', error.message);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
 
 // Sincronizar usuários como agentes na inicialização
 (async () => {
@@ -469,6 +494,7 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 console.log('✅ Agendador configurado:');
+console.log('   - Geração de relatórios de IA diariamente às 06:00h (UTC-3)');
 console.log('   - Geração de próximas 3 visitas para clientes ativos diariamente às 00:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');

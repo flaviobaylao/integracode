@@ -467,6 +467,33 @@ Horário de funcionamento: Segunda a Sexta das 8h às 18h, Sábado das 8h às 12
 Oferecemos entregas em toda região metropolitana.
 Principais produtos: sucos naturais, polpas de frutas, açaí, smoothies.`;
 
+// Cache de relatórios de IA (recarregado automaticamente)
+let aiReportsCache: string | null = null;
+let aiReportsCacheTime: number = 0;
+const AI_REPORTS_CACHE_TTL = 60 * 60 * 1000; // 1 hora
+
+async function getAiReportsForContext(): Promise<string> {
+  try {
+    const now = Date.now();
+    
+    if (aiReportsCache && (now - aiReportsCacheTime) < AI_REPORTS_CACHE_TTL) {
+      return aiReportsCache;
+    }
+
+    const { getAiReportsContext } = await import('./ai-reports-service');
+    const reportsContext = await getAiReportsContext();
+    
+    aiReportsCache = reportsContext;
+    aiReportsCacheTime = now;
+    
+    console.log(`📊 [AI-CONTEXT] Relatórios carregados para contexto (${reportsContext.length} chars)`);
+    return reportsContext;
+  } catch (error: any) {
+    console.error(`❌ [AI-CONTEXT] Erro ao carregar relatórios:`, error.message);
+    return "";
+  }
+}
+
 // Gerar resposta automática usando configurações
 export async function generateAutoResponse(
   context: ConversationContext,
@@ -477,6 +504,11 @@ export async function generateAutoResponse(
   const systemPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
   const companyContext = settings.companyContext || DEFAULT_COMPANY_CONTEXT;
   const model = settings.gptModel || "gpt-4o-mini";
+  
+  const aiReports = await getAiReportsForContext();
+  const fullCompanyContext = aiReports 
+    ? `${companyContext}\n\n--- DADOS ATUALIZADOS DO SISTEMA ---\n${aiReports}`
+    : companyContext;
 
   // Construir histórico de mensagens para contexto
   const messageHistory = context.recentMessages.slice(-10).map(msg => ({
@@ -541,7 +573,7 @@ export async function generateAutoResponse(
         grokMessages,
         { name: context.customerName, phone: context.customerPhone },
         systemPrompt,
-        companyContext
+        fullCompanyContext
       );
 
       return {
@@ -583,7 +615,7 @@ export async function generateAutoResponse(
                 content: `${systemPrompt}
 
 CONTEXTO DA EMPRESA:
-${companyContext}
+${fullCompanyContext}
 
 INFORMAÇÕES DO CLIENTE:
 - Nome: ${context.customerName}

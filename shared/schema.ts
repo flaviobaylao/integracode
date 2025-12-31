@@ -2121,6 +2121,25 @@ export const insertChatAiSettingsSchema = createInsertSchema(chatAiSettings).omi
 export type ChatAiSettings = typeof chatAiSettings.$inferSelect;
 export type InsertChatAiSettings = z.infer<typeof insertChatAiSettingsSchema>;
 
+// Tabela de relatórios automáticos para IA
+export const chatAiReports = pgTable("chat_ai_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Tipo de relatório
+  reportType: varchar("report_type").notNull(), // 'customers', 'overdue_debts', 'billings_summary'
+  
+  // Conteúdo do relatório (formato texto otimizado para IA)
+  content: text("content").notNull(),
+  
+  // Metadados
+  recordCount: integer("record_count").notNull().default(0),
+  generatedAt: timestamp("generated_at").defaultNow(),
+  expiresAt: timestamp("expires_at"), // Para limpeza automática de relatórios antigos
+});
+
+export type ChatAiReport = typeof chatAiReports.$inferSelect;
+export type InsertChatAiReport = typeof chatAiReports.$inferInsert;
+
 // Interface para horário de funcionamento
 export interface BusinessHoursConfig {
   weekdays: WeekdayCode[];

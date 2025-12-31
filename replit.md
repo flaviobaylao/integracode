@@ -82,6 +82,12 @@
   - **Test interface**: Test AI responses before enabling
   - **Audit logging**: Track all AI interactions in `chat_ai_logs` table
   - **Settings stored in**: `chat_ai_settings` table
+  - **Automatic AI Reports**: Three reports generated daily at 06:00h (UTC-3) and on startup, automatically attached to AI context:
+    - **Customers Report**: Complete customer registration data (name, document, address, phone, email, visit days, last purchase)
+    - **Overdue Debts Report**: All overdue debt information by customer (amounts, days overdue, document details)
+    - **Billings Summary Report**: Last 30 days of invoices summarized by customer (total value, order count, last order date)
+  - **Reports stored in**: `chat_ai_reports` table with automatic 2-day expiration
+  - **Service file**: `server/ai-reports-service.ts` with `generateAndSaveAllReports()` and `getAiReportsContext()` functions
 
 # External Dependencies
 
