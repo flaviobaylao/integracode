@@ -2672,6 +2672,17 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // DEBUG: Test apenas 3 primeiros chats com logging detalhado
+
+  // 🔄 Rota para sincronizar atendentes ativos
+  app.post("/api/chat/agents/sync", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      await storage.syncUsersAsAgents();
+      res.json({ success: true, message: "Lista de atendentes sincronizada com sucesso" });
+    } catch (error: any) {
+      console.error("❌ [SYNC-AGENTS-API] Erro ao sincronizar atendentes:", error);
+      res.status(500).json({ error: "Erro ao sincronizar atendentes" });
+    }
+  });
   app.post("/api/chat/debug-sync-3", authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
       console.log("🔍 DEBUG: Processando apenas 3 chats com logging detalhado...");

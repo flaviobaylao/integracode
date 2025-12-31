@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -354,6 +354,34 @@ export default function ChatCenter() {
       toast({
         title: "❌ Erro na Sincronização",
         description: error.message || "Falha ao sincronizar mensagens do WhatsApp",
+        variant: "destructive"
+      });
+    }
+  });
+
+  // Mutation para sincronizar atendentes ativos
+  const syncAgentsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/chat/agents/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      if (!response.ok) throw new Error('Falha ao sincronizar atendentes');
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "✅ Atendentes Sincronizados",
+        description: data.message || "A lista de atendentes foi atualizada."
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/agents/detailed-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/agents"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "❌ Erro na Sincronização",
+        description: error.message || "Falha ao sincronizar atendentes",
         variant: "destructive"
       });
     }
@@ -757,15 +785,29 @@ export default function ChatCenter() {
               Configurar IA
             </Button>
             {isAdmin && (
-              <Button
-                onClick={() => syncWhatsAppMutation.mutate()}
-                disabled={syncWhatsAppMutation.isPending}
-                variant="outline"
-                className="gap-2"
-              >
-                <RefreshCw className={`w-4 h-4 ${syncWhatsAppMutation.isPending ? 'animate-spin' : ''}`} />
-                {syncWhatsAppMutation.isPending ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => syncAgentsMutation.mutate()}
+                  disabled={syncAgentsMutation.isPending}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+                  title="Sincronizar Atendentes"
+                >
+                  <Users className={`w-4 h-4 ${syncAgentsMutation.isPending ? 'animate-spin' : ''}`} />
+                  {syncAgentsMutation.isPending ? 'Sincronizando...' : 'Sincronizar Atendentes'}
+                </Button>
+
+                <Button
+                  onClick={() => syncWhatsAppMutation.mutate()}
+                  disabled={syncWhatsAppMutation.isPending}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${syncWhatsAppMutation.isPending ? 'animate-spin' : ''}`} />
+                  {syncWhatsAppMutation.isPending ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
+                </Button>
+              </div>
             )}
             <BackToDashboardButton />
           </div>
