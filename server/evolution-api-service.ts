@@ -68,10 +68,10 @@ class EvolutionAPIService {
     const prodDomain = process.env.REPLIT_DOMAIN || process.env.REPLIT_DOMAINS;
 
     if (isDev && devDomain) {
-      // No modo dev (Workspace), não configuramos webhook automaticamente para evitar quebrar o de produção
-      // O usuário pode forçar a configuração se quiser testar localmente via endpoint /api/chat/webhook/force-dev-config
-      console.log(`⚠️  [WEBHOOK-INIT] Modo desenvolvimento: Webhook automático desativado para proteger produção.`);
-      console.log(`💡 [WEBHOOK-INIT] Para testar localmente, use: POST /api/chat/webhook/force-dev-config`);
+      // Modo dev (Workspace) - configurar webhook para desenvolvimento automaticamente
+      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
+      console.log(`🔧 [WEBHOOK-INIT] Modo DESENVOLVIMENTO - configurando webhook para: ${webhookUrl}`);
+      this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
     } else if (!isDev && prodDomain) {
       // Priorizar REPLIT_DOMAIN para Autoscale (singular)
       const primaryDomain = process.env.REPLIT_DOMAIN || (Array.isArray(prodDomain) ? prodDomain[0] : prodDomain.split(',')[0]);
