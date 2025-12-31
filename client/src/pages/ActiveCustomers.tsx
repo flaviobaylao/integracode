@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -33,7 +35,8 @@ import {
   X,
   Zap,
   Pencil,
-  Plus
+  Plus,
+  Phone
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -152,11 +155,50 @@ export default function ActiveCustomers() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false);
+  const [showPhoneEditModal, setShowPhoneEditModal] = useState(false);
   const [isLeadMode, setIsLeadMode] = useState(false);
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState<Customer | null>(null);
+  const [phoneEditData, setPhoneEditData] = useState<{customerId: string; customerName: string; currentPhone: string; newPhone: string}>({
+    customerId: '', customerName: '', currentPhone: '', newPhone: ''
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const updatePhoneMutation = useMutation({
+    mutationFn: async ({ customerId, phone }: { customerId: string; phone: string }) => {
+      const response = await fetch(`/api/customers/${customerId}/phone`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone })
+      });
+      if (!response.ok) throw new Error('Falha ao atualizar telefone');
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Telefone atualizado!", description: "O telefone do cliente foi atualizado com sucesso." });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      setShowPhoneEditModal(false);
+    },
+    onError: (error: any) => {
+      toast({ variant: "destructive", title: "Erro", description: error.message || "Falha ao atualizar telefone" });
+    }
+  });
+
+  const handleEditPhone = (e: React.MouseEvent, customerId: string, customerName: string, currentPhone: string) => {
+    e.stopPropagation();
+    setPhoneEditData({ customerId, customerName, currentPhone, newPhone: currentPhone });
+    setShowPhoneEditModal(true);
+  };
+
+  const handleSavePhone = () => {
+    if (!phoneEditData.newPhone.trim()) {
+      toast({ variant: "destructive", title: "Erro", description: "Digite um telefone válido" });
+      return;
+    }
+    updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: phoneEditData.newPhone });
+  };
 
   const handleRowClick = async (customerId: string) => {
     try {
@@ -837,17 +879,30 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              {ac.customer?.id && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={(e) => handleEditCustomer(e, ac.customer!.id)}
-                                  title="Editar cliente"
-                                  data-testid={`button-edit-customer-${ac.id}`}
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              )}
+                              <div className="flex gap-1">
+                                {ac.customer?.id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => handleEditPhone(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.customer!.phone || '')}
+                                    title="Editar telefone"
+                                    data-testid={`button-edit-phone-${ac.id}`}
+                                  >
+                                    <Phone className="h-4 w-4 text-blue-500" />
+                                  </Button>
+                                )}
+                                {ac.customer?.id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => handleEditCustomer(e, ac.customer!.id)}
+                                    title="Editar cliente"
+                                    data-testid={`button-edit-customer-${ac.id}`}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))
@@ -894,6 +949,42 @@ export default function ActiveCustomers() {
           customer={selectedCustomerForEdit}
           isLead={isLeadMode}
         />
+
+        {/* Modal de Edição Rápida de Telefone */}
+        <Dialog open={showPhoneEditModal} onOpenChange={setShowPhoneEditModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Editar Telefone</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="text-sm text-muted-foreground">
+                Cliente: <span className="font-medium text-foreground">{phoneEditData.customerName}</span>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="phone">Telefone</Label>
+                <Input
+                  id="phone"
+                  value={phoneEditData.newPhone}
+                  onChange={(e) => setPhoneEditData(prev => ({ ...prev, newPhone: e.target.value }))}
+                  placeholder="(00) 00000-0000"
+                  data-testid="input-edit-phone"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowPhoneEditModal(false)}>
+                Cancelar
+              </Button>
+              <Button 
+                onClick={handleSavePhone} 
+                disabled={updatePhoneMutation.isPending}
+                data-testid="button-save-phone"
+              >
+                {updatePhoneMutation.isPending ? "Salvando..." : "Salvar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <TabsContent value="history" className="space-y-4">
           <Card>
