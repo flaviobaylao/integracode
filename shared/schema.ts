@@ -1858,6 +1858,28 @@ export const insertKnowledgeBaseSchema = createInsertSchema(knowledgeBase).omit(
   createdAt: true,
 });
 
+// Schema para validar pedidos submetidos via ChatGPT
+export const chatOrderFormSchema = z.object({
+  nomeCompleto: z.string().min(3, "Nome deve ter pelo menos 3 caracteres"),
+  cpfCnpj: z.string().min(11, "CPF/CNPJ inválido").max(18, "CPF/CNPJ inválido"),
+  telefone: z.string().min(10, "Telefone inválido"),
+  endereco: z.string().min(10, "Endereço deve ser completo"),
+  bairro: z.string().min(2, "Bairro é obrigatório"),
+  cidade: z.string().min(2, "Cidade é obrigatória"),
+  cep: z.string().optional(),
+  produtos: z.array(z.object({
+    nome: z.string(),
+    quantidade: z.number().min(1),
+    precoUnitario: z.number().min(0),
+  })).min(1, "Pelo menos um produto é necessário"),
+  formaPagamento: z.enum(["pix", "dinheiro", "cartao_credito", "cartao_debito", "boleto", "a_prazo"]),
+  diaEntrega: z.string().min(1, "Dia de entrega é obrigatório"),
+  horarioEntrega: z.string().optional(),
+  observacoes: z.string().optional(),
+});
+
+export type ChatOrderForm = z.infer<typeof chatOrderFormSchema>;
+
 // Chat Honest - Types
 export type ChatAgent = typeof chatAgents.$inferSelect;
 export type InsertChatAgent = z.infer<typeof insertChatAgentSchema>;

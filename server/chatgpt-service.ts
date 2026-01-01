@@ -33,7 +33,7 @@ export async function handleIncomingMessage(
       recentMessages
     }, settings);
 
-    console.log(`✨ [AI-SERVICE] Resposta gerada: "${result.response.reply.substring(0, 50)}..."`);
+    console.log(`✨ [AI-SERVICE] Resposta gerada: "${result.response.reply.substring(0, 50)}..." | Action: ${result.response.action || 'none'}`);
 
     // 3. Salvar log de auditoria
     await storage.createChatAiLog({
@@ -55,24 +55,64 @@ export async function handleIncomingMessage(
       });
     }
 
-    // 5. Enviar resposta via WhatsApp (Evolution API)
+    // 5. Processar ações de pedido
     const { evolutionAPIService } = await import("./evolution-api-service");
     const config = evolutionAPIService.getConfig();
     
+    let finalReply = result.response.reply;
+    
+    if (result.response.action === 'send_order_form') {
+      console.log(`📋 [AI-SERVICE] Enviando formulário de pedido...`);
+      const { ORDER_FORM_TEMPLATE } = await import("./ai-order-service");
+      finalReply = result.response.reply + "\n\n" + ORDER_FORM_TEMPLATE;
+    } else if (result.response.action === 'process_order') {
+      console.log(`🛒 [AI-SERVICE] Processando pedido do cliente...`);
+      const { parseOrderFormMessage, createSalesCardFromChatOrder, generateOrderConfirmation, isOrderFormResponse } = await import("./ai-order-service");
+      
+      if (isOrderFormResponse(message.content)) {
+        const parseResult = parseOrderFormMessage(message.content);
+        
+        if (parseResult.success && parseResult.order) {
+          const createResult = await createSalesCardFromChatOrder(
+            parseResult.order,
+            conversation.id,
+            conversation.customerPhone
+          );
+          
+          if (createResult.success) {
+            finalReply = generateOrderConfirmation(parseResult.order);
+            console.log(`✅ [AI-SERVICE] Pedido criado com sucesso: ${createResult.salesCardId}`);
+          } else {
+            finalReply = `❌ Ocorreu um erro ao processar seu pedido: ${createResult.error}\n\nPor favor, tente novamente ou peça para falar com um atendente humano.`;
+            console.error(`❌ [AI-SERVICE] Erro ao criar pedido:`, createResult.error);
+          }
+        } else {
+          const errorMsg = parseResult.errors?.join('\n') || 'Dados incompletos';
+          finalReply = `⚠️ Alguns dados do pedido estão incompletos ou inválidos:\n\n${errorMsg}\n\nPor favor, preencha todos os campos do formulário e envie novamente.`;
+          console.warn(`⚠️ [AI-SERVICE] Formulário inválido:`, parseResult.errors);
+        }
+      } else {
+        finalReply = "Parece que você tentou fazer um pedido, mas não consegui identificar todos os dados necessários. Vou enviar o formulário novamente para você preencher:";
+        const { ORDER_FORM_TEMPLATE } = await import("./ai-order-service");
+        finalReply += "\n\n" + ORDER_FORM_TEMPLATE;
+      }
+    }
+
+    // 6. Enviar resposta via WhatsApp (Evolution API)
     if (config && config.instanceName) {
       const sendResult = await evolutionAPIService.sendTextMessage(
         config.instanceName,
         conversation.customerPhone,
-        result.response.reply
+        finalReply
       );
 
       if (sendResult.success) {
-        // 6. Registrar a mensagem enviada pela IA no banco local
+        // 7. Registrar a mensagem enviada pela IA no banco local
         await storage.createChatMessage({
           conversationId: conversation.id,
           senderId: 'system',
           senderType: 'agent',
-          content: result.response.reply,
+          content: finalReply,
           messageType: 'text',
           externalId: sendResult.messageId || `ai_${Date.now()}`,
           isRead: true
@@ -426,6 +466,7 @@ export interface AutoChatResponse {
   reply: string;
   shouldTransfer: boolean;
   transferReason?: string;
+  action?: 'send_order_form' | 'process_order';
 }
 
 // Interface para contexto da conversa
@@ -448,6 +489,28 @@ Seu objetivo é:
 2. Auxiliar clientes com pedidos e informações
 3. Ser cordial, profissional e objetivo
 4. Identificar quando o cliente precisa falar com um atendente humano
+5. CAPTURAR PEDIDOS de clientes enviando o formulário estruturado
+
+IMPORTANTE - FLUXO DE PEDIDOS:
+Quando o cliente quiser fazer um pedido, VOCÊ DEVE:
+1. Enviar o formulário de pedido estruturado (action: "send_order_form")
+2. Quando o cliente responder com o formulário preenchido, validar os dados
+3. Se válido, processar o pedido (action: "process_order")
+4. Enviar confirmação ao cliente
+
+Para ENVIAR O FORMULÁRIO, responda com:
+{
+  "reply": "Ótimo! Vou te enviar nosso formulário de pedido. Por favor, preencha e envie de volta:",
+  "action": "send_order_form",
+  "shouldTransfer": false
+}
+
+Quando DETECTAR UM FORMULÁRIO PREENCHIDO (mensagem com nome, CPF/CNPJ, endereço, produtos), responda com:
+{
+  "reply": "Recebi seu pedido! Estou processando...",
+  "action": "process_order",
+  "shouldTransfer": false
+}
 
 Regras importantes:
 - NUNCA invente informações sobre preços ou produtos específicos
@@ -456,6 +519,10 @@ Regras importantes:
 - Se detectar reclamação grave, problema financeiro ou situação complexa, transfira para humano
 - Mantenha respostas curtas e objetivas (máximo 3 parágrafos)
 - Use linguagem informal mas profissional
+- Quando cliente mencionar "pedido", "comprar", "encomendar", envie o formulário de pedido
+
+Palavras-chave para ENVIAR FORMULÁRIO DE PEDIDO:
+- "quero fazer pedido", "quero pedir", "quero comprar", "fazer pedido", "encomendar"
 
 Palavras-chave para transferir para humano:
 - "falar com atendente", "humano", "pessoa", "gerente", "vendedor"
@@ -626,14 +693,30 @@ Responda em JSON com o seguinte formato:
 {
   "reply": "sua resposta ao cliente",
   "shouldTransfer": false,
-  "transferReason": null
+  "transferReason": null,
+  "action": null
 }
 
 Se precisar transferir para humano, use:
 {
   "reply": "mensagem de despedida antes da transferência",
   "shouldTransfer": true,
-  "transferReason": "motivo da transferência"
+  "transferReason": "motivo da transferência",
+  "action": null
+}
+
+Se o cliente quiser fazer pedido, use:
+{
+  "reply": "Ótimo! Vou te enviar nosso formulário de pedido. Por favor, preencha todos os campos e me envie de volta!",
+  "shouldTransfer": false,
+  "action": "send_order_form"
+}
+
+Se detectar um formulário de pedido preenchido (mensagem longa com nome, CPF/CNPJ, endereço, produtos, pagamento), use:
+{
+  "reply": "Recebi seu pedido! Estou processando os dados...",
+  "shouldTransfer": false,
+  "action": "process_order"
 }`
               },
               ...messageHistory
@@ -650,7 +733,8 @@ Se precisar transferir para humano, use:
             response: {
               reply: parsed.reply || "Desculpe, não consegui processar sua mensagem. Posso ajudar com algo mais?",
               shouldTransfer: parsed.shouldTransfer || false,
-              transferReason: parsed.transferReason
+              transferReason: parsed.transferReason,
+              action: parsed.action
             },
             tokensUsed: response.usage?.total_tokens || 0
           };
