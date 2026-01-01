@@ -3375,20 +3375,49 @@ export function registerChatRoutes(app: Express): void {
         const existingIds = new Set(existingMessages.map(m => m.externalId));
 
         let importedCount = 0;
+        const { uploadMediaFromBase64 } = await import("./whatsapp-media-storage");
+        
         for (const msg of history.messages) {
           const messageId = msg.key?.id;
           if (messageId && !existingIds.has(messageId)) {
             const isFromMe = msg.key?.fromMe === true;
             const text = evolutionAPIService.extractMessageText(msg.message) || '';
             
+            const mediaInfo = evolutionAPIService.extractMediaInfo(msg.message);
+            let finalMediaUrl = mediaInfo.mediaUrl;
+            const finalMessageType = mediaInfo.messageType || 'text';
+            const messageTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : new Date();
+            
+            if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
+              try {
+                console.log(`📥 [SYNC-MEDIA] Baixando mídia para: ${messageId}`);
+                const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(config.instanceName, messageId);
+                if (mediaResult.success && mediaResult.base64) {
+                  const mimeType = mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream';
+                  const uploadResult = await uploadMediaFromBase64(
+                    mediaResult.base64,
+                    mimeType,
+                    mediaInfo.mediaFilename
+                  );
+                  if (uploadResult.success && uploadResult.objectPath) {
+                    finalMediaUrl = uploadResult.objectPath;
+                    console.log(`✅ [SYNC-MEDIA] Mídia salva: ${finalMediaUrl}`);
+                  }
+                }
+              } catch (mediaErr: any) {
+                console.warn(`⚠️ [SYNC-MEDIA] Erro ao baixar mídia: ${mediaErr.message}`);
+              }
+            }
+            
             await storage.createChatMessage({
               conversationId: conversation.id,
               senderId: isFromMe ? 'system' : customer.id,
               senderType: isFromMe ? 'system' : 'customer',
-              content: text || '[Mídia/Histórico]',
-              messageType: 'text',
+              content: text || (finalMessageType !== 'text' ? `[${finalMessageType}]` : '[Mensagem]'),
+              messageType: finalMessageType,
+              mediaUrl: finalMediaUrl,
               externalId: messageId,
-              createdAt: msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : new Date()
+              createdAt: messageTimestamp
             });
             importedCount++;
           }

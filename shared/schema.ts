@@ -1800,7 +1800,8 @@ export const updateChatConversationSchema = createInsertSchema(chatConversations
 
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
   id: true,
-  createdAt: true,
+}).extend({
+  createdAt: z.date().optional(),
 });
 
 export const insertChatReportSchema = createInsertSchema(chatReports).omit({
