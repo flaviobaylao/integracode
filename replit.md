@@ -99,6 +99,13 @@
     - **Billings Summary Report**: Last 30 days of invoices summarized by customer (total value, order count, last order date)
   - **Reports stored in**: `chat_ai_reports` table with automatic 2-day expiration
   - **Service file**: `server/ai-reports-service.ts` with `generateAndSaveAllReports()` and `getAiReportsContext()` functions
+  - **Automated Order Capture via ChatGPT**: Customers can place orders directly through WhatsApp chat
+    - **Order Flow**: Customer expresses intent to order → ChatGPT sends structured form → Customer fills form → ChatGPT validates → Creates sales_card automatically
+    - **Form-based approach**: Prevents data entry errors by requiring all necessary fields (name, CPF/CNPJ, address, products, payment, delivery day)
+    - **Actions**: `send_order_form` sends ORDER_FORM_TEMPLATE, `process_order` validates and creates sales_card
+    - **Validation**: `chatOrderFormSchema` validates order data with Zod, handles partial/invalid submissions gracefully
+    - **Sales card creation**: Creates with `status: 'pending'`, `source: 'whatsapp_chatgpt'` for Omie sync
+    - **Service file**: `server/ai-order-service.ts` with `parseOrderFormMessage()`, `createSalesCardFromChatOrder()`, `generateOrderConfirmation()`
 
 # External Dependencies
 
