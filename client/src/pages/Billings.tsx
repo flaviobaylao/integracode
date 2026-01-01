@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home, Loader2 } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Select,
@@ -409,8 +409,9 @@ export default function Billings() {
   // Query para buscar status de sincronização
   const { data: syncStatuses } = useQuery<any[]>({
     queryKey: ['/api/sync-status'],
-    refetchInterval: (data) => {
-      const isAnyInProgress = data?.some(s => s.status === 'in_progress');
+    refetchInterval: (query) => {
+      const statuses = query.state.data;
+      const isAnyInProgress = Array.isArray(statuses) && statuses.some(s => s.status === 'in_progress');
       return isAnyInProgress ? 2000 : 10000;
     }
   });
