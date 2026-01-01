@@ -24,6 +24,11 @@
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization, and **strict abbreviated weekday format (Seg, Ter, Qua, Qui, Sex, Sab, Dom) throughout system** with robust error handling.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Order release workflow allows admin approval for blocked orders.
 - **Delivery & Route Optimization**: Scheduled daily route generation using Nearest Neighbor + 2-opt and OSRM API. Intelligent regional sectorization using K-means clustering with Haversine distance. Features include visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, driver transfer, and a mobile-friendly driver interface (`/rota-entrega`) with GPS check-in/check-out and photo capture. Admins can manually manage and optimize routes, including creating empty routes for later population. Routes are linked directly to `driver email + date`.
+  - **Omie Invoice Stage Sync**: Automatic synchronization of invoice stages with Omie ERP:
+    - When route is sent to driver: NF stage changes to "Em Rota" (code 20)
+    - When driver completes delivery (checkout): NF stage changes to "Entregue" (code 70)
+    - When driver marks as returned (devolvida): NF stage changes to "Aguardando Rota" (code 80)
+    - Stage changes do not affect route composition (no deliveries added/removed after route is saved)
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
 - **Customer Management**: Client-side search and filtering, inactivation, detailed delivery configurations, and a three-layer date system for visit days.
 - **Mapa de Clientes**: Interactive Leaflet map (`/mapa-clientes`) displaying active customers with color-coded pins, filtering, and in-map editing for administrative users.
