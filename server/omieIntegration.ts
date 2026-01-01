@@ -3856,11 +3856,11 @@ export class OmieService {
     try {
       console.log(`🔄 [OMIE-ETAPA] Alterando etapa do pedido ${codigoPedido} para ${novaEtapa}`);
       
-      // API Omie usa nCodPed e cEtapa como parâmetros
-      const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', [{
-        nCodPed: codigoPedido,
-        cEtapa: novaEtapa
-      }]);
+      // API Omie TrocarEtapaPedido usa codigo_pedido e etapa
+      const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', {
+        codigo_pedido: codigoPedido,
+        etapa: novaEtapa
+      });
       
       console.log(`✅ [OMIE-ETAPA] Etapa do pedido ${codigoPedido} alterada para ${novaEtapa}:`, JSON.stringify(response));
       
