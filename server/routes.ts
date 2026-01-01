@@ -10107,8 +10107,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           stopsWithBilling.push(stopInfo);
           
           // Verificar billing
-          const billing = await db.select().from(billings)
-            .where(eq(billings.id, stop.billingId))
+          const billing = await db.select().from(billingsTable)
+            .where(eq(billingsTable.id, stop.billingId))
             .limit(1);
           
           if (billing.length > 0) {
