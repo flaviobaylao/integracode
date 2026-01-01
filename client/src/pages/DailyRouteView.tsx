@@ -20,7 +20,7 @@ import {
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import RouteMap from "@/components/RouteMap";
@@ -1555,7 +1555,7 @@ export default function DailyRouteView() {
               autoFocus
             />
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Selecione um cliente para adicionar à rota de {format(new Date(route?.routeDate || new Date()), "dd/MM/yyyy")}
+              Selecione um cliente para adicionar à rota de {route?.routeDate ? format(parseISO(route.routeDate), "dd/MM/yyyy") : format(new Date(), "dd/MM/yyyy")}
             </p>
           </div>
 

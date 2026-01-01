@@ -36,7 +36,7 @@ import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -553,7 +553,7 @@ export default function RoutesSummary() {
       const infoY = 45;
       doc.text(`Rota: ${selectedRouteData.routeName}`, 14, infoY);
       doc.text(`Motorista: ${selectedRouteData.driverName}`, 14, infoY + 7);
-      doc.text(`Data: ${format(new Date(selectedRouteData.routeDate), 'dd/MM/yyyy')}`, 14, infoY + 14);
+      doc.text(`Data: ${format(parseISO(selectedRouteData.routeDate), 'dd/MM/yyyy')}`, 14, infoY + 14);
       doc.text(`Veículo: ${selectedRouteData.vehicleType === 'caminhao' ? 'Caminhão' : selectedRouteData.vehicleType === 'carro' ? 'Carro' : 'Moto'}`, 14, infoY + 21);
       
       // Seção 2: Métricas
@@ -614,7 +614,7 @@ export default function RoutesSummary() {
       }
       
       // Salvar PDF
-      doc.save(`Rota_${selectedRouteData.routeName}_${format(new Date(selectedRouteData.routeDate), 'dd-MM-yyyy')}.pdf`);
+      doc.save(`Rota_${selectedRouteData.routeName}_${format(parseISO(selectedRouteData.routeDate), 'dd-MM-yyyy')}.pdf`);
       
       toast({
         title: "PDF Gerado com Sucesso",
@@ -770,7 +770,7 @@ export default function RoutesSummary() {
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center text-muted-foreground">
                     <Calendar className="h-4 w-4 mr-2" />
-                    {format(new Date(route.routeDate), 'dd/MM/yyyy')}
+                    {format(parseISO(route.routeDate), 'dd/MM/yyyy')}
                   </div>
                   <div className="flex items-center text-muted-foreground">
                     <Truck className="h-4 w-4 mr-2" />

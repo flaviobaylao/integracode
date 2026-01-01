@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { parseISO } from "date-fns";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -220,7 +221,7 @@ export default function CustomerManagement() {
     // Filtro por data da rota (verifica se a data está nos dias da semana selecionados)
     let matchesRouteDate = true;
     if (routeDateFilter) {
-      const selectedDate = new Date(routeDateFilter);
+      const selectedDate = parseISO(routeDateFilter);
       const dayOfWeek = selectedDate.getDay(); // 0=domingo, 1=segunda, etc.
       const weekdayMapping = {
         0: 'Dom',
