@@ -9783,6 +9783,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📦 [DRIVER-ROUTES] Query retornou: ${routes.length} rotas`);
       if (routes.length > 0) {
         console.log(`[DEBUG] Primeira rota:`, routes[0]);
+      } else {
+        // Se não encontrou rotas, fazer diagnóstico
+        console.log(`🔍 [DRIVER-ROUTES] Nenhuma rota encontrada. Iniciando diagnóstico...`);
+        
+        // 1. Verificar se existem rotas para esta data (qualquer motorista)
+        const routesForDate = await db.select({
+          id: deliveryRoutes.id,
+          driverEmail: deliveryRoutes.driverEmail,
+          status: deliveryRoutes.status,
+          routeDate: deliveryRoutes.routeDate
+        }).from(deliveryRoutes)
+          .where(sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDateStr} AS DATE)`);
+        
+        console.log(`🔍 [DRIVER-ROUTES] Total de rotas para ${targetDateStr}: ${routesForDate.length}`);
+        if (routesForDate.length > 0) {
+          routesForDate.forEach((r, i) => {
+            console.log(`   [${i}] email="${r.driverEmail}", status="${r.status}"`);
+          });
+        }
+        
+        // 2. Verificar se existem rotas para este email (qualquer data)
+        const routesForEmail = await db.select({
+          id: deliveryRoutes.id,
+          routeDate: deliveryRoutes.routeDate,
+          status: deliveryRoutes.status,
+          driverEmail: deliveryRoutes.driverEmail
+        }).from(deliveryRoutes)
+          .where(sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${userEmail})`)
+          .orderBy(desc(deliveryRoutes.routeDate))
+          .limit(5);
+        
+        console.log(`🔍 [DRIVER-ROUTES] Rotas recentes do email ${userEmail}: ${routesForEmail.length}`);
+        if (routesForEmail.length > 0) {
+          routesForEmail.forEach((r, i) => {
+            console.log(`   [${i}] date="${r.routeDate}", status="${r.status}"`);
+          });
+        }
       }
       
       // Buscar paradas para cada rota
