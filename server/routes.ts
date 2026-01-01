@@ -10186,11 +10186,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
           result: omieResult
         } : {
           attempted: false,
-          reason: "Nenhum billing com omieOrderId válido encontrado"
+          reason: "Nenhum billing com omieOrderId válido encontrado",
+          suggestion: "Use o endpoint /api/billings/fix-missing-omie-ids para tentar preencher os omieOrderIds faltantes"
         }
       });
     } catch (error: any) {
       console.error("Error in force-omie-sync:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Endpoint para tentar preencher omieOrderId faltantes nos billings
+  app.post("/api/billings/fix-missing-omie-ids", async (req: any, res) => {
+    try {
+      console.log(`🔧 [FIX-OMIE-IDS] Buscando billings sem omieOrderId...`);
+      
+      // Buscar billings sem omieOrderId
+      const billingsWithoutOmieId = await db.select().from(billingsTable)
+        .where(
+          and(
+            or(
+              isNull(billingsTable.omieOrderId),
+              eq(billingsTable.omieOrderId, '')
+            ),
+            // Apenas billings não cancelados e com número de pedido
+            eq(billingsTable.isCancelled, false),
+            isNotNull(billingsTable.orderNumber)
+          )
+        )
+        .limit(50); // Limitar para evitar timeout
+      
+      console.log(`🔍 [FIX-OMIE-IDS] Encontrados ${billingsWithoutOmieId.length} billings sem omieOrderId`);
+      
+      const fixed: any[] = [];
+      const notFixed: any[] = [];
+      
+      const omie = getOmieService(storage);
+      if (!omie) {
+        return res.status(400).json({ error: "Omie não configurado" });
+      }
+      
+      for (const billing of billingsWithoutOmieId) {
+        try {
+          // Tentar buscar o pedido no Omie pelo número
+          console.log(`🔍 [FIX-OMIE-IDS] Buscando pedido ${billing.orderNumber}...`);
+          
+          // Usar o número do pedido para buscar no Omie
+          const searchResult = await omie.buscarPedidoPorNumero(billing.orderNumber);
+          
+          if (searchResult && searchResult.nCodPed) {
+            const omieOrderId = String(searchResult.nCodPed);
+            
+            // Atualizar o billing com o omieOrderId
+            await db.update(billingsTable)
+              .set({ omieOrderId })
+              .where(eq(billingsTable.id, billing.id));
+            
+            fixed.push({
+              billingId: billing.id,
+              orderNumber: billing.orderNumber,
+              omieOrderId: omieOrderId
+            });
+            
+            console.log(`✅ [FIX-OMIE-IDS] Billing ${billing.id} atualizado com omieOrderId ${omieOrderId}`);
+          } else {
+            notFixed.push({
+              billingId: billing.id,
+              orderNumber: billing.orderNumber,
+              reason: "Pedido não encontrado no Omie"
+            });
+            console.log(`⚠️ [FIX-OMIE-IDS] Pedido ${billing.orderNumber} não encontrado no Omie`);
+          }
+        } catch (error: any) {
+          notFixed.push({
+            billingId: billing.id,
+            orderNumber: billing.orderNumber,
+            reason: error.message
+          });
+          console.error(`❌ [FIX-OMIE-IDS] Erro ao buscar pedido ${billing.orderNumber}:`, error.message);
+        }
+        
+        // Delay para não sobrecarregar a API Omie
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      res.json({
+        message: `Processados ${billingsWithoutOmieId.length} billings: ${fixed.length} corrigidos, ${notFixed.length} não corrigidos`,
+        fixed,
+        notFixed
+      });
+    } catch (error: any) {
+      console.error("Error fixing missing omie ids:", error);
       res.status(500).json({ error: error.message });
     }
   });

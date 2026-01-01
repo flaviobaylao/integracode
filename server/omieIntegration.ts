@@ -3881,6 +3881,36 @@ export class OmieService {
     }
   }
 
+  // Buscar pedido pelo número do pedido (cNumero)
+  async buscarPedidoPorNumero(numeroPedido: string): Promise<{nCodPed: number; cNumero: string} | null> {
+    try {
+      console.log(`🔍 [OMIE-BUSCA] Buscando pedido pelo número: ${numeroPedido}`);
+      
+      const response = await this.makeRequest('/produtos/pedido/', 'ListarPedidos', [{
+        pagina: 1,
+        registros_por_pagina: 10,
+        filtrar_por_numero: numeroPedido
+      }]);
+      
+      const pedidos = response.pedido_venda_produto || [];
+      
+      if (pedidos.length > 0) {
+        const pedido = pedidos[0];
+        const nCodPed = pedido.cabecalho?.codigo_pedido || pedido.codigo_pedido || pedido.nCodPed;
+        const cNumero = pedido.cabecalho?.numero_pedido || pedido.numero_pedido || numeroPedido;
+        
+        console.log(`✅ [OMIE-BUSCA] Pedido encontrado: nCodPed=${nCodPed}, cNumero=${cNumero}`);
+        return { nCodPed, cNumero };
+      }
+      
+      console.log(`⚠️ [OMIE-BUSCA] Pedido ${numeroPedido} não encontrado`);
+      return null;
+    } catch (error: any) {
+      console.error(`❌ [OMIE-BUSCA] Erro ao buscar pedido ${numeroPedido}:`, error.message);
+      return null;
+    }
+  }
+
   // Alterar etapas de múltiplos pedidos (para uso em lote)
   async trocarEtapasPedidosEmLote(pedidos: { codigoPedido: number; novaEtapa: string }[]): Promise<{
     successCount: number;
