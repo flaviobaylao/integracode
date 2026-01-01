@@ -10280,6 +10280,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: error.message });
     }
   });
+  
+  // Endpoint para atualizar um billing específico com orderNumber e buscar omieOrderId
+  app.post("/api/billings/:billingId/set-order-number", async (req: any, res) => {
+    try {
+      const { billingId } = req.params;
+      const { orderNumber } = req.body;
+      
+      if (!orderNumber) {
+        return res.status(400).json({ error: "orderNumber é obrigatório" });
+      }
+      
+      console.log(`🔧 [SET-ORDER] Atualizando billing ${billingId} com orderNumber ${orderNumber}`);
+      
+      // Verificar se o billing existe
+      const existingBilling = await db.select().from(billingsTable)
+        .where(eq(billingsTable.id, billingId))
+        .limit(1);
+      
+      if (existingBilling.length === 0) {
+        return res.status(404).json({ error: "Billing não encontrado" });
+      }
+      
+      // Buscar o omieOrderId no Omie
+      const omie = getOmieService(storage);
+      let omieOrderId: string | null = null;
+      
+      if (omie) {
+        const searchResult = await omie.buscarPedidoPorNumero(orderNumber);
+        if (searchResult && searchResult.nCodPed) {
+          omieOrderId = String(searchResult.nCodPed);
+          console.log(`✅ [SET-ORDER] Encontrado omieOrderId ${omieOrderId} para pedido ${orderNumber}`);
+        }
+      }
+      
+      // Atualizar o billing
+      await db.update(billingsTable)
+        .set({ 
+          orderNumber,
+          ...(omieOrderId ? { omieOrderId } : {})
+        })
+        .where(eq(billingsTable.id, billingId));
+      
+      res.json({
+        success: true,
+        billingId,
+        orderNumber,
+        omieOrderId,
+        message: omieOrderId 
+          ? `Billing atualizado com orderNumber ${orderNumber} e omieOrderId ${omieOrderId}`
+          : `Billing atualizado com orderNumber ${orderNumber}, mas omieOrderId não encontrado no Omie`
+      });
+    } catch (error: any) {
+      console.error("Error setting order number:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // Enviar rota para o motorista (muda status de 'rota salva' para 'rota_enviada')
   // Também altera etapas das NFs no Omie para "Em Rota" (20)
