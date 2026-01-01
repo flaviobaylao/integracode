@@ -9360,9 +9360,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Routes are required" });
       }
 
+      console.log(`💾 [SAVE-ROUTES] ========== INÍCIO DO SALVAMENTO ==========`);
+      console.log(`💾 [SAVE-ROUTES] Timestamp: ${new Date().toISOString()}`);
       console.log(`💾 [SAVE-ROUTES] Salvando ${routes.length} rotas planejadas`);
       console.log(`💾 [SAVE-ROUTES] Primeira rota routeDate recebido:`, routes[0]?.route?.routeDate);
       console.log(`💾 [SAVE-ROUTES] Tipo do routeDate:`, typeof routes[0]?.route?.routeDate);
+      console.log(`💾 [SAVE-ROUTES] Driver ID:`, routes[0]?.route?.driverId);
+      console.log(`💾 [SAVE-ROUTES] Driver Name:`, routes[0]?.route?.driverName);
+      console.log(`💾 [SAVE-ROUTES] Total stops:`, routes[0]?.stops?.length);
       console.log(`💾 [SAVE-ROUTES] Request body completo:`, JSON.stringify(routes[0]?.route, null, 2));
 
       // Validar todos os driverIds ANTES do loop
@@ -9579,8 +9584,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         routes: savedRoutes
       });
     } catch (error: any) {
-      console.error("Error saving delivery routes:", error);
-      res.status(500).json({ message: "Failed to save delivery routes", error: error.message });
+      console.error(`❌ [SAVE-ROUTES] ========== ERRO NO SALVAMENTO ==========`);
+      console.error(`❌ [SAVE-ROUTES] Timestamp: ${new Date().toISOString()}`);
+      console.error(`❌ [SAVE-ROUTES] Mensagem: ${error.message}`);
+      console.error(`❌ [SAVE-ROUTES] Stack: ${error.stack}`);
+      console.error(`❌ [SAVE-ROUTES] Erro completo:`, error);
+      res.status(500).json({ message: "Failed to save delivery routes", error: error.message, stack: error.stack });
     }
   });
 

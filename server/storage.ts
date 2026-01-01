@@ -4858,10 +4858,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async saveRouteWithStops(route: any, stops: any[]): Promise<{ route: any; stops: any[] }> {
+    console.log(`💾 [STORAGE] saveRouteWithStops - Iniciando transação`);
+    console.log(`💾 [STORAGE] Route data:`, JSON.stringify(route, null, 2));
+    console.log(`💾 [STORAGE] Stops count: ${stops.length}`);
+    
     // Usar transação para garantir atomicidade
     return await db.transaction(async (tx) => {
+      console.log(`💾 [STORAGE] Inserindo rota no banco...`);
       // Salvar a rota
       const [savedRoute] = await tx.insert(deliveryRoutes).values(route).returning();
+      console.log(`✅ [STORAGE] Rota salva com ID: ${savedRoute.id}, routeDate: ${savedRoute.routeDate}`);
       
       // Salvar as paradas com routeId (se houver)
       const stopsWithRouteId = stops.map(stop => ({
@@ -4869,9 +4875,11 @@ export class DatabaseStorage implements IStorage {
         routeId: savedRoute.id
       }));
       
+      console.log(`💾 [STORAGE] Inserindo ${stopsWithRouteId.length} paradas...`);
       const savedStops = stopsWithRouteId.length > 0 
         ? await tx.insert(deliveryRouteStops).values(stopsWithRouteId).returning()
         : [];
+      console.log(`✅ [STORAGE] ${savedStops.length} paradas salvas`);
       
       return { route: savedRoute, stops: savedStops };
     });
