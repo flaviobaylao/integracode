@@ -9480,10 +9480,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           savedStops = await db.insert(deliveryRouteStops).values(stopsData).returning();
           
           // Buscar email do driver para atualizar (normalizado para lowercase)
-          const driver = await db.select().from(deliveryDrivers)
+          let driver = await db.select().from(deliveryDrivers)
             .where(eq(deliveryDrivers.id, route.driverId))
             .limit(1);
-          const driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          
+          // Se não encontrou pelo ID, tentar pelo nome
+          if (driver.length === 0 && route.driverName) {
+            console.log(`⚠️ [SAVE-ROUTES] Driver não encontrado por ID, buscando por nome: "${route.driverName}"`);
+            driver = await db.select().from(deliveryDrivers)
+              .where(sql`LOWER(${deliveryDrivers.name}) = LOWER(${route.driverName})`)
+              .limit(1);
+          }
+          
+          let driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          
+          // Se ainda não encontrou email, tentar construir a partir do nome
+          if (!driverEmail && route.driverName) {
+            const normalizedName = route.driverName.toLowerCase().trim().replace(/\s+/g, '');
+            driverEmail = `${normalizedName}@bebahonest.com.br`;
+            console.log(`⚠️ [SAVE-ROUTES] Email do driver não encontrado, usando fallback: "${driverEmail}"`);
+          }
+          
           console.log(`📧 [SAVE-ROUTES] Email do motorista: "${driverEmail}" (id: ${route.driverId})`);
           
           // Atualizar apenas dados da rota
@@ -9510,11 +9527,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`🆕 [SAVE-ROUTES] Criando nova rota: ${routeName}`);
           
           // Buscar email do driver (normalizado para lowercase)
-          const driver = await db.select().from(deliveryDrivers)
+          let driver = await db.select().from(deliveryDrivers)
             .where(eq(deliveryDrivers.id, route.driverId))
             .limit(1);
           
-          const driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          // Se não encontrou pelo ID, tentar pelo nome
+          if (driver.length === 0 && route.driverName) {
+            console.log(`⚠️ [SAVE-ROUTES] Driver não encontrado por ID, buscando por nome: "${route.driverName}"`);
+            driver = await db.select().from(deliveryDrivers)
+              .where(sql`LOWER(${deliveryDrivers.name}) = LOWER(${route.driverName})`)
+              .limit(1);
+          }
+          
+          let driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          
+          // Se ainda não encontrou email, tentar construir a partir do nome
+          if (!driverEmail && route.driverName) {
+            const normalizedName = route.driverName.toLowerCase().trim().replace(/\s+/g, '');
+            driverEmail = `${normalizedName}@bebahonest.com.br`;
+            console.log(`⚠️ [SAVE-ROUTES] Email do driver não encontrado, usando fallback: "${driverEmail}"`);
+          }
+          
           console.log(`📧 [SAVE-ROUTES] Email do motorista: "${driverEmail}" (id: ${route.driverId})`);
           
           const routeData = {
