@@ -1952,10 +1952,10 @@ export class OmieService {
       
       console.log(`✅ Nota validada: ID=${finalOmieId}, Número=${finalInvoiceNumber}`);
       
-      // Extrair número do pedido
+      // Extrair número do pedido - NÃO usar NF como fallback
       const orderNumber = pedidoCompleto?.cabecalho?.numero_pedido?.toString() || 
                          invoice.compl?.nPed?.toString() || 
-                         finalInvoiceNumber; // Fallback para número da NF
+                         null; // Sem fallback - deixar null se não encontrar o número do pedido
       
       // Buscar delivery_weekdays do customer (usa cache se disponível para evitar N+1 queries)
       let deliveryWeekdays: string[] = [];
@@ -3544,9 +3544,18 @@ export class OmieService {
               let invoiceStage = '';
               let isCancelled = false;
               const pedidoId = invoice.compl?.nIdPedido?.toString();
+              let orderNumber: string | null = null;
+              let pedidoCompleto: any = null;
               
               if (pedidoId) {
                 try {
+                  // Buscar pedido completo para extrair número do pedido
+                  pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
+                  if (pedidoCompleto?.cabecalho?.numero_pedido) {
+                    orderNumber = pedidoCompleto.cabecalho.numero_pedido.toString();
+                    console.log(`✅ Número do pedido extraído: ${orderNumber} (pedidoId: ${pedidoId})`);
+                  }
+                  
                   const stageData = await this.fetchPedidoStage(pedidoId);
                   if (stageData) {
                     if (stageData.stageName) {
@@ -3563,8 +3572,14 @@ export class OmieService {
                     }
                   }
                 } catch (error) {
-                  console.log(`⚠️ Erro ao buscar etapa do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
+                  console.log(`⚠️ Erro ao buscar dados do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
                 }
+              }
+              
+              // Fallback: tentar extrair número do pedido do campo nPed
+              if (!orderNumber && invoice.compl?.nPed) {
+                orderNumber = invoice.compl.nPed.toString();
+                console.log(`✅ Número do pedido extraído de nPed: ${orderNumber}`);
               }
               
               // Verificação adicional: campo de cancelamento direto da NF
@@ -3575,6 +3590,8 @@ export class OmieService {
               }
               
               const billingData = {
+                omieOrderId: pedidoId || null,
+                orderNumber: orderNumber || null,
                 omieInvoiceId,
                 invoiceNumber,
                 customerFantasyName: customerFantasyName || 'Cliente não identificado',
