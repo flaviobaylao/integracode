@@ -61,7 +61,16 @@ export async function handleIncomingMessage(
     
     let finalReply = result.response.reply;
     
-    if (result.response.action === 'send_order_form') {
+    if (result.response.action === 'redirect_to_store') {
+      console.log(`🏪 [AI-SERVICE] Enviando link da loja virtual simplificada...`);
+      const baseUrl = process.env.REPLIT_DEV_DOMAIN 
+        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+        : process.env.REPLIT_DOMAINS 
+          ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
+          : 'https://honest-sucos.replit.app';
+      const storeLink = `${baseUrl}/pedido-rapido?telefone=${encodeURIComponent(conversation.customerPhone)}`;
+      finalReply = result.response.reply + `\n\n🛒 *Acesse nossa loja:*\n${storeLink}`;
+    } else if (result.response.action === 'send_order_form') {
       console.log(`📋 [AI-SERVICE] Enviando formulário de pedido...`);
       const { ORDER_FORM_TEMPLATE } = await import("./ai-order-service");
       finalReply = result.response.reply + "\n\n" + ORDER_FORM_TEMPLATE;
@@ -466,7 +475,7 @@ export interface AutoChatResponse {
   reply: string;
   shouldTransfer: boolean;
   transferReason?: string;
-  action?: 'send_order_form' | 'process_order';
+  action?: 'send_order_form' | 'process_order' | 'redirect_to_store';
 }
 
 // Interface para contexto da conversa
@@ -492,15 +501,21 @@ Seu objetivo é:
 5. CAPTURAR PEDIDOS de clientes enviando o formulário estruturado
 
 IMPORTANTE - FLUXO DE PEDIDOS:
-Quando o cliente quiser fazer um pedido, VOCÊ DEVE:
-1. Enviar o formulário de pedido estruturado (action: "send_order_form")
-2. Quando o cliente responder com o formulário preenchido, validar os dados
-3. Se válido, processar o pedido (action: "process_order")
-4. Enviar confirmação ao cliente
+Quando o cliente quiser fazer um pedido, PREFIRA SEMPRE ENVIAR O LINK DA LOJA VIRTUAL:
+1. Primeiro, envie o link da loja virtual simplificada (action: "redirect_to_store")
+2. A loja permite o cliente escolher tipo de cliente, ver produtos e fazer pedido facilmente
+3. Se o cliente insistir em fazer pedido pelo chat, use o formulário (action: "send_order_form")
 
-Para ENVIAR O FORMULÁRIO, responda com:
+Para ENVIAR O LINK DA LOJA (PREFERIDO), responda com:
 {
-  "reply": "Ótimo! Vou te enviar nosso formulário de pedido. Por favor, preencha e envie de volta:",
+  "reply": "Ótimo! Preparei um link especial para você fazer seu pedido de forma rápida e fácil. Você vai poder escolher os produtos, ver os preços e finalizar seu pedido:",
+  "action": "redirect_to_store",
+  "shouldTransfer": false
+}
+
+Se o cliente PREFERIR FAZER PELO CHAT, envie o formulário:
+{
+  "reply": "Sem problemas! Vou te enviar nosso formulário de pedido. Por favor, preencha e envie de volta:",
   "action": "send_order_form",
   "shouldTransfer": false
 }
@@ -705,9 +720,16 @@ Se precisar transferir para humano, use:
   "action": null
 }
 
-Se o cliente quiser fazer pedido, use:
+Se o cliente quiser fazer pedido, PREFIRA enviar o link da loja virtual (mais fácil para o cliente):
 {
-  "reply": "Ótimo! Vou te enviar nosso formulário de pedido. Por favor, preencha todos os campos e me envie de volta!",
+  "reply": "Ótimo! Preparei um link especial para você fazer seu pedido de forma rápida e fácil. Você vai poder escolher os produtos, ver os preços e finalizar:",
+  "shouldTransfer": false,
+  "action": "redirect_to_store"
+}
+
+Se o cliente preferir fazer pelo chat ou pedir formulário, envie o formulário:
+{
+  "reply": "Sem problemas! Vou te enviar nosso formulário de pedido. Por favor, preencha todos os campos e me envie de volta!",
   "shouldTransfer": false,
   "action": "send_order_form"
 }

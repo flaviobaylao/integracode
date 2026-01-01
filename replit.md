@@ -1,15 +1,10 @@
 # Overview
 
-"Sistema Integra" is a comprehensive CRM and sales management system for Honest Sucos. It aims to optimize business operations by integrating customer relationship management, product catalog administration, sales tracking, and WhatsApp communication. The system enhances efficiency, improves customer service, expands market reach, and increases sales through features like robust sales tracking, advanced route optimization, fine-grained access control, an integrated e-commerce platform ("Hotsite Instagram"), and real-time billing data synchronization with Omie ERP for customer "positivation" status.
+"Sistema Integra" is a comprehensive CRM and sales management system designed for Honest Sucos. Its primary purpose is to optimize business operations by integrating customer relationship management, product catalog administration, sales tracking, and WhatsApp communication. The system aims to enhance efficiency, improve customer service, expand market reach, and increase sales through robust features like sales tracking, advanced route optimization, fine-grained access control, an integrated e-commerce platform ("Hotsite Instagram"), and real-time billing data synchronization with Omie ERP for customer "positivation" status.
 
 # User Preferences
 
 - **Communication Style**: Simple, everyday language.
-- **Testing Credentials**: 
-    - Admin: flavio@bebahonest.com.br / M@riafe1
-    - Motorista: kaique@bebahonest.com.br / test123
-    - Motorista: marcelo@bebahonest.com.br / Honest1*
-    - Telemarketing: telemarketing@bebahonest.com.br / test123
 
 # System Architecture
 
@@ -23,89 +18,25 @@
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, React Hook Form with Zod for form handling.
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
-- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista) restricting access based on user roles.
-- **WhatsApp Integration**: Evolution API (CHAT_HONEST instance) with webhook support for receiving messages, message sending, and real-time conversation tracking.
-  - **IMPORTANT - Webhook URL Configuration**: The system automatically detects the environment and configures the correct webhook URL:
-    - **Development (workspace)**: Uses `REPLIT_DEV_DOMAIN` because external traffic to `REPLIT_DOMAINS` routes to Autoscale, not the dev server
-    - **Production (Autoscale)**: Uses `REPLIT_DOMAIN` (singular) or falls back to `REPLIT_DOMAINS` (plural)
-- **WhatsApp Chat Center**: Complete conversational system at `/telemarketing/atendimento` with real-time conversation management, agent assignment, message read/unread tracking, automatic conversation creation from sales modals, quick template insertion, and status tracking (new → assigned → in-progress → resolved). Includes synchronization for conversations and historical messages.
-  - **Conversation Distribution System**: Intelligent round-robin distribution of incoming conversations among online telemarketing agents
-    - Round-robin algorithm with `chatDistributionState` singleton tracking `lastAssignedAgentId`
-    - Color-coded agent indicators (`AGENT_COLORS` palette of 10 colors) for visual identification
-    - Admin users see ALL conversations with color-coded assigned agent; telemarketing users only see their own
-    - Automatic ChatGPT standby activation when no human agents are online
-    - Automatic ChatGPT standby deactivation when a human agent comes online
-    - 5-minute timeout auto-redistribution job (runs every 2 minutes) for unattended conversations
-    - Transfer functionality: Admin-only endpoint `POST /api/chat/conversations/:id/transfer` with `toAgentId` (including 'chatgpt')
-    - Online agents list: `GET /api/chat/agents/online` includes ChatGPT when standby is active
-    - Fields: `assignedAgentId`, `assignedAgentColor`, `lastAttendedAt` on conversations
-    - Service file: `server/chat-distribution-service.ts` with round-robin, transfer, and standby functions
-- **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization (`fantasy_name`), and **strict abbreviated weekday format (Seg, Ter, Qua, Qui, Sex, Sab, Dom) throughout system** with robust error handling that never breaks on invalid formats.
-- **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Sales cards are accessible by sellers based on creation or customer assignment. Order release workflow allows admins to approve any blocked order.
-- **Delivery & Route Optimization**:
-    - **Route Generation**: Scheduled daily route generation using Nearest Neighbor + 2-opt algorithm with OSRM API, supporting both customers and leads.
-    - **Regional Sectorization**: Intelligent route distribution system using K-means clustering with Haversine distance, smart constraints for vehicle assignment, and validation layers.
-    - **Features**: Visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, check-in/check-out, checkpoint distance tracking, and automatic check-out.
-    - **Driver Transfer & Route Management**: Functionality to transfer deliveries between drivers and map visualization with stop order numbers.
-    - **Driver Interface**: Mobile-friendly app (`/rota-entrega`) for drivers with restricted access, date filtering, delivery lists, summary statistics, GPS check-in/check-out with mandatory photo capture, and Waze navigation.
-    - **Route Management**: Administrative users can manually add, delete, and optimize visits, including creation of empty routes.
-    - **Delivery Status**: Four levels: PENDENTE, EFETUADA, EM PAUSA, DEVOLVIDA, with visual badges.
-    - **Delivery History**: Comprehensive tracking with API endpoint for registering completed deliveries and automatic duration calculation.
-    - **Scheduling**: Hourly time slots, persistent delivery configurations in customer profiles, and synchronized across locations.
-    - **Data Enrichment**: Complete data enrichment for pending delivery orders, including CPF/CNPJ, invoice dates, coordinates, address, receiving weekdays, time slots, vehicle requirements, and average delivery time.
-    - **Route Lookup System**: Routes are now linked directly to **driver email + date** (primary keys). When a driver logs in at `/rota-entrega`, the system searches for routes using their email and selected date, without intermediary lookups. Driver email is stored in `driver_email` column when routes are created/updated.
-    - **Automatic Route Distribution**: When an admin saves/creates a route, it is automatically sent to the driver with status `'rota_enviada'` (not just saved). The driver sees it immediately in their `/rota-entrega` app without any additional action needed.
-    - **Empty Routes Support**: Admins can now create empty routes (without stops) for drivers. Routes can start empty and have stops added later through the UI. When a route is empty, a blue "Adicionar Visitas à Rota" button appears allowing admins to select pending deliveries and add them to the route.
+- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista).
+- **WhatsApp Integration**: Evolution API for message sending, real-time conversation tracking, and webhook support for environment-specific configurations (development/production).
+- **WhatsApp Chat Center**: A complete conversational system at `/telemarketing/atendimento` with real-time conversation management, intelligent round-robin agent distribution, quick templates, status tracking, and optional ChatGPT standby activation/deactivation. Includes features for conversation transfer and unattended conversation auto-redistribution.
+- **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization, and **strict abbreviated weekday format (Seg, Ter, Qua, Qui, Sex, Sab, Dom) throughout system** with robust error handling.
+- **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Order release workflow allows admin approval for blocked orders.
+- **Delivery & Route Optimization**: Scheduled daily route generation using Nearest Neighbor + 2-opt and OSRM API. Intelligent regional sectorization using K-means clustering with Haversine distance. Features include visual mapping, checkpoint registration, performance dashboards, multi-vehicle planning, driver transfer, and a mobile-friendly driver interface (`/rota-entrega`) with GPS check-in/check-out and photo capture. Admins can manually manage and optimize routes, including creating empty routes for later population. Routes are linked directly to `driver email + date`.
 - **WhatsApp Mobile Optimization**: Smart device detection for opening WhatsApp links.
-- **Customer Management**: Client-side search and filtering, inactivation, and detailed delivery configuration displays. Implements a three-layer date system for visit days, calculated delivery days, and manually configured receiving weekdays.
-- **Mapa de Clientes**: Interactive Leaflet map (`/mapa-clientes`) displaying active customers with color-coded pins based on visit day, featuring clickable pins with popups, filtering, and in-map customer editing for administrative users.
-- **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices. Order blocking system. Hotsite orders are sent to Omie ERP with automatic customer creation and robust validation. Supports specific Omie invoice stages for delivery workflow. **Automatic cleanup**: Removes billings from "Aguardando Rota" stage that no longer exist in Omie (e.g., NFs that lost their stage status).
+- **Customer Management**: Client-side search and filtering, inactivation, detailed delivery configurations, and a three-layer date system for visit days.
+- **Mapa de Clientes**: Interactive Leaflet map (`/mapa-clientes`) displaying active customers with color-coded pins, filtering, and in-map editing for administrative users.
+- **Omie ERP Integration**: Hourly synchronization of clients, vendors, products, overdue debts, and invoices. Order blocking system, Hotsite order submission to Omie with automatic customer creation and robust validation. Includes automatic cleanup for billings no longer present in Omie.
 - **HR Management (RH)**: HR tracking for seller performance (monthly mileage, work hours, daily attendance).
-- **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation utility with dry-run mode.
-- **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, recognition/registration, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
-- **Leads Management**: Integrated lead tracking with route optimization, full customer registration form with "isLead" flag. Leads support:
-  - Automatic creation in customers and leads tables
-  - Automatic addition to active customers list for routing
-  - Seller assignment and tracking
-  - Check-in/check-out with mandatory photo requirement
-  - Conversion to full customer workflow
-  - Updates within daily routes with photo enforcement
-- **Lead Check-in/Check-out**: Sellers can perform check-in and check-out on leads with improved error handling:
-  - POST `/api/leads/:id/check-in` - Requires photo, validates location, calculates distance
-  - POST `/api/leads/:id/check-out` - Requires prior check-in
-  - Tracks lastCheckInAt and lastCheckOutAt timestamps
-  - Updates lead status to "contacted" on successful check-in
-  - **Error Handling**: Enhanced error messages and logging for troubleshooting
-- **Phone Number Mapping**: Maps alternative phone numbers to canonical numbers to prevent conversation fragmentation
-  - Table `phone_number_mappings` stores alternative->canonical phone number relationships
-  - API endpoint POST `/api/chat/phone-mappings` (admin-only) to create new mappings
-  - Webhook automatically looks up phone mappings when receiving messages
-  - Example: 5504884295924 can be mapped to 5562949981841 to consolidate conversations from the same contact using different phone numbers
-- **Automatic Data Backup**: Complete backup system protecting all order data with daily scheduled backups and manual trigger options. Stores historical snapshots in an `orders_backup` table.
-- **Sales Card Duplication**: Fixed endpoint to return duplicated card with all relations loaded (customer, seller) for immediate editing
-- **ChatGPT Auto-Attendance**: Configurable AI-powered automatic customer service system:
-  - Accessible at `/telemarketing/ai-settings`
-  - **Four operating modes**: disabled, manual (always active), schedule (outside business hours), timeout (after X minutes without human response)
-  - **Business hours configuration**: Define days and hours when human agents are available
-  - **Handoff keywords**: Automatic transfer to human when customer mentions specific words
-  - **Customizable prompts**: System prompt and company context for AI behavior
-  - **Model selection**: Choose between GPT-4o-mini, GPT-4o, or GPT-4 Turbo
-  - **Test interface**: Test AI responses before enabling
-  - **Audit logging**: Track all AI interactions in `chat_ai_logs` table
-  - **Settings stored in**: `chat_ai_settings` table
-  - **Automatic AI Reports**: Three reports generated daily at 06:00h (UTC-3) and on startup, automatically attached to AI context:
-    - **Customers Report**: Complete customer registration data (name, document, address, phone, email, visit days, last purchase)
-    - **Overdue Debts Report**: All overdue debt information by customer (amounts, days overdue, document details)
-    - **Billings Summary Report**: Last 30 days of invoices summarized by customer (total value, order count, last order date)
-  - **Reports stored in**: `chat_ai_reports` table with automatic 2-day expiration
-  - **Service file**: `server/ai-reports-service.ts` with `generateAndSaveAllReports()` and `getAiReportsContext()` functions
-  - **Automated Order Capture via ChatGPT**: Customers can place orders directly through WhatsApp chat
-    - **Order Flow**: Customer expresses intent to order → ChatGPT sends structured form → Customer fills form → ChatGPT validates → Creates sales_card automatically
-    - **Form-based approach**: Prevents data entry errors by requiring all necessary fields (name, CPF/CNPJ, address, products, payment, delivery day)
-    - **Actions**: `send_order_form` sends ORDER_FORM_TEMPLATE, `process_order` validates and creates sales_card
-    - **Validation**: `chatOrderFormSchema` validates order data with Zod, handles partial/invalid submissions gracefully
-    - **Sales card creation**: Creates with `status: 'pending'`, `source: 'whatsapp_chatgpt'` for Omie sync
-    - **Service file**: `server/ai-order-service.ts` with `parseOrderFormMessage()`, `createSalesCardFromChatOrder()`, `generateOrderConfirmation()`
+- **System Administration**: Admin-only page (`/admin/system`) with data maintenance tools, including delivery days recalculation.
+- **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
+- **Leads Management**: Integrated lead tracking with route optimization, full customer registration form with "isLead" flag. Supports automatic creation, seller assignment, check-in/check-out with photo requirement, and conversion to full customer workflow.
+- **Lead Check-in/Check-out**: Sellers can perform check-in/check-out on leads via dedicated API endpoints, with photo requirement, location validation, distance calculation, and improved error handling.
+- **Phone Number Mapping**: Maps alternative phone numbers to canonical numbers to consolidate conversations, stored in `phone_number_mappings` table, managed via an admin-only API.
+- **Automatic Data Backup**: Complete backup system for all order data with daily scheduled backups and manual trigger options, storing historical snapshots in an `orders_backup` table.
+- **Sales Card Duplication**: Endpoint for duplicating sales cards with all related entities loaded.
+- **ChatGPT Auto-Attendance**: Configurable AI-powered customer service system at `/telemarketing/ai-settings`. Features four operating modes (disabled, manual, schedule, timeout), configurable business hours, handoff keywords, customizable prompts, model selection (GPT-4o-mini, GPT-4o, GPT-4 Turbo), test interface, and audit logging. Includes daily AI reports for customer data, overdue debts, and billing summaries. Supports automated order capture via ChatGPT, allowing customers to place orders through a form-based approach via WhatsApp or by redirecting to a simplified virtual store (`/pedido-rapido`). The simplified store allows public access, pre-fills phone numbers from WhatsApp, applies 5-tier pricing, validates minimum orders, and creates orders via a public API.
 
 # External Dependencies
 

@@ -57,6 +57,7 @@ import SalesCardDetail from "@/pages/SalesCardDetail";
 import ChatAISettings from "@/pages/ChatAISettings";
 import BulkMessage from "@/pages/BulkMessage";
 import SDRDigital from "@/pages/SDRDigital";
+import PedidoRapido from "@/pages/PedidoRapido";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -148,6 +149,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
       <Route path="/admin-login" component={AdminLogin} />
+      <Route path="/pedido-rapido" component={PedidoRapido} />
       {!isAuthenticated ? (
         <Route path="/" component={Landing} />
       ) : (
