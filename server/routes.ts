@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
-import { getOmieService, isOmieConfigured, createOmieOrder } from "./omieIntegration";
+import { getOmieService, isOmieConfigured, createOmieOrder, OmieService } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -9434,22 +9434,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         console.log(`📝 [SAVE-ROUTES] Processando rota com data: ${dateStr}, driverId: ${route.driverId}, data bruta: ${route.routeDate}`);
         
-        // ✅ NOVO: Buscar rotas planejadas existentes para este motorista nesta data (comparação de string)
-        const existingPlannedRoutes = await db.select().from(deliveryRoutes)
+        // ✅ CORRIGIDO: Buscar rotas existentes para este motorista nesta data (qualquer status ativo)
+        const existingRoutes = await db.select().from(deliveryRoutes)
           .where(and(
             eq(deliveryRoutes.driverId, route.driverId),
             sql`${deliveryRoutes.routeDate}::text = ${dateStr}`,
-            eq(deliveryRoutes.status, 'planejada')
+            sql`${deliveryRoutes.status} NOT IN ('cancelled', 'concluida', 'cancelada')`
           ));
         
-        console.log(`🔍 [SAVE-ROUTES] Encontradas ${existingPlannedRoutes.length} rotas planejadas para motorista ${route.driverId} em ${dateStr}`);
+        console.log(`🔍 [SAVE-ROUTES] Encontradas ${existingRoutes.length} rotas ativas para motorista ${route.driverId} em ${dateStr}`);
         
         let savedRoute: any;
         let savedStops: any[];
         
-        if (existingPlannedRoutes.length > 0) {
+        if (existingRoutes.length > 0) {
           // ✅ ATUALIZAR rota existente (usar a primeira)
-          const routeToUpdate = existingPlannedRoutes[0];
+          const routeToUpdate = existingRoutes[0];
           console.log(`♻️ [SAVE-ROUTES] Atualizando rota planejada existente: ${routeToUpdate.id} (${routeToUpdate.routeName})`);
           
           // Deletar paradas antigas
@@ -9479,11 +9479,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Inserir paradas novas
           savedStops = await db.insert(deliveryRouteStops).values(stopsData).returning();
           
-          // Buscar email do driver para atualizar
+          // Buscar email do driver para atualizar (normalizado para lowercase)
           const driver = await db.select().from(deliveryDrivers)
             .where(eq(deliveryDrivers.id, route.driverId))
             .limit(1);
-          const driverEmail = driver.length > 0 ? driver[0].email : '';
+          const driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          console.log(`📧 [SAVE-ROUTES] Email do motorista: "${driverEmail}" (id: ${route.driverId})`);
           
           // Atualizar apenas dados da rota
           const [updatedRoute] = await db.update(deliveryRoutes)
@@ -9508,12 +9509,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log(`🆕 [SAVE-ROUTES] Criando nova rota: ${routeName}`);
           
-          // Buscar email do driver
+          // Buscar email do driver (normalizado para lowercase)
           const driver = await db.select().from(deliveryDrivers)
             .where(eq(deliveryDrivers.id, route.driverId))
             .limit(1);
           
-          const driverEmail = driver.length > 0 ? driver[0].email : '';
+          const driverEmail = driver.length > 0 ? (driver[0].email || '').toLowerCase().trim() : '';
+          console.log(`📧 [SAVE-ROUTES] Email do motorista: "${driverEmail}" (id: ${route.driverId})`);
           
           const routeData = {
             routeName,
@@ -9573,6 +9575,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (allBillingIds.length > 0) {
         await storage.updateBillingsStatus(allBillingIds, 'Em Rota');
         console.log(`📦 [SAVE-ROUTES] ${allBillingIds.length} billings atualizados para "Em Rota"`);
+        
+        // ✅ SINCRONIZAÇÃO OMIE: Alterar etapa das NFs para "Em Rota" (código 20)
+        try {
+          console.log(`🔄 [OMIE-SYNC] Iniciando sincronização de etapas para ${allBillingIds.length} billings...`);
+          
+          // Buscar billings com omieOrderId
+          const billingsData = await db.select({
+            id: billings.id,
+            omieOrderId: billings.omieOrderId,
+            orderNumber: billings.orderNumber
+          }).from(billings).where(inArray(billings.id, allBillingIds));
+          
+          // Filtrar apenas os que têm omieOrderId válido
+          const ordersToUpdate = billingsData
+            .filter(b => b.omieOrderId && !isNaN(parseInt(b.omieOrderId)))
+            .map(b => ({
+              codigoPedido: parseInt(b.omieOrderId!),
+              novaEtapa: OmieService.STAGE_EM_ROTA // '20'
+            }));
+          
+          if (ordersToUpdate.length > 0) {
+            console.log(`📤 [OMIE-SYNC] Atualizando ${ordersToUpdate.length} pedidos para etapa "Em Rota" (20)...`);
+            
+            // Chamar API Omie em lote (sem bloquear resposta)
+            const omie = getOmieService(storage);
+            if (omie) {
+              omie.trocarEtapasPedidosEmLote(ordersToUpdate)
+                .then(result => {
+                  console.log(`✅ [OMIE-SYNC] Etapas atualizadas: ${result.successCount} sucesso, ${result.errorCount} erros`);
+                })
+                .catch(error => {
+                  console.error(`❌ [OMIE-SYNC] Erro ao atualizar etapas:`, error);
+                });
+            } else {
+              console.log(`⚠️ [OMIE-SYNC] Omie não configurado, não foi possível atualizar etapas`);
+            }
+          } else {
+            console.log(`⚠️ [OMIE-SYNC] Nenhum billing com omieOrderId válido encontrado`);
+          }
+        } catch (omieError) {
+          // Não bloquear salvamento por erro de Omie
+          console.error(`⚠️ [OMIE-SYNC] Erro ao sincronizar com Omie (não crítico):`, omieError);
+        }
       }
 
       console.log(`✅ [SAVE-ROUTES] ${savedRoutes.length} rotas salvas com sucesso`);
@@ -9730,7 +9775,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${userEmail})`,
             sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDateStr} AS DATE)`,
-            inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
+            inArray(deliveryRoutes.status, ['rota_salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         )
         .orderBy(asc(deliveryRoutes.createdAt));
@@ -9814,7 +9859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(
             sql`LOWER(${deliveryRoutes.driverEmail}) = LOWER(${email})`,
             sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${date} AS DATE)`,
-            inArray(deliveryRoutes.status, ['rota salva', 'rota_enviada', 'em_andamento', 'concluida'])
+            inArray(deliveryRoutes.status, ['rota_salva', 'rota_enviada', 'em_andamento', 'concluida'])
           )
         );
       
