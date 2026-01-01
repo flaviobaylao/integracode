@@ -3842,6 +3842,87 @@ export class OmieService {
     }
   }
 
+  // Constantes para códigos de etapa do Omie
+  static readonly STAGE_EM_ROTA = '20';
+  static readonly STAGE_ENTREGUE = '70';
+  static readonly STAGE_AGUARDANDO_ROTA = '80';
+
+  // Trocar etapa de um pedido no Omie
+  async trocarEtapaPedido(codigoPedido: number, novaEtapa: string): Promise<{
+    success: boolean;
+    message: string;
+    data?: any;
+  }> {
+    try {
+      console.log(`🔄 [OMIE-ETAPA] Alterando etapa do pedido ${codigoPedido} para ${novaEtapa}`);
+      
+      const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', {
+        codigo_pedido: codigoPedido,
+        etapa: novaEtapa
+      });
+      
+      console.log(`✅ [OMIE-ETAPA] Etapa do pedido ${codigoPedido} alterada para ${novaEtapa}:`, response);
+      
+      return {
+        success: true,
+        message: `Etapa alterada com sucesso para ${novaEtapa}`,
+        data: response
+      };
+    } catch (error: any) {
+      console.error(`❌ [OMIE-ETAPA] Erro ao alterar etapa do pedido ${codigoPedido}:`, error);
+      
+      // Verificar se é erro de pedido não encontrado ou já faturado
+      const errorMessage = error.message || error.toString();
+      
+      return {
+        success: false,
+        message: `Erro ao alterar etapa: ${errorMessage}`
+      };
+    }
+  }
+
+  // Alterar etapas de múltiplos pedidos (para uso em lote)
+  async trocarEtapasPedidosEmLote(pedidos: { codigoPedido: number; novaEtapa: string }[]): Promise<{
+    successCount: number;
+    errorCount: number;
+    results: Array<{ codigoPedido: number; success: boolean; message: string }>;
+  }> {
+    console.log(`🔄 [OMIE-ETAPA-LOTE] Alterando etapas de ${pedidos.length} pedidos...`);
+    
+    const results: Array<{ codigoPedido: number; success: boolean; message: string }> = [];
+    let successCount = 0;
+    let errorCount = 0;
+    
+    // Processar em paralelo com limite de 5 requisições simultâneas
+    const chunkSize = 5;
+    for (let i = 0; i < pedidos.length; i += chunkSize) {
+      const chunk = pedidos.slice(i, i + chunkSize);
+      const chunkResults = await Promise.all(
+        chunk.map(async (pedido) => {
+          const result = await this.trocarEtapaPedido(pedido.codigoPedido, pedido.novaEtapa);
+          return {
+            codigoPedido: pedido.codigoPedido,
+            success: result.success,
+            message: result.message
+          };
+        })
+      );
+      
+      for (const result of chunkResults) {
+        results.push(result);
+        if (result.success) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      }
+    }
+    
+    console.log(`✅ [OMIE-ETAPA-LOTE] Concluído: ${successCount} sucesso, ${errorCount} erros`);
+    
+    return { successCount, errorCount, results };
+  }
+
   // Listar pedidos por etapa do Omie
   async getOrdersByStage(stage: string, page = 1, pageSize = 50): Promise<{
     orders: any[];
