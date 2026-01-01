@@ -3856,16 +3856,29 @@ export class OmieService {
     try {
       console.log(`🔄 [OMIE-ETAPA] Alterando etapa do pedido ${codigoPedido} para ${novaEtapa}`);
       
-      const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', {
-        codigo_pedido: codigoPedido,
-        etapa: novaEtapa
-      });
+      // API Omie usa nCodPed e cEtapa como parâmetros
+      const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', [{
+        nCodPed: codigoPedido,
+        cEtapa: novaEtapa
+      }]);
       
-      console.log(`✅ [OMIE-ETAPA] Etapa do pedido ${codigoPedido} alterada para ${novaEtapa}:`, response);
+      console.log(`✅ [OMIE-ETAPA] Etapa do pedido ${codigoPedido} alterada para ${novaEtapa}:`, JSON.stringify(response));
+      
+      // Verificar se a resposta indica sucesso
+      const status = response.cCodStatus || response.cCod || '';
+      const descStatus = response.cDescStatus || response.cDescricaoStatus || '';
+      
+      if (status === '0' || descStatus.toLowerCase().includes('sucesso')) {
+        return {
+          success: true,
+          message: `Etapa alterada com sucesso para ${novaEtapa}`,
+          data: response
+        };
+      }
       
       return {
         success: true,
-        message: `Etapa alterada com sucesso para ${novaEtapa}`,
+        message: descStatus || `Etapa alterada para ${novaEtapa}`,
         data: response
       };
     } catch (error: any) {
