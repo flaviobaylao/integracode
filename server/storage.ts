@@ -236,7 +236,7 @@ export interface IStorage {
   getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
-  getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string; savedOnly?: boolean }): Promise<any[]>;
+  getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; driverId?: string; savedOnly?: boolean }): Promise<any[]>;
   getDeliveryRoute(id: string): Promise<any | undefined>;
   createDeliveryRoute(route: any): Promise<any>;
   updateDeliveryRoute(id: string, route: any): Promise<any>;
@@ -4711,7 +4711,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Delivery routes operations
-  async getDeliveryRoutes(filters?: { status?: string; routeDate?: Date; driverId?: string; savedOnly?: boolean }): Promise<any[]> {
+  async getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; driverId?: string; savedOnly?: boolean }): Promise<any[]> {
     let query = db.select().from(deliveryRoutes);
     
     const conditions: any[] = [];
@@ -4722,7 +4722,11 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(deliveryRoutes.driverId, filters.driverId));
     }
     if (filters?.routeDate) {
-      conditions.push(eq(deliveryRoutes.routeDate, sql`${filters.routeDate}::date`));
+      // Usar comparação de string YYYY-MM-DD para evitar problemas de timezone
+      const dateStr = typeof filters.routeDate === 'string' 
+        ? filters.routeDate.split('T')[0]
+        : filters.routeDate.toISOString().split('T')[0];
+      conditions.push(sql`${deliveryRoutes.routeDate}::text LIKE ${dateStr + '%'}`);
     }
     if (filters?.savedOnly) {
       // Filtrar apenas rotas salvas (que têm routeName)

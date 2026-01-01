@@ -9591,7 +9591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const filters: any = {};
       if (status) filters.status = status;
-      if (routeDate) filters.routeDate = new Date(routeDate);
+      if (routeDate) filters.routeDate = routeDate; // Manter como string YYYY-MM-DD
       if (driverId) filters.driverId = driverId;
       if (savedOnly === 'true') filters.savedOnly = true;
       
