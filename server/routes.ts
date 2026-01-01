@@ -5473,7 +5473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const response = await (omieService as any).makeRequest(
         '/produtos/etapafat/',
         'ListarEtapasFaturamento',
-        {}
+        [{}]
       );
 
       output += '📊 Resposta da API:\n' + JSON.stringify(response, null, 2) + '\n\n';
