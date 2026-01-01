@@ -5557,6 +5557,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint temporário para testar troca de etapa (SEM AUTH PARA TESTE)
+  app.get('/api/test-change-stage/:omieOrderId/:stageCode', async (req: any, res) => {
+    try {
+      const { omieOrderId, stageCode } = req.params;
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({ 
+          message: "Integração Omie não configurada" 
+        });
+      }
+
+      console.log(`🧪 [TEST-STAGE] Testando troca de etapa: pedido ${omieOrderId} para etapa ${stageCode}`);
+      
+      const result = await omieService.trocarEtapaPedido(parseInt(omieOrderId), stageCode);
+      
+      console.log(`🧪 [TEST-STAGE] Resultado:`, JSON.stringify(result, null, 2));
+      
+      res.json({
+        success: result.success,
+        message: result.message,
+        omieOrderId,
+        stageCode,
+        response: result.data
+      });
+
+    } catch (error) {
+      console.error('❌ Erro ao testar troca de etapa:', error);
+      res.status(500).json({ 
+        message: 'Erro ao testar troca de etapa', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   // Get orders by step/stage
   app.get('/api/omie/orders/:step', authenticateUser, async (req: any, res) => {
     try {
