@@ -7109,6 +7109,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Cancelar sincronização de faturamentos em andamento
+  app.post('/api/billings/sync/cancel', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      const result = omieService.cancelSync();
+      console.log('🛑 Cancelamento de sincronização solicitado:', result);
+      
+      res.json(result);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao cancelar sincronização:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
+  // Verificar status da sincronização
+  app.get('/api/billings/sync/status', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+    try {
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(503).json({
+          message: 'Integração Omie não configurada'
+        });
+      }
+      
+      const status = omieService.getSyncStatus();
+      res.json(status);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao verificar status:', error);
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        message: error.message 
+      });
+    }
+  });
+
   // Sincronizar faturamentos do Omie por período
   app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home, Loader2 } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home, Loader2, X } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Select,
@@ -240,6 +240,41 @@ export default function Billings() {
 
   const handleSyncOmieBillings = () => {
     syncOmieBillingsMutation.mutate();
+  };
+
+  // Mutation para cancelar sincronização em andamento
+  const cancelSyncMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/billings/sync/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao cancelar');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: 'Cancelamento solicitado',
+        description: result.message || 'A sincronização será interrompida em breve.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao cancelar',
+        description: error.message || 'Erro desconhecido',
+        variant: 'destructive',
+      });
+    }
+  });
+
+  const handleCancelSync = () => {
+    cancelSyncMutation.mutate();
   };
 
   // Mutation para atualizar seller_names retroativamente
@@ -542,8 +577,24 @@ export default function Billings() {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Sincronização Total em Andamento...
                 </div>
-                <div className="text-sm font-bold">
-                  {displaySync.currentProgress || 0}%
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-bold">
+                    {displaySync.currentProgress || 0}%
+                  </div>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    onClick={handleCancelSync}
+                    disabled={cancelSyncMutation.isPending}
+                    data-testid="button-cancel-sync"
+                  >
+                    {cancelSyncMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <X className="h-4 w-4 mr-2" />
+                    )}
+                    Cancelar
+                  </Button>
                 </div>
               </div>
               <div className="h-2 w-full bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">

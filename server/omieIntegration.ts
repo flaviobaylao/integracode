@@ -405,6 +405,25 @@ export class OmieService {
   private vendorsCache: Map<string, any> = new Map(); // Cache para vendedores
   private stageNamesCache: Map<string, string> = new Map(); // Cache para nomes das etapas
   private paymentMethodsCache: Map<string, string> = new Map(); // Cache para formas de pagamento
+  
+  // Controle de cancelamento de sincronização
+  private syncCancelled: boolean = false;
+  private isSyncing: boolean = false;
+  
+  // Método para cancelar sincronização em andamento
+  public cancelSync(): { success: boolean; message: string } {
+    if (!this.isSyncing) {
+      return { success: false, message: 'Nenhuma sincronização em andamento' };
+    }
+    this.syncCancelled = true;
+    console.log('🛑 Solicitação de cancelamento de sincronização recebida');
+    return { success: true, message: 'Cancelamento solicitado. A sincronização será interrompida em breve.' };
+  }
+  
+  // Método para verificar status da sincronização
+  public getSyncStatus(): { isSyncing: boolean; cancelled: boolean } {
+    return { isSyncing: this.isSyncing, cancelled: this.syncCancelled };
+  }
 
   // Limpar cache
   public clearCache(): void {
@@ -3316,6 +3335,10 @@ export class OmieService {
     const fullResync = options?.fullResync ?? false;
     
     try {
+      // Marcar que está sincronizando e resetar flag de cancelamento
+      this.isSyncing = true;
+      this.syncCancelled = false;
+      
       if (fullResync) {
         console.log('🔄 SINCRONIZAÇÃO TOTAL: Limpando todos os faturamentos existentes...');
         const resetResult = await this.storage.resetAllBillings();
@@ -3342,6 +3365,21 @@ export class OmieService {
       const maxPagesWithoutData = 100; // Parar se 100 páginas consecutivas sem dados válidos de 2025
       
       while (hasMorePages) {
+        // Verificar se foi solicitado cancelamento
+        if (this.syncCancelled) {
+          console.log('🛑 Sincronização cancelada pelo usuário');
+          this.isSyncing = false;
+          return {
+            totalProcessed,
+            imported,
+            updated,
+            skipped,
+            errors,
+            isComplete: false,
+            message: `Sincronização cancelada. Processadas ${totalProcessed} notas fiscais (${imported} novas, ${updated} atualizadas, ${skipped} ignoradas).`
+          };
+        }
+        
         try {
           console.log(`📄 Processando página ${page}...`);
           
@@ -3727,6 +3765,9 @@ export class OmieService {
       
       const isComplete = recordsProcessedThisSync < maxRecordsPerSync;
       
+      // Marcar que finalizou a sincronização
+      this.isSyncing = false;
+      
       return {
         totalProcessed,
         imported,
@@ -3738,6 +3779,8 @@ export class OmieService {
       };
       
     } catch (error) {
+      // Marcar que finalizou a sincronização (mesmo com erro)
+      this.isSyncing = false;
       console.error('❌ Erro na sincronização de faturamentos:', error);
       throw error;
     }
