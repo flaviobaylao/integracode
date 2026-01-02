@@ -56,7 +56,6 @@ export default function DeliveryDailySummary() {
       const params = new URLSearchParams();
       if (selectedDate) params.append('routeDate', selectedDate);
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
-      params.append('savedOnly', 'true');
 
       const url = `/api/delivery-routes?${params.toString()}`;
       const res = await fetch(url, { credentials: 'include' });
