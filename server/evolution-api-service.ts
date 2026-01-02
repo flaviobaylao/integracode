@@ -61,24 +61,16 @@ class EvolutionAPIService {
     this.config = config;
     console.log('✅ Evolution API configurada:', config.apiUrl);
 
-    // Auto-configurar webhook na inicialização
-    const instanceName = config.instanceName || process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+    // Webhook configuration is handled by routes.ts to avoid conflicts
+    // In development mode, we DON'T reconfigure to preserve production webhook
     const isDev = process.env.NODE_ENV === 'development';
     const devDomain = process.env.REPLIT_DEV_DOMAIN;
-    const prodDomain = process.env.REPLIT_DOMAIN || process.env.REPLIT_DOMAINS;
-
+    
     if (isDev && devDomain) {
-      // Modo dev (Workspace) - configurar webhook para desenvolvimento automaticamente
-      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
-      console.log(`🔧 [WEBHOOK-INIT] Modo DESENVOLVIMENTO - configurando webhook para: ${webhookUrl}`);
-      this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
-    } else if (!isDev && prodDomain) {
-      // Priorizar REPLIT_DOMAIN para Autoscale (singular)
-      const primaryDomain = process.env.REPLIT_DOMAIN || (Array.isArray(prodDomain) ? prodDomain[0] : prodDomain.split(',')[0]);
-      const webhookUrl = `https://${primaryDomain}/api/chat/webhook/messages`;
-      console.log(`🚀 [WEBHOOK-INIT] Configurando para produção: ${webhookUrl}`);
-      this.setWebhook(instanceName, webhookUrl).catch(err => console.error('❌ [WEBHOOK-INIT] Erro:', err.message));
+      console.log(`⚠️  [WEBHOOK-INIT] Modo DESENVOLVIMENTO - NÃO reconfigurando webhook para preservar produção`);
+      console.log(`💡 [WEBHOOK-INIT] Use POST /api/chat/webhook/force-dev-config para testar em dev`);
     }
+    // Production webhook configuration is handled in routes.ts
   }
 
   public isConfigured(): boolean {

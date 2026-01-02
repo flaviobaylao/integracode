@@ -267,9 +267,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('⚠️  [WEBHOOK] Modo desenvolvimento detectado - NÃO reconfigurando webhook');
       console.log('⚠️  [WEBHOOK] O webhook de produção será mantido para receber mensagens');
       console.log('💡 [WEBHOOK] Para testar webhooks em dev, use: POST /api/chat/webhook/force-dev-config');
-    } else if (prodDomainPlural) {
-      // Production: configure webhook to use production domain
-      const webhookUrl = `https://${prodDomainPlural}/api/chat/webhook/messages`;
+    } else {
+      // Production: use fixed production domain to avoid issues with dynamic domain detection
+      const prodDomain = prodDomainPlural || 'integrahonest.replit.app';
+      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
       console.log('🔧 [WEBHOOK] Modo PRODUÇÃO - configurando webhook para:', webhookUrl);
 
       try {
@@ -301,8 +302,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (err) {
         console.warn('⚠️  Erro ao tentar configurar webhook:', err);
       }
-    } else {
-      console.warn('⚠️  [WEBHOOK] Nenhum domínio de produção encontrado - webhook não configurado');
     }
   } else {
     console.warn('⚠️  Evolution API não completamente configurada. Verifique as secrets:', {
