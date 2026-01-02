@@ -75,7 +75,17 @@ export default function RotaEntrega() {
   const [pendingAction, setPendingAction] = useState<{ type: 'checkin' | 'checkout', stopId: string, latitude: number, longitude: number } | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [isSubmittingPhoto, setIsSubmittingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Função para fechar o modal e limpar estados
+  const closePhotoModal = () => {
+    if (isSubmittingPhoto) return; // Não fechar enquanto envia
+    setShowPhotoModal(false);
+    setPendingAction(null);
+    setCapturedPhoto(null);
+    setPhotoPreview(null);
+  };
 
   const { data: routes = [], isLoading, refetch, error: routesError } = useQuery<DeliveryRoute[]>({
     queryKey: ['', 'api', 'delivery-routes', 'driver', 'my-routes', selectedDate],
@@ -232,8 +242,10 @@ export default function RotaEntrega() {
   };
 
   const handleConfirmPhoto = async () => {
-    if (!capturedPhoto || !pendingAction) return;
+    if (!capturedPhoto || !pendingAction || isSubmittingPhoto) return;
 
+    setIsSubmittingPhoto(true);
+    
     const formData = new FormData();
     formData.append('photo', capturedPhoto);
     formData.append('latitude', pendingAction.latitude.toString());
@@ -263,16 +275,15 @@ export default function RotaEntrega() {
       });
 
       refetch();
-      setShowPhotoModal(false);
-      setPendingAction(null);
-      setCapturedPhoto(null);
-      setPhotoPreview(null);
+      closePhotoModal();
     } catch (error: any) {
       toast({
         title: `Erro ao fazer ${pendingAction.type === 'checkin' ? 'check-in' : 'check-out'}`,
         description: error.message,
         variant: "destructive",
       });
+    } finally {
+      setIsSubmittingPhoto(false);
     }
   };
 
@@ -576,7 +587,7 @@ export default function RotaEntrega() {
       </div>
 
       {/* Photo Capture Modal */}
-      <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
+      <Dialog open={showPhotoModal} onOpenChange={(open) => !open && closePhotoModal()}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -588,7 +599,13 @@ export default function RotaEntrega() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {!photoPreview ? (
+            {isSubmittingPhoto ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+                <p className="text-lg font-medium text-gray-700">Enviando foto...</p>
+                <p className="text-sm text-gray-500">Aguarde, isso pode levar alguns segundos</p>
+              </div>
+            ) : !photoPreview ? (
               <div className="space-y-3">
                 <input
                   ref={fileInputRef}
@@ -606,6 +623,14 @@ export default function RotaEntrega() {
                 >
                   <Camera className="mr-2 h-4 w-4" />
                   Tirar Foto
+                </Button>
+                <Button
+                  onClick={closePhotoModal}
+                  variant="outline"
+                  className="w-full"
+                  data-testid="button-cancel-photo"
+                >
+                  ← Voltar às Entregas
                 </Button>
               </div>
             ) : (
@@ -639,6 +664,14 @@ export default function RotaEntrega() {
                     Confirmar
                   </Button>
                 </div>
+                <Button
+                  onClick={closePhotoModal}
+                  variant="ghost"
+                  className="w-full text-gray-500"
+                  data-testid="button-back-to-deliveries"
+                >
+                  ← Voltar às Entregas
+                </Button>
               </div>
             )}
           </div>
