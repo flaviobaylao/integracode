@@ -111,7 +111,13 @@ async function syncComplete(horario: string) {
       });
       
       const billingResult = await (omieService as any).syncBillings({
-        onProgress: (progress: { processed: number, total: number }) => {
+        onProgress: async (progress: { processed: number, total: number }) => {
+          // Verificar se foi cancelado antes de atualizar
+          const syncStatus = omieService.getSyncStatus();
+          if (syncStatus.cancelled) {
+            console.log('🛑 [SYNC] Cancelamento detectado no callback de progresso - ignorando atualização');
+            return;
+          }
           // Atualizar progresso em tempo real
           storage.updateSyncStatus('omie_billings', { 
             status: 'in_progress', 

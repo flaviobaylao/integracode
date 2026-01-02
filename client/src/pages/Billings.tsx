@@ -260,9 +260,13 @@ export default function Billings() {
     },
     onSuccess: (result) => {
       toast({
-        title: 'Cancelamento solicitado',
-        description: result.message || 'A sincronização será interrompida em breve.',
+        title: 'Sincronização cancelada',
+        description: result.message || 'A sincronização foi interrompida.',
       });
+      // Invalidar todos os caches relacionados para forçar atualização
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/sync-status'] });
     },
     onError: (error: any) => {
       toast({

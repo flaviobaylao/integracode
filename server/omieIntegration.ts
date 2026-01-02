@@ -3594,12 +3594,24 @@ export class OmieService {
               let pedidoCompleto: any = null;
               
               if (pedidoId) {
+                // Verificar cancelamento antes de buscar dados do pedido
+                if (this.syncCancelled) {
+                  console.log('🛑 Cancelamento detectado no loop de notas - interrompendo');
+                  throw new Error('SYNC_CANCELLED');
+                }
+                
                 try {
                   // Buscar pedido completo para extrair número do pedido
                   pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
                   if (pedidoCompleto?.cabecalho?.numero_pedido) {
                     orderNumber = pedidoCompleto.cabecalho.numero_pedido.toString();
                     console.log(`✅ Número do pedido extraído: ${orderNumber} (pedidoId: ${pedidoId})`);
+                  }
+                  
+                  // Verificar cancelamento após operação assíncrona
+                  if (this.syncCancelled) {
+                    console.log('🛑 Cancelamento detectado após buscar pedido - interrompendo');
+                    throw new Error('SYNC_CANCELLED');
                   }
                   
                   const stageData = await this.fetchPedidoStage(pedidoId);
@@ -3618,6 +3630,10 @@ export class OmieService {
                     }
                   }
                 } catch (error) {
+                  // Se for cancelamento, propagar o erro
+                  if (error instanceof Error && error.message === 'SYNC_CANCELLED') {
+                    throw error;
+                  }
                   console.log(`⚠️ Erro ao buscar dados do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
                 }
               }
@@ -3789,6 +3805,21 @@ export class OmieService {
     } catch (error) {
       // Marcar que finalizou a sincronização (mesmo com erro)
       this.isSyncing = false;
+      
+      // Verificar se foi cancelamento
+      if (error instanceof Error && error.message === 'SYNC_CANCELLED') {
+        console.log('🛑 Sincronização cancelada pelo usuário');
+        return {
+          totalProcessed: 0,
+          imported: 0,
+          updated: 0,
+          skipped: 0,
+          errors: [],
+          isComplete: false,
+          message: 'Sincronização cancelada pelo usuário.'
+        };
+      }
+      
       console.error('❌ Erro na sincronização de faturamentos:', error);
       throw error;
     }
