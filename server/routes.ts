@@ -7112,26 +7112,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Cancelar sincronização de faturamentos em andamento
   app.post('/api/billings/sync/cancel', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({
-          message: 'Integração Omie não configurada'
+      console.log('🛑 [CANCEL-SYNC] Iniciando cancelamento de sincronização...');
+      
+      // 1. Primeiro, forçar atualização do status no banco de dados (isso sempre funciona)
+      try {
+        await storage.updateSyncStatus('omie_billings', { 
+          status: 'cancelled', 
+          message: 'Sincronização cancelada pelo usuário',
+          recordsProcessed: 0,
+          totalRecords: 0,
+          currentProgress: 0,
+          lastSyncAt: new Date()
         });
+        console.log('✅ [CANCEL-SYNC] Status do banco atualizado para cancelled');
+      } catch (dbError) {
+        console.error('⚠️ [CANCEL-SYNC] Erro ao atualizar banco:', dbError);
       }
       
-      // Solicitar cancelamento no serviço
-      const result = omieService.cancelSync();
-      console.log('🛑 Cancelamento de sincronização solicitado:', result);
-      
-      // FORÇAR atualização do status no banco de dados para refletir o cancelamento
-      await storage.updateSyncStatus('omie_billings', { 
-        status: 'cancelled', 
-        message: 'Sincronização cancelada pelo usuário',
-        lastSyncAt: new Date()
-      });
-      
-      // Forçar reset do estado interno do serviço
-      omieService.forceResetSyncState();
+      // 2. Tentar cancelar no serviço Omie (pode falhar se o serviço não está configurado)
+      const omieService = getOmieService(storage);
+      if (omieService) {
+        try {
+          const result = omieService.cancelSync();
+          console.log('🛑 [CANCEL-SYNC] Resultado do cancelamento no serviço:', result);
+          omieService.forceResetSyncState();
+          console.log('✅ [CANCEL-SYNC] Estado do serviço resetado');
+        } catch (serviceError) {
+          console.log('⚠️ [CANCEL-SYNC] Erro ao cancelar no serviço (ignorado):', serviceError);
+        }
+      } else {
+        console.log('⚠️ [CANCEL-SYNC] Serviço Omie não disponível, apenas banco foi atualizado');
+      }
       
       res.json({
         success: true,
@@ -7139,7 +7150,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
     } catch (error: any) {
-      console.error('❌ Erro ao cancelar sincronização:', error);
+      console.error('❌ [CANCEL-SYNC] Erro ao cancelar sincronização:', error);
       res.status(500).json({ 
         error: 'Erro interno do servidor',
         message: error.message 
