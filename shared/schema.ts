@@ -2106,6 +2106,11 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   isStandby: boolean("is_standby").notNull().default(true), // 🔄 Modo standby - ativa quando nenhum atendente disponível
   mode: chatGptModeEnum("mode").notNull().default("disabled"),
   
+  // 🚀 Prioridade do ChatGPT na fila de atendimento
+  // 0 = ChatGPT só atende quando não há humanos online (padrão/standby)
+  // 1+ = Posição do ChatGPT na fila (ex: 1 = primeiro, antes de humanos)
+  chatgptQueuePosition: integer("chatgpt_queue_position").notNull().default(0),
+  
   // Provedor de IA (openai ou grok)
   aiProvider: aiProviderEnum("ai_provider").notNull().default("openai"),
   
