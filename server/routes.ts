@@ -7115,16 +7115,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('🛑 [CANCEL-SYNC] Iniciando cancelamento de sincronização...');
       
       // 1. Primeiro, forçar atualização do status no banco de dados (isso sempre funciona)
+      // Usa 'error' pois o enum do banco não tem 'cancelled' - apenas success, error, in_progress
       try {
         await storage.updateSyncStatus('omie_billings', { 
-          status: 'cancelled', 
+          status: 'error', 
           message: 'Sincronização cancelada pelo usuário',
           recordsProcessed: 0,
           totalRecords: 0,
           currentProgress: 0,
           lastSyncAt: new Date()
         });
-        console.log('✅ [CANCEL-SYNC] Status do banco atualizado para cancelled');
+        console.log('✅ [CANCEL-SYNC] Status do banco atualizado para error (cancelado)');
       } catch (dbError) {
         console.error('⚠️ [CANCEL-SYNC] Erro ao atualizar banco:', dbError);
       }

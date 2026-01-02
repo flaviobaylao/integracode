@@ -347,7 +347,7 @@ export interface IStorage {
   getAllSyncStatus(): Promise<SyncStatus[]>;
   upsertSyncStatus(syncStatus: InsertSyncStatus): Promise<SyncStatus>;
   updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress' | 'cancelled'; 
+    status: 'success' | 'error' | 'in_progress'; 
     message?: string; 
     recordsProcessed?: number;
     totalRecords?: number;
@@ -5464,7 +5464,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress' | 'cancelled'; 
+    status: 'success' | 'error' | 'in_progress'; 
     message?: string; 
     recordsProcessed?: number;
     totalRecords?: number;
