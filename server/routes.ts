@@ -7119,10 +7119,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Solicitar cancelamento no serviço
       const result = omieService.cancelSync();
       console.log('🛑 Cancelamento de sincronização solicitado:', result);
       
-      res.json(result);
+      // FORÇAR atualização do status no banco de dados para refletir o cancelamento
+      await storage.updateSyncStatus('omie_billings', { 
+        status: 'cancelled', 
+        message: 'Sincronização cancelada pelo usuário',
+        lastSyncAt: new Date()
+      });
+      
+      // Forçar reset do estado interno do serviço
+      omieService.forceResetSyncState();
+      
+      res.json({
+        success: true,
+        message: 'Sincronização cancelada com sucesso. O status foi atualizado.'
+      });
       
     } catch (error: any) {
       console.error('❌ Erro ao cancelar sincronização:', error);

@@ -420,6 +420,14 @@ export class OmieService {
     return { success: true, message: 'Cancelamento solicitado. A sincronização será interrompida em breve.' };
   }
   
+  // Método para forçar reset do estado de sincronização (usado quando travada)
+  public forceResetSyncState(): void {
+    console.log('🔄 Forçando reset do estado de sincronização...');
+    this.isSyncing = false;
+    this.syncCancelled = true;
+    console.log('✅ Estado de sincronização resetado: isSyncing=false, syncCancelled=true');
+  }
+  
   // Método para verificar status da sincronização
   public getSyncStatus(): { isSyncing: boolean; cancelled: boolean } {
     return { isSyncing: this.isSyncing, cancelled: this.syncCancelled };
