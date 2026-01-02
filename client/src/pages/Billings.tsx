@@ -266,7 +266,7 @@ export default function Billings() {
       // Invalidar todos os caches relacionados para forçar atualização
       queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/sync-status'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] });
     },
     onError: (error: any) => {
       toast({
