@@ -93,16 +93,30 @@ export async function assignConversationToAgent(
 }
 
 export async function distributeNewConversation(conversationId: string): Promise<{ assignedTo: string; isChatGpt: boolean }> {
+  // Buscar configurações de IA para verificar prioridade do ChatGPT
+  const aiSettings = await db.select().from(chatAiSettings).limit(1);
+  const settings = aiSettings[0];
+  const chatgptQueuePosition = settings?.chatgptQueuePosition ?? 0;
+  const isChatGptEnabled = settings?.isEnabled ?? false;
+  
+  // Se ChatGPT está habilitado e tem posição 1 (primeiro na fila), ele atende primeiro
+  if (isChatGptEnabled && chatgptQueuePosition === 1) {
+    console.log(`🤖 [DISTRIBUTION] ChatGPT configurado como primeiro na fila de atendimento.`);
+    await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6");
+    return { assignedTo: "chatgpt", isChatGpt: true };
+  }
+  
+  // Fluxo normal: distribuir para atendentes humanos via round-robin
   const nextAgent = await getNextAgentRoundRobin();
   
   if (nextAgent) {
     await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor);
     return { assignedTo: nextAgent.agentId, isChatGpt: false };
   } else {
-    const aiSettings = await db.select().from(chatAiSettings).limit(1);
-    const isStandby = aiSettings[0]?.isStandby ?? true;
+    // Nenhum atendente online - verificar se ChatGPT pode assumir via standby
+    const isStandby = settings?.isStandby ?? true;
     
-    if (isStandby && aiSettings[0]?.isEnabled) {
+    if (isStandby && isChatGptEnabled) {
       console.log(`🤖 [DISTRIBUTION] Nenhum atendente online. Ativando ChatGPT via standby.`);
       await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6");
       return { assignedTo: "chatgpt", isChatGpt: true };

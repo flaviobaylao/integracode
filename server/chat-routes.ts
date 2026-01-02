@@ -3782,28 +3782,64 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // GET /api/chat/agents/online - Listar atendentes online para transferência
+  // GET /api/chat/agents/online - Listar atendentes online para transferência (inclui ChatGPT)
   app.get("/api/chat/agents/online", authenticateUser, async (req, res) => {
     try {
       const { getOnlineTelemarketingAgents } = await import("./chat-distribution-service");
       const onlineAgents = await getOnlineTelemarketingAgents();
       
-      // Buscar configurações de AI para verificar se standby está habilitado
+      // Buscar configurações de AI para verificar posição na fila
       const aiSettings = await storage.getChatAiSettings();
-      const isAiEnabled = aiSettings?.isEnabled && aiSettings?.isStandby;
+      const isAiEnabled = aiSettings?.isEnabled ?? false;
+      const chatgptQueuePosition = aiSettings?.chatgptQueuePosition ?? 0;
       
-      // Adicionar ChatGPT como opção se AI estiver habilitada
-      const agents = [
-        ...onlineAgents.map(a => ({
-          id: a.id,
-          name: a.name,
-          email: a.email,
-          status: a.status
-        })),
-        ...(isAiEnabled || onlineAgents.length === 0 ? [{ id: "chatgpt", name: "ChatGPT (IA)", email: "", status: "standby" }] : [])
-      ];
+      // Determinar status do ChatGPT baseado na configuração
+      // position=1 = primeiro na fila (online), position=0 = standby (só assume quando ninguém disponível)
+      const chatgptStatus = chatgptQueuePosition === 1 ? "online" : "standby";
       
-      res.json({ success: true, agents });
+      // Criar objeto ChatGPT
+      const chatgptAgent = {
+        id: "chatgpt",
+        name: "ChatGPT (IA)",
+        email: "",
+        status: chatgptStatus,
+        type: "bot" as const,
+        queuePosition: chatgptQueuePosition,
+        activeConversations: 0
+      };
+      
+      // Montar lista de agentes respeitando a posição do ChatGPT na fila
+      let agents: any[] = [];
+      
+      if (isAiEnabled && chatgptQueuePosition === 1) {
+        // ChatGPT primeiro na fila
+        agents = [
+          chatgptAgent,
+          ...onlineAgents.map(a => ({
+            id: a.id,
+            name: a.name,
+            email: a.email,
+            status: a.status,
+            type: "human" as const,
+            activeConversations: a.activeConversations
+          }))
+        ];
+      } else {
+        // Atendentes humanos primeiro, ChatGPT no final (standby)
+        agents = [
+          ...onlineAgents.map(a => ({
+            id: a.id,
+            name: a.name,
+            email: a.email,
+            status: a.status,
+            type: "human" as const,
+            activeConversations: a.activeConversations
+          })),
+          ...(isAiEnabled ? [chatgptAgent] : [])
+        ];
+      }
+      
+      res.json({ success: true, agents, chatgptQueuePosition });
     } catch (error: any) {
       console.error("[AGENTS-ONLINE] Erro ao buscar atendentes:", error);
       res.status(500).json({ error: error.message, success: false });
