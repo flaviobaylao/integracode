@@ -77,6 +77,8 @@ interface ActiveCustomerWithVisits {
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
   nextThreeVisits: Array<{ date: string; status: string }>;
+  previousMonthTotal?: number;
+  currentMonthTotal?: number;
 }
 
 interface UploadRecord {
@@ -766,6 +768,9 @@ export default function ActiveCustomers() {
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
                         <TableHead>Positivado</TableHead>
+                        <TableHead className="text-right">Mês Anterior</TableHead>
+                        <TableHead className="text-right">Mês Atual</TableHead>
+                        <TableHead className="text-right">Variação</TableHead>
                         <TableHead>Última Atividade</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                         <TableHead>Ações</TableHead>
@@ -774,7 +779,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -846,6 +851,31 @@ export default function ActiveCustomers() {
                               <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth ? 'text-green-600' : 'text-red-500'}`}>
                                 {ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO'}
                               </span>
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {ac.previousMonthTotal 
+                                ? `R$ ${ac.previousMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                                : 'R$ 0,00'}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {ac.currentMonthTotal 
+                                ? `R$ ${ac.currentMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                                : 'R$ 0,00'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {(() => {
+                                const prev = ac.previousMonthTotal || 0;
+                                const curr = ac.currentMonthTotal || 0;
+                                if (prev === 0 && curr === 0) return <span className="text-gray-400">-</span>;
+                                if (prev === 0 && curr > 0) return <span className="text-green-600 font-semibold">+100%</span>;
+                                const variation = ((curr - prev) / prev) * 100;
+                                const isPositive = variation >= 0;
+                                return (
+                                  <span className={`font-semibold ${isPositive ? 'text-green-600' : 'text-red-500'}`}>
+                                    {isPositive ? '+' : ''}{variation.toFixed(0)}%
+                                  </span>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
                               <span className="text-sm text-muted-foreground">
