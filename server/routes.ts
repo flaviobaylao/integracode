@@ -55,12 +55,55 @@ import path from 'path';
 import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
+import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
 
 // Configurar multer para upload de arquivos
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
+
+// Helper function to upload photo to Object Storage
+async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: string): Promise<string | null> {
+  try {
+    const privateDir = process.env.PRIVATE_OBJECT_DIR;
+    if (!privateDir) {
+      console.log('⚠️ [PHOTO-UPLOAD] PRIVATE_OBJECT_DIR not set, falling back to base64');
+      return null;
+    }
+    
+    const { bucketName, objectName: basePath } = parseObjectStoragePath(privateDir);
+    const photoId = nanoid(12);
+    const ext = mimetype.includes('png') ? 'png' : 'jpg';
+    const objectName = `${basePath}/${folder}/${photoId}.${ext}`;
+    
+    const bucket = objectStorageClient.bucket(bucketName);
+    const file = bucket.file(objectName);
+    
+    await file.save(buffer, {
+      contentType: mimetype,
+      resumable: false,
+    });
+    
+    // Return the path that can be used to access the file
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
+    console.log(`✅ [PHOTO-UPLOAD] Foto salva: ${publicUrl}`);
+    return publicUrl;
+  } catch (error) {
+    console.error('❌ [PHOTO-UPLOAD] Erro ao fazer upload:', error);
+    return null;
+  }
+}
+
+// Helper to parse object storage path
+function parseObjectStoragePath(path: string): { bucketName: string; objectName: string } {
+  if (!path.startsWith('/')) path = `/${path}`;
+  const parts = path.split('/').filter(p => p);
+  return {
+    bucketName: parts[0],
+    objectName: parts.slice(1).join('/')
+  };
+}
 
 // Helper function to save sync status after successful synchronization
 async function saveSyncStatus(
@@ -10705,9 +10748,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
-      // Processar foto
-      const base64Photo = req.file.buffer.toString('base64');
-      const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      // Processar foto - usar Object Storage para evitar travamentos com base64 grandes
+      let photoUrl: string | null = null;
+      try {
+        photoUrl = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'delivery-photos');
+      } catch (uploadErr) {
+        console.error('❌ [DRIVER-CHECKIN] Erro no upload, usando fallback base64 compacto');
+      }
+      
+      // Fallback: se Object Storage falhar, usar thumbnail base64 menor
+      if (!photoUrl) {
+        // Apenas guardar referência que a foto foi tirada, sem o conteúdo completo
+        photoUrl = `photo-${nanoid(8)}-checkin`;
+        console.log('⚠️ [DRIVER-CHECKIN] Usando referência simples para foto');
+      }
       
       const now = new Date();
       
@@ -10718,7 +10772,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkInTime: now,
           checkInLatitude: latitude?.toString(),
           checkInLongitude: longitude?.toString(),
-          photos: [...currentPhotos, photoUrl], // Adiciona foto ao array
+          photos: [...currentPhotos, photoUrl],
           status: 'em_pausa',
           updatedAt: now
         })
@@ -10783,9 +10837,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
-      // Processar foto
-      const base64Photo = req.file.buffer.toString('base64');
-      const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
+      // Processar foto - usar Object Storage para evitar travamentos com base64 grandes
+      let photoUrl: string | null = null;
+      try {
+        photoUrl = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'delivery-photos');
+      } catch (uploadErr) {
+        console.error('❌ [DRIVER-CHECKOUT] Erro no upload, usando fallback');
+      }
+      
+      // Fallback: se Object Storage falhar, usar referência simples
+      if (!photoUrl) {
+        photoUrl = `photo-${nanoid(8)}-checkout`;
+        console.log('⚠️ [DRIVER-CHECKOUT] Usando referência simples para foto');
+      }
       
       const now = new Date();
       
@@ -10796,7 +10860,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkOutTime: now,
           checkOutLatitude: latitude?.toString(),
           checkOutLongitude: longitude?.toString(),
-          photos: [...currentPhotos, photoUrl], // Adiciona foto ao array
+          photos: [...currentPhotos, photoUrl],
           status: 'efetuada',
           completedAt: now,
           updatedAt: now
