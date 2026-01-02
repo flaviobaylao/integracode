@@ -36,7 +36,10 @@ import {
   Zap,
   Pencil,
   Plus,
-  Phone
+  Phone,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -153,6 +156,8 @@ export default function ActiveCustomers() {
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
+  const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNoSaleModal, setShowNoSaleModal] = useState(false);
@@ -440,36 +445,75 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
-  const filteredCustomers = activeCustomers.filter((ac) => {
-    const searchLower = searchTerm.toLowerCase();
-    const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
-    const doc = ac.document || "";
-    
-    // Filtro de busca
-    const matchesSearch = name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
-    
-    // Filtro de vendedor
-    const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
-    
-    // Filtro de dia de rota
-    const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
-    
-    // Filtro de periodicidade
-    const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
-    
-    // Filtro de tipo (virtual/presencial)
-    const matchesVirtualType = !selectedVirtualType || 
-      (selectedVirtualType === "virtual" ? ac.customer?.virtualService === true : ac.customer?.virtualService === false);
-    
-    // Filtro de data - verificar se cliente tem visita agendada para aquele dia
-    const matchesDate = !selectedDate || ac.nextThreeVisits.some(v => v.date === selectedDate);
-    
-    // Filtro de positivação
-    const matchesPositivation = !selectedPositivation || 
-      (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
-    
-    return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation;
-  });
+  // Função para calcular variação percentual
+  const calcVariation = (prev: number, curr: number): number => {
+    if (prev === 0 && curr === 0) return -Infinity; // Sem atividade = último na ordenação
+    if (prev === 0 && curr > 0) return Infinity; // Novo cliente = primeiro na ordenação
+    return ((curr - prev) / prev) * 100;
+  };
+
+  // Função para alternar ordenação
+  const handleSort = (column: 'previousMonth' | 'currentMonth' | 'variation') => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
+
+  const filteredCustomers = activeCustomers
+    .filter((ac) => {
+      const searchLower = searchTerm.toLowerCase();
+      const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
+      const doc = ac.document || "";
+      
+      // Filtro de busca
+      const matchesSearch = name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
+      
+      // Filtro de vendedor
+      const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
+      
+      // Filtro de dia de rota
+      const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
+      
+      // Filtro de periodicidade
+      const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
+      
+      // Filtro de tipo (virtual/presencial)
+      const matchesVirtualType = !selectedVirtualType || 
+        (selectedVirtualType === "virtual" ? ac.customer?.virtualService === true : ac.customer?.virtualService === false);
+      
+      // Filtro de data - verificar se cliente tem visita agendada para aquele dia
+      const matchesDate = !selectedDate || ac.nextThreeVisits.some(v => v.date === selectedDate);
+      
+      // Filtro de positivação
+      const matchesPositivation = !selectedPositivation || 
+        (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
+      
+      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation;
+    })
+    .sort((a, b) => {
+      if (!sortColumn) return 0;
+      
+      let aValue: number, bValue: number;
+      
+      if (sortColumn === 'previousMonth') {
+        aValue = a.previousMonthTotal || 0;
+        bValue = b.previousMonthTotal || 0;
+      } else if (sortColumn === 'currentMonth') {
+        aValue = a.currentMonthTotal || 0;
+        bValue = b.currentMonthTotal || 0;
+      } else {
+        aValue = calcVariation(a.previousMonthTotal || 0, a.currentMonthTotal || 0);
+        bValue = calcVariation(b.previousMonthTotal || 0, b.currentMonthTotal || 0);
+      }
+      
+      if (sortDirection === 'asc') {
+        return aValue - bValue;
+      }
+      return bValue - aValue;
+    });
 
   const formatDocument = (doc: string, type: string) => {
     if (type === "cpf" && doc.length === 11) {
@@ -768,9 +812,48 @@ export default function ActiveCustomers() {
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
                         <TableHead>Positivado</TableHead>
-                        <TableHead className="text-right">Mês Anterior</TableHead>
-                        <TableHead className="text-right">Mês Atual</TableHead>
-                        <TableHead className="text-right">Variação</TableHead>
+                        <TableHead className="text-right">
+                          <button
+                            onClick={() => handleSort('previousMonth')}
+                            className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
+                            data-testid="sort-previous-month"
+                          >
+                            Mês Anterior
+                            {sortColumn === 'previousMonth' ? (
+                              sortDirection === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                            ) : (
+                              <ArrowUpDown className="h-4 w-4 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="text-right">
+                          <button
+                            onClick={() => handleSort('currentMonth')}
+                            className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
+                            data-testid="sort-current-month"
+                          >
+                            Mês Atual
+                            {sortColumn === 'currentMonth' ? (
+                              sortDirection === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                            ) : (
+                              <ArrowUpDown className="h-4 w-4 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="text-right">
+                          <button
+                            onClick={() => handleSort('variation')}
+                            className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
+                            data-testid="sort-variation"
+                          >
+                            Variação
+                            {sortColumn === 'variation' ? (
+                              sortDirection === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                            ) : (
+                              <ArrowUpDown className="h-4 w-4 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
                         <TableHead>Última Atividade</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                         <TableHead>Ações</TableHead>
