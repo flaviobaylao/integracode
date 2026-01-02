@@ -38,6 +38,7 @@ interface ChatAiSettings {
   companyContext: string | null;
   gptModel: string;
   assistantId: string | null;
+  chatgptQueuePosition: number;
   createdAt: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -151,6 +152,7 @@ export default function ChatAISettings() {
     companyContext: null,
     gptModel: 'gpt-4o-mini',
     assistantId: null,
+    chatgptQueuePosition: 0,
     createdAt: null,
     updatedAt: null,
     updatedBy: null
@@ -511,6 +513,49 @@ export default function ChatAISettings() {
                 <p className="text-sm text-muted-foreground">
                   Após {settings.maxTurnsBeforeEscalation} mensagens, o ChatGPT sugerirá transferir para humano
                 </p>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t">
+                <Label className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-purple-500" />
+                  Posição do ChatGPT na Fila de Atendimento
+                </Label>
+                <Select
+                  value={String(settings.chatgptQueuePosition)}
+                  onValueChange={(value) => setSettings({ ...settings, chatgptQueuePosition: parseInt(value) })}
+                  data-testid="select-queue-position"
+                >
+                  <SelectTrigger className="w-80">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">
+                      <span className="flex items-center gap-2">
+                        <span className="text-gray-400">🔄</span>
+                        Standby - Só atende quando não há humanos online
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="1">
+                      <span className="flex items-center gap-2">
+                        <span className="text-green-500">🥇</span>
+                        Primeiro - ChatGPT atende todas as conversas primeiro
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  {settings.chatgptQueuePosition === 1 
+                    ? "O ChatGPT receberá todas as novas conversas primeiro. Os atendentes humanos podem assumir quando necessário."
+                    : "O ChatGPT só assumirá conversas quando não houver atendentes humanos online (modo standby)."}
+                </p>
+                {settings.chatgptQueuePosition === 1 && (
+                  <Alert className="mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Com esta configuração, o ChatGPT atenderá primeiro todas as conversas antes dos atendentes humanos.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </div>
             </CardContent>
           </Card>
