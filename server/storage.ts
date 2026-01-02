@@ -6246,9 +6246,10 @@ export class DatabaseStorage implements IStorage {
       const today = new Date(todayStr);
       today.setHours(0, 0, 0, 0);
       
-      // Mapas para positivação e última atividade
+      // Mapas para positivação, última atividade e totais mensais
       let positivationMap = new Map<string, boolean>();
       let lastActivityMap = new Map<string, Date>();
+      let monthlyTotalsMap = new Map<string, { previousMonth: number; currentMonth: number }>();
       
       if (customerIds.length > 0) {
         try {
@@ -6350,6 +6351,63 @@ export class DatabaseStorage implements IStorage {
                 lastActivityMap.set(c.id, omieLastActivityMap.get(c.omieClientCode)!);
               }
             }
+            
+            // 4. Buscar totais de compras do mês anterior e atual
+            const previousMonthStart = new Date(currentMonthStart);
+            previousMonthStart.setMonth(previousMonthStart.getMonth() - 1);
+            
+            const previousMonthEnd = new Date(currentMonthStart);
+            previousMonthEnd.setDate(previousMonthEnd.getDate() - 1);
+            previousMonthEnd.setHours(23, 59, 59, 999);
+            
+            // Totais do mês anterior
+            const previousMonthTotals = await db
+              .select({
+                omieCustomerCode: billings.omieCustomerCode,
+                total: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)`.mapWith(Number),
+              })
+              .from(billings)
+              .where(
+                and(
+                  inArray(billings.omieCustomerCode, customerOmieCodes),
+                  isNotNull(billings.invoiceDate),
+                  gte(billings.invoiceDate, previousMonthStart),
+                  sql`${billings.invoiceDate} <= ${previousMonthEnd}`,
+                  eq(billings.isCancelled, false)
+                )
+              )
+              .groupBy(billings.omieCustomerCode);
+            
+            // Totais do mês atual
+            const currentMonthTotals = await db
+              .select({
+                omieCustomerCode: billings.omieCustomerCode,
+                total: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)`.mapWith(Number),
+              })
+              .from(billings)
+              .where(
+                and(
+                  inArray(billings.omieCustomerCode, customerOmieCodes),
+                  isNotNull(billings.invoiceDate),
+                  gte(billings.invoiceDate, currentMonthStart),
+                  sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
+                  eq(billings.isCancelled, false)
+                )
+              )
+              .groupBy(billings.omieCustomerCode);
+            
+            // Criar mapas de totais
+            const previousMonthMap = new Map(previousMonthTotals.map(p => [p.omieCustomerCode, p.total]));
+            const currentMonthMap = new Map(currentMonthTotals.map(p => [p.omieCustomerCode, p.total]));
+            
+            // Converter para customerId
+            for (const c of customersData) {
+              if (c.omieClientCode) {
+                const prevTotal = previousMonthMap.get(c.omieClientCode) || 0;
+                const currTotal = currentMonthMap.get(c.omieClientCode) || 0;
+                monthlyTotalsMap.set(c.id, { previousMonth: prevTotal, currentMonth: currTotal });
+              }
+            }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
@@ -6417,6 +6475,7 @@ export class DatabaseStorage implements IStorage {
         // Adicionar dados de positivação e última atividade
         const isPositivated = ac.customerId ? (positivationMap.get(ac.customerId) || false) : false;
         const lastActivity = ac.customerId ? lastActivityMap.get(ac.customerId) : undefined;
+        const monthlyTotals = ac.customerId ? monthlyTotalsMap.get(ac.customerId) : undefined;
         
         // Debug TUTTO PANE final
         if (customer && (customer.fantasyName?.includes('TUTTO') || customer.name?.includes('TUTTO'))) {
@@ -6431,7 +6490,9 @@ export class DatabaseStorage implements IStorage {
             lastActivityDate: lastActivity?.toISOString() || null
           } : undefined,
           lastTwoVisits: [],
-          nextThreeVisits: visits
+          nextThreeVisits: visits,
+          previousMonthTotal: monthlyTotals?.previousMonth || 0,
+          currentMonthTotal: monthlyTotals?.currentMonth || 0
         };
       });
       

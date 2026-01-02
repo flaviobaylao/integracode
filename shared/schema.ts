@@ -2075,6 +2075,8 @@ export interface ActiveCustomerWithVisits extends ActiveCustomer {
   customer?: Customer;
   lastTwoVisits: Array<{ date: string; status: string }>;
   nextThreeVisits: Array<{ date: string; status: string }>;
+  previousMonthTotal?: number;
+  currentMonthTotal?: number;
 }
 
 // ============================================================================
