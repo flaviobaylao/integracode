@@ -76,6 +76,7 @@ function getMinimumOrder(category: CustomerCategory | null, consumerTier: Consum
   }
   if (category === 'reseller') {
     if (resellerLocation === 'interior') return 350;
+    if (resellerLocation === 'brasilia') return 250;
     return 150;
   }
   return 70;
@@ -91,6 +92,7 @@ export default function PedidoRapido() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [customerData, setCustomerData] = useState<CustomerData>({
     name: '',
@@ -126,6 +128,61 @@ export default function PedidoRapido() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleGetLocation = async () => {
+    if (!navigator.geolocation) {
+      toast({ title: 'Erro', description: 'Seu navegador não suporta geolocalização', variant: 'destructive' });
+      return;
+    }
+
+    setIsGettingLocation(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`,
+            { headers: { 'Accept-Language': 'pt-BR' } }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const addr = data.address || {};
+            const formattedAddress = [
+              addr.road,
+              addr.house_number,
+              addr.suburb || addr.neighbourhood,
+              addr.city || addr.town || addr.village,
+              addr.state
+            ].filter(Boolean).join(', ');
+            
+            const addressWithCoords = `${formattedAddress} [GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}]`;
+            setCustomerData(prev => ({ ...prev, address: addressWithCoords }));
+            toast({ title: 'Localização capturada!', description: 'Endereço preenchido automaticamente' });
+          } else {
+            const addressWithCoords = `[GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}]`;
+            setCustomerData(prev => ({ ...prev, address: addressWithCoords }));
+            toast({ title: 'Localização capturada!', description: 'Coordenadas salvas. Complete o endereço manualmente.' });
+          }
+        } catch (error) {
+          const addressWithCoords = `[GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}]`;
+          setCustomerData(prev => ({ ...prev, address: addressWithCoords }));
+          toast({ title: 'Localização capturada!', description: 'Coordenadas salvas. Complete o endereço manualmente.' });
+        }
+        setIsGettingLocation(false);
+      },
+      (error) => {
+        setIsGettingLocation(false);
+        let message = 'Não foi possível obter sua localização';
+        if (error.code === 1) message = 'Permissão de localização negada. Habilite nas configurações do navegador.';
+        else if (error.code === 2) message = 'Localização indisponível no momento';
+        else if (error.code === 3) message = 'Tempo limite excedido ao buscar localização';
+        toast({ title: 'Erro', description: message, variant: 'destructive' });
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   const handleCategorySelect = (cat: CustomerCategory) => {
@@ -348,13 +405,31 @@ export default function PedidoRapido() {
               </div>
               <div>
                 <Label htmlFor="address">Endereço de Entrega *</Label>
-                <Input
-                  id="address"
-                  value={customerData.address}
-                  onChange={e => setCustomerData(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="Rua, número, bairro, cidade"
-                  data-testid="input-address"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="address"
+                    value={customerData.address}
+                    onChange={e => setCustomerData(prev => ({ ...prev, address: e.target.value }))}
+                    placeholder="Rua, número, bairro, cidade"
+                    className="flex-1"
+                    data-testid="input-address"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleGetLocation}
+                    disabled={isGettingLocation}
+                    className="shrink-0"
+                    data-testid="btn-get-location"
+                  >
+                    {isGettingLocation ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MapPin className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Clique no ícone para usar sua localização atual</p>
               </div>
               <div>
                 <Label>Forma de Pagamento</Label>
