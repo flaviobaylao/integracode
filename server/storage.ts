@@ -347,12 +347,13 @@ export interface IStorage {
   getAllSyncStatus(): Promise<SyncStatus[]>;
   upsertSyncStatus(syncStatus: InsertSyncStatus): Promise<SyncStatus>;
   updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress'; 
+    status: 'success' | 'error' | 'in_progress' | 'cancelled'; 
     message?: string; 
     recordsProcessed?: number;
     totalRecords?: number;
     currentProgress?: number;
     lastFinishedAt?: Date;
+    lastSyncAt?: Date;
   }): Promise<SyncStatus>;
   
   // Lead operations
@@ -5463,12 +5464,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress'; 
+    status: 'success' | 'error' | 'in_progress' | 'cancelled'; 
     message?: string; 
     recordsProcessed?: number;
     totalRecords?: number;
     currentProgress?: number;
     lastFinishedAt?: Date;
+    lastSyncAt?: Date;
   }): Promise<SyncStatus> {
     // Tentar atualizar primeiro
     const [existing] = await db
@@ -5488,6 +5490,7 @@ export class DatabaseStorage implements IStorage {
       if (data.totalRecords !== undefined) updateData.totalRecords = data.totalRecords;
       if (data.currentProgress !== undefined) updateData.currentProgress = data.currentProgress;
       if (data.lastFinishedAt !== undefined) updateData.lastFinishedAt = data.lastFinishedAt;
+      if (data.lastSyncAt !== undefined) updateData.lastSyncAt = data.lastSyncAt;
       if (data.status === 'success') updateData.lastSyncAt = new Date();
 
       const [status] = await db
@@ -5501,7 +5504,7 @@ export class DatabaseStorage implements IStorage {
       const insertData: any = {
         syncType,
         status: data.status,
-        lastSyncAt: new Date(),
+        lastSyncAt: data.lastSyncAt || new Date(),
         updatedAt: new Date()
       };
 
