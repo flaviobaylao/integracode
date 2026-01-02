@@ -83,6 +83,18 @@ async function saveSyncStatus(
   }
 }
 
+// Helper function to get today's date at midnight in Brazil timezone (UTC-3)
+// This is critical for matching routes correctly, especially for late-night check-outs
+function getTodayBrazil(): Date {
+  const BRAZIL_TZ = 'America/Sao_Paulo';
+  // Get current time in Brazil timezone
+  const nowInBrazil = toZonedTime(new Date(), BRAZIL_TZ);
+  // Set to midnight in Brazil
+  nowInBrazil.setHours(0, 0, 0, 0);
+  // Convert back to UTC for database comparison
+  return fromZonedTime(nowInBrazil, BRAZIL_TZ);
+}
+
 // Helper function to determine if a visit is a LEAD (requires mandatory photo)
 async function isLeadVisit(customerId: string, dailyRoute: any): Promise<boolean> {
   try {
@@ -3704,20 +3716,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             console.log(`🔄 [AUTO-CHECKOUT] Status mudando para "${data.status}" - verificando visita relacionada ao card ${id}...`);
             
-            // Buscar visita relacionada a este sales card (mais recente da data de hoje)
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const tomorrow = new Date(today);
+            // Buscar visita relacionada a este sales card (mais recente da data de hoje no Brasil)
+            const todayBrazil = getTodayBrazil();
+            const tomorrow = new Date(todayBrazil);
             tomorrow.setDate(tomorrow.getDate() + 1);
             
             console.log(`🔍 [AUTO-CHECKOUT DEBUG] Buscando visita para card ${id}`);
-            console.log(`   📅 Data range: ${today.toISOString()} até ${tomorrow.toISOString()}`);
+            console.log(`   📅 Data range: ${todayBrazil.toISOString()} até ${tomorrow.toISOString()}`);
             
             const relatedVisits = await db.select()
               .from(visitAgenda)
               .where(and(
                 eq(visitAgenda.salesCardId, id),
-                gte(visitAgenda.scheduledDate, today),
+                gte(visitAgenda.scheduledDate, todayBrazil),
                 lt(visitAgenda.scheduledDate, tomorrow)
               ))
               .orderBy(desc(visitAgenda.createdAt))
@@ -6238,9 +6249,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Registrar checkpoint na rota diária (se existir)
       let routeProgress = null;
       try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
+        // Usar timezone do Brasil para garantir que encontramos a rota correta
+        const todayBrazil = getTodayBrazil();
+        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
           console.log(`📍 Registrando checkpoint de check-in para visita ${id} na rota ${dailyRoute.id}`);
@@ -6257,7 +6268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           console.log(`✅ Checkpoint de check-in registrado com sucesso: ${JSON.stringify(routeProgress)}`);
         } else {
-          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${today.toISOString()}`);
+          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${todayBrazil.toISOString()}`);
         }
       } catch (error) {
         console.error('❌ Erro ao registrar checkpoint de check-in:', error);
@@ -6398,9 +6409,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Registrar checkpoint na rota diária (se existir)
       let routeProgress = null;
       try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, today);
+        // Usar timezone do Brasil para garantir que encontramos a rota correta
+        const todayBrazil = getTodayBrazil();
+        const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
           console.log(`📍 Registrando checkpoint de check-out para visita ${id} na rota ${dailyRoute.id}`);
@@ -6417,7 +6428,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           console.log(`✅ Checkpoint registrado com sucesso: ${JSON.stringify(routeProgress)}`);
         } else {
-          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${today.toISOString()}`);
+          console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentVisit.sellerId} na data ${todayBrazil.toISOString()}`);
         }
       } catch (error: any) {
         console.error('❌ Erro ao registrar checkpoint de check-out:', error);
@@ -12264,10 +12275,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto é obrigatória
       if (currentCard.customerId) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const todayBrazil = getTodayBrazil();
         const dailyRoute = currentCard.sellerId 
-          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today)
+          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
         
         const isLead = await isLeadVisit(currentCard.customerId, dailyRoute);
@@ -12319,9 +12329,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         if (currentCard.sellerId) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today);
+          // Usar timezone do Brasil para garantir que encontramos a rota correta
+          const todayBrazil = getTodayBrazil();
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
             console.log(`📍 Registrando checkpoint de check-in para sales_card ${id} na rota ${dailyRoute.id}`);
@@ -12546,10 +12556,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto de check-in existe
       if (currentCard.customerId) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const todayBrazil = getTodayBrazil();
         const dailyRoute = currentCard.sellerId 
-          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today)
+          ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
         
         const isLead = await isLeadVisit(currentCard.customerId, dailyRoute);
@@ -12594,9 +12603,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         if (currentCard && currentCard.sellerId) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, today);
+          // Usar timezone do Brasil para garantir que encontramos a rota correta
+          const todayBrazil = getTodayBrazil();
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
             console.log(`📍 Registrando checkpoint de check-out para sales_card ${id} na rota ${dailyRoute.id}`);
@@ -13832,10 +13841,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // Usar timezone do Brasil para garantir que encontramos a rota correta
+      const todayBrazil = getTodayBrazil();
       
-      const route = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+      const route = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
       
       if (!route) {
         return res.json({
@@ -18839,9 +18848,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let routeProgress = null;
         try {
           const sellerId = lead.assignedTo || user.id;
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+          // Usar timezone do Brasil para garantir que encontramos a rota correta
+          const todayBrazil = getTodayBrazil();
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
             // Buscar o visitId correspondente ao lead na rota
@@ -18955,9 +18964,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let routeProgress = null;
         try {
           const sellerId = lead.assignedTo || user.id;
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+          // Usar timezone do Brasil para garantir que encontramos a rota correta
+          const todayBrazil = getTodayBrazil();
+          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
             const visits = dailyRoute.visits || [];
