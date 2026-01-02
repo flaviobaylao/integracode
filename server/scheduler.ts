@@ -46,6 +46,8 @@ cron.schedule('*/5 * * * *', async () => {
   } catch (error) {
     console.error('❌ Erro ao encerrar conversas inativas:', error);
   }
+}, {
+  timezone: "America/Sao_Paulo"
 });
 
 // Job para redistribuir conversas sem atendimento a cada 2 minutos
@@ -58,6 +60,8 @@ cron.schedule('*/2 * * * *', async () => {
   } catch (error) {
     console.error('❌ Erro ao redistribuir conversas:', error);
   }
+}, {
+  timezone: "America/Sao_Paulo"
 });
 
 // Função para sincronização completa (Clientes + Faturamentos + Débitos Vencidos)
@@ -486,7 +490,10 @@ cron.schedule('*/30 * * * * *', async () => {
   } catch (error: any) {
     console.error('❌ [POLLING] Erro no fallback de sincronização:', error.message);
   }
+}, {
+  timezone: "America/Sao_Paulo"
 });
+
 // Geração automática de próximas 3 visitas para clientes ativos
 cron.schedule('0 0 * * *', async () => {
   console.log('📅 [SCHEDULER] Iniciando geração de próximas 3 visitas para clientes ativos às 00:00h...');

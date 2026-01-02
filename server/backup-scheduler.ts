@@ -4,7 +4,7 @@ import { backupAllOrders } from './backup-service';
 export function startBackupScheduler() {
   console.log('⏰ Inicializando agendador de backup de pedidos...');
 
-  // Executar backup todo dia às 2 da manhã (horário UTC)
+  // Executar backup todo dia às 2 da manhã (horário de Brasília)
   cron.schedule('0 2 * * *', async () => {
     try {
       console.log('🔄 Executando backup agendado de pedidos...');
@@ -13,6 +13,8 @@ export function startBackupScheduler() {
     } catch (error) {
       console.error('❌ Erro ao executar backup agendado:', error);
     }
+  }, {
+    timezone: "America/Sao_Paulo"
   });
 
   // Também executar uma vez na inicialização do servidor
@@ -26,5 +28,5 @@ export function startBackupScheduler() {
     }
   })();
 
-  console.log('✅ Agendador de backup iniciado (diariamente às 2h UTC + backup inicial)');
+  console.log('✅ Agendador de backup iniciado (diariamente às 2h Brasília + backup inicial)');
 }
