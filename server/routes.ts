@@ -14820,10 +14820,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let ordersCount = 0;
       try {
         // Montar lista de customerIds da rota (apenas customers, não leads)
-        const routeCustomerIds = customerIds.filter(id => id) as string[];
+        let routeCustomerIds = customerIds.filter(id => id) as string[];
         
         console.log(`📊 [ORDERS-DEBUG] Iniciando contagem - sellerId: ${sellerId}, date: ${date}, routeId: ${route.id}`);
         console.log(`📊 [ORDERS-DEBUG] customerIds na rota: ${routeCustomerIds.length}`);
+        
+        // FALLBACK: Se a rota não tem clientes populados, buscar da visit_agenda
+        if (routeCustomerIds.length === 0) {
+          console.log(`📊 [ORDERS-DEBUG] Rota sem customers, buscando da visit_agenda...`);
+          const visitAgendaResult = await db.execute(sql`
+            SELECT DISTINCT customer_id
+            FROM visit_agenda
+            WHERE seller_id = ${sellerId}
+              AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+          `);
+          routeCustomerIds = (visitAgendaResult.rows as any[]).map(r => r.customer_id).filter(Boolean);
+          console.log(`📊 [ORDERS-DEBUG] customerIds da visit_agenda: ${routeCustomerIds.length}`);
+        }
         
         if (routeCustomerIds.length > 0) {
           // ABORDAGEM CORRIGIDA: Contar pedidos DIRETAMENTE do order_history
