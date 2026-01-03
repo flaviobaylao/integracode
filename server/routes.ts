@@ -13704,6 +13704,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // ROTA JÁ EXISTE: Regenerar usando planDailyRoute + updateDailyRoute
         console.log(`🔄 Rota existente encontrada: ${existingRoute.id} - regenerando com permanent cards...`);
         
+        // CRÍTICO: Buscar checkpoints existentes para preservar clientes já visitados
+        const existingCheckpoints = await storage.getRouteCheckpoints(existingRoute.id);
+        const customerIdsWithCheckpoints = new Set(
+          existingCheckpoints
+            .filter(cp => cp.customerId)
+            .map(cp => cp.customerId)
+        );
+        console.log(`🔒 [PRESERVE] ${customerIdsWithCheckpoints.size} clientes com checkpoints serão preservados`);
+        
         // Usar função helper para planejar nova rota (sem salvar)
         console.log(`🔍 DEBUG: Antes de importar planDailyRoute - sellerId: ${targetSellerId}, date: ${routeDate.toISOString()}`);
         const { planDailyRoute } = await import('./routeOptimizationService');
@@ -13711,11 +13720,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const plan = await planDailyRoute(storage, targetSellerId, routeDate);
         console.log(`🔍 DEBUG: Após planDailyRoute - plan.optimizedOrder.length: ${plan.optimizedOrder.length}`);
         
-        // Atualizar rota existente com novos dados (PRESERVA ID e checkpoints)
+        // NOVO: Mesclar optimizedOrder - preservar clientes com checkpoints + adicionar novos
+        const existingOptimizedOrder = existingRoute.optimizedOrder || [];
+        const newPlannedCustomers = plan.optimizedOrder || [];
+        
+        // Identificar clientes que devem ser preservados (têm checkpoints)
+        const preservedFromExisting = existingOptimizedOrder.filter((id: string) => 
+          customerIdsWithCheckpoints.has(id)
+        );
+        
+        // Adicionar novos clientes que não estavam na rota original
+        const existingCustomerSet = new Set(existingOptimizedOrder);
+        const newCustomersToAdd = newPlannedCustomers.filter((id: string) => 
+          !existingCustomerSet.has(id)
+        );
+        
+        // Combinar: clientes preservados (com checkpoints) + clientes existentes sem checkpoints + novos
+        const preservedSet = new Set(preservedFromExisting);
+        const existingWithoutCheckpoints = existingOptimizedOrder.filter((id: string) => 
+          !preservedSet.has(id)
+        );
+        
+        const mergedOptimizedOrder = [
+          ...preservedFromExisting,
+          ...existingWithoutCheckpoints,
+          ...newCustomersToAdd
+        ];
+        
+        console.log(`📊 [MERGE] Resultado: ${preservedFromExisting.length} preservados + ${existingWithoutCheckpoints.length} existentes + ${newCustomersToAdd.length} novos = ${mergedOptimizedOrder.length} total`);
+        
+        // Atualizar rota existente com dados mesclados (PRESERVA ID e checkpoints)
         const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
-          optimizedOrder: plan.optimizedOrder,
+          optimizedOrder: mergedOptimizedOrder,
           totalEstimatedDistance: plan.totalDistance.toString(),
-          totalVisits: plan.totalVisits,
+          totalVisits: mergedOptimizedOrder.length,
           // Preservar totalActualDistance e completedVisits (não resetar progresso)
           totalActualDistance: existingRoute.totalActualDistance || '0',
           completedVisits: existingRoute.completedVisits || 0,
@@ -13732,16 +13770,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        console.log(`✅ Rota ${existingRoute.id} atualizada: ${plan.totalVisits} visitas, ${plan.totalDistance.toFixed(2)}km`);
+        console.log(`✅ Rota ${existingRoute.id} atualizada: ${mergedOptimizedOrder.length} visitas, ${plan.totalDistance.toFixed(2)}km`);
         
         return res.json({
           success: true,
           regenerated: true,
           routeId: updatedRoute.id,
-          totalVisits: plan.totalVisits,
+          totalVisits: mergedOptimizedOrder.length,
           totalEstimatedDistance: plan.totalDistance,
           warnings: plan.warnings || [],
-          suspiciousCoordinates: plan.customersWithSuspiciousCoords || []
+          suspiciousCoordinates: plan.customersWithSuspiciousCoords || [],
+          preservedCustomers: preservedFromExisting.length,
+          newCustomers: newCustomersToAdd.length
         });
       }
 
