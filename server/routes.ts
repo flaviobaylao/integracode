@@ -14758,7 +14758,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Montar lista de customerIds da rota (apenas customers, não leads)
         const routeCustomerIds = customerIds.filter(id => id) as string[];
         
+        console.log(`📊 [ORDERS-DEBUG] Iniciando contagem - sellerId: ${sellerId}, date: ${date}, routeId: ${route.id}`);
+        console.log(`📊 [ORDERS-DEBUG] customerIds na rota: ${routeCustomerIds.length}`);
+        
         if (routeCustomerIds.length > 0) {
+          // Debug: verificar quantos sales_cards existem para esses clientes
+          const debugCardsResult = await db.execute(sql`
+            SELECT 
+              COUNT(*) as total_cards,
+              COUNT(CASE WHEN status IN ('completed', 'delivered', 'invoiced') THEN 1 END) as completed_cards
+            FROM sales_cards
+            WHERE seller_id = ${sellerId}
+              AND customer_id = ANY(${routeCustomerIds}::text[])
+          `);
+          console.log(`📊 [ORDERS-DEBUG] Cards totais: ${(debugCardsResult.rows[0] as any)?.total_cards}, Completed: ${(debugCardsResult.rows[0] as any)?.completed_cards}`);
+          
+          // Debug: verificar order_history
+          const debugHistoryResult = await db.execute(sql`
+            SELECT 
+              COUNT(*) as total_history,
+              COUNT(CASE WHEN DATE(order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date THEN 1 END) as history_today
+            FROM order_history oh
+            JOIN sales_cards sc ON sc.id = oh.sales_card_id
+            WHERE sc.seller_id = ${sellerId}
+              AND sc.customer_id = ANY(${routeCustomerIds}::text[])
+          `);
+          console.log(`📊 [ORDERS-DEBUG] History total: ${(debugHistoryResult.rows[0] as any)?.total_history}, No dia ${date}: ${(debugHistoryResult.rows[0] as any)?.history_today}`);
+          
           // Query SQL para contagem de pedidos com fallback completo
           const ordersResult = await db.execute(sql`
             WITH route_checkouts AS (
