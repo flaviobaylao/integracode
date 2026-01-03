@@ -14762,64 +14762,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📊 [ORDERS-DEBUG] customerIds na rota: ${routeCustomerIds.length}`);
         
         if (routeCustomerIds.length > 0) {
-          // Debug: verificar quantos sales_cards existem para esses clientes
-          const debugCardsResult = await db.execute(sql`
-            SELECT 
-              COUNT(*) as total_cards,
-              COUNT(CASE WHEN status IN ('completed', 'delivered', 'invoiced') THEN 1 END) as completed_cards
-            FROM sales_cards
-            WHERE seller_id = ${sellerId}
-              AND customer_id = ANY(${routeCustomerIds}::text[])
-          `);
-          console.log(`📊 [ORDERS-DEBUG] Cards totais: ${(debugCardsResult.rows[0] as any)?.total_cards}, Completed: ${(debugCardsResult.rows[0] as any)?.completed_cards}`);
-          
-          // Debug: verificar order_history
-          const debugHistoryResult = await db.execute(sql`
-            SELECT 
-              COUNT(*) as total_history,
-              COUNT(CASE WHEN DATE(order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date THEN 1 END) as history_today
+          // ABORDAGEM CORRIGIDA: Contar pedidos DIRETAMENTE do order_history
+          // O order_history registra cada pedido feito, independente do status atual do card
+          const ordersResult = await db.execute(sql`
+            SELECT COUNT(DISTINCT oh.id)::int as count
             FROM order_history oh
             JOIN sales_cards sc ON sc.id = oh.sales_card_id
             WHERE sc.seller_id = ${sellerId}
               AND sc.customer_id = ANY(${routeCustomerIds}::text[])
-          `);
-          console.log(`📊 [ORDERS-DEBUG] History total: ${(debugHistoryResult.rows[0] as any)?.total_history}, No dia ${date}: ${(debugHistoryResult.rows[0] as any)?.history_today}`);
-          
-          // Query SQL para contagem de pedidos com fallback completo
-          const ordersResult = await db.execute(sql`
-            WITH route_checkouts AS (
-              SELECT DISTINCT ON (customer_id) 
-                customer_id, 
-                checkpoint_time
-              FROM route_checkpoints
-              WHERE route_id = ${route.id}
-                AND checkpoint_type IN ('check_out', 'auto_check_out')
-              ORDER BY customer_id, checkpoint_time DESC
-            ),
-            resolved_orders AS (
-              SELECT 
-                sc.id,
-                COALESCE(
-                  DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo'),
-                  DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                  DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                  DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo'),
-                  ${date}::date
-                ) as resolved_date
-              FROM sales_cards sc
-              LEFT JOIN order_history oh ON oh.sales_card_id = sc.id
-              LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
-              WHERE sc.seller_id = ${sellerId}
-                AND sc.customer_id = ANY(${routeCustomerIds}::text[])
-                AND sc.status IN ('completed', 'delivered', 'invoiced')
-            )
-            SELECT COUNT(DISTINCT id)::int as count
-            FROM resolved_orders
-            WHERE resolved_date = ${date}::date
+              AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
           `);
           
           ordersCount = (ordersResult.rows[0] as any)?.count || 0;
-          console.log(`📊 [ORDERS-COUNT] Total pedidos resolvidos: ${ordersCount}`);
+          console.log(`📊 [ORDERS-COUNT] Pedidos via order_history: ${ordersCount}`);
+          
+          // Se não encontrou no order_history, tentar contar cards completed/delivered/invoiced
+          // com fallback para checkpoints
+          if (ordersCount === 0) {
+            console.log(`📊 [ORDERS-DEBUG] Sem pedidos em order_history, tentando fallback...`);
+            
+            const fallbackResult = await db.execute(sql`
+              WITH route_checkouts AS (
+                SELECT DISTINCT ON (customer_id) 
+                  customer_id, 
+                  checkpoint_time
+                FROM route_checkpoints
+                WHERE route_id = ${route.id}
+                  AND checkpoint_type IN ('check_out', 'auto_check_out')
+                ORDER BY customer_id, checkpoint_time DESC
+              ),
+              resolved_orders AS (
+                SELECT 
+                  sc.id,
+                  COALESCE(
+                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo')
+                  ) as resolved_date
+                FROM sales_cards sc
+                LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
+                WHERE sc.seller_id = ${sellerId}
+                  AND sc.customer_id = ANY(${routeCustomerIds}::text[])
+                  AND sc.status IN ('completed', 'delivered', 'invoiced')
+                  AND (
+                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                    OR DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                    OR DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                  )
+              )
+              SELECT COUNT(DISTINCT id)::int as count
+              FROM resolved_orders
+            `);
+            
+            ordersCount = (fallbackResult.rows[0] as any)?.count || 0;
+            console.log(`📊 [ORDERS-COUNT] Fallback via status: ${ordersCount}`);
+          }
         }
       } catch (ordersError) {
         console.error('⚠️ [ORDERS-COUNT] Erro ao calcular pedidos (não crítico):', ordersError);
