@@ -14894,6 +14894,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ordersCount = (fallbackResult.rows[0] as any)?.count || 0;
             console.log(`📊 [ORDERS-COUNT] Fallback via status: ${ordersCount}`);
           }
+          
+          // FALLBACK FINAL: Se ainda não encontrou, buscar TODOS os pedidos do vendedor na data
+          // Isso captura pedidos que podem não estar vinculados a customers da rota atual
+          if (ordersCount === 0) {
+            console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data...`);
+            
+            const allOrdersResult = await db.execute(sql`
+              SELECT COUNT(DISTINCT oh.id)::int as count
+              FROM order_history oh
+              JOIN sales_cards sc ON sc.id = oh.sales_card_id
+              WHERE sc.seller_id = ${sellerId}
+                AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                AND oh.status = 'completed'
+            `);
+            
+            ordersCount = (allOrdersResult.rows[0] as any)?.count || 0;
+            console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor: ${ordersCount}`);
+          }
         }
       } catch (ordersError) {
         console.error('⚠️ [ORDERS-COUNT] Erro ao calcular pedidos (não crítico):', ordersError);
