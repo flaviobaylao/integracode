@@ -11074,10 +11074,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: "Erro ao buscar rotas", error: routeErr.message });
       }
 
+      // Buscar informações do motorista de destino (nome e email)
+      let targetDriverName = "";
+      let targetDriverEmail = "";
+      try {
+        const driverInfo = await db.select().from(deliveryDrivers)
+          .where(eq(deliveryDrivers.id, toDriverId))
+          .limit(1);
+        
+        if (driverInfo.length > 0) {
+          targetDriverName = driverInfo[0].name || "";
+          targetDriverEmail = (driverInfo[0].email || "").toLowerCase().trim();
+          
+          // Se não tem email, tentar construir a partir do nome
+          if (!targetDriverEmail && targetDriverName) {
+            const normalizedName = targetDriverName.toLowerCase().trim().replace(/\s+/g, '');
+            targetDriverEmail = `${normalizedName}@bebahonest.com.br`;
+          }
+        }
+        console.log(`👤 [TRANSFER-STOP] Motorista destino: ${targetDriverName} (${targetDriverEmail})`);
+      } catch (driverErr) {
+        console.error(`⚠️ [TRANSFER-STOP] Erro ao buscar motorista:`, driverErr);
+      }
+
       let toRouteId: string;
       if (existingRoutes.length > 0) {
         toRouteId = existingRoutes[0].id;
         console.log(`✅ [TRANSFER-STOP] Rota existente encontrada: ${toRouteId}`);
+        
+        // Atualizar o driverEmail se estiver vazio (para rotas criadas anteriormente sem email)
+        if (!existingRoutes[0].driverEmail && targetDriverEmail) {
+          await db.update(deliveryRoutes)
+            .set({ 
+              driverEmail: targetDriverEmail,
+              driverName: targetDriverName || existingRoutes[0].driverName
+            })
+            .where(eq(deliveryRoutes.id, toRouteId));
+          console.log(`📧 [TRANSFER-STOP] Email atualizado na rota existente: ${targetDriverEmail}`);
+        }
       } else {
         // Criar nova rota com coordenadas da parada
         toRouteId = nanoid();
@@ -11087,19 +11121,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const newRoute = await db.insert(deliveryRoutes).values({
             id: toRouteId,
-            routeName: `Rota-${toDriverId}-${new Date(routeDateStr).getDate()}`,
+            routeName: `Rota-${targetDriverName || toDriverId}-${new Date(routeDateStr).getDate()}`,
             routeDate: routeDateStr,
             driverId: toDriverId,
-            driverName: "", 
+            driverName: targetDriverName, 
+            driverEmail: targetDriverEmail, // IMPORTANTE: preencher email para busca posterior
             vehicleType: "Padrão",
             startLatitude: startLat,
             startLongitude: startLng,
             totalDistance: 0,
             totalDuration: 0,
             totalDeliveries: 0,
-            status: "planejada"
+            status: "rota_salva" // Já salva para aparecer para o motorista
           }).returning();
-          console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId}`);
+          console.log(`✨ [TRANSFER-STOP] Nova rota criada: ${toRouteId} com email: ${targetDriverEmail}`);
         } catch (createErr: any) {
           console.error(`❌ [TRANSFER-STOP] Erro ao criar rota:`, createErr);
           return res.status(500).json({ message: "Erro ao criar rota", error: createErr.message });
@@ -11155,6 +11190,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (insertedStops.length === 0) {
         console.error(`❌ [TRANSFER-STOP] Insert retornou vazio`);
         return res.status(500).json({ message: "Insert retornou vazio" });
+      }
+
+      // Atualizar contagem de entregas nas duas rotas
+      try {
+        // Contar paradas na rota de destino e atualizar
+        const destStopsCount = await db.select({ 
+          count: sql<number>`COUNT(*)` 
+        })
+          .from(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.routeId, toRouteId));
+        
+        await db.update(deliveryRoutes)
+          .set({ totalDeliveries: destStopsCount[0]?.count || 0 })
+          .where(eq(deliveryRoutes.id, toRouteId));
+        console.log(`📊 [TRANSFER-STOP] Rota destino ${toRouteId} atualizada com ${destStopsCount[0]?.count || 0} paradas`);
+        
+        // Contar paradas na rota de origem e atualizar
+        const origStopsCount = await db.select({ 
+          count: sql<number>`COUNT(*)` 
+        })
+          .from(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.routeId, fromRouteId));
+        
+        await db.update(deliveryRoutes)
+          .set({ totalDeliveries: origStopsCount[0]?.count || 0 })
+          .where(eq(deliveryRoutes.id, fromRouteId));
+        console.log(`📊 [TRANSFER-STOP] Rota origem ${fromRouteId} atualizada com ${origStopsCount[0]?.count || 0} paradas`);
+      } catch (countErr) {
+        console.error(`⚠️ [TRANSFER-STOP] Erro ao atualizar contagens (não crítico):`, countErr);
       }
 
       console.log(`✅ [TRANSFER-STOP] ✅ SUCESSO: ${stopId} → ${toRouteId}`);
