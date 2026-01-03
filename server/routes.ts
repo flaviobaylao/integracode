@@ -2513,8 +2513,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         SELECT 
           seller_id,
           DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') as visit_date,
-          COUNT(*) FILTER (WHERE visit_type = 'presencial' OR visit_type IS NULL) as presencial,
-          COUNT(*) FILTER (WHERE visit_type = 'virtual') as virtual,
+          COUNT(*) FILTER (WHERE is_virtual = false OR is_virtual IS NULL) as presencial,
+          COUNT(*) FILTER (WHERE is_virtual = true) as virtual,
           COUNT(*) FILTER (WHERE actual_check_out IS NOT NULL) as completed
         FROM visit_agenda
         WHERE DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
