@@ -287,7 +287,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {menuItems
                   .filter(item => item.available)
                   .filter(item => !isMotorista || item.id === 'rota-entrega')
-                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'whatsapp'].includes(item.id))
+                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'whatsapp'].includes(item.id))
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -491,7 +491,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               {menuItems
                 .filter(item => item.available)
                 .filter(item => !isMotorista || item.id === 'rota-entrega')
-                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'whatsapp'].includes(item.id))
+                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'whatsapp'].includes(item.id))
                 .map(item => (
                   <li key={item.id}>
                     <Button
