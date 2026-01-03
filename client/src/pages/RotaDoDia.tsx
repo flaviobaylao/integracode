@@ -903,6 +903,28 @@ export default function RotaDoDia() {
                     </p>
                   </div>
                 </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
+                    <CheckCircle className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Pedidos</p>
+                    <p className="text-2xl font-bold" data-testid="orders-count">
+                      {(route.progress as any)?.ordersCount ?? 0}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
+                    <Target className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Performance</p>
+                    <p className="text-2xl font-bold" data-testid="performance-index">
+                      {(route.progress as any)?.performanceIndex ?? 0}%
+                    </p>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

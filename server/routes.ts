@@ -14711,6 +14711,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
+      // Calcular quantidade de pedidos para clientes da rota no dia
+      // Query única CTE com COALESCE completo que resolve uma data canônica por salesCard
+      // Fallback: orderHistory → completedDate → deliveryCompletedDate → checkpoint → scheduledDate → route_date
+      
+      // Montar lista de customerIds da rota (apenas customers, não leads)
+      const routeCustomerIds = customerIds.filter(id => id) as string[]; // Remove undefined/null
+      
+      let ordersCount = 0;
+      if (routeCustomerIds.length > 0) {
+        // Query SQL raw para contagem precisa com fallback completo
+        // Usa COALESCE para resolver data: orderHistory → completedDate → deliveryCompletedDate → checkpoint → scheduledDate → route_date
+        const ordersResult = await db.execute(sql`
+          WITH route_checkouts AS (
+            -- Incluir checkout manual E auto checkout (tipo correto: auto_check_out)
+            SELECT DISTINCT ON (customer_id) 
+              customer_id, 
+              checkpoint_time
+            FROM route_checkpoints
+            WHERE route_id = ${route.id}
+              AND checkpoint_type IN ('check_out', 'auto_check_out')
+            ORDER BY customer_id, checkpoint_time DESC
+          ),
+          resolved_orders AS (
+            SELECT 
+              sc.id,
+              -- Converter cada timestamp para data Brasil antes do COALESCE
+              -- scheduled_date ignorado pois pode estar desatualizado de ciclos anteriores
+              -- Para cards com status de sucesso na rota, assume-se que pertencem à data da rota
+              COALESCE(
+                DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo'),
+                ${date}::date  -- Fallback: se nenhum timestamp, assume data da rota
+              ) as resolved_date
+            FROM sales_cards sc
+            LEFT JOIN order_history oh ON oh.sales_card_id = sc.id
+            LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
+            WHERE sc.seller_id = ${sellerId}
+              AND sc.customer_id = ANY(${routeCustomerIds}::text[])
+              AND sc.status IN ('completed', 'delivered', 'invoiced')
+          )
+          SELECT COUNT(DISTINCT id)::int as count
+          FROM resolved_orders
+          WHERE resolved_date = ${date}::date
+        `);
+        
+        ordersCount = (ordersResult.rows[0] as any)?.count || 0;
+        
+        console.log(`📊 [ORDERS-COUNT] Total pedidos resolvidos: ${ordersCount}`);
+      }
+      
+      // Calcular índice de performance (pedidos / clientes da rota * 100)
+      const performanceIndex = totalVisits > 0 
+        ? Math.round((ordersCount / totalVisits) * 100) 
+        : 0;
+      
+      console.log(`📊 [ROUTE-METRICS] Rota ${date}: ${ordersCount} pedidos / ${totalVisits} visitas = ${performanceIndex}% performance`);
+
       res.json({
         route: {
           ...route,
@@ -14729,7 +14788,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalActualDistance: Math.round(parseFloat(route.totalActualDistance || '0') * 1000),
             percentComplete,
             workedHours,
-            lunchBreak
+            lunchBreak,
+            ordersCount,
+            performanceIndex
           }
         }
       });
