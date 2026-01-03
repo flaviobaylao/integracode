@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,10 +6,45 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RefreshCw, TrendingUp, TrendingDown, Users, Target, Calendar, MapPin } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { SalesGoal, User } from "@shared/schema";
+
+interface DailyMetric {
+  sellerId: string;
+  sellerName: string;
+  date: string;
+  day: number;
+  scheduledPresencial: number;
+  scheduledVirtual: number;
+  completedVisits: number;
+  ordersCount: number;
+  performance: number;
+  distance: number;
+}
+
+interface MonthlyMetric {
+  sellerId: string;
+  sellerName: string;
+  activeCustomers: number;
+  positivados: number;
+  positivationRate: number;
+  currentMonthSales: number;
+  prevMonthSales: number;
+  salesComparison: number;
+  customersWithHigherSales: number;
+}
+
+interface DailyMetricsResponse {
+  month: number;
+  year: number;
+  daysInMonth: number;
+  sellers: { id: string; name: string }[];
+  dailyData: DailyMetric[];
+  monthlyData: MonthlyMetric[];
+}
 
 interface SalesGoalsDashboardProps {
   user: User;
@@ -112,6 +147,41 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     retry: false
   });
 
+  // Buscar métricas diárias detalhadas (novo dashboard)
+  const { data: dailyMetricsData, isLoading: isLoadingDailyMetrics } = useQuery<DailyMetricsResponse>({
+    queryKey: ['/api/sales-goals/daily-metrics', selectedMonth, selectedYear],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        month: selectedMonth.toString(),
+        year: selectedYear.toString()
+      });
+      const res = await fetch(`/api/sales-goals/daily-metrics?${params}`, {
+        credentials: 'include'
+      });
+      if (!res.ok) throw new Error('Erro ao buscar métricas diárias');
+      return res.json();
+    },
+    enabled: ['admin', 'coordinator', 'administrative'].includes(user.role),
+    staleTime: 60000
+  });
+
+  // Agrupar dados diários por vendedor para exibição organizada
+  const groupedDailyData = useMemo(() => {
+    if (!dailyMetricsData?.dailyData) return {};
+    
+    const grouped: Record<string, DailyMetric[]> = {};
+    dailyMetricsData.dailyData.forEach((metric) => {
+      if (!grouped[metric.sellerId]) {
+        grouped[metric.sellerId] = [];
+      }
+      grouped[metric.sellerId].push(metric);
+    });
+    return grouped;
+  }, [dailyMetricsData]);
+
+  // Filtrar vendedor no dashboard diário
+  const [dailyViewSeller, setDailyViewSeller] = useState<string>('all');
+
   const months = [
     { value: 1, label: 'Janeiro' },
     { value: 2, label: 'Fevereiro' },
@@ -163,6 +233,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     try {
       await queryClient.invalidateQueries({ queryKey: ['/api/sales-metrics'] });
       await queryClient.invalidateQueries({ queryKey: ['/api/sales-goals'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/sales-goals/daily-metrics'] });
       
       toast({
         title: "Dados atualizados",
@@ -427,6 +498,232 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                 : 'Nenhuma meta foi definida para este período.'}
             </p>
           </div>
+        </Card>
+      )}
+
+      {/* QUADRO 1: Detalhamento Diário por Vendedor */}
+      {canViewAllSellers && (
+        <Card className="mt-8">
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5" />
+                Detalhamento Diário - {months.find(m => m.value === selectedMonth)?.label}/{selectedYear}
+              </CardTitle>
+              <Select value={dailyViewSeller} onValueChange={setDailyViewSeller}>
+                <SelectTrigger className="w-48" data-testid="select-daily-seller">
+                  <SelectValue placeholder="Filtrar vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os vendedores</SelectItem>
+                  {dailyMetricsData?.sellers?.map((seller) => (
+                    <SelectItem key={seller.id} value={seller.id}>
+                      {seller.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isLoadingDailyMetrics ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+                Carregando dados diários...
+              </div>
+            ) : dailyMetricsData?.dailyData && dailyMetricsData.dailyData.length > 0 ? (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="sticky left-0 bg-white z-10">Vendedor</TableHead>
+                      <TableHead className="text-center">Dia</TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Presencial</span>
+                          <span className="text-xs text-gray-500">Agendadas</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Virtual</span>
+                          <span className="text-xs text-gray-500">Agendadas</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Visitas</span>
+                          <span className="text-xs text-gray-500">Efetuadas</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Pedidos</span>
+                          <span className="text-xs text-gray-500">Registrados</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">Performance</TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <MapPin className="h-4 w-4" />
+                          <span className="text-xs">Distância (km)</span>
+                        </div>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(groupedDailyData)
+                      .filter(([sellerId]) => dailyViewSeller === 'all' || sellerId === dailyViewSeller)
+                      .map(([sellerId, metrics]) => 
+                        metrics.map((metric, idx) => (
+                          <TableRow 
+                            key={`${sellerId}-${metric.day}`} 
+                            className={`${idx === 0 ? 'border-t-2 border-gray-300' : ''} ${
+                              metric.scheduledPresencial === 0 && metric.scheduledVirtual === 0 && metric.ordersCount === 0 
+                                ? 'bg-gray-50 text-gray-400' 
+                                : ''
+                            }`}
+                          >
+                            <TableCell className="sticky left-0 bg-white font-medium">
+                              {idx === 0 ? metric.sellerName : ''}
+                            </TableCell>
+                            <TableCell className="text-center font-mono">{String(metric.day).padStart(2, '0')}</TableCell>
+                            <TableCell className="text-center">{metric.scheduledPresencial || '-'}</TableCell>
+                            <TableCell className="text-center">{metric.scheduledVirtual || '-'}</TableCell>
+                            <TableCell className="text-center">{metric.completedVisits || '-'}</TableCell>
+                            <TableCell className="text-center font-semibold">{metric.ordersCount || '-'}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge className={
+                                metric.performance >= 80 ? 'bg-green-100 text-green-800' :
+                                metric.performance >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                                metric.performance > 0 ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600'
+                              }>
+                                {metric.performance}%
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-center">{metric.distance > 0 ? metric.distance.toFixed(1) : '-'}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 py-8">
+                Nenhum dado disponível para o período selecionado.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* QUADRO 2: Performance Mensal por Vendedor */}
+      {canViewAllSellers && dailyMetricsData?.monthlyData && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Performance Mensal - {months.find(m => m.value === selectedMonth)?.label}/{selectedYear}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingDailyMetrics ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+                Carregando dados mensais...
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="sticky left-0 bg-white z-10">Vendedor</TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <Users className="h-4 w-4" />
+                          <span className="text-xs">Clientes Ativos</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Positivados</span>
+                          <span className="text-xs text-gray-500">Este mês</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>% Positivação</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Vendas Atual</span>
+                          <span className="text-xs text-gray-500">{months.find(m => m.value === selectedMonth)?.label}</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Vendas Anterior</span>
+                          <span className="text-xs text-gray-500">{months.find(m => m.value === (selectedMonth === 1 ? 12 : selectedMonth - 1))?.label}</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <span>Variação</span>
+                          <span className="text-xs text-gray-500">% vs mês ant.</span>
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-center">
+                        <div className="flex flex-col items-center">
+                          <TrendingUp className="h-4 w-4" />
+                          <span className="text-xs">Clientes em alta</span>
+                        </div>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dailyMetricsData.monthlyData.map((metric) => (
+                      <TableRow key={metric.sellerId}>
+                        <TableCell className="sticky left-0 bg-white font-medium">{metric.sellerName}</TableCell>
+                        <TableCell className="text-center">{metric.activeCustomers}</TableCell>
+                        <TableCell className="text-center font-semibold">{metric.positivados}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge className={
+                            metric.positivationRate >= 70 ? 'bg-green-100 text-green-800' :
+                            metric.positivationRate >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                          }>
+                            {metric.positivationRate}%
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">{formatCurrency(metric.currentMonthSales)}</TableCell>
+                        <TableCell className="text-center text-gray-600">{formatCurrency(metric.prevMonthSales)}</TableCell>
+                        <TableCell className="text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {metric.salesComparison >= 0 ? (
+                              <TrendingUp className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <TrendingDown className="h-4 w-4 text-red-600" />
+                            )}
+                            <Badge className={
+                              metric.salesComparison >= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }>
+                              {metric.salesComparison >= 0 ? '+' : ''}{metric.salesComparison}%
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className="bg-blue-50">
+                            {metric.customersWithHigherSales}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
         </Card>
       )}
     </div>

@@ -2464,6 +2464,273 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sales Daily Metrics - Dashboard detalhado com todos vendedores, todos dias do mês
+  // OTIMIZADO: Usa queries agregadas com GROUP BY em vez de múltiplas queries por dia
+  app.get('/api/sales-goals/daily-metrics', authenticateUser, async (req: any, res) => {
+    try {
+      const { month, year } = req.query;
+      const user = req.currentUser;
+      
+      // Apenas admins/coordinators/administrative podem ver este dashboard
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const targetMonth = month ? parseInt(month as string) : new Date().getMonth() + 1;
+      const targetYear = year ? parseInt(year as string) : new Date().getFullYear();
+      
+      console.log(`📊 [DAILY-METRICS] Gerando métricas diárias para ${targetMonth}/${targetYear}`);
+      
+      // Calcular datas do mês
+      const startDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+      const endDate = new Date(targetYear, targetMonth, 0);
+      const endDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      const daysInMonth = endDate.getDate();
+      
+      // Mês anterior para comparação
+      const prevMonth = targetMonth === 1 ? 12 : targetMonth - 1;
+      const prevYear = targetMonth === 1 ? targetYear - 1 : targetYear;
+      const prevStartDateStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
+      const prevEndDate = new Date(prevYear, prevMonth, 0);
+      const prevEndDateStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(prevEndDate.getDate()).padStart(2, '0')}`;
+      
+      // Buscar todos os vendedores ativos
+      const activeSellers = await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName
+      })
+      .from(users)
+      .where(and(
+        eq(users.role, 'vendedor'),
+        eq(users.isActive, true)
+      ));
+      
+      console.log(`📊 [DAILY-METRICS] ${activeSellers.length} vendedores ativos`);
+      
+      // QUERY AGREGADA 1: Visitas agendadas por vendedor/dia (presencial e virtual)
+      const scheduledVisitsResult = await db.execute(sql`
+        SELECT 
+          seller_id,
+          DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') as visit_date,
+          COUNT(*) FILTER (WHERE visit_type = 'presencial' OR visit_type IS NULL) as presencial,
+          COUNT(*) FILTER (WHERE visit_type = 'virtual') as virtual,
+          COUNT(*) FILTER (WHERE actual_check_out IS NOT NULL) as completed
+        FROM visit_agenda
+        WHERE DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+          AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        GROUP BY seller_id, DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo')
+      `);
+      
+      // QUERY AGREGADA 2: Pedidos por vendedor/dia
+      const ordersResult = await db.execute(sql`
+        SELECT 
+          sc.seller_id,
+          DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') as order_date,
+          COUNT(*) as count
+        FROM order_history oh
+        JOIN sales_cards sc ON sc.id = oh.sales_card_id
+        WHERE oh.status = 'completed'
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        GROUP BY sc.seller_id, DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo')
+      `);
+      
+      // QUERY AGREGADA 3: Distância por vendedor/dia
+      const distanceResult = await db.execute(sql`
+        SELECT 
+          seller_id,
+          route_date,
+          COALESCE(total_actual_distance, total_estimated_distance, 0) as distance
+        FROM daily_routes
+        WHERE route_date >= ${startDateStr}::date
+          AND route_date <= ${endDateStr}::date
+      `);
+      
+      // Indexar resultados por seller_id e data
+      const visitsMap: Record<string, Record<string, { presencial: number; virtual: number; completed: number }>> = {};
+      (scheduledVisitsResult.rows as any[]).forEach(row => {
+        if (!visitsMap[row.seller_id]) visitsMap[row.seller_id] = {};
+        const dateKey = new Date(row.visit_date).toISOString().split('T')[0];
+        visitsMap[row.seller_id][dateKey] = {
+          presencial: parseInt(row.presencial || '0'),
+          virtual: parseInt(row.virtual || '0'),
+          completed: parseInt(row.completed || '0')
+        };
+      });
+      
+      const ordersMap: Record<string, Record<string, number>> = {};
+      (ordersResult.rows as any[]).forEach(row => {
+        if (!ordersMap[row.seller_id]) ordersMap[row.seller_id] = {};
+        const dateKey = new Date(row.order_date).toISOString().split('T')[0];
+        ordersMap[row.seller_id][dateKey] = parseInt(row.count || '0');
+      });
+      
+      const distanceMap: Record<string, Record<string, number>> = {};
+      (distanceResult.rows as any[]).forEach(row => {
+        if (!distanceMap[row.seller_id]) distanceMap[row.seller_id] = {};
+        const dateKey = new Date(row.route_date).toISOString().split('T')[0];
+        distanceMap[row.seller_id][dateKey] = parseFloat(row.distance || '0');
+      });
+      
+      // Montar dados diários para TODOS os vendedores e TODOS os dias
+      const dailyData: any[] = [];
+      
+      for (const seller of activeSellers) {
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          
+          const visits = visitsMap[seller.id]?.[dateStr] || { presencial: 0, virtual: 0, completed: 0 };
+          const ordersCount = ordersMap[seller.id]?.[dateStr] || 0;
+          const distance = distanceMap[seller.id]?.[dateStr] || 0;
+          
+          const totalScheduled = visits.presencial + visits.virtual;
+          const performance = totalScheduled > 0 ? Math.round((ordersCount / totalScheduled) * 100) : 0;
+          
+          dailyData.push({
+            sellerId: seller.id,
+            sellerName: `${seller.firstName} ${seller.lastName || ''}`.trim(),
+            date: dateStr,
+            day,
+            scheduledPresencial: visits.presencial,
+            scheduledVirtual: visits.virtual,
+            completedVisits: visits.completed,
+            ordersCount,
+            performance,
+            distance: Math.round(distance * 10) / 10
+          });
+        }
+      }
+      
+      // QUERIES AGREGADAS PARA DADOS MENSAIS
+      
+      // Clientes ativos por vendedor
+      const activeCustomersResult = await db.execute(sql`
+        SELECT seller_id, COUNT(*) as count
+        FROM customers
+        WHERE is_active = true
+        GROUP BY seller_id
+      `);
+      
+      const activeCustomersMap: Record<string, number> = {};
+      (activeCustomersResult.rows as any[]).forEach(row => {
+        activeCustomersMap[row.seller_id] = parseInt(row.count || '0');
+      });
+      
+      // Positivados e vendas do mês atual
+      const currentMonthResult = await db.execute(sql`
+        SELECT 
+          sc.seller_id,
+          COUNT(DISTINCT sc.customer_id) as positivados,
+          COALESCE(SUM(oh.total_value::numeric), 0) as total_sales
+        FROM order_history oh
+        JOIN sales_cards sc ON sc.id = oh.sales_card_id
+        WHERE oh.status = 'completed'
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        GROUP BY sc.seller_id
+      `);
+      
+      const currentMonthMap: Record<string, { positivados: number; sales: number }> = {};
+      (currentMonthResult.rows as any[]).forEach(row => {
+        currentMonthMap[row.seller_id] = {
+          positivados: parseInt(row.positivados || '0'),
+          sales: parseFloat(row.total_sales || '0')
+        };
+      });
+      
+      // Vendas do mês anterior
+      const prevMonthResult = await db.execute(sql`
+        SELECT 
+          sc.seller_id,
+          COALESCE(SUM(oh.total_value::numeric), 0) as total_sales
+        FROM order_history oh
+        JOIN sales_cards sc ON sc.id = oh.sales_card_id
+        WHERE oh.status = 'completed'
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${prevStartDateStr}::date
+          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${prevEndDateStr}::date
+        GROUP BY sc.seller_id
+      `);
+      
+      const prevMonthMap: Record<string, number> = {};
+      (prevMonthResult.rows as any[]).forEach(row => {
+        prevMonthMap[row.seller_id] = parseFloat(row.total_sales || '0');
+      });
+      
+      // Clientes com vendas maiores este mês vs anterior (query agregada por vendedor)
+      const customersHigherSalesResult = await db.execute(sql`
+        WITH current_sales AS (
+          SELECT sc.seller_id, sc.customer_id, COALESCE(SUM(oh.total_value::numeric), 0) as total
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.status = 'completed'
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+          GROUP BY sc.seller_id, sc.customer_id
+        ),
+        prev_sales AS (
+          SELECT sc.seller_id, sc.customer_id, COALESCE(SUM(oh.total_value::numeric), 0) as total
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.status = 'completed'
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${prevStartDateStr}::date
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${prevEndDateStr}::date
+          GROUP BY sc.seller_id, sc.customer_id
+        )
+        SELECT c.seller_id, COUNT(*) as count
+        FROM current_sales c
+        LEFT JOIN prev_sales p ON c.seller_id = p.seller_id AND c.customer_id = p.customer_id
+        WHERE c.total > COALESCE(p.total, 0)
+        GROUP BY c.seller_id
+      `);
+      
+      const higherSalesMap: Record<string, number> = {};
+      (customersHigherSalesResult.rows as any[]).forEach(row => {
+        higherSalesMap[row.seller_id] = parseInt(row.count || '0');
+      });
+      
+      // Montar dados mensais
+      const monthlyData: any[] = [];
+      
+      for (const seller of activeSellers) {
+        const activeCustomers = activeCustomersMap[seller.id] || 0;
+        const currentMonth = currentMonthMap[seller.id] || { positivados: 0, sales: 0 };
+        const prevMonthSales = prevMonthMap[seller.id] || 0;
+        
+        const salesComparison = prevMonthSales > 0 
+          ? Math.round(((currentMonth.sales / prevMonthSales) * 100) - 100) 
+          : currentMonth.sales > 0 ? 100 : 0;
+        
+        monthlyData.push({
+          sellerId: seller.id,
+          sellerName: `${seller.firstName} ${seller.lastName || ''}`.trim(),
+          activeCustomers,
+          positivados: currentMonth.positivados,
+          positivationRate: activeCustomers > 0 ? Math.round((currentMonth.positivados / activeCustomers) * 100) : 0,
+          currentMonthSales: currentMonth.sales,
+          prevMonthSales,
+          salesComparison,
+          customersWithHigherSales: higherSalesMap[seller.id] || 0
+        });
+      }
+      
+      console.log(`📊 [DAILY-METRICS] Retornando ${dailyData.length} registros diários e ${monthlyData.length} registros mensais`);
+      
+      res.json({
+        month: targetMonth,
+        year: targetYear,
+        daysInMonth,
+        sellers: activeSellers.map(s => ({ id: s.id, name: `${s.firstName} ${s.lastName || ''}`.trim() })),
+        dailyData,
+        monthlyData
+      });
+      
+    } catch (error) {
+      console.error("❌ [DAILY-METRICS] Error:", error);
+      res.status(500).json({ message: "Failed to fetch daily metrics", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   // Location routes
   app.get('/api/locations', authenticateUser, async (req: any, res) => {
     try {
