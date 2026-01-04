@@ -2133,6 +2133,7 @@ export function registerChatRoutes(app: Express): void {
       let conversations: any[] = [];
       let agents: any[] = [];
       let customers: any[] = [];
+      let phonebookContacts: any[] = [];
 
       try {
         conversations = await storage.getChatConversations() || [];
@@ -2150,6 +2151,13 @@ export function registerChatRoutes(app: Express): void {
         customers = await storage.getChatCustomers() || [];
       } catch (e) {
         console.error("[CHAT] Error getting customers:", e);
+      }
+
+      // ✅ Buscar contatos da agenda para priorizar nomes salvos
+      try {
+        phonebookContacts = await storage.getPhonebookContacts() || [];
+      } catch (e) {
+        console.error("[CHAT] Error getting phonebook contacts:", e);
       }
 
       // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas atribuídas
@@ -2174,10 +2182,21 @@ export function registerChatRoutes(app: Express): void {
         const creatorAgent = agents.find(a => a.id === conv.agentId);
         const customer = customers.find(c => c.id === conv.customerId);
         
+        // ✅ PRIORIDADE: Agenda (phonebook) > Customer > Conversa > Fallback
+        // Normalizar telefone para busca na agenda
+        const normalizedPhone = (conv.customerPhone || customer?.phone || '').replace(/\D/g, '');
+        const phonebookContact = phonebookContacts.find((p: any) => {
+          const pPhone = (p.phone || '').replace(/\D/g, '');
+          return pPhone === normalizedPhone || pPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(pPhone);
+        });
+        
+        // Nome priorizado: agenda > customer > conversa > fallback
+        const displayName = phonebookContact?.name || customer?.name || conv.customerName || "Desconhecido";
+        
         return {
           id: conv.id,
           customerId: conv.customerId,
-          customerName: customer?.name || conv.customerName || "Desconhecido",
+          customerName: displayName,
           customerPhone: conv.customerPhone || customer?.phone || "-",
           agentId: conv.agentId,
           agentName: creatorAgent?.name,
