@@ -15121,9 +15121,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`📊 [ORDERS-COUNT] Pedidos via order_history: ${ordersCount}`);
           
           // Se não encontrou no order_history, tentar contar cards completed/delivered/invoiced
-          // com fallback para checkpoints
+          // com fallback para checkpoints e omie_sent_at
           if (ordersCount === 0) {
-            console.log(`📊 [ORDERS-DEBUG] Sem pedidos em order_history, tentando fallback...`);
+            console.log(`📊 [ORDERS-DEBUG] Sem pedidos em order_history, tentando fallback com omie_sent_at...`);
             
             const fallbackResult = await db.execute(sql`
               WITH route_checkouts AS (
@@ -15139,6 +15139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 SELECT 
                   sc.id,
                   COALESCE(
+                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
                     DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
                     DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
                     DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo')
@@ -15147,9 +15148,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
                 WHERE sc.seller_id = ${sellerId}
                   AND sc.customer_id = ANY(${routeCustomerIds}::text[])
-                  AND sc.status IN ('completed', 'delivered', 'invoiced')
+                  AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
                   AND (
-                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                    OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
                     OR DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
                     OR DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
                   )
@@ -15159,25 +15161,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `);
             
             ordersCount = (fallbackResult.rows[0] as any)?.count || 0;
-            console.log(`📊 [ORDERS-COUNT] Fallback via status: ${ordersCount}`);
+            console.log(`📊 [ORDERS-COUNT] Fallback via omie_sent_at/status: ${ordersCount}`);
           }
           
           // FALLBACK FINAL: Se ainda não encontrou, buscar TODOS os pedidos do vendedor na data
-          // Isso captura pedidos que podem não estar vinculados a customers da rota atual
+          // incluindo pedidos enviados ao Omie (omie_sent_at) e order_history
           if (ordersCount === 0) {
-            console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data...`);
+            console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data (incluindo Omie)...`);
             
             const allOrdersResult = await db.execute(sql`
-              SELECT COUNT(DISTINCT oh.id)::int as count
-              FROM order_history oh
-              JOIN sales_cards sc ON sc.id = oh.sales_card_id
+              SELECT COUNT(DISTINCT sc.id)::int as count
+              FROM sales_cards sc
               WHERE sc.seller_id = ${sellerId}
-                AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                AND oh.status = 'completed'
+                AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
+                AND (
+                  DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                  OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                  OR DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                )
             `);
             
             ordersCount = (allOrdersResult.rows[0] as any)?.count || 0;
-            console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor: ${ordersCount}`);
+            console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor (incluindo Omie): ${ordersCount}`);
           }
         }
       } catch (ordersError) {
