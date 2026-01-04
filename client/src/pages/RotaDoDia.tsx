@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
 import { formatInTimeZone } from "date-fns-tz";
@@ -147,6 +147,26 @@ export default function RotaDoDia() {
     queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate],
     enabled: !!selectedSellerId && !!selectedDate,
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
+  });
+
+  // Buscar pedidos do dia e débitos para os clientes da rota
+  interface CustomerInfoResponse {
+    orders: Record<string, { cardNumber: string | null; omieOrderId: string | null }[]>;
+    debts: Record<string, number>;
+  }
+  
+  const routeId = response?.route?.id;
+  const { data: customerInfo, refetch: refetchCustomerInfo, isFetching: isFetchingCustomerInfo } = useQuery<CustomerInfoResponse>({
+    queryKey: ['/api/daily-routes', routeId, 'customer-info', selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/daily-routes/${routeId}/customer-info?date=${selectedDate}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch customer info');
+      return res.json();
+    },
+    enabled: !!routeId && !!selectedDate,
+    staleTime: 60000, // Cache por 1 minuto
   });
 
   const generateFromPlannedVisitsMutation = useMutation({
@@ -997,6 +1017,17 @@ export default function RotaDoDia() {
                     <Button
                       size="sm"
                       variant="outline"
+                      onClick={() => refetchCustomerInfo()}
+                      disabled={isFetchingCustomerInfo}
+                      className="flex items-center gap-2"
+                      data-testid="button-refresh-debts"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isFetchingCustomerInfo ? 'animate-spin' : ''}`} />
+                      {isFetchingCustomerInfo ? 'Atualizando...' : 'Atualizar Débitos'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => setShowAddVisitModal(true)}
                       className="flex items-center gap-2"
                       data-testid="button-add-visit"
@@ -1109,7 +1140,7 @@ export default function RotaDoDia() {
                           </div>
                           
                           <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
                                 {isLead && <Target className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
                                 {visit.customerName}
@@ -1117,6 +1148,29 @@ export default function RotaDoDia() {
                               {isLead && (
                                 <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 dark:text-purple-400">
                                   Lead
+                                </Badge>
+                              )}
+                              {/* Mostrar pedidos do dia */}
+                              {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
+                                <Badge 
+                                  key={orderIdx}
+                                  variant="default" 
+                                  className="text-xs bg-green-600 hover:bg-green-700"
+                                  data-testid={`order-badge-${visit.customerId}-${orderIdx}`}
+                                >
+                                  <ShoppingCart className="h-3 w-3 mr-1" />
+                                  {order.omieOrderId || order.cardNumber || 'Pedido'}
+                                </Badge>
+                              ))}
+                              {/* Mostrar débito vencido */}
+                              {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
+                                <Badge 
+                                  variant="destructive" 
+                                  className="text-xs"
+                                  data-testid={`debt-badge-${visit.customerId}`}
+                                >
+                                  <DollarSign className="h-3 w-3 mr-1" />
+                                  R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                 </Badge>
                               )}
                               {checkInCheckpoint && checkInCheckpoint.photoUrl && (
@@ -1274,13 +1328,38 @@ export default function RotaDoDia() {
                                   {index + 1}
                                 </div>
                                 <div className="flex-1">
-                                  <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                                    <Phone className="h-4 w-4" />
-                                    {visit.customerName}
-                                  </p>
-                                  {visit.phone && (
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                                      <Phone className="h-4 w-4" />
+                                      {visit.customerName}
+                                    </p>
+                                    {/* Mostrar pedidos do dia */}
+                                    {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
+                                      <Badge 
+                                        key={orderIdx}
+                                        variant="default" 
+                                        className="text-xs bg-green-600 hover:bg-green-700"
+                                        data-testid={`virtual-order-badge-${visit.customerId}-${orderIdx}`}
+                                      >
+                                        <ShoppingCart className="h-3 w-3 mr-1" />
+                                        {order.omieOrderId || order.cardNumber || 'Pedido'}
+                                      </Badge>
+                                    ))}
+                                    {/* Mostrar débito vencido */}
+                                    {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
+                                      <Badge 
+                                        variant="destructive" 
+                                        className="text-xs"
+                                        data-testid={`virtual-debt-badge-${visit.customerId}`}
+                                      >
+                                        <DollarSign className="h-3 w-3 mr-1" />
+                                        R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  {(visit as any).phone && (
                                     <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                      📱 {visit.phone}
+                                      📱 {(visit as any).phone}
                                     </p>
                                   )}
                                   {visit.customerAddress && (

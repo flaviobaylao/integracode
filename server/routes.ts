@@ -16156,6 +16156,211 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buscar pedidos do dia e débitos para clientes de uma rota
+  app.get('/api/daily-routes/:routeId/customer-info', authenticateUser, async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const { date } = req.query;
+      
+      // Buscar a rota para obter os customerIds
+      const route = await storage.getDailyRoute(routeId);
+      if (!route) {
+        return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+      
+      const routeDate = date ? String(date) : route.routeDate.toISOString().split('T')[0];
+      
+      // Extrair customerIds das visitas
+      // visitStops é um objeto onde KEYS são stopIds e valores contêm entityType/entityId
+      const customerIds: string[] = [];
+      const visitStops = route.visitStops as Record<string, { entityType: string; entityId: string }> || {};
+      const optimizedOrder = route.optimizedOrder as string[] || [];
+      
+      // Estratégia robusta para normalizar stopIds e extrair customerIds
+      // Handles: legacy UUIDs, prefixed "customer:UUID", key mismatches
+      
+      // Criar mapas para busca rápida:
+      // 1. entityId -> metadata
+      // 2. key suffix (após ':') -> metadata
+      const entityIdToMeta: Record<string, { key: string; entityType: string; entityId: string }> = {};
+      const keySuffixToMeta: Record<string, { key: string; entityType: string; entityId: string }> = {};
+      
+      Object.entries(visitStops).forEach(([key, stop]: [string, any]) => {
+        if (stop.entityId) {
+          entityIdToMeta[stop.entityId] = { key, ...stop };
+        }
+        // Extrair sufixo após ':' para busca legacy (ex: "visit:UUID" -> "UUID")
+        if (key.includes(':')) {
+          const suffix = key.split(':').pop() || '';
+          if (suffix && stop.entityType && stop.entityId) {
+            keySuffixToMeta[suffix] = { key, ...stop };
+          }
+        }
+      });
+      
+      optimizedOrder.forEach((stopId: string) => {
+        // 1. Busca direta em visitStops
+        let stopMeta = visitStops[stopId];
+        
+        // 2. Se não encontrou e é UUID puro, tenta com prefixo "customer:"
+        if (!stopMeta && !stopId.includes(':')) {
+          stopMeta = visitStops[`customer:${stopId}`];
+        }
+        
+        // 3. Se ainda não encontrou, tenta com prefixo "visit:"
+        if (!stopMeta && !stopId.includes(':')) {
+          stopMeta = visitStops[`visit:${stopId}`];
+        }
+        
+        // 4. Se ainda não encontrou, busca por entityId no mapa reverso
+        if (!stopMeta && !stopId.includes(':')) {
+          const foundByEntityId = entityIdToMeta[stopId];
+          if (foundByEntityId) {
+            stopMeta = foundByEntityId;
+          }
+        }
+        
+        // 5. Se ainda não encontrou, busca por sufixo de key
+        if (!stopMeta && !stopId.includes(':')) {
+          const foundBySuffix = keySuffixToMeta[stopId];
+          if (foundBySuffix) {
+            stopMeta = foundBySuffix;
+          }
+        }
+        
+        // 6. Se encontrou metadata de cliente
+        if (stopMeta && stopMeta.entityType === 'customer' && stopMeta.entityId) {
+          if (!customerIds.includes(stopMeta.entityId)) {
+            customerIds.push(stopMeta.entityId);
+          }
+        } else if (stopId.startsWith('customer:')) {
+          // Formato moderno sem metadata: extrai ID do próprio stopId
+          const customerId = stopId.replace('customer:', '');
+          if (customerId && !customerIds.includes(customerId)) {
+            customerIds.push(customerId);
+          }
+        }
+      });
+      
+      // Fallback final: iterar diretamente sobre visitStops para cobrir todos os cenários
+      Object.entries(visitStops).forEach(([key, stop]: [string, any]) => {
+        if (stop.entityType === 'customer' && stop.entityId) {
+          if (!customerIds.includes(stop.entityId)) {
+            customerIds.push(stop.entityId);
+          }
+        }
+      });
+      
+      if (customerIds.length === 0) {
+        return res.json({ orders: {}, debts: {} });
+      }
+      
+      console.log(`📊 [CUSTOMER-INFO] Rota ${routeId}, data ${routeDate}, ${customerIds.length} clientes, stopIds: ${optimizedOrder.slice(0,3).join(', ')}...`);
+      
+      // Buscar pedidos do dia para esses clientes
+      // Usa UNION para combinar order_history + omie_order_id
+      const ordersResult = await db.execute(sql`
+        WITH order_history_orders AS (
+          SELECT 
+            sc.customer_id,
+            sc.id as sales_card_id,
+            sc.card_number,
+            oh.order_date,
+            sc.omie_order_id
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.status = 'completed'
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+            AND sc.customer_id = ANY(${customerIds}::text[])
+        ),
+        omie_orders AS (
+          SELECT 
+            customer_id,
+            id as sales_card_id,
+            card_number,
+            omie_order_id
+          FROM sales_cards
+          WHERE omie_order_id IS NOT NULL
+            AND customer_id = ANY(${customerIds}::text[])
+            AND (
+              -- Filtro por data extraída da notes OU omie_sent_at/completed_date
+              (notes LIKE '%Enviado para Omie:%' AND 
+               TO_DATE(SUBSTRING(notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'), 'DD/MM/YYYY') = ${routeDate}::date)
+              OR
+              (notes NOT LIKE '%Enviado para Omie:%' AND 
+               COALESCE(DATE(omie_sent_at AT TIME ZONE 'America/Sao_Paulo'), 
+                        DATE(completed_date AT TIME ZONE 'America/Sao_Paulo')) = ${routeDate}::date)
+            )
+        )
+        SELECT DISTINCT customer_id, sales_card_id, card_number, omie_order_id
+        FROM (
+          SELECT customer_id, sales_card_id, card_number, omie_order_id FROM order_history_orders
+          UNION
+          SELECT customer_id, sales_card_id, card_number, omie_order_id FROM omie_orders
+        ) all_orders
+      `);
+      
+      // Indexar pedidos por customerId
+      const ordersMap: Record<string, { cardNumber: string | null; omieOrderId: string | null }[]> = {};
+      (ordersResult.rows as any[]).forEach(row => {
+        if (!ordersMap[row.customer_id]) ordersMap[row.customer_id] = [];
+        ordersMap[row.customer_id].push({
+          cardNumber: row.card_number,
+          omieOrderId: row.omie_order_id
+        });
+      });
+      
+      // Buscar clientes para obter o documento (CPF/CNPJ)
+      const customersResult = await db.execute(sql`
+        SELECT id, document FROM customers WHERE id = ANY(${customerIds}::text[])
+      `);
+      
+      const customerDocuments: Record<string, string> = {};
+      (customersResult.rows as any[]).forEach(row => {
+        if (row.document) {
+          customerDocuments[row.id] = row.document.replace(/\D/g, '');
+        }
+      });
+      
+      // Buscar débitos vencidos por documento do cliente
+      const documents = Object.values(customerDocuments).filter(d => d);
+      let debtsMap: Record<string, number> = {};
+      
+      if (documents.length > 0) {
+        const debtsResult = await db.execute(sql`
+          SELECT client_document, total_amount 
+          FROM overdue_debts 
+          WHERE REPLACE(REPLACE(client_document, '.', ''), '-', '') = ANY(${documents}::text[])
+        `);
+        
+        // Criar mapa de documento -> total de débito
+        const documentToDebt: Record<string, number> = {};
+        (debtsResult.rows as any[]).forEach(row => {
+          const normalizedDoc = (row.client_document || '').replace(/\D/g, '');
+          documentToDebt[normalizedDoc] = parseFloat(row.total_amount || '0');
+        });
+        
+        // Mapear customerId -> débito total
+        Object.entries(customerDocuments).forEach(([customerId, doc]) => {
+          if (documentToDebt[doc]) {
+            debtsMap[customerId] = documentToDebt[doc];
+          }
+        });
+      }
+      
+      res.json({
+        orders: ordersMap,
+        debts: debtsMap
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar informações dos clientes:', error);
+      res.status(500).json({ 
+        message: 'Erro ao buscar informações dos clientes',
+        error: error.message 
+      });
+    }
+  });
+
   // ========== ROUTE METRICS ENDPOINTS ==========
   
   // Buscar métricas diárias de um vendedor
