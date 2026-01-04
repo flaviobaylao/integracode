@@ -16310,15 +16310,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
       
-      // Buscar clientes para obter o documento (CPF/CNPJ)
+      // Buscar clientes para obter o documento (CPF ou CNPJ)
       const customersResult = await db.execute(sql`
-        SELECT id, document FROM customers WHERE id = ANY(${customerIds}::text[])
+        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(${customerIds}::text[])
       `);
       
       const customerDocuments: Record<string, string> = {};
       (customersResult.rows as any[]).forEach(row => {
-        if (row.document) {
-          customerDocuments[row.id] = row.document.replace(/\D/g, '');
+        // Priorizar CNPJ, senão CPF
+        const doc = row.cnpj || row.cpf;
+        if (doc) {
+          customerDocuments[row.id] = doc.replace(/\D/g, '');
         }
       });
       
@@ -16330,7 +16332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const debtsResult = await db.execute(sql`
           SELECT client_document, total_amount 
           FROM overdue_debts 
-          WHERE REPLACE(REPLACE(client_document, '.', ''), '-', '') = ANY(${documents}::text[])
+          WHERE REGEXP_REPLACE(client_document, '[^0-9]', '', 'g') = ANY(${documents}::text[])
         `);
         
         // Criar mapa de documento -> total de débito
