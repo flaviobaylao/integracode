@@ -2494,11 +2494,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const prevEndDate = new Date(prevYear, prevMonth, 0);
       const prevEndDateStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(prevEndDate.getDate()).padStart(2, '0')}`;
       
-      // Buscar todos os vendedores ativos
+      // Buscar todos os vendedores ativos com omieVendorCode
       const activeSellers = await db.select({
         id: users.id,
         firstName: users.firstName,
-        lastName: users.lastName
+        lastName: users.lastName,
+        omieVendorCode: users.omieVendorCode
       })
       .from(users)
       .where(and(
@@ -2506,7 +2507,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eq(users.isActive, true)
       ));
       
-      console.log(`📊 [DAILY-METRICS] ${activeSellers.length} vendedores ativos`);
+      // ✅ CORREÇÃO: Criar mapeamento UUID → omieVendorCode para indexar pedidos corretamente
+      // sales_cards.seller_id armazena código Omie (numérico), não UUID
+      const uuidToOmieCode: Record<string, string> = {};
+      const omieCodeToUuid: Record<string, string> = {};
+      activeSellers.forEach(seller => {
+        if (seller.omieVendorCode) {
+          uuidToOmieCode[seller.id] = seller.omieVendorCode;
+          omieCodeToUuid[seller.omieVendorCode] = seller.id;
+        }
+      });
+      
+      console.log(`📊 [DAILY-METRICS] ${activeSellers.length} vendedores ativos, ${Object.keys(uuidToOmieCode).length} com omieVendorCode`);
       
       // QUERY AGREGADA 1: Visitas agendadas por vendedor/dia (presencial e virtual)
       const scheduledVisitsResult = await db.execute(sql`
@@ -2559,11 +2571,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
       
+      // ✅ CORREÇÃO: ordersResult.seller_id é código Omie, precisa mapear para UUID
       const ordersMap: Record<string, Record<string, number>> = {};
       (ordersResult.rows as any[]).forEach(row => {
-        if (!ordersMap[row.seller_id]) ordersMap[row.seller_id] = {};
-        const dateKey = new Date(row.order_date).toISOString().split('T')[0];
-        ordersMap[row.seller_id][dateKey] = parseInt(row.count || '0');
+        // Mapear código Omie para UUID
+        const userUuid = omieCodeToUuid[row.seller_id];
+        if (userUuid) {
+          if (!ordersMap[userUuid]) ordersMap[userUuid] = {};
+          const dateKey = new Date(row.order_date).toISOString().split('T')[0];
+          ordersMap[userUuid][dateKey] = parseInt(row.count || '0');
+        }
       });
       
       const distanceMap: Record<string, Record<string, number>> = {};
@@ -2631,12 +2648,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         GROUP BY sc.seller_id
       `);
       
+      // ✅ CORREÇÃO: Mapear código Omie para UUID
       const currentMonthMap: Record<string, { positivados: number; sales: number }> = {};
       (currentMonthResult.rows as any[]).forEach(row => {
-        currentMonthMap[row.seller_id] = {
-          positivados: parseInt(row.positivados || '0'),
-          sales: parseFloat(row.total_sales || '0')
-        };
+        const userUuid = omieCodeToUuid[row.seller_id];
+        if (userUuid) {
+          currentMonthMap[userUuid] = {
+            positivados: parseInt(row.positivados || '0'),
+            sales: parseFloat(row.total_sales || '0')
+          };
+        }
       });
       
       // Vendas do mês anterior
@@ -2652,9 +2673,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         GROUP BY sc.seller_id
       `);
       
+      // ✅ CORREÇÃO: Mapear código Omie para UUID
       const prevMonthMap: Record<string, number> = {};
       (prevMonthResult.rows as any[]).forEach(row => {
-        prevMonthMap[row.seller_id] = parseFloat(row.total_sales || '0');
+        const userUuid = omieCodeToUuid[row.seller_id];
+        if (userUuid) {
+          prevMonthMap[userUuid] = parseFloat(row.total_sales || '0');
+        }
       });
       
       // Clientes com vendas maiores este mês vs anterior (query agregada por vendedor)
@@ -2684,9 +2709,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         GROUP BY c.seller_id
       `);
       
+      // ✅ CORREÇÃO: Mapear código Omie para UUID
       const higherSalesMap: Record<string, number> = {};
       (customersHigherSalesResult.rows as any[]).forEach(row => {
-        higherSalesMap[row.seller_id] = parseInt(row.count || '0');
+        const userUuid = omieCodeToUuid[row.seller_id];
+        if (userUuid) {
+          higherSalesMap[userUuid] = parseInt(row.count || '0');
+        }
       });
       
       // Montar dados mensais
@@ -15089,7 +15118,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Montar lista de customerIds da rota (apenas customers, não leads)
         let routeCustomerIds = customerIds.filter(id => id) as string[];
         
-        console.log(`📊 [ORDERS-DEBUG] Iniciando contagem - sellerId: ${sellerId}, date: ${date}, routeId: ${route.id}`);
+        // ✅ CORREÇÃO: Buscar omieVendorCode do vendedor para filtrar sales_cards
+        // sales_cards.seller_id armazena o código Omie (numérico), não o UUID
+        let omieVendorCode: string | null = null;
+        const userResult = await db.execute(sql`
+          SELECT omie_vendor_code FROM users WHERE id = ${sellerId}
+        `);
+        if (userResult.rows.length > 0 && userResult.rows[0].omie_vendor_code) {
+          omieVendorCode = userResult.rows[0].omie_vendor_code as string;
+        }
+        
+        console.log(`📊 [ORDERS-DEBUG] Iniciando contagem - sellerId: ${sellerId}, omieVendorCode: ${omieVendorCode}, date: ${date}, routeId: ${route.id}`);
         console.log(`📊 [ORDERS-DEBUG] customerIds na rota: ${routeCustomerIds.length}`);
         
         // FALLBACK: Se a rota não tem clientes populados, buscar da visit_agenda
@@ -15105,14 +15144,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`📊 [ORDERS-DEBUG] customerIds da visit_agenda: ${routeCustomerIds.length}`);
         }
         
-        if (routeCustomerIds.length > 0) {
+        if (routeCustomerIds.length > 0 && omieVendorCode) {
           // ABORDAGEM CORRIGIDA: Contar pedidos DIRETAMENTE do order_history
           // O order_history registra cada pedido feito, independente do status atual do card
+          // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
           const ordersResult = await db.execute(sql`
             SELECT COUNT(DISTINCT oh.id)::int as count
             FROM order_history oh
             JOIN sales_cards sc ON sc.id = oh.sales_card_id
-            WHERE sc.seller_id = ${sellerId}
+            WHERE sc.seller_id = ${omieVendorCode}
               AND sc.customer_id = ANY(${routeCustomerIds}::text[])
               AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
           `);
@@ -15125,6 +15165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (ordersCount === 0) {
             console.log(`📊 [ORDERS-DEBUG] Sem pedidos em order_history, tentando fallback com omie_sent_at...`);
             
+            // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
             const fallbackResult = await db.execute(sql`
               WITH route_checkouts AS (
                 SELECT DISTINCT ON (customer_id) 
@@ -15146,7 +15187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   ) as resolved_date
                 FROM sales_cards sc
                 LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
-                WHERE sc.seller_id = ${sellerId}
+                WHERE sc.seller_id = ${omieVendorCode}
                   AND sc.customer_id = ANY(${routeCustomerIds}::text[])
                   AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
                   AND (
@@ -15169,10 +15210,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (ordersCount === 0) {
             console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data (incluindo Omie)...`);
             
+            // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
             const allOrdersResult = await db.execute(sql`
               SELECT COUNT(DISTINCT sc.id)::int as count
               FROM sales_cards sc
-              WHERE sc.seller_id = ${sellerId}
+              WHERE sc.seller_id = ${omieVendorCode}
                 AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
                 AND (
                   DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
