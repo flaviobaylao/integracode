@@ -317,47 +317,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('🔍 [WEBHOOK-ENV] REPLIT_DEV_DOMAIN:', devDomain || 'não definido');
     console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAINS:', prodDomainPlural || 'não definido');
     
-    // In development mode, skip webhook reconfiguration to preserve production webhook
-    if (isDevelopment && devDomain) {
-      console.log('⚠️  [WEBHOOK] Modo desenvolvimento detectado - NÃO reconfigurando webhook');
-      console.log('⚠️  [WEBHOOK] O webhook de produção será mantido para receber mensagens');
-      console.log('💡 [WEBHOOK] Para testar webhooks em dev, use: POST /api/chat/webhook/force-dev-config');
-    } else {
-      // Production: use fixed production domain to avoid issues with dynamic domain detection
-      const prodDomain = prodDomainPlural || 'integrahonest.replit.app';
-      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
-      console.log('🔧 [WEBHOOK] Modo PRODUÇÃO - configurando webhook para:', webhookUrl);
-
+    // Expected production URL for webhook - always use the stable production domain
+    const expectedProdDomain = prodDomainPlural || 'integrahonest.replit.app';
+    const expectedWebhookUrl = `https://${expectedProdDomain}/api/chat/webhook/messages`;
+    const webhookEvents = [
+      'MESSAGES_UPSERT',
+      'SEND_MESSAGE',
+      'MESSAGES_UPDATE',
+      'MESSAGES_SET',
+      'MESSAGES_EDITED'
+    ];
+    
+    // Helper function to check if URL is pointing to an old/temporary deployment
+    const isStaleUrl = (url: string): boolean => {
+      if (!url) return true;
+      return url.includes('.spock.') || 
+             url.includes('.prod.repl.run') || 
+             url.includes('.repl.co') ||
+             (url.includes('replit') && !url.includes(expectedProdDomain));
+    };
+    
+    // Run webhook validation/configuration in background to avoid blocking startup
+    (async () => {
       try {
-        // 🪞 ESPELHO COMPLETO DO WHATSAPP - Configurar webhook para capturar TODAS as mensagens
-        const webhookEvents = [
-          'MESSAGES_UPSERT',      // Mensagens novas (recebidas E enviadas via celular - principal)
-          'SEND_MESSAGE',         // Mensagens enviadas via API
-          'MESSAGES_UPDATE',      // Atualizações de status (lido, entregue, etc)
-          'MESSAGES_SET',         // Sincronização em lote
-          'MESSAGES_EDITED'       // Mensagens editadas
-        ];
+        console.log('🔍 [WEBHOOK] Verificando URL do webhook...');
         
-        console.log('🪞 [WEBHOOK-CONFIG] Configurando espelho completo do WhatsApp...');
-        console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
-        
-        const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, webhookUrl, webhookEvents);
-        if (webhookResult.success) {
-          console.log('✅ Webhook configurado com sucesso para PRODUÇÃO');
-          console.log('✅ URL:', webhookUrl);
-          console.log('✅ Eventos configurados:', webhookEvents.join(', '));
-          // Verificar status depois de configurar
-          setTimeout(async () => {
-            const webhookStatus = await evolutionAPIService.getWebhook(evolutionInstanceName);
-            console.log('📡 Status do webhook após configuração:', webhookStatus);
-          }, 2000);
-        } else {
-          console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
+        // First, check current webhook URL
+        let currentUrl = '';
+        try {
+          const currentWebhook = await evolutionAPIService.getWebhook(evolutionInstanceName);
+          currentUrl = currentWebhook.webhook?.url || '';
+          console.log(`📡 [WEBHOOK] URL atual: ${currentUrl}`);
+          console.log(`📡 [WEBHOOK] URL esperada: ${expectedWebhookUrl}`);
+        } catch (getErr: any) {
+          console.warn('⚠️  [WEBHOOK] Erro ao obter webhook atual:', getErr.message);
         }
-      } catch (err) {
-        console.warn('⚠️  Erro ao tentar configurar webhook:', err);
+        
+        const isCorrectUrl = currentUrl === expectedWebhookUrl;
+        const needsFix = !isCorrectUrl && isStaleUrl(currentUrl);
+        
+        if (isCorrectUrl) {
+          console.log('✅ [WEBHOOK] URL de produção correta - nenhuma ação necessária');
+        } else if (needsFix) {
+          console.log('🔧 [WEBHOOK-FIX] Webhook apontando para URL antiga/incorreta - RECONFIGURANDO para produção!');
+          
+          const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, expectedWebhookUrl, webhookEvents);
+          if (webhookResult.success) {
+            console.log('✅ [WEBHOOK-FIX] Webhook corrigido para produção:', expectedWebhookUrl);
+          } else {
+            console.warn('⚠️  [WEBHOOK-FIX] Erro ao corrigir webhook:', webhookResult.error);
+          }
+        } else if (!isDevelopment) {
+          // Production mode: always configure webhook to ensure it's correct
+          console.log('🔧 [WEBHOOK] Modo PRODUÇÃO - configurando webhook para:', expectedWebhookUrl);
+          console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
+          
+          const webhookResult = await evolutionAPIService.setWebhook(evolutionInstanceName, expectedWebhookUrl, webhookEvents);
+          if (webhookResult.success) {
+            console.log('✅ Webhook configurado com sucesso para PRODUÇÃO');
+            console.log('✅ URL:', expectedWebhookUrl);
+          } else {
+            console.warn('⚠️  Erro ao configurar webhook:', webhookResult.error);
+          }
+        } else {
+          console.log('⚠️  [WEBHOOK] Webhook aponta para URL customizada, mantendo configuração atual');
+          console.log('💡 [WEBHOOK] Para forçar reconfiguração: POST /api/chat/webhook/force-production');
+        }
+      } catch (err: any) {
+        console.warn('⚠️  [WEBHOOK] Erro ao verificar/configurar webhook:', err.message);
+        console.log('💡 [WEBHOOK] Para reconfigurar manualmente: POST /api/chat/webhook/force-production');
       }
-    }
+    })();
   } else {
     console.warn('⚠️  Evolution API não completamente configurada. Verifique as secrets:', {
       hasBaseUrl: !!evolutionBaseUrl,
