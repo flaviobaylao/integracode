@@ -853,6 +853,19 @@ export default function RotaDoDia() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
+                    <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
+                    <p className="text-2xl font-bold" data-testid="attendance-percentage">
+                      {route.totalVisits > 0 
+                        ? Math.round((route.completedVisits / route.totalVisits) * 100) 
+                        : 0}%
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
                   <div className="p-3 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
                     <Clock className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                   </div>
