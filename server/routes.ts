@@ -2535,17 +2535,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       
       // QUERY AGREGADA 2: Pedidos por vendedor/dia
+      // ✅ CORREÇÃO: Combina order_history + pedidos enviados ao Omie (via omie_order_id + notes)
       const ordersResult = await db.execute(sql`
+        WITH order_history_orders AS (
+          SELECT 
+            sc.seller_id,
+            DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') as order_date
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.status = 'completed'
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        ),
+        omie_orders AS (
+          -- Pedidos enviados ao Omie que podem não estar em order_history
+          -- Extrai a data do campo notes: "Enviado para Omie: DD/MM/YYYY, HH:MM:SS"
+          SELECT 
+            seller_id,
+            CASE 
+              WHEN notes LIKE '%Enviado para Omie:%' THEN
+                TO_DATE(
+                  SUBSTRING(notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'),
+                  'DD/MM/YYYY'
+                )
+              ELSE COALESCE(
+                DATE(omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(delivery_completed_date AT TIME ZONE 'America/Sao_Paulo')
+              )
+            END as order_date
+          FROM sales_cards
+          WHERE omie_order_id IS NOT NULL
+        ),
+        all_orders AS (
+          SELECT seller_id, order_date FROM order_history_orders
+          UNION
+          SELECT seller_id, order_date FROM omie_orders 
+          WHERE order_date >= ${startDateStr}::date 
+            AND order_date <= ${endDateStr}::date
+        )
         SELECT 
-          sc.seller_id,
-          DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') as order_date,
+          seller_id,
+          order_date,
           COUNT(*) as count
-        FROM order_history oh
-        JOIN sales_cards sc ON sc.id = oh.sales_card_id
-        WHERE oh.status = 'completed'
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
-        GROUP BY sc.seller_id, DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo')
+        FROM all_orders
+        WHERE order_date IS NOT NULL
+        GROUP BY seller_id, order_date
       `);
       
       // QUERY AGREGADA 3: Distância por vendedor/dia
@@ -2635,17 +2670,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Positivados e vendas do mês atual
+      // ✅ CORREÇÃO: Combina order_history + pedidos Omie via omie_order_id
       const currentMonthResult = await db.execute(sql`
+        WITH order_history_data AS (
+          SELECT 
+            sc.seller_id,
+            sc.customer_id,
+            oh.total_value::numeric as total_value
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.status = 'completed'
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        ),
+        omie_data AS (
+          SELECT 
+            seller_id,
+            customer_id,
+            total_value::numeric as total_value
+          FROM sales_cards
+          WHERE omie_order_id IS NOT NULL
+            AND notes LIKE '%Enviado para Omie:%'
+            AND (
+              CASE 
+                WHEN notes LIKE '%Enviado para Omie:%' THEN
+                  TO_DATE(
+                    SUBSTRING(notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'),
+                    'DD/MM/YYYY'
+                  )
+                ELSE NULL
+              END
+            ) >= ${startDateStr}::date
+            AND (
+              CASE 
+                WHEN notes LIKE '%Enviado para Omie:%' THEN
+                  TO_DATE(
+                    SUBSTRING(notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'),
+                    'DD/MM/YYYY'
+                  )
+                ELSE NULL
+              END
+            ) <= ${endDateStr}::date
+        ),
+        all_data AS (
+          SELECT seller_id, customer_id, total_value FROM order_history_data
+          UNION ALL
+          SELECT seller_id, customer_id, total_value FROM omie_data
+        )
         SELECT 
-          sc.seller_id,
-          COUNT(DISTINCT sc.customer_id) as positivados,
-          COALESCE(SUM(oh.total_value::numeric), 0) as total_sales
-        FROM order_history oh
-        JOIN sales_cards sc ON sc.id = oh.sales_card_id
-        WHERE oh.status = 'completed'
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
-        GROUP BY sc.seller_id
+          seller_id,
+          COUNT(DISTINCT customer_id) as positivados,
+          COALESCE(SUM(total_value), 0) as total_sales
+        FROM all_data
+        GROUP BY seller_id
       `);
       
       // ✅ CORREÇÃO: Mapear código Omie para UUID
