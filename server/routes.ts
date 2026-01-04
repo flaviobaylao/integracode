@@ -15256,6 +15256,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ordersCount = (allOrdersResult.rows[0] as any)?.count || 0;
             console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor (incluindo Omie via notes): ${ordersCount}`);
           }
+          
+          // SUPER FALLBACK: Se ainda zero, buscar por omie_order_id diretamente sem filtro de clientes
+          // Isso pega TODOS os pedidos enviados ao Omie pelo vendedor na data via notes
+          if (ordersCount === 0) {
+            console.log(`📊 [ORDERS-DEBUG] Super fallback: buscando por omie_order_id sem filtro de clientes...`);
+            
+            // Padrão no notes: "Enviado para Omie: 02/01/2026, 10:30:45"
+            // Converter a data alvo para formato DD/MM/YYYY para busca no notes
+            const [year, month, day] = date.split('-');
+            const datePatternSearch = `${day}/${month}/${year}`;
+            
+            const superFallbackResult = await db.execute(sql`
+              SELECT COUNT(DISTINCT id)::int as count
+              FROM sales_cards
+              WHERE seller_id = ANY(${sellerIdVariations}::text[])
+                AND omie_order_id IS NOT NULL
+                AND notes LIKE ${'%Enviado para Omie: ' + datePatternSearch + '%'}
+            `);
+            
+            ordersCount = (superFallbackResult.rows[0] as any)?.count || 0;
+            console.log(`📊 [ORDERS-COUNT] Super fallback (omie_order_id + notes pattern "${datePatternSearch}"): ${ordersCount}`);
+          }
         }
       } catch (ordersError) {
         console.error('⚠️ [ORDERS-COUNT] Erro ao calcular pedidos (não crítico):', ordersError);
