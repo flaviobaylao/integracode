@@ -3756,10 +3756,16 @@ export class DatabaseStorage implements IStorage {
 
       // === 2. VENDAS: Somar faturamentos INCLUINDO apenas CFOPs de venda ===
       // CFOPs a INCLUIR (mesma lógica do Omie):
-      // - 5.101 / 5101: Venda de Producao do Estabelecimento
+      // - 5.101 / 5101: Venda de Producao do Estabelecimento (intra-estado)
+      // - 5.102 / 5102: Venda de Mercadoria Adquirida (intra-estado)
+      // - 6.101 / 6101: Venda de Producao do Estabelecimento (inter-estado)
+      // - 6.102 / 6102: Venda de Mercadoria Adquirida (inter-estado)
       // - 1.201 / 1201: Devolucao de Venda de Producao do Estabelecimento
       const includedCFOPs = [
-        '5.101', '5101',  // Venda de produção
+        '5.101', '5101',  // Venda de produção (intra-estado)
+        '5.102', '5102',  // Venda de mercadoria (intra-estado)
+        '6.101', '6101',  // Venda de produção (inter-estado)
+        '6.102', '6102',  // Venda de mercadoria (inter-estado)
         '1.201', '1201'   // Devolução de venda
       ];
 
