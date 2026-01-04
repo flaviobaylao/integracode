@@ -14395,7 +14395,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
-      const visits = await Promise.all(
+      const visits: any[] = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
           // optimizedOrder agora contém IDs de clientes, não de sales_cards
           const [customer] = await db.select({
@@ -14417,6 +14417,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return customer;
         })
       );
+
+      // ✅ CORREÇÃO: Buscar clientes virtuais programados para hoje
+      // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
+      try {
+        const virtualCustomersData = await storage.getCustomersWithVirtualVisitsOnDate(sellerId, todayBrazil);
+        
+        if (virtualCustomersData.length > 0) {
+          // Filtrar clientes virtuais que já não estão na lista de visitas
+          const existingCustomerIds = new Set(visits.map((v: any) => v?.customerId).filter(Boolean));
+          
+          const virtualVisitsToAdd = virtualCustomersData
+            .filter(vc => !existingCustomerIds.has(vc.id))
+            .map(vc => ({
+              id: vc.id,
+              customerId: vc.id,
+              customerName: vc.fantasyName || vc.name,
+              customerLatitude: vc.latitude,
+              customerLongitude: vc.longitude,
+              customerAddress: vc.address,
+              scheduledDate: route.routeDate,
+              isVirtual: true, // Forçar isVirtual = true
+              weekdays: vc.weekdays,
+              visitPeriodicity: vc.visitPeriodicity
+            }));
+          
+          // Adicionar visitas virtuais ao final da lista
+          visits.push(...virtualVisitsToAdd);
+          
+          console.log(`📞 [VIRTUAL-TODAY] Adicionadas ${virtualVisitsToAdd.length} visitas virtuais à rota de hoje`);
+        }
+      } catch (virtualError) {
+        console.warn(`⚠️ Erro ao buscar clientes virtuais para hoje:`, virtualError);
+      }
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
@@ -14955,6 +14988,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter(Boolean);
       
       console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
+
+      // ✅ CORREÇÃO: Buscar clientes virtuais programados para esta data
+      // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
+      try {
+        const virtualCustomersData = await storage.getCustomersWithVirtualVisitsOnDate(sellerId, routeDate);
+        
+        if (virtualCustomersData.length > 0) {
+          // Filtrar clientes virtuais que já não estão na lista de visitas
+          const existingCustomerIds = new Set(visits.map((v: any) => v.customerId).filter(Boolean));
+          
+          const virtualVisitsToAdd = virtualCustomersData
+            .filter(vc => !existingCustomerIds.has(vc.id))
+            .map(vc => ({
+              id: `virtual:${vc.id}`,
+              visitType: 'customer' as const,
+              entityId: vc.id,
+              customerId: vc.id,
+              customerName: vc.fantasyName || vc.name,
+              customerLatitude: vc.latitude,
+              customerLongitude: vc.longitude,
+              customerAddress: vc.address,
+              scheduledDate: route.routeDate,
+              isVirtual: true, // Forçar isVirtual = true
+              weekdays: vc.weekdays,
+              visitPeriodicity: vc.visitPeriodicity,
+              isAutoCheckout: false,
+              visitDuration: null
+            }));
+          
+          // Adicionar visitas virtuais ao final da lista
+          visits.push(...virtualVisitsToAdd);
+          
+          console.log(`📞 [VIRTUAL] Adicionadas ${virtualVisitsToAdd.length} visitas virtuais à rota (de ${virtualCustomersData.length} encontradas)`);
+        }
+      } catch (virtualError) {
+        console.warn(`⚠️ Erro ao buscar clientes virtuais:`, virtualError);
+      }
 
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
