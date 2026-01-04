@@ -19,7 +19,7 @@
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista).
-- **WhatsApp Integration**: Evolution API for message sending, real-time conversation tracking, and webhook support for environment-specific configurations (development/production).
+- **WhatsApp Integration**: Evolution API for message sending, real-time conversation tracking, and webhook support for environment-specific configurations (development/production). **Automatic webhook URL validation** on startup detects and corrects stale deployment URLs (`.spock.`, `.prod.repl.run`, `.repl.co`) to the stable production domain (`integrahonest.replit.app`), preventing intermittent message reception issues.
 - **WhatsApp Chat Center**: A complete conversational system at `/telemarketing/atendimento` with real-time conversation management, intelligent round-robin agent distribution, quick templates, status tracking, and optional ChatGPT standby activation/deactivation. Includes features for conversation transfer and unattended conversation auto-redistribution.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization, and **strict abbreviated weekday format (Seg, Ter, Qua, Qui, Sex, Sab, Dom) throughout system** with robust error handling.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Order release workflow allows admin approval for blocked orders.
