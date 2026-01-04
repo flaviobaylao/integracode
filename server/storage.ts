@@ -3807,9 +3807,10 @@ export class DatabaseStorage implements IStorage {
 
       // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Projeção de faturamento ===
       let overdueDebtRatio = 0;
+      let totalOverdueDebt = 0; // Valor absoluto do débito vencido
       
       // ✅ CORREÇÃO: Usar userSellerId (UUID do usuário) para buscar débitos via customers
-      if (userSellerId && revenueProjection > 0) {
+      if (userSellerId) {
         // Buscar débitos vencidos da carteira usando JOIN
         const overdueDebtsResult = await db.execute(sql`
           SELECT 
@@ -3824,12 +3825,12 @@ export class DatabaseStorage implements IStorage {
             AND c.omie_status = 'ativo'
         `);
 
-        const totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
+        totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
           const value = parseFloat(debt.total_amount?.toString() || '0');
           return sum + (isNaN(value) ? 0 : value);
         }, 0);
 
-        if (totalOverdueDebt > 0) {
+        if (totalOverdueDebt > 0 && revenueProjection > 0) {
           overdueDebtRatio = (totalOverdueDebt / revenueProjection) * 100;
         }
         
@@ -3922,6 +3923,7 @@ export class DatabaseStorage implements IStorage {
         totalRevenue,
         revenueProjection,
         overdueDebtRatio,
+        totalOverdueDebt, // Valor absoluto do débito vencido
         serviceRate,
         workingDaysInMonth,
         workingDaysElapsed,

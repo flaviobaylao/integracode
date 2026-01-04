@@ -344,6 +344,9 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                 <div className="text-sm text-gray-500">
                   Meta: máx {goal.overdueDebtGoal}%
                 </div>
+                <div className="text-xs text-gray-400">
+                  Valor: {formatCurrency((metrics as any)?.totalOverdueDebt || 0)}
+                </div>
                 <Progress
                   value={Math.min(100, (metrics?.overdueDebtRatio || 0) / parseFloat(goal.overdueDebtGoal.toString()) * 100)}
                   className={`h-2 ${(metrics?.overdueDebtRatio || 0) > parseFloat(goal.overdueDebtGoal.toString()) ? '[&>div]:bg-red-500' : '[&>div]:bg-green-500'}`}
