@@ -57,6 +57,7 @@ interface SalesMetrics {
   totalRevenue: number;
   revenueProjection: number;
   overdueDebtRatio: number;
+  totalOverdueDebt: number;
   serviceRate: number;
   workingDaysInMonth: number;
   workingDaysElapsed: number;
@@ -345,7 +346,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                   Meta: máx {goal.overdueDebtGoal}%
                 </div>
                 <div className="text-xs text-gray-400">
-                  Valor: {formatCurrency((metrics as any)?.totalOverdueDebt || 0)}
+                  Atual: {formatCurrency(metrics?.totalOverdueDebt || 0)}
                 </div>
                 <Progress
                   value={Math.min(100, (metrics?.overdueDebtRatio || 0) / parseFloat(goal.overdueDebtGoal.toString()) * 100)}
