@@ -15119,16 +15119,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let routeCustomerIds = customerIds.filter(id => id) as string[];
         
         // ✅ CORREÇÃO: Buscar omieVendorCode do vendedor para filtrar sales_cards
-        // sales_cards.seller_id armazena o código Omie (numérico), não o UUID
+        // sales_cards.seller_id armazena com prefixo 'omie-vendor-' + código Omie OU apenas código
         let omieVendorCode: string | null = null;
+        let sellerIdVariations: string[] = [];
         const userResult = await db.execute(sql`
           SELECT omie_vendor_code FROM users WHERE id = ${sellerId}
         `);
         if (userResult.rows.length > 0 && userResult.rows[0].omie_vendor_code) {
           omieVendorCode = userResult.rows[0].omie_vendor_code as string;
+          // Criar variações do seller_id: com e sem prefixo
+          sellerIdVariations = [
+            omieVendorCode,
+            `omie-vendor-${omieVendorCode}`,
+            sellerId // UUID original como fallback
+          ];
+        } else {
+          sellerIdVariations = [sellerId];
         }
         
         console.log(`📊 [ORDERS-DEBUG] Iniciando contagem - sellerId: ${sellerId}, omieVendorCode: ${omieVendorCode}, date: ${date}, routeId: ${route.id}`);
+        console.log(`📊 [ORDERS-DEBUG] sellerIdVariations: ${sellerIdVariations.join(', ')}`);
         console.log(`📊 [ORDERS-DEBUG] customerIds na rota: ${routeCustomerIds.length}`);
         
         // FALLBACK: Se a rota não tem clientes populados, buscar da visit_agenda
@@ -15144,15 +15154,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`📊 [ORDERS-DEBUG] customerIds da visit_agenda: ${routeCustomerIds.length}`);
         }
         
-        if (routeCustomerIds.length > 0 && omieVendorCode) {
+        if (routeCustomerIds.length > 0 && sellerIdVariations.length > 0) {
           // ABORDAGEM CORRIGIDA: Contar pedidos DIRETAMENTE do order_history
           // O order_history registra cada pedido feito, independente do status atual do card
-          // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
+          // ✅ CORREÇÃO: Usar array de variações do seller_id (com e sem prefixo)
           const ordersResult = await db.execute(sql`
             SELECT COUNT(DISTINCT oh.id)::int as count
             FROM order_history oh
             JOIN sales_cards sc ON sc.id = oh.sales_card_id
-            WHERE sc.seller_id = ${omieVendorCode}
+            WHERE sc.seller_id = ANY(${sellerIdVariations}::text[])
               AND sc.customer_id = ANY(${routeCustomerIds}::text[])
               AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
           `);
@@ -15165,7 +15175,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (ordersCount === 0) {
             console.log(`📊 [ORDERS-DEBUG] Sem pedidos em order_history, tentando fallback com omie_sent_at...`);
             
-            // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
+            // ✅ CORREÇÃO: Usar array de variações do seller_id (com e sem prefixo)
+            // Também usa notes para extrair data de envio ao Omie
             const fallbackResult = await db.execute(sql`
               WITH route_checkouts AS (
                 SELECT DISTINCT ON (customer_id) 
@@ -15183,22 +15194,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
                     DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
                     DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo')
+                    DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo'),
+                    -- Extrair data do campo notes se contém "Enviado para Omie: DD/MM/YYYY"
+                    CASE 
+                      WHEN sc.notes LIKE '%Enviado para Omie:%' THEN
+                        TO_DATE(
+                          SUBSTRING(sc.notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'),
+                          'DD/MM/YYYY'
+                        )
+                      ELSE NULL
+                    END
                   ) as resolved_date
                 FROM sales_cards sc
                 LEFT JOIN route_checkouts rc ON rc.customer_id = sc.customer_id
-                WHERE sc.seller_id = ${omieVendorCode}
+                WHERE sc.seller_id = ANY(${sellerIdVariations}::text[])
                   AND sc.customer_id = ANY(${routeCustomerIds}::text[])
                   AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
-                  AND (
-                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                    OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                    OR DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                    OR DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                  )
               )
               SELECT COUNT(DISTINCT id)::int as count
               FROM resolved_orders
+              WHERE resolved_date = ${date}::date
             `);
             
             ordersCount = (fallbackResult.rows[0] as any)?.count || 0;
@@ -15206,25 +15221,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           
           // FALLBACK FINAL: Se ainda não encontrou, buscar TODOS os pedidos do vendedor na data
-          // incluindo pedidos enviados ao Omie (omie_sent_at) e order_history
+          // incluindo pedidos enviados ao Omie usando notes para extrair data
           if (ordersCount === 0) {
-            console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data (incluindo Omie)...`);
+            console.log(`📊 [ORDERS-DEBUG] Fallback final: buscando TODOS os pedidos do vendedor na data (incluindo Omie via notes)...`);
             
-            // ✅ CORREÇÃO: Usar omieVendorCode em vez de sellerId (UUID)
+            // ✅ CORREÇÃO: Usar array de variações do seller_id e extrair data de notes
             const allOrdersResult = await db.execute(sql`
-              SELECT COUNT(DISTINCT sc.id)::int as count
-              FROM sales_cards sc
-              WHERE sc.seller_id = ${omieVendorCode}
-                AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
-                AND (
-                  DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                  OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                  OR DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
-                )
+              WITH order_dates AS (
+                SELECT 
+                  sc.id,
+                  COALESCE(
+                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                    -- Extrair data do campo notes
+                    CASE 
+                      WHEN sc.notes LIKE '%Enviado para Omie:%' THEN
+                        TO_DATE(
+                          SUBSTRING(sc.notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'),
+                          'DD/MM/YYYY'
+                        )
+                      ELSE NULL
+                    END
+                  ) as order_date
+                FROM sales_cards sc
+                WHERE sc.seller_id = ANY(${sellerIdVariations}::text[])
+                  AND (sc.status IN ('completed', 'delivered', 'invoiced') OR sc.omie_order_id IS NOT NULL)
+              )
+              SELECT COUNT(DISTINCT id)::int as count
+              FROM order_dates
+              WHERE order_date = ${date}::date
             `);
             
             ordersCount = (allOrdersResult.rows[0] as any)?.count || 0;
-            console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor (incluindo Omie): ${ordersCount}`);
+            console.log(`📊 [ORDERS-COUNT] Fallback total do vendedor (incluindo Omie via notes): ${ordersCount}`);
           }
         }
       } catch (ordersError) {
