@@ -43,6 +43,7 @@
 - **E-commerce Platform (Hotsite Instagram)**: Standalone React SPA with customer type selection, 5-tier dynamic pricing, server-side security, automatic order registration as `sales_cards`, product gallery, stock management, and differentiated payment methods.
 - **Leads Management**: Integrated lead tracking with route optimization, full customer registration form with "isLead" flag. Supports automatic creation, seller assignment, check-in/check-out with photo requirement, and conversion to full customer workflow.
 - **Lead Check-in/Check-out**: Sellers can perform check-in/check-out on leads via dedicated API endpoints, with photo requirement, location validation, distance calculation, and improved error handling.
+- **Automatic Check-out**: Visits with check-in but no order or no-sale registered are automatically checked out after 20 minutes. The system runs every 5 minutes (6h-23h) and only auto-checkouts visits where sales_card status is NOT 'completed' (order registered) or 'no_sale' (non-sale registered).
 - **Phone Number Mapping**: Maps alternative phone numbers to canonical numbers to consolidate conversations, stored in `phone_number_mappings` table, managed via an admin-only API.
 - **Automatic Data Backup**: Complete backup system for all order data with daily scheduled backups and manual trigger options, storing historical snapshots in an `orders_backup` table.
 - **Sales Card Duplication**: Endpoint for duplicating sales cards with all related entities loaded.
