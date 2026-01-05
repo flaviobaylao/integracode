@@ -8,6 +8,7 @@ import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
 import { evolutionPollingService } from "./evolution-polling-service";
 import { getAgentColor } from "./chat-distribution-service";
+import { uploadMediaFromBase64 } from "./whatsapp-media-storage";
 import {
   insertChatAgentSchema,
   insertChatConversationSchema,
@@ -187,14 +188,50 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     const finalMessageType = mediaInfo.messageType || 'text';
     const finalContent = messageText || (finalMessageType !== 'text' ? `[${finalMessageType}]` : '[Mensagem]');
     
-    // 5. Salva a mensagem com tipo correto (schema: messageType, mediaUrl, metadata)
+    // 5. Se for mídia, fazer download e salvar no object storage
+    let finalMediaUrl = mediaInfo.mediaUrl;
+    
+    if (finalMessageType !== 'text' && messageId) {
+      try {
+        console.log(`📥 [MEDIA-DOWNLOAD] Baixando mídia para mensagem ${messageId}...`);
+        
+        // Tentar baixar a mídia via Evolution API
+        const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
+        if (instanceName) {
+          const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageId);
+          
+          if (mediaResult.success && mediaResult.base64) {
+            // Upload para object storage
+            const uploadResult = await uploadMediaFromBase64(
+              mediaResult.base64,
+              mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream',
+              mediaInfo.mediaFilename
+            );
+            
+            if (uploadResult.success && uploadResult.objectPath) {
+              finalMediaUrl = `/objects/${uploadResult.objectPath}`;
+              console.log(`✅ [MEDIA-DOWNLOAD] Mídia salva: ${finalMediaUrl}`);
+            } else {
+              console.warn(`⚠️ [MEDIA-DOWNLOAD] Falha no upload: ${uploadResult.error}`);
+            }
+          } else {
+            console.warn(`⚠️ [MEDIA-DOWNLOAD] Falha ao baixar mídia: ${mediaResult.error}`);
+          }
+        }
+      } catch (mediaErr: any) {
+        console.warn(`⚠️ [MEDIA-DOWNLOAD] Erro ao processar mídia: ${mediaErr.message}`);
+        // Continua com a URL original (transiente) como fallback
+      }
+    }
+    
+    // 6. Salva a mensagem com tipo correto (schema: messageType, mediaUrl, metadata)
     await storage.createChatMessage({
       conversationId: conversation.id,
       senderId: isFromMe ? 'system' : customer.id,
       senderType: isFromMe ? 'system' : 'customer',
       content: finalContent,
       messageType: finalMessageType,
-      mediaUrl: mediaInfo.mediaUrl,
+      mediaUrl: finalMediaUrl,
       metadata: mediaInfo.mediaType || mediaInfo.mediaFilename ? { 
         mediaType: mediaInfo.mediaType, 
         mediaFilename: mediaInfo.mediaFilename,
@@ -1041,8 +1078,28 @@ export function registerChatRoutes(app: Express): void {
       }
 
       const finalMessageType = mediaInfo.messageType || 'text';
-      const finalMediaUrl = mediaInfo.mediaUrl || null;
+      let finalMediaUrl = mediaInfo.mediaUrl || null;
       const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
+      
+      // 🔧 Se for mídia mas não temos a URL/base64, tentar baixar via Evolution API
+      if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
+        try {
+          console.log(`📥 [WEBHOOK-MEDIA] Baixando mídia via getBase64FromMediaMessage: ${messageId}`);
+          const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
+          if (instanceName) {
+            const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageId);
+            if (mediaResult.success && mediaResult.base64) {
+              const mimeType = mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream';
+              finalMediaUrl = `data:${mimeType};base64,${mediaResult.base64}`;
+              console.log(`✅ [WEBHOOK-MEDIA] Mídia baixada com sucesso: ${mimeType}`);
+            } else {
+              console.warn(`⚠️ [WEBHOOK-MEDIA] Falha ao baixar mídia: ${mediaResult.error}`);
+            }
+          }
+        } catch (downloadErr: any) {
+          console.warn(`⚠️ [WEBHOOK-MEDIA] Erro ao baixar mídia: ${downloadErr.message}`);
+        }
+      }
       
       debugInfo.normalizedPhone = normalizedPhone;
       debugInfo.isFromMe = isFromMe;

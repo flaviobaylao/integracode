@@ -28,6 +28,12 @@ interface ChatMessage {
   senderType: "customer" | "agent" | "system";
   content: string;
   messageType: string;
+  mediaUrl?: string;
+  metadata?: {
+    mediaType?: string;
+    mediaFilename?: string;
+    mediaSize?: number;
+  };
   createdAt: Date | string;
   isRead: boolean;
 }
