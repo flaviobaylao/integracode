@@ -2515,6 +2515,16 @@ export function registerChatRoutes(app: Express): void {
       
       // Buscar mensagens novamente após marcar como lidas
       const updatedMessages = await storage.getChatMessages(conversationId) || [];
+      
+      // DEBUG: Verificar campos de mídia
+      const mediaMessages = updatedMessages.filter((m: any) => m.messageType !== 'text' || m.mediaUrl);
+      if (mediaMessages.length > 0) {
+        console.log(`🖼️ [MEDIA-DEBUG] Conversa ${conversationId}: ${mediaMessages.length} mensagens de mídia`);
+        mediaMessages.slice(0, 3).forEach((m: any) => {
+          console.log(`   📎 ID: ${m.id} | Type: ${m.messageType} | URL: ${m.mediaUrl} | Content: ${m.content?.substring(0, 30)}`);
+        });
+      }
+      
       res.json(updatedMessages);
     } catch (error: any) {
       console.error("[CHAT-MESSAGES] Erro:", error);
