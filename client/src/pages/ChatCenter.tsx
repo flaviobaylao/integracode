@@ -1190,26 +1190,41 @@ export default function ChatCenter() {
                                   <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
                                     <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
                                   </div>
-                                ) : msg.mediaUrl ? (
+                                ) : (msg.mediaUrl || (msg.messageType === 'image' || msg.messageType === 'audio' || msg.messageType === 'video' || msg.messageType === 'document')) ? (
                                   <div className="mb-2">
-                                    {msg.messageType === 'image' && (
+                                    {msg.messageType === 'image' && msg.mediaUrl && (
                                       <img 
                                         src={msg.mediaUrl} 
                                         alt="mídia" 
-                                        className="max-w-sm rounded cursor-pointer" 
+                                        className="max-w-xs rounded cursor-pointer shadow-lg border" 
+                                        style={{ maxHeight: '200px' }}
                                         onClick={() => window.open(msg.mediaUrl, '_blank')}
                                         onError={(e) => {
-                                          console.log('Erro ao carregar imagem:', msg.mediaUrl);
-                                          (e.target as HTMLImageElement).style.display = 'none';
+                                          console.error('Erro ao carregar imagem:', msg.mediaUrl);
+                                          const target = e.target as HTMLImageElement;
+                                          target.style.border = '2px solid red';
+                                          target.alt = 'Erro: ' + msg.mediaUrl;
                                         }}
                                       />
                                     )}
-                                    {msg.messageType === 'audio' && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
-                                    {msg.messageType === 'video' && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
-                                    {msg.messageType === 'document' && (
+                                    {msg.messageType === 'image' && !msg.mediaUrl && (
+                                      <div className="bg-yellow-100 p-2 rounded text-xs">📷 Imagem (sem URL)</div>
+                                    )}
+                                    {msg.messageType === 'audio' && msg.mediaUrl && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
+                                    {msg.messageType === 'audio' && !msg.mediaUrl && (
+                                      <div className="bg-yellow-100 p-2 rounded text-xs">🎵 Áudio (sem URL)</div>
+                                    )}
+                                    {msg.messageType === 'video' && msg.mediaUrl && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
+                                    {msg.messageType === 'video' && !msg.mediaUrl && (
+                                      <div className="bg-yellow-100 p-2 rounded text-xs">🎬 Vídeo (sem URL)</div>
+                                    )}
+                                    {msg.messageType === 'document' && msg.mediaUrl && (
                                       <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="underline text-blue-600">
                                         📄 {msg.content && !msg.content.startsWith('[') ? msg.content : 'Documento'}
                                       </a>
+                                    )}
+                                    {msg.messageType === 'document' && !msg.mediaUrl && (
+                                      <div className="bg-yellow-100 p-2 rounded text-xs">📄 Documento (sem URL)</div>
                                     )}
                                   </div>
                                 ) : (msg.messageType !== 'text' && msg.content && msg.content.startsWith('data:')) ? (
