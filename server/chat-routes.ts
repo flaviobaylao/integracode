@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, and, eq } from "drizzle-orm";
+import { sql, and, eq, inArray, isNull } from "drizzle-orm";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -3650,6 +3650,143 @@ export function registerChatRoutes(app: Express): void {
       res.status(500).json({ error: error.message, success: false });
     }
   });
+
+  // ============================================================================
+  // ADMIN: RE-PROCESS MEDIA FOR MESSAGES WITHOUT URL
+  // ============================================================================
+  
+  app.post("/api/chat/admin/fix-media", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      console.log("📷 [FIX-MEDIA] Iniciando re-processamento de mídia...");
+      
+      const messagesWithoutMedia = await db.select({
+        id: chatMessages.id,
+        externalId: chatMessages.externalId,
+        messageType: chatMessages.messageType,
+        mediaUrl: chatMessages.mediaUrl,
+        content: chatMessages.content
+      })
+      .from(chatMessages)
+      .where(
+        and(
+          inArray(chatMessages.messageType, ['image', 'audio', 'video', 'document']),
+          isNull(chatMessages.mediaUrl)
+        )
+      )
+      .limit(50);
+      
+      console.log(`📷 [FIX-MEDIA] Encontradas ${messagesWithoutMedia.length} mensagens de mídia sem URL`);
+      
+      if (messagesWithoutMedia.length === 0) {
+        return res.json({
+          success: true,
+          message: "Nenhuma mensagem de mídia sem URL encontrada",
+          processed: 0,
+          failed: 0
+        });
+      }
+      
+      const results = {
+        processed: 0,
+        failed: 0,
+        errors: [] as string[]
+      };
+      
+      const config = evolutionAPIService.getConfig();
+      if (!config) {
+        return res.status(400).json({ error: "Evolution API não configurada" });
+      }
+      
+      for (const msg of messagesWithoutMedia) {
+        if (!msg.externalId) {
+          results.failed++;
+          results.errors.push(`Mensagem ${msg.id}: sem externalId`);
+          continue;
+        }
+        
+        try {
+          console.log(`📷 [FIX-MEDIA] Baixando mídia: ${msg.externalId} (${msg.messageType})`);
+          
+          const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
+            config.instanceName,
+            msg.externalId
+          );
+          
+          if (!mediaResult.success || !mediaResult.base64) {
+            results.failed++;
+            results.errors.push(`${msg.id}: ${mediaResult.error || 'sem dados'}`);
+            continue;
+          }
+          
+          const mimeType = mediaResult.mimetype || getMimeTypeFromMessageType(msg.messageType || 'image');
+          const extension = getExtensionFromMimeType(mimeType);
+          const fileName = `${msg.externalId}.${extension}`;
+          
+          console.log(`📤 [FIX-MEDIA] Fazendo upload: ${fileName}`);
+          
+          const uploadResult = await uploadMediaFromBase64(
+            mediaResult.base64,
+            mimeType,
+            fileName
+          );
+          
+          if (uploadResult.success && uploadResult.objectPath) {
+            await db.update(chatMessages)
+              .set({ mediaUrl: uploadResult.objectPath })
+              .where(eq(chatMessages.id, msg.id));
+            
+            console.log(`✅ [FIX-MEDIA] Mídia atualizada: ${msg.id} -> ${uploadResult.objectPath}`);
+            results.processed++;
+          } else {
+            results.failed++;
+            results.errors.push(`${msg.id}: upload falhou`);
+          }
+          
+        } catch (err: any) {
+          results.failed++;
+          results.errors.push(`${msg.id}: ${err.message}`);
+        }
+      }
+      
+      console.log(`📷 [FIX-MEDIA] Concluído: ${results.processed} processadas, ${results.failed} falhas`);
+      
+      res.json({
+        success: true,
+        message: `Re-processamento concluído: ${results.processed} processadas, ${results.failed} falhas`,
+        ...results,
+        remaining: messagesWithoutMedia.length - results.processed - results.failed
+      });
+      
+    } catch (error: any) {
+      console.error("[FIX-MEDIA] Erro:", error);
+      res.status(500).json({ error: error.message, success: false });
+    }
+  });
+  
+  function getMimeTypeFromMessageType(messageType: string): string {
+    switch (messageType) {
+      case 'image': return 'image/jpeg';
+      case 'audio': return 'audio/ogg';
+      case 'video': return 'video/mp4';
+      case 'document': return 'application/octet-stream';
+      default: return 'application/octet-stream';
+    }
+  }
+  
+  function getExtensionFromMimeType(mimeType: string): string {
+    const map: { [key: string]: string } = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'audio/ogg': 'ogg',
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'm4a',
+      'video/mp4': 'mp4',
+      'application/pdf': 'pdf',
+    };
+    return map[mimeType] || 'bin';
+  }
 
   // ============================================================================
   // ADMIN: DEBUG WEBHOOK LOGS

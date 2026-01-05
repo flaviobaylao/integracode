@@ -5,6 +5,7 @@
 
 import { evolutionAPIService } from './evolution-api-service';
 import { storage } from './storage';
+import { uploadMediaFromBase64 } from './whatsapp-media-storage';
 
 // 🔧 FUNÇÃO DE NORMALIZAÇÃO DE TELEFONE - INCLUI MAPEAMENTOS CONHECIDOS
 function normalizePhoneNumber(phone: string): string {
@@ -235,6 +236,95 @@ class EvolutionPollingService {
   }
 
   /**
+   * Detect message type from Evolution API message structure
+   */
+  private detectMessageType(message: any): { type: 'text' | 'image' | 'audio' | 'video' | 'document', hasMedia: boolean } {
+    if (!message) return { type: 'text', hasMedia: false };
+    
+    if (message.imageMessage) return { type: 'image', hasMedia: true };
+    if (message.audioMessage) return { type: 'audio', hasMedia: true };
+    if (message.videoMessage) return { type: 'video', hasMedia: true };
+    if (message.documentMessage) return { type: 'document', hasMedia: true };
+    if (message.stickerMessage) return { type: 'image', hasMedia: true };
+    
+    return { type: 'text', hasMedia: false };
+  }
+
+  /**
+   * Download media from Evolution API and upload to object storage
+   */
+  private async downloadAndStoreMedia(messageId: string, messageType: string): Promise<string | null> {
+    try {
+      const config = evolutionAPIService.getConfig();
+      if (!config) {
+        console.warn('📷 [POLLING-MEDIA] Evolution API não configurada');
+        return null;
+      }
+
+      console.log(`📷 [POLLING-MEDIA] Baixando mídia: ${messageId} (tipo: ${messageType})`);
+
+      const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
+        config.instanceName,
+        messageId
+      );
+
+      if (!mediaResult.success || !mediaResult.base64) {
+        console.warn(`⚠️  [POLLING-MEDIA] Falha ao baixar mídia ${messageId}: ${mediaResult.error || 'sem dados'}`);
+        return null;
+      }
+
+      const mimeType = mediaResult.mimetype || this.getMimeTypeFromMessageType(messageType);
+      const extension = this.getExtensionFromMimeType(mimeType);
+      const fileName = `${messageId}.${extension}`;
+
+      console.log(`📤 [POLLING-MEDIA] Fazendo upload: ${fileName} (${mimeType})`);
+
+      const uploadResult = await uploadMediaFromBase64(
+        mediaResult.base64,
+        mimeType,
+        fileName
+      );
+
+      if (uploadResult.success && uploadResult.objectPath) {
+        console.log(`✅ [POLLING-MEDIA] Upload concluído: ${uploadResult.objectPath}`);
+        return uploadResult.objectPath;
+      }
+
+      console.warn(`⚠️  [POLLING-MEDIA] Falha no upload: ${uploadResult.error || 'erro desconhecido'}`);
+      return null;
+
+    } catch (error: any) {
+      console.error(`❌ [POLLING-MEDIA] Erro ao processar mídia ${messageId}:`, error.message);
+      return null;
+    }
+  }
+
+  private getMimeTypeFromMessageType(messageType: string): string {
+    switch (messageType) {
+      case 'image': return 'image/jpeg';
+      case 'audio': return 'audio/ogg';
+      case 'video': return 'video/mp4';
+      case 'document': return 'application/octet-stream';
+      default: return 'application/octet-stream';
+    }
+  }
+
+  private getExtensionFromMimeType(mimeType: string): string {
+    const map: { [key: string]: string } = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'audio/ogg': 'ogg',
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'm4a',
+      'video/mp4': 'mp4',
+      'application/pdf': 'pdf',
+    };
+    return map[mimeType] || 'bin';
+  }
+
+  /**
    * Process a single message (similar to webhook handler)
    */
   private async processMessage(data: any, originalPhone: string): Promise<boolean> {
@@ -260,6 +350,9 @@ class EvolutionPollingService {
       const isFromMe = data.key?.fromMe === true;
       const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
       const messageId = data.key?.id;
+
+      // Detect message type (text, image, audio, video, document)
+      const { type: messageType, hasMedia } = this.detectMessageType(data.message);
 
       // Lookup contact in phonebook
       const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
@@ -297,22 +390,37 @@ class EvolutionPollingService {
         return false; // Already exists
       }
 
-      // 3. Save message
+      // 3. Process media if present
+      let mediaUrl: string | null = null;
+      let content = messageText;
+
+      if (hasMedia) {
+        console.log(`📷 [POLLING] Mensagem com mídia detectada: ${messageId} (${messageType})`);
+        mediaUrl = await this.downloadAndStoreMedia(messageId, messageType);
+        
+        if (!content || content === '') {
+          content = '[Mensagem de mídia]';
+        }
+      }
+
+      // 4. Save message with correct type and media URL
       await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : customer.id,
         senderType: isFromMe ? 'system' : 'customer',
-        content: messageText || '[Mídia/Outro]',
-        messageType: 'text',
+        content: content || '[Mídia/Outro]',
+        messageType: messageType,
+        mediaUrl: mediaUrl || undefined,
         externalId: messageId
       });
 
-      // 4. Update conversation (lastMessage and status are handled by storage layer)
+      // 5. Update conversation (lastMessage and status are handled by storage layer)
       await storage.updateChatConversation(conversation.id, {
         status: isFromMe ? conversation.status : 'new'
       });
 
-      console.log(`✅ [POLLING] Mensagem salva: ${normalizedPhone} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
+      const mediaInfo = hasMedia ? ` | Mídia: ${mediaUrl ? '✅' : '❌'}` : '';
+      console.log(`✅ [POLLING] Mensagem salva: ${normalizedPhone} | Tipo: ${messageType}${mediaInfo} | ${content.substring(0, 30)}...`);
       return true;
 
     } catch (error: any) {
