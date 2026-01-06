@@ -1,5 +1,5 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v15-2026-01-06-optimize-fix';
+const CACHE_NAME = 'integra-v16-2026-01-06-debug-response';
 const urlsToCache = [
   '/manifest.json'
 ];

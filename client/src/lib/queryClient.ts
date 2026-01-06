@@ -75,7 +75,25 @@ export async function apiRequest(
 
     console.log('📡 API Response:', res.status, res.statusText);
     await throwIfResNotOk(res);
-    return await res.json();
+    
+    const responseText = await res.text();
+    console.log('📄 API Response Text:', responseText.substring(0, 500));
+    
+    if (!responseText) {
+      console.log('⚠️ Empty response body');
+      return {};
+    }
+    
+    try {
+      return JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ JSON parse error:', parseError);
+      console.error('📄 Raw response:', responseText);
+      throw new Error(`Failed to parse JSON response: ${responseText.substring(0, 200)}`);
+    }
+  } catch (error) {
+    console.error('❌ API Request failed:', error);
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
