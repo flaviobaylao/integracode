@@ -163,22 +163,55 @@ export function calculateRouteEfficiency(route: OptimizedRoute): number {
 /**
  * Versão melhorada usando 2-opt para refinamento local
  * Aplica melhoria local na rota gerada pelo Nearest Neighbor
+ * PROTEÇÃO: Limite máximo de iterações para evitar loops infinitos
  */
 export function optimizeRouteAdvanced(
   startLocation: { latitude: number; longitude: number },
   destinations: RouteLocation[]
 ): OptimizedRoute {
-  // Começar com rota básica
-  let bestRoute = optimizeRoute(startLocation, destinations);
+  // Validar dados de entrada para evitar erros
+  if (!startLocation || isNaN(startLocation.latitude) || isNaN(startLocation.longitude)) {
+    console.error('[OPTIMIZE] Coordenadas de início inválidas:', startLocation);
+    return {
+      locations: destinations,
+      totalDistance: 0,
+      estimatedTotalTime: 0,
+      routeOrder: destinations.map(d => d.id)
+    };
+  }
   
-  if (destinations.length < 4) {
+  // Filtrar destinos com coordenadas válidas
+  const validDestinations = destinations.filter(d => 
+    d && !isNaN(d.latitude) && !isNaN(d.longitude) && 
+    d.latitude !== 0 && d.longitude !== 0
+  );
+  
+  if (validDestinations.length === 0) {
+    console.error('[OPTIMIZE] Nenhum destino com coordenadas válidas');
+    return {
+      locations: [],
+      totalDistance: 0,
+      estimatedTotalTime: 0,
+      routeOrder: []
+    };
+  }
+  
+  // Começar com rota básica
+  let bestRoute = optimizeRoute(startLocation, validDestinations);
+  
+  if (validDestinations.length < 4) {
     return bestRoute; // 2-opt não é eficaz para rotas muito pequenas
   }
 
-  // Aplicar melhoria 2-opt
+  // PROTEÇÃO: Limite máximo de iterações (evita loop infinito)
+  const MAX_ITERATIONS = 100;
+  let iterationCount = 0;
+  
+  // Aplicar melhoria 2-opt com limite de iterações
   let improved = true;
-  while (improved) {
+  while (improved && iterationCount < MAX_ITERATIONS) {
     improved = false;
+    iterationCount++;
     
     for (let i = 1; i < bestRoute.locations.length - 1; i++) {
       for (let j = i + 1; j < bestRoute.locations.length; j++) {
@@ -188,20 +221,17 @@ export function optimizeRouteAdvanced(
         segment.reverse();
         newRoute.splice(i, j - i + 1, ...segment);
         
-        // GUARDAR 2-OPT: Verificar se a troca viola a regra de urgência
-        // Não permitir que entregas urgentes sejam movidas para depois de não-urgentes
+        // Verificar se a troca viola a regra de urgência
         let violatesUrgencyRule = false;
         for (let k = 0; k < newRoute.length - 1; k++) {
           const current = newRoute[k];
           const next = newRoute[k + 1];
-          // Se próxima é urgente mas atual não é, viola a regra
           if (next.isUrgent === true && current.isUrgent !== true) {
             violatesUrgencyRule = true;
             break;
           }
         }
         
-        // Se viola a regra de urgência, pular esta troca
         if (violatesUrgencyRule) {
           continue;
         }
@@ -211,18 +241,21 @@ export function optimizeRouteAdvanced(
         let currentLoc = startLocation;
         
         for (const location of newRoute) {
-          newDistance += calculateDistance(
+          const dist = calculateDistance(
             currentLoc.latitude,
             currentLoc.longitude,
             location.latitude,
             location.longitude
           );
+          // Proteção contra NaN
+          if (!isNaN(dist)) {
+            newDistance += dist;
+          }
           currentLoc = location;
         }
         
-        // Se melhorou, aceitar nova rota
-        if (newDistance < bestRoute.totalDistance) {
-          // Recalcular tempo total para a nova ordem
+        // Se melhorou, aceitar nova rota (com proteção contra NaN)
+        if (!isNaN(newDistance) && newDistance < bestRoute.totalDistance) {
           let newEstimatedTime = 0;
           let currentLoc = startLocation;
           
@@ -234,7 +267,9 @@ export function optimizeRouteAdvanced(
               location.longitude
             ));
             const visitTime = location.estimatedDuration || 30;
-            newEstimatedTime += travelTime + visitTime;
+            if (!isNaN(travelTime)) {
+              newEstimatedTime += travelTime + visitTime;
+            }
             currentLoc = location;
           }
           
@@ -249,6 +284,10 @@ export function optimizeRouteAdvanced(
         }
       }
     }
+  }
+  
+  if (iterationCount >= MAX_ITERATIONS) {
+    console.warn('[OPTIMIZE] Atingido limite máximo de iterações (100)');
   }
   
   return bestRoute;

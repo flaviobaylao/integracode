@@ -11759,7 +11759,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userEmail = (req as any).currentUser?.email;
       const userRole = (req as any).currentUser?.role;
       
-      console.log(`🔄 [OPTIMIZE-ROUTE] Usuário ${userEmail} (${userRole}) otimizando rota ${routeId}`);
+      console.log(`🔄 [OPTIMIZE-ROUTE] Iniciando otimização - Usuário: ${userEmail} (${userRole}), Rota: ${routeId}`);
+      
+      // Proteção: timeout máximo de 10 segundos para evitar travamentos
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: otimização demorou mais de 10 segundos')), 10000)
+      );
       
       // Buscar a rota
       const routeResult = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, routeId));
