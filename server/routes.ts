@@ -3286,6 +3286,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: "Pedido com pagamento via boleto deve ter prazo de dias válido (boletoDays). Não é possível enviar para Omie." 
           });
         }
+        // ✅ BLOQUEIO: Boleto com prazo maior que 7 dias não é permitido
+        if (days > 7) {
+          console.log(`🚫 [SEND-TO-OMIE] Bloqueado: boleto com prazo de ${days} dias (máximo: 7 dias)`);
+          return res.status(400).json({ 
+            message: `Pedido bloqueado: Boleto com prazo de ${days} dias não é permitido. O prazo máximo para pagamento via boleto é de 7 dias.`,
+            blocked: true,
+            blockReason: 'boleto_days_exceeded',
+            boletoDays: days,
+            maxBoletoDays: 7
+          });
+        }
         boletoDays = days;
       }
       
@@ -4113,6 +4124,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertSalesCardSchema.partial().parse(req.body);
       
       console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
+      
+      // ✅ BLOQUEIO: Boleto com prazo maior que 7 dias não é permitido
+      if (data.paymentMethod === 'boleto' && data.boletoDays && Number(data.boletoDays) > 7) {
+        console.log(`🚫 [SALES-CARD] Bloqueado: boleto com prazo de ${data.boletoDays} dias (máximo: 7 dias)`);
+        return res.status(400).json({ 
+          message: `Boleto com prazo de ${data.boletoDays} dias não é permitido. O prazo máximo para pagamento via boleto é de 7 dias.`,
+          blocked: true,
+          blockReason: 'boleto_days_exceeded',
+          boletoDays: data.boletoDays,
+          maxBoletoDays: 7
+        });
+      }
       
       // Check permissions for reassigning sales cards
       const userId = req.userId;
