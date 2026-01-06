@@ -11807,7 +11807,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return !isNaN(lat) && !isNaN(lng);
       }).map(stop => ({
         id: stop.id,
-        name: stop.customerName,
+        customerName: stop.customerName,
         latitude: parseFloat(stop.customerLatitude),
         longitude: parseFloat(stop.customerLongitude),
         isUrgent: stop.isPriority === true, // Entregas marcadas como prioritárias são urgentes
@@ -11818,7 +11818,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       
       console.log(`📊 [OPTIMIZE-ROUTE] Prioridades:`, destinations.map(d => ({ 
-        name: d.name, 
+        name: d.customerName, 
         isUrgent: d.isUrgent, 
         priority: d.priority 
       })));
