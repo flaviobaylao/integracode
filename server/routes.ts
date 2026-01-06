@@ -3423,10 +3423,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...converted,
                 sellerId: converted.sellerId || '',
                 weekdays: JSON.stringify(normalizedWeekdays),
-                deliveryWeekdays: autoDeliveryDays
+                deliveryWeekdays: autoDeliveryDays,
+                isLead: false
               };
               
-              customer = await storage.createCustomer(systemClient);
+              customer = await storage.createCustomer(systemClient as any);
               console.log(`✅ Cliente sincronizado do Omie: ${customer.id}`);
             }
           }
@@ -3647,7 +3648,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               zipCode: receitaData.cep || '',
               sellerId: user.role === 'vendedor' ? user.id : (row.Vendedor || user.id),
               weekdays: JSON.stringify(clientWeekdays),
-              visitPeriodicity: (row.Periodicidade || row.periodicidade || row.FREQUENCIA || row.frequencia)?.toLowerCase() || 'semanal'
+              visitPeriodicity: (row.Periodicidade || row.periodicidade || row.FREQUENCIA || row.frequencia)?.toLowerCase() || 'semanal',
+              isLead: false
             });
             
             results.created++;
@@ -5602,7 +5604,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Usar sellerId do Omie (resolvido) se disponível, senão usar sellerId da planilha
             sellerId: resolvedSellerId || sellerId || '',
             weekdays: JSON.stringify(normalizedWeekdays),
-            deliveryWeekdays: autoDeliveryDays
+            deliveryWeekdays: autoDeliveryDays,
+            isLead: false
           };
 
           // Verificar se cliente já existe (por CPF/CNPJ)
@@ -5621,7 +5624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Criar cliente no sistema
-          const newCustomer = await storage.createCustomer(systemClient);
+          const newCustomer = await storage.createCustomer(systemClient as any);
           importedClients.push(newCustomer);
 
         } catch (error) {
@@ -5696,7 +5699,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...converted,
         sellerId: resolvedSellerId || '',
         weekdays: JSON.stringify(normalizedWeekdays),
-        deliveryWeekdays: autoDeliveryDays
+        deliveryWeekdays: autoDeliveryDays,
+        isLead: false
       };
 
       // Verificar se cliente já existe
@@ -5714,7 +5718,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Criar cliente no sistema
-      const newCustomer = await storage.createCustomer(systemClient);
+      const newCustomer = await storage.createCustomer(systemClient as any);
       
       res.json({ 
         message: 'Cliente sincronizado com sucesso',
@@ -5820,7 +5824,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...converted,
                 sellerId: finalSellerId,
                 weekdays: JSON.stringify(normalizedWeekdays),
-                deliveryWeekdays: autoDeliveryDays
+                deliveryWeekdays: autoDeliveryDays,
+                isLead: false
               };
               
               if (existingCustomer) {
@@ -5856,7 +5861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 result.updated++;
               } else {
                 // Criar novo cliente
-                await storage.createCustomer(systemClient);
+                await storage.createCustomer(systemClient as any);
                 result.imported++;
               }
               
@@ -20452,10 +20457,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...converted,
                 sellerId: converted.sellerId || '',
                 weekdays: JSON.stringify(normalizedWeekdays),
-                deliveryWeekdays: autoDeliveryDays
+                deliveryWeekdays: autoDeliveryDays,
+                isLead: false
               };
               
-              customer = await storage.createCustomer(systemClient);
+              customer = await storage.createCustomer(systemClient as any);
               console.log(`✅ Cliente sincronizado do Omie: ${customer.id}`);
             }
           }
