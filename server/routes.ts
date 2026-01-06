@@ -11810,11 +11810,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerName: stop.customerName,
         latitude: parseFloat(stop.customerLatitude),
         longitude: parseFloat(stop.customerLongitude),
-        isUrgent: stop.isPriority === true, // Entregas marcadas como prioritárias são urgentes
-        priority: stop.isPriority ? 5 : 3, // 5 para alta prioridade, 3 para normal
-        estimatedDuration: stop.estimatedDuration || 30,
-        timeWindowStart: stop.estimatedArrival ? new Date(stop.estimatedArrival).getHours() : undefined,
-        timeWindowEnd: undefined
+        isUrgent: stop.isPriority === true,
+        priority: stop.isPriority ? 5 : 3,
+        estimatedDuration: stop.estimatedServiceTime || 30
       }));
       
       console.log(`📊 [OPTIMIZE-ROUTE] Prioridades:`, destinations.map(d => ({ 
