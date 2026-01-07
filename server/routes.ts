@@ -3286,12 +3286,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: "Pedido com pagamento via boleto deve ter prazo de dias válido (boletoDays). Não é possível enviar para Omie." 
           });
         }
-        // ✅ BLOQUEIO: Boleto com prazo maior que 7 dias não é permitido
+        // ✅ BLOQUEIO: Boleto com prazo maior que 7 dias - enviar para blocked_orders
         if (days > 7) {
-          console.log(`🚫 [SEND-TO-OMIE] Bloqueado: boleto com prazo de ${days} dias (máximo: 7 dias)`);
-          return res.status(400).json({ 
-            message: `Pedido bloqueado: Boleto com prazo de ${days} dias não é permitido. O prazo máximo para pagamento via boleto é de 7 dias.`,
+          console.log(`🚫 [SEND-TO-OMIE] Bloqueado: boleto com prazo de ${days} dias (máximo: 7 dias) - criando pedido bloqueado`);
+          
+          // Criar registro em blocked_orders
+          const blockedOrderData = {
+            salesCardId: orderId,
+            customerId: order.customerId,
+            sellerId: order.sellerId,
+            blockReason: 'boleto_days_exceeded',
+            blockDetails: `Boleto com prazo de ${days} dias excede o máximo permitido de 7 dias`,
+            operationType: order.operationType || 'venda',
+            paymentMethod: order.paymentMethod,
+            boletoDays: days,
+            totalAmount: parseFloat(order.saleValue) || 0,
+            products: order.products || []
+          };
+          
+          await db.insert(blockedOrders).values([blockedOrderData]);
+          
+          // Atualizar status do card para blocked
+          await storage.updateSalesCard(orderId, {
+            status: 'blocked',
+            notes: (order.notes || '') + `\n\nPedido bloqueado: Boleto com prazo de ${days} dias não permitido (máximo 7 dias)`
+          });
+          
+          console.log(`✅ Pedido bloqueado criado em blocked_orders para card ${orderId}`);
+          
+          return res.json({ 
+            success: true,
             blocked: true,
+            message: `Pedido registrado na aba de pedidos bloqueados. Boleto com prazo de ${days} dias requer aprovação manual.`,
             blockReason: 'boleto_days_exceeded',
             boletoDays: days,
             maxBoletoDays: 7
@@ -4127,16 +4153,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
       
-      // ✅ BLOQUEIO: Boleto com prazo maior que 7 dias não é permitido
+      // ✅ Boleto com prazo > 7 dias: permitir salvar, bloqueio será aplicado na finalização
       if (data.paymentMethod === 'boleto' && data.boletoDays && Number(data.boletoDays) > 7) {
-        console.log(`🚫 [SALES-CARD] Bloqueado: boleto com prazo de ${data.boletoDays} dias (máximo: 7 dias)`);
-        return res.status(400).json({ 
-          message: `Boleto com prazo de ${data.boletoDays} dias não é permitido. O prazo máximo para pagamento via boleto é de 7 dias.`,
-          blocked: true,
-          blockReason: 'boleto_days_exceeded',
-          boletoDays: data.boletoDays,
-          maxBoletoDays: 7
-        });
+        console.log(`⚠️ [SALES-CARD] Boleto com prazo de ${data.boletoDays} dias - será bloqueado na finalização`);
       }
       
       // Check permissions for reassigning sales cards
@@ -13289,6 +13308,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shouldBlockOrder = true;
         blockReason = 'payment_terms';
         blockDetails = 'Pedido com condições de pagamento que requerem aprovação';
+      }
+
+      // ✅ Block if boleto with terms > 7 days
+      if (!shouldBlockOrder && paymentMethod === 'boleto' && boletoDays && Number(boletoDays) > 7) {
+        shouldBlockOrder = true;
+        blockReason = 'boleto_days_exceeded';
+        blockDetails = `Boleto com prazo de ${boletoDays} dias excede o máximo permitido de 7 dias`;
+        console.log(`🚫 [FINALIZE-SALE] Bloqueando: ${blockDetails}`);
       }
 
       // Check if customer has overdue debt
