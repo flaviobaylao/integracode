@@ -2366,6 +2366,55 @@ export class DatabaseStorage implements IStorage {
       } as any)
       .returning();
     
+    // Criar ou vincular visit_agenda para permitir check-in/check-out
+    try {
+      // Buscar dados do cliente para a visita
+      const customer = await this.getCustomer(originalCard.customerId);
+      
+      if (customer) {
+        // Verificar se já existe visita para este cliente na data
+        const existingVisit = await db.select()
+          .from(visitAgenda)
+          .where(and(
+            eq(visitAgenda.customerId, originalCard.customerId),
+            sql`DATE(${visitAgenda.scheduledDate}) = DATE(${newDate})`
+          ))
+          .limit(1);
+        
+        if (existingVisit.length > 0) {
+          // Atualizar visita existente com novo salesCardId
+          await db.update(visitAgenda)
+            .set({ 
+              salesCardId: newCard.id,
+              visitStatus: 'pending' // Reset status
+            })
+            .where(eq(visitAgenda.id, existingVisit[0].id));
+          console.log(`✅ [DUPLICATE] Visita existente ${existingVisit[0].id} vinculada ao card duplicado ${newCard.id}`);
+        } else {
+          // Criar nova visita
+          await db.insert(visitAgenda)
+            .values({
+              customerId: originalCard.customerId,
+              sellerId: originalCard.sellerId,
+              scheduledDate: newDate,
+              routeDay: originalCard.routeDay || 'Seg',
+              recurrenceType: originalCard.recurrenceType || 'semanal',
+              visitStatus: 'pending',
+              customerName: customer.fantasyName || customer.name || 'Cliente',
+              customerLatitude: customer.latitude,
+              customerLongitude: customer.longitude,
+              customerAddress: customer.address,
+              salesCardId: newCard.id,
+              isVirtual: false
+            } as any);
+          console.log(`✅ [DUPLICATE] Nova visita criada para card duplicado ${newCard.id}`);
+        }
+      }
+    } catch (visitError) {
+      // Não falhar a duplicação se não conseguir criar visita
+      console.error(`⚠️ [DUPLICATE] Erro ao criar visita para card duplicado:`, visitError);
+    }
+    
     return newCard;
   }
 
