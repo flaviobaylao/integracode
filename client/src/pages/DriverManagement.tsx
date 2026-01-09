@@ -110,14 +110,24 @@ export default function DriverManagement() {
       if (!response.ok) throw new Error('Erro ao criar motorista');
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-drivers'] });
       setShowCreateModal(false);
       resetForm();
-      toast({
-        title: "Motorista criado",
-        description: "Motorista criado com sucesso.",
-      });
+      
+      // Mostrar senha temporária se usuário foi criado
+      if (data.userCreated && data.temporaryPassword) {
+        toast({
+          title: "Motorista criado com conta de acesso!",
+          description: `Senha temporária: ${data.temporaryPassword} - Anote para informar ao motorista!`,
+          duration: 15000, // 15 segundos para dar tempo de anotar
+        });
+      } else {
+        toast({
+          title: "Motorista criado",
+          description: "Motorista criado com sucesso.",
+        });
+      }
     },
     onError: (error: any) => {
       toast({
