@@ -10154,6 +10154,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const routePlan of routes) {
         const { route, stops } = routePlan;
 
+        // ✅ VALIDAÇÃO: Impedir salvamento de rotas sem paradas
+        if (!stops || !Array.isArray(stops) || stops.length === 0) {
+          console.warn(`⚠️ [SAVE-ROUTES] Rota do motorista ${route.driverName} ignorada - sem paradas`);
+          continue; // Pular esta rota e continuar com as próximas
+        }
+
         // Garantir que routeDate é sempre uma string YYYY-MM-DD
         let dateStr: string;
         if (typeof route.routeDate === 'string') {
