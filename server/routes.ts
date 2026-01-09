@@ -9736,6 +9736,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Deletar motorista (com autenticação)
+  app.delete("/api/delivery-drivers/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Buscar motorista para obter email
+      const driver = await storage.getDeliveryDriverById(id);
+      if (!driver) {
+        return res.status(404).json({ message: "Motorista não encontrado" });
+      }
+      
+      // Deletar conta de usuário associada se existir
+      if (driver.email) {
+        try {
+          const user = await storage.getUserByEmail(driver.email);
+          if (user) {
+            await db.delete(users).where(eq(users.id, user.id));
+            console.log(`✅ [DELIVERY-DRIVER] Conta de usuário removida: ${driver.email}`);
+          }
+        } catch (userError: any) {
+          console.error(`⚠️ [DELIVERY-DRIVER] Erro ao remover conta de usuário:`, userError.message);
+        }
+      }
+      
+      // Deletar motorista
+      await db.delete(deliveryDrivers).where(eq(deliveryDrivers.id, id));
+      
+      console.log(`✅ [DELIVERY-DRIVER] Motorista removido: ${driver.name}`);
+      res.json({ success: true, message: "Motorista removido com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting delivery driver:", error);
+      res.status(500).json({ message: "Erro ao remover motorista", error: error.message });
+    }
+  });
+
   // Estatísticas de motoristas (com autenticação)
   app.get("/api/delivery-drivers/stats", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {

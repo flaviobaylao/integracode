@@ -226,6 +226,7 @@ export interface IStorage {
   getActiveDeliveryDrivers(): Promise<any[]>;
   createDeliveryDriver(data: any): Promise<any>;
   updateDeliveryDriver(id: string, data: any): Promise<any>;
+  getDeliveryDriverById(id: string): Promise<any | undefined>;
   getDeliveryDriverByEmail(email: string): Promise<any | undefined>;
   updateDriverLocation(driverId: string, location: string): Promise<any>;
   getDeliveryStats(period: string): Promise<any>;
@@ -4548,6 +4549,29 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return result;
+  }
+
+  async getDeliveryDriverById(id: string): Promise<any | undefined> {
+    const result = await db.execute(sql`
+      SELECT 
+        id,
+        name,
+        phone,
+        email,
+        vehicle_type as "vehicleType",
+        license_plate as "licensePlate",
+        is_active as "isActive",
+        current_location as "currentLocation",
+        home_latitude as "homeLatitude",
+        home_longitude as "homeLongitude",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      FROM delivery_drivers
+      WHERE id = ${id}
+      LIMIT 1
+    `);
+    
+    return result.rows && result.rows.length > 0 ? result.rows[0] : undefined;
   }
 
   async getDeliveryDriverByEmail(email: string): Promise<any | undefined> {

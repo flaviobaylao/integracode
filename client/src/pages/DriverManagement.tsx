@@ -27,8 +27,19 @@ import {
   Bike,
   Eye,
   UserCheck,
-  UserX
+  UserX,
+  Trash2
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Driver {
   id: string;
@@ -61,7 +72,9 @@ export default function DriverManagement() {
   const { toast } = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+  const [driverToDelete, setDriverToDelete] = useState<Driver | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   // Form state
@@ -174,6 +187,37 @@ export default function DriverManagement() {
     },
   });
 
+  // Mutation para deletar motorista
+  const deleteDriverMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/delivery-drivers/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao deletar motorista');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-drivers'] });
+      setShowDeleteDialog(false);
+      setDriverToDelete(null);
+      toast({
+        title: "Motorista removido",
+        description: "Motorista removido com sucesso.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao deletar motorista",
+        variant: "destructive",
+      });
+    },
+  });
+
   const resetForm = () => {
     setDriverForm({
       name: "",
@@ -215,6 +259,17 @@ export default function DriverManagement() {
       id: driver.id,
       isActive: !driver.isActive
     });
+  };
+
+  const handleDeleteClick = (driver: Driver) => {
+    setDriverToDelete(driver);
+    setShowDeleteDialog(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (driverToDelete) {
+      deleteDriverMutation.mutate(driverToDelete.id);
+    }
   };
 
   // Filtrar motoristas
@@ -471,6 +526,14 @@ export default function DriverManagement() {
                         >
                           <Edit3 className="h-4 w-4" />
                         </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDeleteClick(driver)}
+                          data-testid={`button-delete-${driver.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -572,6 +635,30 @@ export default function DriverManagement() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja remover o motorista <strong>{driverToDelete?.name}</strong>?
+              Esta ação não pode ser desfeita e também removerá a conta de usuário associada.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDriverToDelete(null)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteDriverMutation.isPending ? "Removendo..." : "Remover"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
