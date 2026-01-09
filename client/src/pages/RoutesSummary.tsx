@@ -470,11 +470,12 @@ export default function RoutesSummary() {
 
   const activeDrivers = drivers.filter(d => d.isActive);
 
-  // Contar rotas pendentes de envio (status 'rota salva')
-  const pendingSendRoutes = routes.filter(r => r.status === 'rota salva');
+  // Contar rotas pendentes de envio (status 'rota salva' ou 'pending')
+  const pendingSendRoutes = routes.filter(r => r.status === 'rota salva' || r.status === 'pending');
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: any; label: string; className?: string }> = {
+      'pending': { variant: 'secondary', label: 'Pendente (Não Enviada)', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
       'rota salva': { variant: 'secondary', label: 'Salva (Não Enviada)', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
       'rota_enviada': { variant: 'default', label: 'Enviada', className: 'bg-blue-500 text-white' },
       planejada: { variant: 'secondary', label: 'Planejada' },
@@ -852,7 +853,7 @@ export default function RoutesSummary() {
                 <FileText className="h-4 w-4 mr-2" />
                 📄 Gerar PDF
               </Button>
-              {selectedRouteData.status === 'rota salva' && (
+              {(selectedRouteData.status === 'rota salva' || selectedRouteData.status === 'pending') && (
                 <Button
                   variant="default"
                   size="sm"

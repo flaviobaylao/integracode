@@ -11166,12 +11166,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📤 [SEND-ALL-ROUTES] Enviando todas as rotas de ${targetDate} para os motoristas`);
       
-      // Buscar todas as rotas com status 'rota salva' para a data
+      // Buscar todas as rotas com status 'rota salva' ou 'pending' para a data
       const routesToSend = await db.select().from(deliveryRoutes)
         .where(
           and(
             sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDate} AS DATE)`,
-            eq(deliveryRoutes.status, 'rota salva')
+            sql`${deliveryRoutes.status} IN ('rota salva', 'pending')`
           )
         );
       
