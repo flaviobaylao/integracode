@@ -9771,6 +9771,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Resetar senha do motorista (com autenticação)
+  app.post("/api/delivery-drivers/:id/reset-password", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Buscar motorista
+      const driver = await storage.getDeliveryDriverById(id);
+      if (!driver) {
+        return res.status(404).json({ message: "Motorista não encontrado" });
+      }
+      
+      if (!driver.email) {
+        return res.status(400).json({ message: "Motorista não possui email cadastrado" });
+      }
+      
+      // Buscar usuário associado
+      const user = await storage.getUserByEmail(driver.email);
+      if (!user) {
+        return res.status(404).json({ message: "Conta de usuário não encontrada para este motorista" });
+      }
+      
+      // Gerar nova senha temporária
+      const namePart = (driver.name || 'driver').toLowerCase().replace(/\s+/g, '').substring(0, 4);
+      const temporaryPassword = `${namePart}1234`;
+      const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+      
+      // Atualizar senha do usuário
+      await db.update(users)
+        .set({ password: hashedPassword })
+        .where(eq(users.id, user.id));
+      
+      console.log(`🔑 [DELIVERY-DRIVER] Senha resetada para motorista: ${driver.name} (${driver.email})`);
+      
+      res.json({
+        success: true,
+        temporaryPassword: temporaryPassword,
+        message: `Senha resetada com sucesso. Nova senha: ${temporaryPassword}`
+      });
+    } catch (error: any) {
+      console.error("Error resetting driver password:", error);
+      res.status(500).json({ message: "Erro ao resetar senha", error: error.message });
+    }
+  });
+
   // Estatísticas de motoristas (com autenticação)
   app.get("/api/delivery-drivers/stats", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {

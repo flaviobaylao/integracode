@@ -28,7 +28,8 @@ import {
   Eye,
   UserCheck,
   UserX,
-  Trash2
+  Trash2,
+  KeyRound
 } from "lucide-react";
 import {
   AlertDialog,
@@ -73,8 +74,11 @@ export default function DriverManagement() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showResetPasswordDialog, setShowResetPasswordDialog] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
   const [driverToDelete, setDriverToDelete] = useState<Driver | null>(null);
+  const [driverToResetPassword, setDriverToResetPassword] = useState<Driver | null>(null);
+  const [newPassword, setNewPassword] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   // Form state
@@ -280,6 +284,51 @@ export default function DriverManagement() {
     if (driverToDelete) {
       deleteDriverMutation.mutate(driverToDelete.id);
     }
+  };
+
+  // Mutation para resetar senha
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/delivery-drivers/${id}/reset-password`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Erro ao resetar senha');
+      }
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      setNewPassword(data.temporaryPassword);
+    },
+    onError: (error: any) => {
+      setShowResetPasswordDialog(false);
+      setDriverToResetPassword(null);
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao resetar senha",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleResetPasswordClick = (driver: Driver) => {
+    setDriverToResetPassword(driver);
+    setNewPassword(null);
+    setShowResetPasswordDialog(true);
+  };
+
+  const handleConfirmResetPassword = () => {
+    if (driverToResetPassword) {
+      resetPasswordMutation.mutate(driverToResetPassword.id);
+    }
+  };
+
+  const handleCloseResetPasswordDialog = () => {
+    setShowResetPasswordDialog(false);
+    setDriverToResetPassword(null);
+    setNewPassword(null);
   };
 
   // Filtrar motoristas
@@ -525,14 +574,28 @@ export default function DriverManagement() {
                           onClick={() => handleToggleStatus(driver)}
                           disabled={toggleDriverStatusMutation.isPending}
                           data-testid={`button-toggle-${driver.id}`}
+                          title={driver.isActive ? "Desativar" : "Ativar"}
                         >
                           {driver.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                         </Button>
+                        {driver.email && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleResetPasswordClick(driver)}
+                            disabled={resetPasswordMutation.isPending}
+                            data-testid={`button-reset-password-${driver.id}`}
+                            title="Resetar Senha"
+                          >
+                            <KeyRound className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => openEditModal(driver)}
                           data-testid={`button-edit-${driver.id}`}
+                          title="Editar"
                         >
                           <Edit3 className="h-4 w-4" />
                         </Button>
@@ -541,6 +604,7 @@ export default function DriverManagement() {
                           size="sm"
                           onClick={() => handleDeleteClick(driver)}
                           data-testid={`button-delete-${driver.id}`}
+                          title="Excluir"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -666,6 +730,57 @@ export default function DriverManagement() {
             >
               {deleteDriverMutation.isPending ? "Removendo..." : "Remover"}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset Password Dialog */}
+      <AlertDialog open={showResetPasswordDialog} onOpenChange={(open) => !open && handleCloseResetPasswordDialog()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {newPassword ? "Senha Resetada!" : "Resetar Senha"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                {newPassword ? (
+                  <div className="space-y-4">
+                    <p>A senha do motorista <strong>{driverToResetPassword?.name}</strong> foi resetada com sucesso.</p>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <p className="text-sm text-green-800 mb-2">Nova senha temporária:</p>
+                      <p className="text-2xl font-bold text-green-700 font-mono tracking-wider">{newPassword}</p>
+                    </div>
+                    <p className="text-sm text-amber-600">
+                      Anote esta senha para informar ao motorista. Após fechar esta janela, a senha não será exibida novamente.
+                    </p>
+                  </div>
+                ) : (
+                  <p>
+                    Deseja resetar a senha do motorista <strong>{driverToResetPassword?.name}</strong>?
+                    Uma nova senha temporária será gerada.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            {newPassword ? (
+              <AlertDialogAction onClick={handleCloseResetPasswordDialog}>
+                Fechar
+              </AlertDialogAction>
+            ) : (
+              <>
+                <AlertDialogCancel onClick={handleCloseResetPasswordDialog}>
+                  Cancelar
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleConfirmResetPassword}
+                  disabled={resetPasswordMutation.isPending}
+                >
+                  {resetPasswordMutation.isPending ? "Resetando..." : "Resetar Senha"}
+                </AlertDialogAction>
+              </>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
