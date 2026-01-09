@@ -9658,6 +9658,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const driverData = req.body;
       const driver = await storage.createDeliveryDriver(driverData);
+      
+      // Se o motorista tem email, criar conta de usuário automaticamente para acesso ao sistema
+      if (driverData.email) {
+        try {
+          // Verificar se já existe usuário com este email
+          const existingUser = await storage.getUserByEmail(driverData.email);
+          
+          if (!existingUser) {
+            // Gerar senha temporária baseada no nome (primeiras 4 letras em minúsculo + "1234")
+            const namePart = (driverData.name || 'driver').toLowerCase().replace(/\s+/g, '').substring(0, 4);
+            const temporaryPassword = `${namePart}1234`;
+            const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+            
+            // Criar usuário com role 'motorista'
+            await db.insert(users).values({
+              id: driver.id, // Usar mesmo ID para facilitar associação
+              email: driverData.email.toLowerCase().trim(),
+              firstName: driverData.name?.split(' ')[0] || 'Motorista',
+              lastName: driverData.name?.split(' ').slice(1).join(' ') || '',
+              password: hashedPassword,
+              role: 'motorista',
+              isActive: true,
+              homeLatitude: driverData.homeLatitude || null,
+              homeLongitude: driverData.homeLongitude || null
+            });
+            
+            console.log(`✅ [DELIVERY-DRIVER] Conta de usuário criada automaticamente para motorista: ${driverData.email}`);
+            console.log(`   Senha temporária: ${temporaryPassword} (deve ser alterada)`);
+            
+            // Incluir senha temporária na resposta para o admin informar ao motorista
+            return res.json({
+              ...driver,
+              userCreated: true,
+              temporaryPassword: temporaryPassword,
+              message: `Motorista cadastrado com sucesso. Senha temporária: ${temporaryPassword}`
+            });
+          } else {
+            console.log(`ℹ️ [DELIVERY-DRIVER] Usuário já existe para email: ${driverData.email}`);
+          }
+        } catch (userError: any) {
+          console.error(`⚠️ [DELIVERY-DRIVER] Erro ao criar conta de usuário:`, userError.message);
+          // Não falhar a criação do driver se não conseguir criar o usuário
+        }
+      }
+      
       res.json(driver);
     } catch (error: any) {
       console.error("Error creating delivery driver:", error);
