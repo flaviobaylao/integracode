@@ -10469,6 +10469,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (driverName) updateData.driverName = driverName;
       if (vehicleType) updateData.vehicleType = vehicleType;
       
+      // ✅ IMPORTANTE: Buscar e atualizar o email do motorista para que a rota apareça para ele
+      if (driverId) {
+        const driver = await db.select().from(deliveryDrivers)
+          .where(eq(deliveryDrivers.id, driverId))
+          .limit(1);
+        
+        if (driver.length > 0 && driver[0].email) {
+          updateData.driverEmail = driver[0].email.toLowerCase().trim();
+          console.log(`📧 [ROUTE-UPDATE] Email do motorista atualizado: ${updateData.driverEmail}`);
+        } else {
+          console.warn(`⚠️ [ROUTE-UPDATE] Motorista ${driverId} não tem email cadastrado! A rota não aparecerá para ele.`);
+        }
+      }
+      
       // Atualizar rota
       const updatedRoute = await storage.updateDeliveryRoute(routeId, updateData);
       

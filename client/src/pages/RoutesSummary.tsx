@@ -1454,11 +1454,23 @@ export default function RoutesSummary() {
                 <SelectContent>
                   {drivers.map(driver => (
                     <SelectItem key={driver.id} value={driver.id}>
-                      {driver.name}
+                      {driver.name} {driver.email ? `(${driver.email})` : '(sem email)'}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {editDriverId && (() => {
+                const selectedDriver = drivers.find(d => d.id === editDriverId);
+                return selectedDriver ? (
+                  <div className={`text-sm mt-1 p-2 rounded ${selectedDriver.email ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    {selectedDriver.email ? (
+                      <>📧 Email: <strong>{selectedDriver.email}</strong></>
+                    ) : (
+                      <>⚠️ <strong>Atenção:</strong> Este motorista não tem email cadastrado. A rota não aparecerá para ele.</>
+                    )}
+                  </div>
+                ) : null;
+              })()}
             </div>
             <div className="space-y-2">
               <Label>Tipo de Veículo</Label>
