@@ -5849,8 +5849,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               if (existingCustomer) {
                 // Atualizar cliente existente
-                // IMPORTANTE: Preservar latitude, longitude, route, weekdays e visitPeriodicity
+                // IMPORTANTE: Preservar latitude, longitude, route, weekdays, visitPeriodicity e PHONE editado manualmente
                 // Estes campos só devem ser alterados via importação de planilha ou edição individual no app
+                
+                // ✅ CORREÇÃO: Preservar telefone editado manualmente se Omie tiver 00000
+                const isOmiePhoneEmpty = !systemClient.phone || systemClient.phone === '(00) 00000-0000' || systemClient.phone.includes('00000');
+                const hasValidExistingPhone = existingCustomer.phone && 
+                  existingCustomer.phone !== '(00) 00000-0000' && 
+                  !existingCustomer.phone.includes('00000') &&
+                  existingCustomer.phone.length >= 10;
+                const shouldPreservePhone = hasValidExistingPhone && isOmiePhoneEmpty;
+                
+                if (shouldPreservePhone) {
+                  console.log(`📞 [SYNC-ACTIVE] Preservando telefone editado: ${existingCustomer.phone} para ${systemClient.name}`);
+                }
+                
                 await storage.updateCustomer(existingCustomer.id, {
                   // Campos que podem ser atualizados do Omie
                   name: systemClient.name,
@@ -5859,7 +5872,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   cnpj: systemClient.cnpj,
                   companyName: systemClient.companyName,
                   fantasyName: systemClient.fantasyName,
-                  phone: systemClient.phone,
+                  // ✅ PRESERVAR telefone editado manualmente se Omie não tiver válido
+                  phone: shouldPreservePhone ? existingCustomer.phone : systemClient.phone,
                   email: systemClient.email,
                   address: systemClient.address,
                   city: systemClient.city,
@@ -5876,6 +5890,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   // - route (depreciado)
                   // - weekdays
                   // - visitPeriodicity
+                  // - phone (se existente for válido e Omie tiver 00000)
                 });
                 result.updated++;
               } else {

@@ -59,6 +59,16 @@ async function syncClientsFromOmie() {
             
             if (existingCustomer) {
               // Atualizar cliente existente - NÃO sobrescrever weekdays/visitPeriodicity
+              // IMPORTANTE: Preservar telefone editado manualmente se o existente for válido e Omie tiver 00000
+              const isOmiePhoneEmpty = !converted.phone || converted.phone === '(00) 00000-0000' || converted.phone.includes('00000');
+              const hasValidExistingPhone = existingCustomer.phone && 
+                existingCustomer.phone !== '(00) 00000-0000' && 
+                !existingCustomer.phone.includes('00000') &&
+                existingCustomer.phone.length >= 10;
+              
+              // Só atualizar telefone se Omie tiver um válido, OU se o existente estiver vazio
+              const shouldPreservePhone = hasValidExistingPhone && isOmiePhoneEmpty;
+              
               await storage.updateCustomer(existingCustomer.id, {
                 name: converted.name,
                 customerType: converted.customerType,
@@ -66,7 +76,8 @@ async function syncClientsFromOmie() {
                 cnpj: converted.cnpj,
                 companyName: converted.companyName,
                 fantasyName: converted.fantasyName,
-                phone: converted.phone,
+                // ✅ PRESERVAR telefone editado manualmente se Omie não tiver válido
+                phone: shouldPreservePhone ? existingCustomer.phone : converted.phone,
                 email: converted.email,
                 address: converted.address,
                 city: converted.city,
@@ -79,6 +90,10 @@ async function syncClientsFromOmie() {
                 virtualService: false // IMPORTANTE: Garantir que não seja marcado como virtual
                 // NÃO incluir weekdays/visitPeriodicity na atualização para preservar dados existentes
               });
+              
+              if (shouldPreservePhone) {
+                console.log(`📞 [SYNC] Preservando telefone editado: ${existingCustomer.phone} para ${converted.name}`);
+              }
               
               // Log quando atualizar vendedor
               if (converted.sellerId && converted.sellerId !== existingCustomer.sellerId) {
