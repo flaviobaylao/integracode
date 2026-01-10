@@ -5852,16 +5852,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // IMPORTANTE: Preservar latitude, longitude, route, weekdays, visitPeriodicity e PHONE editado manualmente
                 // Estes campos só devem ser alterados via importação de planilha ou edição individual no app
                 
-                // ✅ CORREÇÃO: Preservar telefone editado manualmente se Omie tiver 00000
-                const isOmiePhoneEmpty = !systemClient.phone || systemClient.phone === '(00) 00000-0000' || systemClient.phone.includes('00000');
+                // ✅ REGRA: INTEGRA é a fonte de verdade para telefones
+                // O telefone do Integra SEMPRE prevalece sobre o Omie (se existir)
+                // Só usa Omie quando Integra está vazio
                 const hasValidExistingPhone = existingCustomer.phone && 
                   existingCustomer.phone !== '(00) 00000-0000' && 
                   !existingCustomer.phone.includes('00000') &&
                   existingCustomer.phone.length >= 10;
-                const shouldPreservePhone = hasValidExistingPhone && isOmiePhoneEmpty;
                 
-                if (shouldPreservePhone) {
-                  console.log(`📞 [SYNC-ACTIVE] Preservando telefone editado: ${existingCustomer.phone} para ${systemClient.name}`);
+                // Se Integra tem telefone válido, SEMPRE preservar (não importa o que Omie tem)
+                const finalPhone = hasValidExistingPhone ? existingCustomer.phone : systemClient.phone;
+                
+                if (hasValidExistingPhone && systemClient.phone && systemClient.phone !== existingCustomer.phone) {
+                  console.log(`📞 [SYNC-ACTIVE] Integra prevalece: mantendo ${existingCustomer.phone} (Omie tinha: ${systemClient.phone}) para ${systemClient.name}`);
                 }
                 
                 await storage.updateCustomer(existingCustomer.id, {
@@ -5872,8 +5875,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   cnpj: systemClient.cnpj,
                   companyName: systemClient.companyName,
                   fantasyName: systemClient.fantasyName,
-                  // ✅ PRESERVAR telefone editado manualmente se Omie não tiver válido
-                  phone: shouldPreservePhone ? existingCustomer.phone : systemClient.phone,
+                  // ✅ INTEGRA prevalece: só usa Omie se Integra estiver vazio
+                  phone: finalPhone,
                   email: systemClient.email,
                   address: systemClient.address,
                   city: systemClient.city,
@@ -5890,7 +5893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   // - route (depreciado)
                   // - weekdays
                   // - visitPeriodicity
-                  // - phone (se existente for válido e Omie tiver 00000)
+                  // - phone (se Integra tiver telefone válido)
                 });
                 result.updated++;
               } else {

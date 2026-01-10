@@ -59,15 +59,16 @@ async function syncClientsFromOmie() {
             
             if (existingCustomer) {
               // Atualizar cliente existente - NÃO sobrescrever weekdays/visitPeriodicity
-              // IMPORTANTE: Preservar telefone editado manualmente se o existente for válido e Omie tiver 00000
-              const isOmiePhoneEmpty = !converted.phone || converted.phone === '(00) 00000-0000' || converted.phone.includes('00000');
+              // ✅ REGRA: INTEGRA é a fonte de verdade para telefones
+              // O telefone do Integra SEMPRE prevalece sobre o Omie (se existir)
+              // Só usa Omie quando Integra está vazio
               const hasValidExistingPhone = existingCustomer.phone && 
                 existingCustomer.phone !== '(00) 00000-0000' && 
                 !existingCustomer.phone.includes('00000') &&
                 existingCustomer.phone.length >= 10;
               
-              // Só atualizar telefone se Omie tiver um válido, OU se o existente estiver vazio
-              const shouldPreservePhone = hasValidExistingPhone && isOmiePhoneEmpty;
+              // Se Integra tem telefone válido, SEMPRE preservar (não importa o que Omie tem)
+              const finalPhone = hasValidExistingPhone ? existingCustomer.phone : converted.phone;
               
               await storage.updateCustomer(existingCustomer.id, {
                 name: converted.name,
@@ -76,8 +77,8 @@ async function syncClientsFromOmie() {
                 cnpj: converted.cnpj,
                 companyName: converted.companyName,
                 fantasyName: converted.fantasyName,
-                // ✅ PRESERVAR telefone editado manualmente se Omie não tiver válido
-                phone: shouldPreservePhone ? existingCustomer.phone : converted.phone,
+                // ✅ INTEGRA prevalece: só usa Omie se Integra estiver vazio
+                phone: finalPhone,
                 email: converted.email,
                 address: converted.address,
                 city: converted.city,
@@ -91,8 +92,8 @@ async function syncClientsFromOmie() {
                 // NÃO incluir weekdays/visitPeriodicity na atualização para preservar dados existentes
               });
               
-              if (shouldPreservePhone) {
-                console.log(`📞 [SYNC] Preservando telefone editado: ${existingCustomer.phone} para ${converted.name}`);
+              if (hasValidExistingPhone && converted.phone && converted.phone !== existingCustomer.phone) {
+                console.log(`📞 [SYNC] Integra prevalece: mantendo ${existingCustomer.phone} (Omie tinha: ${converted.phone}) para ${converted.name}`);
               }
               
               // Log quando atualizar vendedor
