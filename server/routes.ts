@@ -12705,7 +12705,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Criar pedido no Omie com informações de entrega
-      const omieOrder = await omieService.createSalesOrder(salesCard, customer, products);
+      const omieOrder = await omieService.createSalesOrder(
+        salesCard, 
+        customer, 
+        products,
+        salesCard.paymentMethod || 'a_vista',
+        salesCard.operationType || 'venda',
+        salesCard.sellerId
+      );
       
       // Salvar ID do pedido do Omie no sales card
       await storage.updateSalesCard(id, {
@@ -12880,7 +12887,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Criar pedido no Omie
-      const omieOrder = await omieService.createSalesOrder(salesCard, customer, orderProducts);
+      const omieOrder = await omieService.createSalesOrder(
+        salesCard, 
+        customer, 
+        orderProducts,
+        salesCard.paymentMethod || 'a_vista',
+        salesCard.operationType || 'venda',
+        salesCard.sellerId
+      );
       
       // Atualizar card com status de faturado e dados do pedido
       const updatedCard = await storage.updateSalesCard(id, {
