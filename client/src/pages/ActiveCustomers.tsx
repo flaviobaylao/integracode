@@ -883,7 +883,15 @@ export default function ActiveCustomers() {
                             data-testid={`row-customer-${ac.id}`}
                             onClick={() => {
                               if (ac.customer?.id) {
-                                handleRowClick(ac.customer.id);
+                                if (ac.customer?.virtualService) {
+                                  setServiceLogCustomer({ 
+                                    id: ac.customer.id, 
+                                    name: ac.customer.fantasyName || ac.customer.name 
+                                  });
+                                  setShowServiceLogModal(true);
+                                } else {
+                                  handleRowClick(ac.customer.id);
+                                }
                               }
                             }}
                             className="cursor-pointer hover:bg-muted/50 transition-colors"
