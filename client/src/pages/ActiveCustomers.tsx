@@ -17,6 +17,7 @@ import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
+import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { 
   Upload, 
@@ -39,7 +40,8 @@ import {
   Phone,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  FileText
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -169,6 +171,8 @@ export default function ActiveCustomers() {
   const [phoneEditData, setPhoneEditData] = useState<{customerId: string; customerName: string; currentPhone: string; newPhone: string}>({
     customerId: '', customerName: '', currentPhone: '', newPhone: ''
   });
+  const [showServiceLogModal, setShowServiceLogModal] = useState(false);
+  const [serviceLogCustomer, setServiceLogCustomer] = useState<{id: string; name: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -255,6 +259,12 @@ export default function ActiveCustomers() {
     setShowCustomerEditModal(false);
     setSelectedCard(null);
     setSelectedCustomerForEdit(null);
+  };
+
+  const handleOpenServiceLog = (e: React.MouseEvent, customerId: string, customerName: string) => {
+    e.stopPropagation();
+    setServiceLogCustomer({ id: customerId, name: customerName });
+    setShowServiceLogModal(true);
   };
 
   const handleEditCustomer = async (e: React.MouseEvent, customerId: string) => {
@@ -993,6 +1003,17 @@ export default function ActiveCustomers() {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
+                                {ac.customer?.id && ac.customer?.virtualService && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => handleOpenServiceLog(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name)}
+                                    title="Registrar atendimento virtual"
+                                    data-testid={`button-service-log-${ac.id}`}
+                                  >
+                                    <FileText className="h-4 w-4 text-green-500" />
+                                  </Button>
+                                )}
                                 {ac.customer?.id && (
                                   <Button
                                     variant="ghost"
@@ -1098,6 +1119,19 @@ export default function ActiveCustomers() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Modal de Registro de Atendimento Virtual */}
+        {serviceLogCustomer && (
+          <VirtualServiceLogModal
+            open={showServiceLogModal}
+            onClose={() => {
+              setShowServiceLogModal(false);
+              setServiceLogCustomer(null);
+            }}
+            customerId={serviceLogCustomer.id}
+            customerName={serviceLogCustomer.name}
+          />
+        )}
 
         <TabsContent value="history" className="space-y-4">
           <Card>

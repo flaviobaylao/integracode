@@ -2000,6 +2000,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Upload image for service logs
+  app.post('/api/upload-image', authenticateUser, upload.single('image'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhuma imagem foi enviada" });
+      }
+
+      // Validate MIME type - only allow image formats
+      const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      if (!allowedMimeTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ 
+          message: "Tipo de arquivo não permitido. Use apenas imagens (JPEG, PNG, GIF, WebP)" 
+        });
+      }
+
+      // Additional check: limit file size to 5MB
+      if (req.file.size > 5 * 1024 * 1024) {
+        return res.status(400).json({ message: "Imagem muito grande. Máximo 5MB" });
+      }
+
+      const url = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'service-logs');
+      
+      if (!url) {
+        return res.status(500).json({ message: "Falha ao salvar imagem no storage" });
+      }
+
+      res.json({ url });
+    } catch (error) {
+      console.error("Error uploading image:", error);
+      res.status(500).json({ message: "Falha ao fazer upload da imagem" });
+    }
+  });
+
   // Bulk update time slots for all customers - ADMIN ONLY
   app.post('/api/customers/bulk-update-time-slots', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
