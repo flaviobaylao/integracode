@@ -1910,6 +1910,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // VIRTUAL SERVICE LOGS - Registros de atendimento virtual
+  // ============================================================================
+
+  // List service logs for a customer
+  app.get('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const logs = await db.execute(sql`
+        SELECT * FROM virtual_service_logs 
+        WHERE customer_id = ${id} 
+        ORDER BY attendance_date DESC
+      `);
+      res.json(logs.rows || []);
+    } catch (error) {
+      console.error("Error fetching service logs:", error);
+      res.status(500).json({ message: "Falha ao buscar registros de atendimento" });
+    }
+  });
+
+  // Create a new service log
+  app.post('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      const { notes, images } = req.body;
+
+      if (!notes && (!images || images.length === 0)) {
+        return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
+      }
+
+      const result = await db.execute(sql`
+        INSERT INTO virtual_service_logs (customer_id, attendant_id, attendant_name, notes, images)
+        VALUES (${id}, ${user.id}, ${user.name || user.email}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb)
+        RETURNING *
+      `);
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error creating service log:", error);
+      res.status(500).json({ message: "Falha ao criar registro de atendimento" });
+    }
+  });
+
+  // Update a service log
+  app.patch('/api/service-logs/:logId', authenticateUser, async (req: any, res) => {
+    try {
+      const { logId } = req.params;
+      const { notes, images } = req.body;
+
+      const result = await db.execute(sql`
+        UPDATE virtual_service_logs 
+        SET notes = ${notes || null}, 
+            images = ${JSON.stringify(images || [])}::jsonb,
+            updated_at = NOW()
+        WHERE id = ${logId}
+        RETURNING *
+      `);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ message: "Registro não encontrado" });
+      }
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error updating service log:", error);
+      res.status(500).json({ message: "Falha ao atualizar registro de atendimento" });
+    }
+  });
+
+  // Delete a service log
+  app.delete('/api/service-logs/:logId', authenticateUser, async (req: any, res) => {
+    try {
+      const { logId } = req.params;
+
+      const result = await db.execute(sql`
+        DELETE FROM virtual_service_logs WHERE id = ${logId}
+      `);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ message: "Registro não encontrado" });
+      }
+
+      res.json({ message: "Registro excluído com sucesso" });
+    } catch (error) {
+      console.error("Error deleting service log:", error);
+      res.status(500).json({ message: "Falha ao excluir registro de atendimento" });
+    }
+  });
+
   // Bulk update time slots for all customers - ADMIN ONLY
   app.post('/api/customers/bulk-update-time-slots', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
