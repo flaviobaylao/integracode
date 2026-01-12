@@ -4687,6 +4687,11 @@ export async function createOmieOrder(orderData: {
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
         enviar_email: "N",
+        // ✅ REGRA: Marcar checkbox de email de cobrança baseado no método de pagamento
+        // Boleto: Enviar e-mail com o boleto de cobrança (juntamente com DANFE e XML)
+        // Pix/A vista: Enviar e-mail com o pix de cobrança (juntamente com DANFE e XML)
+        ...(orderData.paymentMethod === 'boleto' ? { enviar_boleto: "S" } : {}),
+        ...(orderData.paymentMethod === 'pix' || orderData.paymentMethod === 'a_vista' ? { enviar_pix: "S" } : {}),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
