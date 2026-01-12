@@ -11,6 +11,16 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import type { ChatConversationWithCustomer, ChatMessageWithSender } from "@shared/schema";
 
+function getMediaUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/objects/') || url.startsWith('/api/')) {
+    return `${window.location.origin}${url}`;
+  }
+  return url;
+}
+
 interface QuickMessage {
   id: string;
   title: string;
@@ -420,16 +430,27 @@ export function ChatArea({ conversation, currentUser }: ChatAreaProps) {
                   {message.messageType === 'image' && message.mediaUrl && (
                     <div className="mb-2">
                       <img 
-                        src={message.mediaUrl} 
-                        alt={message.mediaFilename || 'Image'} 
-                        className="rounded-lg max-w-full h-auto"
+                        src={getMediaUrl(message.mediaUrl)} 
+                        alt={message.mediaFilename || 'Imagem'} 
+                        className="rounded-lg max-w-full h-auto cursor-pointer"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = 'none';
+                          const fallback = target.nextElementSibling as HTMLElement;
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
+                        onClick={() => window.open(getMediaUrl(message.mediaUrl), '_blank')}
                       />
+                      <div className="hidden items-center justify-center p-4 bg-gray-100 rounded-lg text-gray-500 text-sm">
+                        <i className="fas fa-image mr-2"></i>
+                        Imagem não disponível
+                      </div>
                     </div>
                   )}
                   {message.messageType === 'audio' && message.mediaUrl && (
                     <div className="mb-2">
                       <audio controls className="w-full">
-                        <source src={message.mediaUrl} type={message.mediaType || 'audio/mpeg'} />
+                        <source src={getMediaUrl(message.mediaUrl)} type={message.mediaType || 'audio/mpeg'} />
                         Seu navegador não suporta áudio.
                       </audio>
                     </div>
@@ -437,7 +458,7 @@ export function ChatArea({ conversation, currentUser }: ChatAreaProps) {
                   {message.messageType === 'video' && message.mediaUrl && (
                     <div className="mb-2">
                       <video controls className="rounded-lg max-w-full h-auto">
-                        <source src={message.mediaUrl} type={message.mediaType || 'video/mp4'} />
+                        <source src={getMediaUrl(message.mediaUrl)} type={message.mediaType || 'video/mp4'} />
                         Seu navegador não suporta vídeo.
                       </video>
                     </div>
@@ -452,7 +473,7 @@ export function ChatArea({ conversation, currentUser }: ChatAreaProps) {
                         </p>
                       </div>
                       <a 
-                        href={message.mediaUrl} 
+                        href={getMediaUrl(message.mediaUrl)} 
                         download 
                         className="text-whatsapp-500 hover:text-whatsapp-600"
                       >
