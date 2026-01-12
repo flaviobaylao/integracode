@@ -179,12 +179,12 @@ export default function VirtualClientsToday() {
       card = {
         id: `virtual-${client.id}`,
         customerId: client.customerId || client.id,
-        customerName: client.customer.name || client.fantasyNameImported || 'Cliente',
-        customerPhone: client.customer.phone || '',
+        customerName: client.customer?.name || client.fantasyNameImported || 'Cliente',
+        customerPhone: client.customer?.phone || '',
         document: client.document || '',
-        address: client.customer.address || '',
-        sellerName: client.customer.sellerName || '',
-        sellerId: client.customer.sellerId || '',
+        address: client.customer?.address || '',
+        sellerName: client.customer?.sellerName || '',
+        sellerId: client.customer?.sellerId || '',
         scheduledDate: selectedDate,
         status: 'pending',
         items: [],
@@ -390,7 +390,7 @@ export default function VirtualClientsToday() {
                           </div>
                           {client.customer?.address && (
                             <div className="text-xs text-muted-foreground truncate max-w-[200px]">
-                              {client.customer.neighborhood}
+                              {client.customer?.neighborhood}
                             </div>
                           )}
                         </TableCell>
@@ -408,7 +408,7 @@ export default function VirtualClientsToday() {
                         <TableCell>
                           <Badge variant="outline">
                             {Array.isArray(client.customer?.weekdays)
-                              ? (client.customer.weekdays as string[]).join(", ")
+                              ? (client.customer?.weekdays as string[]).join(", ")
                               : client.customer?.weekdays || "-"}
                           </Badge>
                         </TableCell>

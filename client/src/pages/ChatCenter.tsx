@@ -21,6 +21,16 @@ import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useAuth } from "@/hooks/useAuth";
 
+function getMediaUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/objects/') || url.startsWith('/uploads/') || url.startsWith('/api/')) {
+    return `${window.location.origin}${url}`;
+  }
+  return url;
+}
+
 interface ChatMessage {
   id: string;
   conversationId: string;
@@ -1193,33 +1203,39 @@ export default function ChatCenter() {
                                 ) : (msg.mediaUrl || (msg.messageType === 'image' || msg.messageType === 'audio' || msg.messageType === 'video' || msg.messageType === 'document')) ? (
                                   <div className="mb-2">
                                     {msg.messageType === 'image' && msg.mediaUrl && (
-                                      <img 
-                                        src={msg.mediaUrl} 
-                                        alt="mídia" 
-                                        className="max-w-xs rounded cursor-pointer shadow-lg border" 
-                                        style={{ maxHeight: '200px' }}
-                                        onClick={() => window.open(msg.mediaUrl, '_blank')}
-                                        onError={(e) => {
-                                          console.error('Erro ao carregar imagem:', msg.mediaUrl);
-                                          const target = e.target as HTMLImageElement;
-                                          target.style.border = '2px solid red';
-                                          target.alt = 'Erro: ' + msg.mediaUrl;
-                                        }}
-                                      />
+                                      <>
+                                        <img 
+                                          src={getMediaUrl(msg.mediaUrl)} 
+                                          alt="Imagem" 
+                                          className="max-w-xs rounded cursor-pointer shadow-lg border" 
+                                          style={{ maxHeight: '200px' }}
+                                          onClick={() => window.open(getMediaUrl(msg.mediaUrl), '_blank')}
+                                          onError={(e) => {
+                                            const target = e.target as HTMLImageElement;
+                                            target.style.display = 'none';
+                                            const fallback = target.nextElementSibling as HTMLElement;
+                                            if (fallback) fallback.style.display = 'flex';
+                                          }}
+                                        />
+                                        <div className="hidden items-center justify-center p-4 bg-gray-100 rounded text-gray-500 text-sm">
+                                          <ImageIcon className="h-4 w-4 mr-2" />
+                                          Imagem não disponível
+                                        </div>
+                                      </>
                                     )}
                                     {msg.messageType === 'image' && !msg.mediaUrl && (
                                       <div className="bg-yellow-100 p-2 rounded text-xs">📷 Imagem (sem URL)</div>
                                     )}
-                                    {msg.messageType === 'audio' && msg.mediaUrl && <audio src={msg.mediaUrl} controls className="max-w-sm" />}
+                                    {msg.messageType === 'audio' && msg.mediaUrl && <audio src={getMediaUrl(msg.mediaUrl)} controls className="max-w-sm" />}
                                     {msg.messageType === 'audio' && !msg.mediaUrl && (
                                       <div className="bg-yellow-100 p-2 rounded text-xs">🎵 Áudio (sem URL)</div>
                                     )}
-                                    {msg.messageType === 'video' && msg.mediaUrl && <video src={msg.mediaUrl} controls className="max-w-sm rounded" />}
+                                    {msg.messageType === 'video' && msg.mediaUrl && <video src={getMediaUrl(msg.mediaUrl)} controls className="max-w-sm rounded" />}
                                     {msg.messageType === 'video' && !msg.mediaUrl && (
                                       <div className="bg-yellow-100 p-2 rounded text-xs">🎬 Vídeo (sem URL)</div>
                                     )}
                                     {msg.messageType === 'document' && msg.mediaUrl && (
-                                      <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="underline text-blue-600">
+                                      <a href={getMediaUrl(msg.mediaUrl)} target="_blank" rel="noopener noreferrer" className="underline text-blue-600">
                                         📄 {msg.content && !msg.content.startsWith('[') ? msg.content : 'Documento'}
                                       </a>
                                     )}

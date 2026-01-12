@@ -15,7 +15,7 @@ function getMediaUrl(url: string | null | undefined): string {
   if (!url) return '';
   if (url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/objects/') || url.startsWith('/api/')) {
+  if (url.startsWith('/objects/') || url.startsWith('/uploads/') || url.startsWith('/api/')) {
     return `${window.location.origin}${url}`;
   }
   return url;
