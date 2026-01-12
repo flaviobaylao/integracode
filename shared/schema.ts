@@ -234,6 +234,29 @@ export const customers = pgTable("customers", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Virtual Service Logs - Registros de atendimento virtual
+export const virtualServiceLogs = pgTable("virtual_service_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull(), // Cliente atendido
+  attendantId: varchar("attendant_id").notNull(), // Usuário que realizou o atendimento
+  attendantName: varchar("attendant_name").notNull(), // Nome do atendente (snapshot)
+  attendanceDate: timestamp("attendance_date").notNull().defaultNow(), // Data/hora do atendimento
+  notes: text("notes"), // Notas escritas do atendimento
+  images: jsonb("images").$type<string[]>().default([]), // URLs das imagens anexadas
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Virtual Service Logs Insert Schema
+export const insertVirtualServiceLogSchema = createInsertSchema(virtualServiceLogs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertVirtualServiceLog = z.infer<typeof insertVirtualServiceLogSchema>;
+export type VirtualServiceLog = typeof virtualServiceLogs.$inferSelect;
+
 // Products table
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
