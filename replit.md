@@ -48,6 +48,7 @@
 - **Automatic Data Backup**: Complete backup system for all order data with daily scheduled backups and manual trigger options, storing historical snapshots in an `orders_backup` table.
 - **Sales Card Duplication**: Endpoint for duplicating sales cards with all related entities loaded.
 - **ChatGPT Auto-Attendance**: Configurable AI-powered customer service system at `/telemarketing/ai-settings`. Features four operating modes (disabled, manual, schedule, timeout), configurable business hours, handoff keywords, customizable prompts, model selection (GPT-4o-mini, GPT-4o, GPT-4 Turbo), test interface, and audit logging. Includes daily AI reports for customer data, overdue debts, and billing summaries. Supports automated order capture via ChatGPT, allowing customers to place orders through a form-based approach via WhatsApp or by redirecting to a simplified virtual store (`/pedido-rapido`). The simplified store allows public access, pre-fills phone numbers from WhatsApp, applies 5-tier pricing, validates minimum orders, and creates orders via a public API.
+- **Virtual Service Logging**: Attendants can log virtual customer service interactions via a modal accessible from the Active Customers page (FileText icon for virtual customers). Features include: written notes, image attachments (JPEG, PNG, GIF, WebP up to 5MB), automatic attendant tracking (server-side from authenticated user), and full history view. Data stored in `virtual_service_logs` table with authenticated CRUD API endpoints.
 
 # External Dependencies
 
