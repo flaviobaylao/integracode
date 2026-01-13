@@ -146,7 +146,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       id: 'overdue-debts', 
       label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
       icon: 'fas fa-exclamation-triangle', 
-      available: canAccessReports || isVendedor,
+      available: canAccessReports || isVendedor || isTelemarketing,
       badge: null
     },
     { 
