@@ -40,8 +40,6 @@ export async function handleIncomingMessage(
       conversationId: conversation.id,
       customerMessage: message.content,
       botResponse: result.response.reply,
-      provider: (settings as any).aiProvider || 'openai',
-      model: settings.gptModel || 'gpt-4o-mini',
       tokensUsed: result.tokensUsed,
       responseTimeMs: result.responseTimeMs,
       status: 'success'
@@ -144,6 +142,9 @@ export async function handleIncomingMessage(
 
   } catch (error: any) {
     console.error(`❌ [AI-SERVICE] Erro crítico ao processar mensagem:`, error.message);
+    console.error(`❌ [AI-SERVICE] Stack:`, error.stack?.slice(0, 500));
+    console.error(`❌ [AI-SERVICE] Status:`, error.status);
+    console.error(`❌ [AI-SERVICE] Type:`, error.type || error.code);
     
     // Registrar erro no log
     try {
@@ -461,7 +462,6 @@ export const chatGPTService = new ChatGPTService();
 
 import pLimit from "p-limit";
 import pRetry from "p-retry";
-import { type ChatAiSettings } from "@shared/schema";
 
 // Rate limiter para evitar exceder limites da API
 const limit = pLimit(2);
@@ -783,6 +783,11 @@ Se detectar um formulário de pedido preenchido (mensagem longa com nome, CPF/CN
     };
   } catch (error: any) {
     console.error('❌ [CHATGPT-AUTO] Erro ao gerar resposta:', error.message);
+    console.error('❌ [CHATGPT-AUTO] Stack:', error.stack?.slice(0, 500));
+    console.error('❌ [CHATGPT-AUTO] Status:', error.status);
+    console.error('❌ [CHATGPT-AUTO] Type:', error.type || error.code);
+    console.error('❌ [CHATGPT-AUTO] Model usado:', model);
+    console.error('❌ [CHATGPT-AUTO] OPENAI_API_KEY exists:', !!process.env.OPENAI_API_KEY);
     
     // Retornar resposta de fallback em caso de erro
     return {
