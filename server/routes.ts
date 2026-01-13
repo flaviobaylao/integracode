@@ -17553,8 +17553,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let consecutiveErrors = 0;
       const maxRetries = 3;
       const maxConsecutiveErrors = 3;
-      const delayBetweenPages = 1500;
-      const delayBetweenVendors = 300;
+      const delayBetweenPages = 2000;
+      const delayBetweenVendors = 500;
+      
+      let requestsThisMinute = 0;
+      let minuteStart = Date.now();
+      const maxRequestsPerMinute = 200;
+
+      const checkRateLimit = async () => {
+        const now = Date.now();
+        if (now - minuteStart >= 60000) {
+          minuteStart = now;
+          requestsThisMinute = 0;
+        }
+        
+        if (requestsThisMinute >= maxRequestsPerMinute) {
+          const waitTime = 60000 - (now - minuteStart) + 1000;
+          console.log(`⏳ Rate limit atingido (${requestsThisMinute}/${maxRequestsPerMinute}). Aguardando ${Math.ceil(waitTime/1000)}s...`);
+          billingSyncState.message = `Rate limit atingido. Aguardando ${Math.ceil(waitTime/1000)}s...`;
+          await new Promise(r => setTimeout(r, waitTime));
+          minuteStart = Date.now();
+          requestsThisMinute = 0;
+        }
+        
+        requestsThisMinute++;
+      };
 
       while (hasMorePages && page <= 50) {
         billingSyncState.currentPage = page;
@@ -17564,6 +17587,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (page > 1) {
           await new Promise(r => setTimeout(r, delayBetweenPages));
         }
+        
+        await checkRateLimit();
         
         let response;
         let retryCount = 0;
@@ -17581,6 +17606,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           } catch (pageError: any) {
             retryCount++;
+            const isRateLimited = pageError.message?.includes('429') || pageError.message?.toLowerCase().includes('rate') || pageError.message?.toLowerCase().includes('limit');
+            
+            if (isRateLimited) {
+              console.log(`⚠️ Rate limit detectado na página ${page}. Aguardando 60s...`);
+              billingSyncState.message = `Rate limit detectado. Aguardando 60s...`;
+              await new Promise(r => setTimeout(r, 60000));
+              minuteStart = Date.now();
+              requestsThisMinute = 0;
+              retryCount--;
+              continue;
+            }
+            
             console.log(`⚠️ Erro na página ${page}, tentativa ${retryCount}/${maxRetries}: ${pageError.message}`);
             if (retryCount < maxRetries) {
               await new Promise(r => setTimeout(r, 3000 * retryCount));
@@ -17645,10 +17682,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (vendorCode) {
             try {
+              await checkRateLimit();
               await new Promise(r => setTimeout(r, delayBetweenVendors));
               const vendorData = await omieService.fetchVendorData(vendorCode);
               vendorName = vendorData?.nome || vendorCode;
-            } catch (error) {
+            } catch (error: any) {
+              const isRateLimited = error.message?.includes('429') || error.message?.toLowerCase().includes('rate');
+              if (isRateLimited) {
+                console.log(`⚠️ Rate limit em lookup de vendedor. Aguardando 60s...`);
+                await new Promise(r => setTimeout(r, 60000));
+                minuteStart = Date.now();
+                requestsThisMinute = 0;
+              }
               vendorName = vendorCode;
             }
           }
