@@ -5710,22 +5710,32 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // Encerrar conversas inativas (30+ minutos)
+  // Encerrar conversas inativas (15+ minutos sem atividade)
   async closeInactiveConversations(): Promise<number> {
     try {
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      
+      // Encerrar todas as conversas não finalizadas que estão inativas há 15+ minutos
+      // Status a fechar: 'new', 'assigned', 'in-progress'
       const result = await db
         .update(chatConversations)
-        .set({ status: 'resolved' })
+        .set({ 
+          status: 'resolved',
+          updatedAt: new Date()
+        })
         .where(
           and(
-            eq(chatConversations.status, 'in-progress' as any),
-            lt(chatConversations.lastMessageTime, thirtyMinutesAgo)
+            sql`${chatConversations.status} IN ('new', 'assigned', 'in-progress')`,
+            lt(chatConversations.lastMessageTime, fifteenMinutesAgo)
           )
         )
         .returning();
+      
       if (result.length > 0) {
-        console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade`);
+        console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade (15 min)`);
+        result.forEach(conv => {
+          console.log(`   📌 Conversa ${conv.id} (${conv.customerPhone}) finalizada`);
+        });
       }
       return result.length;
     } catch (error) {
