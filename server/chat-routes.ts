@@ -1278,62 +1278,72 @@ export function registerChatRoutes(app: Express): void {
       // SÓ acionar IA se:
       // 1. Mensagem é do CLIENTE (não do sistema)
       // 2. ChatGPT está habilitado
-      // 3. Conversa está atribuída ao ChatGPT OU é nova (não atribuída a atendente humano)
+      // 3. Conversa está atribuída ao ChatGPT OU é nova/reaberta (não atribuída a atendente humano)
       if (!isFromMe) {
         debugInfo.steps.push('10a-ai-trigger');
         try {
           const aiSettings = await storage.getChatAiSettings();
           
-          // Verificar se a conversa está atribuída ao ChatGPT ou é nova
-          const isAssignedToChatGpt = conversation.assignedAgentId === 'chatgpt';
-          const isNewConversation = !conversation.assignedAgentId || conversation.status === 'new';
-          const isAssignedToHuman = conversation.assignedAgentId && 
-                                    conversation.assignedAgentId !== 'chatgpt' && 
-                                    conversation.status !== 'new';
+          // IMPORTANTE: Recarregar conversa para pegar o status atualizado (linha 1270-1275 atualizou para 'new')
+          const currentConversation = await storage.getChatConversation(conversation.id);
           
-          if (isAssignedToHuman) {
-            console.log(`👤 [WEBHOOK-AI] Conversa ${conversation.id} atribuída a atendente humano (${conversation.assignedAgentId}) - IA não será acionada`);
-          } else if (aiSettings && aiSettings.isEnabled && aiSettings.mode !== 'disabled') {
-            // Se ChatGPT está ativado e conversa é nova ou está atribuída ao ChatGPT
-            if (isNewConversation) {
-              // Nova conversa - distribuir primeiro
-              const { distributeNewConversation } = await import("./chat-distribution-service");
-              const distribution = await distributeNewConversation(conversation.id);
-              
-              if (!distribution.isChatGpt) {
-                console.log(`👤 [WEBHOOK-AI] Nova conversa distribuída para atendente humano (${distribution.assignedTo}) - IA não será acionada`);
+          if (!currentConversation) {
+            console.error(`❌ [WEBHOOK-AI] Conversa ${conversation.id} não encontrada após atualização`);
+          } else {
+            // Verificar se a conversa está atribuída ao ChatGPT ou é nova/reaberta
+            const isAssignedToChatGpt = currentConversation.assignedAgentId === 'chatgpt';
+            // Conversa é "nova" se: não tem agente atribuído OU status é 'new'
+            const isNewOrReopened = !currentConversation.assignedAgentId || currentConversation.status === 'new';
+            const isAssignedToHuman = currentConversation.assignedAgentId && 
+                                      currentConversation.assignedAgentId !== 'chatgpt';
+            
+            console.log(`🔍 [WEBHOOK-AI] Status: ${currentConversation.status} | Agent: ${currentConversation.assignedAgentId || 'nenhum'} | isNew: ${isNewOrReopened} | isHuman: ${isAssignedToHuman} | isChatGPT: ${isAssignedToChatGpt}`);
+            
+            if (isAssignedToHuman) {
+              console.log(`👤 [WEBHOOK-AI] Conversa ${conversation.id} atribuída a atendente humano (${currentConversation.assignedAgentId}) - IA não será acionada`);
+            } else if (aiSettings && aiSettings.isEnabled && aiSettings.mode !== 'disabled') {
+              // Se ChatGPT está ativado e conversa é nova/reaberta ou está atribuída ao ChatGPT
+              if (isNewOrReopened && !isAssignedToChatGpt) {
+                // Conversa nova ou reaberta - distribuir primeiro
+                console.log(`🔄 [WEBHOOK-AI] Conversa ${conversation.id} nova/reaberta - distribuindo...`);
+                const { distributeNewConversation } = await import("./chat-distribution-service");
+                const distribution = await distributeNewConversation(conversation.id);
+                
+                if (!distribution.isChatGpt) {
+                  console.log(`👤 [WEBHOOK-AI] Conversa distribuída para atendente humano (${distribution.assignedTo}) - IA não será acionada`);
+                }
               }
-            }
-            
-            // Recarregar conversa para pegar atribuição atualizada
-            const updatedConversation = await storage.getChatConversation(conversation.id);
-            
-            if (updatedConversation?.assignedAgentId === 'chatgpt') {
-              console.log(`🤖 [WEBHOOK-AI] Acionando IA para conversa: ${conversation.id} (${normalizedPhone})`);
               
-              // Importar dinamicamente para evitar dependência circular se houver
-              const { handleIncomingMessage } = await import("./chatgpt-service");
+              // Recarregar conversa para pegar atribuição após distribuição
+              const finalConversation = await storage.getChatConversation(conversation.id);
               
-              // Executar em background para não atrasar o webhook
-              handleIncomingMessage(
-                {
-                  id: conversation.id,
-                  customerName: identifiedName,
-                  customerPhone: normalizedPhone
-                },
-                {
-                  content: finalContent,
-                  timestamp: new Date()
-                },
-                aiSettings
-              ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
-            }
-          } else if (!aiSettings?.isEnabled) {
-            // ChatGPT desativado - distribuir para atendente humano se for nova conversa
-            if (isNewConversation) {
-              const { distributeNewConversation } = await import("./chat-distribution-service");
-              const distribution = await distributeNewConversation(conversation.id);
-              console.log(`👤 [WEBHOOK-AI] ChatGPT DESATIVADO - Nova conversa distribuída para: ${distribution.assignedTo || 'fila'}`);
+              if (finalConversation?.assignedAgentId === 'chatgpt') {
+                console.log(`🤖 [WEBHOOK-AI] Acionando IA para conversa: ${conversation.id} (${normalizedPhone})`);
+                
+                // Importar dinamicamente para evitar dependência circular se houver
+                const { handleIncomingMessage } = await import("./chatgpt-service");
+                
+                // Executar em background para não atrasar o webhook
+                handleIncomingMessage(
+                  {
+                    id: conversation.id,
+                    customerName: identifiedName,
+                    customerPhone: normalizedPhone
+                  },
+                  {
+                    content: finalContent,
+                    timestamp: new Date()
+                  },
+                  aiSettings
+                ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
+              }
+            } else if (!aiSettings?.isEnabled) {
+              // ChatGPT desativado - distribuir para atendente humano se for nova conversa
+              if (isNewOrReopened) {
+                const { distributeNewConversation } = await import("./chat-distribution-service");
+                const distribution = await distributeNewConversation(conversation.id);
+                console.log(`👤 [WEBHOOK-AI] ChatGPT DESATIVADO - Nova conversa distribuída para: ${distribution.assignedTo || 'fila'}`);
+              }
             }
           }
         } catch (aiErr: any) {
