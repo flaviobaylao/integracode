@@ -139,7 +139,7 @@ export class OmieService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Error response body:', errorText);
+      console.error('❌ [OMIE] Error response body:', errorText);
       
       // Capturar erro específico de "não existem registros"
       if (errorText.includes('NÃ£o existem registros para a pÃ¡gina')) {
@@ -151,19 +151,51 @@ export class OmieService {
       // Tentar parsear a resposta de erro para obter mais detalhes
       try {
         const errorData = JSON.parse(errorText);
+        
+        // Verificar erros SOAP específicos
+        if (errorData.faultcode) {
+          const faultCode = errorData.faultcode;
+          const faultString = errorData.faultstring || 'Erro desconhecido';
+          console.error(`❌ [OMIE] SOAP Fault: ${faultCode} - ${faultString}`);
+          
+          // Traduzir erros comuns do Omie
+          let userMessage = faultString;
+          if (faultCode === 'SOAP-ENV:Client-S001' || faultString.includes('APP_KEY')) {
+            userMessage = 'Credenciais do Omie inválidas ou expiradas. Verifique as configurações de integração.';
+          } else if (faultCode.includes('S002')) {
+            userMessage = 'Erro de permissão no Omie. Verifique se a aplicação tem acesso a este recurso.';
+          }
+          
+          throw new Error(userMessage);
+        }
+        
         const errorMessage = errorData.faultstring || errorData.message || `${response.status}: ${response.statusText}`;
         throw new Error(errorMessage);
       } catch (parseError) {
+        if (parseError instanceof Error && parseError.message !== errorText) {
+          throw parseError;
+        }
         // Se não conseguir fazer parse, lançar erro com o texto da resposta
         throw new Error(`${response.status}: ${errorText || response.statusText}`);
       }
     }
 
     const data = await response.json();
-    console.log('Response data:', JSON.stringify(data, null, 2));
     
+    // Log apenas parte da resposta para evitar logs muito grandes
+    const responsePreview = JSON.stringify(data).slice(0, 500);
+    console.log('Response data (preview):', responsePreview + (JSON.stringify(data).length > 500 ? '...' : ''));
+    
+    // Verificar faultstring em respostas que retornam 200 mas contêm erro
     if (data.faultstring) {
-      throw new Error(`Omie API fault: ${data.faultstring}`);
+      console.error(`❌ [OMIE] API fault em resposta 200: ${data.faultcode} - ${data.faultstring}`);
+      throw new Error(`Omie: ${data.faultstring}`);
+    }
+    
+    // Verificar faultcode em respostas que retornam 200 mas contêm erro
+    if (data.faultcode) {
+      console.error(`❌ [OMIE] SOAP fault em resposta 200: ${data.faultcode}`);
+      throw new Error(`Omie: ${data.faultcode}`);
     }
 
     return data;
