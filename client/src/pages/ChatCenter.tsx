@@ -175,6 +175,7 @@ export default function ChatCenter() {
   const [mediaCaption, setMediaCaption] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showTransferDialog, setShowTransferDialog] = useState(false);
@@ -751,11 +752,16 @@ export default function ChatCenter() {
   });
   const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
 
+  // Scroll automático para a última mensagem
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+    // Usar setTimeout para garantir que o DOM foi atualizado
+    const timer = setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [messages, selectedChat]);
 
   const handleSendMessage = async () => {
     if (!messageText.trim()) return;
@@ -935,7 +941,7 @@ export default function ChatCenter() {
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-5" : "lg:grid-cols-4"} gap-6`}>
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-7" : "lg:grid-cols-5"} gap-6`}>
           {isAdmin && (
             // Sidebar esquerda com stats de agentes
             <div className="lg:col-span-1">
@@ -972,8 +978,8 @@ export default function ChatCenter() {
             </div>
           )}
           
-          {/* Lista de Conversas + Agenda Telefônica */}
-          <div className="lg:col-span-2 flex flex-col" style={{ height: 'calc(100vh - 200px)' }}>
+          {/* Lista de Conversas + Agenda Telefônica - Coluna reduzida em 30% */}
+          <div className={`${isAdmin ? "lg:col-span-2" : "lg:col-span-2"} flex flex-col`} style={{ height: 'calc(100vh - 200px)' }}>
             <Tabs defaultValue="conversas" className="h-full flex flex-col">
               <Card className="h-full flex flex-col overflow-hidden">
                 <CardHeader className="shrink-0 pb-3">
@@ -1088,8 +1094,8 @@ export default function ChatCenter() {
             </Tabs>
           </div>
 
-          {/* Chat */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* Chat - Coluna expandida para mais espaço */}
+          <div className={`${isAdmin ? "lg:col-span-4" : "lg:col-span-3"} space-y-4`}>
             {selectedChat ? (
               <>
                 {/* Info do Cliente */}
@@ -1306,6 +1312,8 @@ export default function ChatCenter() {
                             </div>
                           ))
                         )}
+                        {/* Âncora para scroll automático */}
+                        <div ref={messagesEndRef} />
                       </div>
                     </ScrollArea>
                     

@@ -3517,7 +3517,9 @@ export class OmieService {
                 console.log(`📋 FULL RESYNC - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()}`);
               }
               pageHasValidData = true;
-              nfsFromOmie.add(invoiceNumber); // Rastrear NF que veio do Omie
+              // Normalizar número da NF com padding de zeros (8 dígitos) para match com banco de dados
+              const normalizedInvoiceNumber = String(invoiceNumber).padStart(8, '0');
+              nfsFromOmie.add(normalizedInvoiceNumber); // Rastrear NF que veio do Omie
               
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie || invoice.nfDestInt?.nCodCli;
@@ -3809,11 +3811,18 @@ export class OmieService {
           
           const billingsToDelete: string[] = [];
           for (const row of aguardandoRotaBillings.rows as any[]) {
-            if (!nfsFromOmie.has(row.invoice_number)) {
+            // Normalizar número da NF do banco para comparação (garantir mesmo formato)
+            const normalizedDbInvoiceNumber = String(row.invoice_number).padStart(8, '0');
+            if (!nfsFromOmie.has(normalizedDbInvoiceNumber)) {
               billingsToDelete.push(row.invoice_number);
-              console.log(`🗑️ Marcado para remoção: NF ${row.invoice_number} - ${row.customer_fantasy_name} (${row.invoice_date}) - R$ ${row.total_value}`);
+              console.log(`🗑️ Marcado para remoção: NF ${row.invoice_number} (normalizado: ${normalizedDbInvoiceNumber}) - ${row.customer_fantasy_name} (${row.invoice_date}) - R$ ${row.total_value}`);
             }
           }
+          
+          // Log para debug: mostrar algumas NFs do Set para verificar formato
+          const sampleNfs = Array.from(nfsFromOmie).slice(0, 5);
+          console.log(`📋 Exemplo de NFs no Set (formato Omie normalizado): ${sampleNfs.join(', ')}`);
+          console.log(`📋 Total de billings em "Aguardando Rota" no banco: ${aguardandoRotaBillings.rows.length}`);
           
           if (billingsToDelete.length > 0) {
             // Deletar em lotes para evitar query muito longa
