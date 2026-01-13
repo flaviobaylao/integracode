@@ -43,8 +43,30 @@ import {
   ArrowDown,
   FileText
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+function getDateRecencyClass(dateString: string | null | undefined): string {
+  if (!dateString) return '';
+  
+  try {
+    const date = new Date(dateString);
+    const today = new Date();
+    const daysDiff = differenceInDays(today, date);
+    
+    if (daysDiff <= 7) {
+      return 'bg-green-100 dark:bg-green-900/30';
+    } else if (daysDiff <= 15) {
+      return 'bg-yellow-100 dark:bg-yellow-900/30';
+    } else if (daysDiff <= 30) {
+      return 'bg-orange-100 dark:bg-orange-900/30';
+    } else {
+      return 'bg-red-100 dark:bg-red-900/30';
+    }
+  } catch {
+    return '';
+  }
+}
 import {
   Select,
   SelectContent,
@@ -1059,15 +1081,15 @@ export default function ActiveCustomers() {
                               })()}
                             </TableCell>
                             <TableCell>
-                              <span className="text-sm text-muted-foreground">
+                              <span className={`text-sm px-2 py-1 rounded ${ac.customer?.lastActivityDate ? getDateRecencyClass(ac.customer.lastActivityDate) : ''}`}>
                                 {ac.customer?.lastActivityDate 
                                   ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR })
-                                  : 'Nunca'}
+                                  : <span className="text-muted-foreground">Nunca</span>}
                               </span>
                             </TableCell>
                             <TableCell>
                               {ac.customer?.id && lastServiceLogs[ac.customer.id] ? (
-                                <div className="flex flex-col gap-0.5 text-xs">
+                                <div className={`flex flex-col gap-0.5 text-xs px-2 py-1 rounded ${getDateRecencyClass(lastServiceLogs[ac.customer.id].date)}`}>
                                   <span className="font-medium">
                                     {format(new Date(lastServiceLogs[ac.customer.id].date), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
                                   </span>
