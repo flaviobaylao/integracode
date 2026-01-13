@@ -1,6 +1,7 @@
 import { db } from "./db";
-import { chatAgents, chatConversations, chatDistributionState, chatAiSettings, AGENT_COLORS } from "@shared/schema";
+import { chatAgents, chatConversations, chatDistributionState, chatAiSettings, chatMessages, AGENT_COLORS } from "@shared/schema";
 import { eq, and, desc, isNull, lt, ne, sql } from "drizzle-orm";
+import { evolutionAPIService } from "./evolution-api-service";
 
 const REDISTRIBUTION_TIMEOUT_MINUTES = 5;
 
@@ -117,8 +118,38 @@ export async function distributeNewConversation(conversationId: string): Promise
     console.log(`✅ [DISTRIBUTION] Conversa ${conversationId} atribuída ao atendente ${nextAgent.agentId}`);
     return { assignedTo: nextAgent.agentId, isChatGpt: false };
   } else {
-    // Nenhum atendente online - deixar sem atribuição
-    console.log(`⚠️ [DISTRIBUTION] Nenhum atendente online. Conversa aguardando na fila.`);
+    // Nenhum atendente online - enviar mensagem de ausência
+    console.log(`⚠️ [DISTRIBUTION] Nenhum atendente online. Enviando mensagem de ausência.`);
+    
+    // Buscar conversa para obter telefone do cliente
+    const [conversation] = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.id, conversationId))
+      .limit(1);
+    
+    if (conversation?.customerPhone) {
+      const absenceMessage = settings?.absenceMessage || 
+        'No momento não há atendentes disponíveis. Por favor, tente novamente em instantes ou envie sua mensagem que responderemos assim que possível.';
+      
+      try {
+        await evolutionAPIService.sendText(conversation.customerPhone, absenceMessage);
+        console.log(`📩 [DISTRIBUTION] Mensagem de ausência enviada para ${conversation.customerPhone}`);
+        
+        // Registrar mensagem no histórico
+        await db.insert(chatMessages).values({
+          conversationId: conversationId,
+          senderId: 'system',
+          senderType: 'system',
+          content: `[Mensagem automática - sem atendentes online] ${absenceMessage}`,
+          messageType: 'text',
+          isRead: true
+        });
+      } catch (sendErr: any) {
+        console.error(`⚠️ [DISTRIBUTION] Erro ao enviar mensagem de ausência:`, sendErr.message);
+      }
+    }
+    
     return { assignedTo: "", isChatGpt: false };
   }
 }

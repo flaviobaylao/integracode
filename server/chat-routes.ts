@@ -2658,7 +2658,32 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
-      // Finalizar conversa
+      // Buscar configurações para mensagem de finalização
+      const aiSettings = await storage.getChatAiSettings();
+      const finalizeMessage = aiSettings?.finalizeMessage || 
+        'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.';
+
+      // Enviar mensagem de finalização ao cliente via WhatsApp
+      if (conversation.customerPhone) {
+        try {
+          await evolutionAPIService.sendText(conversation.customerPhone, finalizeMessage);
+          console.log(`📩 [CHAT-FINISH] Mensagem de finalização enviada para ${conversation.customerPhone}`);
+          
+          // Registrar mensagem no histórico
+          await storage.createChatMessage({
+            conversationId: conversationId,
+            senderId: 'system',
+            senderType: 'system',
+            content: `[Finalização manual] ${finalizeMessage}`,
+            messageType: 'text',
+            isRead: true
+          });
+        } catch (sendErr: any) {
+          console.error(`⚠️ [CHAT-FINISH] Erro ao enviar mensagem de finalização:`, sendErr.message);
+        }
+      }
+
+      // Finalizar conversa e desvincular atendente
       const updated = await storage.updateChatConversation(conversationId, {
         status: 'resolved',
         assignedAgentId: null,
