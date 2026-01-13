@@ -424,6 +424,43 @@ export default function ActiveCustomers() {
     window.location.href = "/api/active-customers/template";
   };
 
+  const handleExportContacts = () => {
+    const dataToExport = filteredCustomers.map((ac) => ({
+      'Nome Fantasia': ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || '',
+      'Telefone': ac.customer?.phone || ''
+    }));
+
+    if (dataToExport.length === 0) {
+      toast({
+        title: 'Nenhum cliente para exportar',
+        description: 'Aplique filtros ou verifique se há clientes na lista',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    const csvContent = [
+      ['Nome Fantasia', 'Telefone'].join(';'),
+      ...dataToExport.map(row => [
+        `"${(row['Nome Fantasia'] || '').replace(/"/g, '""')}"`,
+        `"${(row['Telefone'] || '').replace(/"/g, '""')}"`
+      ].join(';'))
+    ].join('\n');
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `contatos_clientes_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+
+    toast({
+      title: 'Contatos exportados',
+      description: `${dataToExport.length} clientes exportados com sucesso`
+    });
+  };
+
   // Obter lista única de vendedores
   const sellers = Array.from(
     new Map(
@@ -618,6 +655,15 @@ export default function ActiveCustomers() {
           >
             <Download className="h-4 w-4 mr-2" />
             Template
+          </Button>
+          <Button 
+            variant="outline"
+            className="border-green-600 text-green-600 hover:bg-green-50"
+            onClick={handleExportContacts}
+            data-testid="button-export-contacts"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Exportar Contatos
           </Button>
           <input
             type="file"
