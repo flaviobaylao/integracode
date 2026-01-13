@@ -3790,28 +3790,50 @@ export class OmieService {
       }
       
       // CLEANUP: Remover billings em "Aguardando Rota" que não estão mais no Omie
-      // ❌ DESABILITADO: Não deletar pedidos em "Aguardando Rota" - deixar para o usuário gerenciar
-      // Se um pedido saiu dessa fase no Omie, ele terá um novo stage
-      // Deletar causa perda de dados na Gestão de Entregas
-      // console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
-      // try {
-      //   const result = await db.execute(sql`
-      //     DELETE FROM billings 
-      //     WHERE invoice_stage = 'Aguardando Rota' 
-      //       AND invoice_number IS NOT NULL
-      //       AND NOT (${sql.raw(`invoice_number IN (${Array.from(nfsFromOmie).map(nf => `'${nf}'`).join(',') || "'_NONE_'"})`)})
-      //     RETURNING invoice_number
-      //   `);
-      //   if (result.rows && result.rows.length > 0) {
-      //     const deletedNFs = result.rows.map(r => (r as any).invoice_number).join(', ');
-      //     console.log(`🗑️ ${result.rows.length} pedidos removidos de "Aguardando Rota": ${deletedNFs}`);
-      //   } else {
-      //     console.log(`✅ Nenhum pedido para remover.`);
-      //   }
-      // } catch (cleanupError) {
-      //   console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
-      // }
-      console.log(`✅ Limpeza desabilitada: Pedidos em "Aguardando Rota" são preservados`);
+      // ✅ REABILITADO: Notas que saíram de "Aguardando Rota" no Omie devem ser removidas
+      // para evitar dados obsoletos na Gestão de Entregas
+      console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
+      console.log(`📊 NFs rastreadas do Omie nesta sincronização: ${nfsFromOmie.size}`);
+      
+      let deletedCount = 0;
+      try {
+        // Só fazer cleanup se tivermos processado notas (evitar deletar tudo em caso de erro)
+        if (nfsFromOmie.size > 0) {
+          // Buscar billings em "Aguardando Rota" que NÃO estão mais no Omie
+          const aguardandoRotaBillings = await db.execute(sql`
+            SELECT id, invoice_number, customer_fantasy_name, invoice_date, total_value
+            FROM billings 
+            WHERE invoice_stage = 'Aguardando Rota' 
+              AND invoice_number IS NOT NULL
+          `);
+          
+          const billingsToDelete: string[] = [];
+          for (const row of aguardandoRotaBillings.rows as any[]) {
+            if (!nfsFromOmie.has(row.invoice_number)) {
+              billingsToDelete.push(row.invoice_number);
+              console.log(`🗑️ Marcado para remoção: NF ${row.invoice_number} - ${row.customer_fantasy_name} (${row.invoice_date}) - R$ ${row.total_value}`);
+            }
+          }
+          
+          if (billingsToDelete.length > 0) {
+            // Deletar em lotes para evitar query muito longa
+            for (const nf of billingsToDelete) {
+              await db.execute(sql`
+                DELETE FROM billings 
+                WHERE invoice_number = ${nf} AND invoice_stage = 'Aguardando Rota'
+              `);
+              deletedCount++;
+            }
+            console.log(`🗑️ ${deletedCount} pedidos removidos de "Aguardando Rota" (não encontrados no Omie)`);
+          } else {
+            console.log(`✅ Nenhum pedido obsoleto para remover.`);
+          }
+        } else {
+          console.log(`⚠️ Nenhuma NF processada do Omie - cleanup ignorado para segurança`);
+        }
+      } catch (cleanupError) {
+        console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
+      }
       
       console.log(`✅ Sincronização de faturamentos concluída:`);
       console.log(`📊 Total processado: ${totalProcessed}`);
