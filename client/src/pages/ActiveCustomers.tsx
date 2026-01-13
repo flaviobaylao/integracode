@@ -69,6 +69,7 @@ interface ActiveCustomerWithVisits {
     name: string;
     fantasyName: string | null;
     phone: string;
+    contact: string | null;
     address: string;
     city: string | null;
     neighborhood: string | null;
@@ -168,8 +169,8 @@ export default function ActiveCustomers() {
   const [isLeadMode, setIsLeadMode] = useState(false);
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);
   const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState<Customer | null>(null);
-  const [phoneEditData, setPhoneEditData] = useState<{customerId: string; customerName: string; currentPhone: string; newPhone: string}>({
-    customerId: '', customerName: '', currentPhone: '', newPhone: ''
+  const [phoneEditData, setPhoneEditData] = useState<{customerId: string; customerName: string; currentPhone: string; newPhone: string; currentContact: string; newContact: string}>({
+    customerId: '', customerName: '', currentPhone: '', newPhone: '', currentContact: '', newContact: ''
   });
   const [showServiceLogModal, setShowServiceLogModal] = useState(false);
   const [serviceLogCustomer, setServiceLogCustomer] = useState<{id: string; name: string} | null>(null);
@@ -179,29 +180,29 @@ export default function ActiveCustomers() {
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
-    mutationFn: async ({ customerId, phone }: { customerId: string; phone: string }) => {
+    mutationFn: async ({ customerId, phone, contact }: { customerId: string; phone: string; contact: string }) => {
       const response = await fetch(`/api/customers/${customerId}/phone`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ phone })
+        body: JSON.stringify({ phone, contact })
       });
-      if (!response.ok) throw new Error('Falha ao atualizar telefone');
+      if (!response.ok) throw new Error('Falha ao atualizar dados');
       return response.json();
     },
     onSuccess: () => {
-      toast({ title: "Telefone atualizado!", description: "O telefone do cliente foi atualizado com sucesso." });
+      toast({ title: "Dados atualizados!", description: "O telefone e contato do cliente foram atualizados com sucesso." });
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       setShowPhoneEditModal(false);
     },
     onError: (error: any) => {
-      toast({ variant: "destructive", title: "Erro", description: error.message || "Falha ao atualizar telefone" });
+      toast({ variant: "destructive", title: "Erro", description: error.message || "Falha ao atualizar dados" });
     }
   });
 
-  const handleEditPhone = (e: React.MouseEvent, customerId: string, customerName: string, currentPhone: string) => {
+  const handleEditPhone = (e: React.MouseEvent, customerId: string, customerName: string, currentPhone: string, currentContact: string) => {
     e.stopPropagation();
-    setPhoneEditData({ customerId, customerName, currentPhone, newPhone: currentPhone });
+    setPhoneEditData({ customerId, customerName, currentPhone, newPhone: currentPhone, currentContact: currentContact || '', newContact: currentContact || '' });
     setShowPhoneEditModal(true);
   };
 
@@ -210,7 +211,7 @@ export default function ActiveCustomers() {
       toast({ variant: "destructive", title: "Erro", description: "Digite um telefone válido" });
       return;
     }
-    updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: phoneEditData.newPhone });
+    updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: phoneEditData.newPhone, contact: phoneEditData.newContact });
   };
 
   const handleRowClick = async (customerId: string) => {
@@ -1099,7 +1100,7 @@ export default function ActiveCustomers() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={(e) => handleEditPhone(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.customer!.phone || '')}
+                                    onClick={(e) => handleEditPhone(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.customer!.phone || '', ac.customer!.contact || '')}
                                     title="Editar telefone"
                                     data-testid={`button-edit-phone-${ac.id}`}
                                   >
@@ -1165,15 +1166,25 @@ export default function ActiveCustomers() {
           isLead={isLeadMode}
         />
 
-        {/* Modal de Edição Rápida de Telefone */}
+        {/* Modal de Edição Rápida de Telefone e Contato */}
         <Dialog open={showPhoneEditModal} onOpenChange={setShowPhoneEditModal}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Editar Telefone</DialogTitle>
+              <DialogTitle>Editar Telefone e Contato</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="text-sm text-muted-foreground">
                 Cliente: <span className="font-medium text-foreground">{phoneEditData.customerName}</span>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contact">Nome do Contato</Label>
+                <Input
+                  id="contact"
+                  value={phoneEditData.newContact}
+                  onChange={(e) => setPhoneEditData(prev => ({ ...prev, newContact: e.target.value }))}
+                  placeholder="Nome da pessoa de contato"
+                  data-testid="input-edit-contact"
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="phone">Telefone</Label>

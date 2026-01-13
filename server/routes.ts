@@ -1901,17 +1901,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update customer phone
+  // Update customer phone and contact
   app.patch('/api/customers/:id/phone', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { phone } = req.body;
+      const { phone, contact } = req.body;
       
       if (!phone) {
         return res.status(400).json({ message: "Telefone é obrigatório" });
       }
       
-      const customer = await storage.updateCustomer(id, { phone });
+      const updateData: { phone: string; contact?: string } = { phone };
+      if (contact !== undefined) {
+        updateData.contact = contact;
+      }
+      
+      const customer = await storage.updateCustomer(id, updateData);
       res.json({ message: "Telefone atualizado com sucesso", customer });
     } catch (error) {
       console.error("Error updating customer phone:", error);

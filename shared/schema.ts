@@ -185,6 +185,7 @@ export const customers = pgTable("customers", {
   companyName: varchar("company_name"), // Razão social para PJ
   fantasyName: varchar("fantasy_name"), // Nome fantasia para PJ
   phone: varchar("phone").notNull(),
+  contact: varchar("contact"), // Nome do contato principal
   email: varchar("email"),
   address: text("address").notNull(),
   city: varchar("city"),
