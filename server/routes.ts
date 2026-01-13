@@ -66,15 +66,23 @@ const upload = multer({
 // Helper function to upload photo to Object Storage
 async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: string): Promise<string | null> {
   try {
+    // Usar diretório PÚBLICO para que as imagens sejam acessíveis
+    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
     const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    if (!privateDir) {
-      console.log('⚠️ [PHOTO-UPLOAD] PRIVATE_OBJECT_DIR not set, falling back to base64');
+    
+    // Determinar qual diretório usar
+    let baseDirEnv = publicPaths || privateDir;
+    if (!baseDirEnv) {
+      console.log('⚠️ [PHOTO-UPLOAD] PUBLIC_OBJECT_SEARCH_PATHS e PRIVATE_OBJECT_DIR not set');
       return null;
     }
     
-    const { bucketName, objectName: basePath } = parseObjectStoragePath(privateDir);
+    // PUBLIC_OBJECT_SEARCH_PATHS pode ser uma lista separada por vírgula, pegar o primeiro
+    const baseDir = baseDirEnv.split(',')[0].trim();
+    
+    const { bucketName, objectName: basePath } = parseObjectStoragePath(baseDir);
     const photoId = nanoid(12);
-    const ext = mimetype.includes('png') ? 'png' : 'jpg';
+    const ext = mimetype.includes('png') ? 'png' : (mimetype.includes('gif') ? 'gif' : (mimetype.includes('webp') ? 'webp' : 'jpg'));
     const objectName = `${basePath}/${folder}/${photoId}.${ext}`;
     
     const bucket = objectStorageClient.bucket(bucketName);
@@ -85,10 +93,11 @@ async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: st
       resumable: false,
     });
     
-    // Return the path that can be used to access the file
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
-    console.log(`✅ [PHOTO-UPLOAD] Foto salva: ${publicUrl}`);
-    return publicUrl;
+    // Retornar URL que passa pelo nosso servidor (endpoint /objects/*)
+    // Isso garante que a imagem seja acessível mesmo se o bucket for privado
+    const serverUrl = `/objects/${bucketName}/${objectName}`;
+    console.log(`✅ [PHOTO-UPLOAD] Foto salva: ${serverUrl}`);
+    return serverUrl;
   } catch (error) {
     console.error('❌ [PHOTO-UPLOAD] Erro ao fazer upload:', error);
     return null;
