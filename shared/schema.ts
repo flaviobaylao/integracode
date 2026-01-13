@@ -2165,6 +2165,19 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   // ID do Assistente OpenAI (ex: asst_4AM6M50fsOXKXlz5Ijc7IA9k)
   assistantId: varchar("assistant_id"),
   
+  // ============================================================================
+  // CONFIGURAÇÕES DE FINALIZAÇÃO E AUSÊNCIA
+  // ============================================================================
+  
+  // Timeout de inatividade para auto-finalização (em minutos)
+  inactivityTimeoutMinutes: integer("inactivity_timeout_minutes").notNull().default(30),
+  
+  // Mensagem enviada ao cliente quando a conversa é finalizada (manual ou por inatividade)
+  finalizeMessage: text("finalize_message").default("Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição."),
+  
+  // Mensagem enviada ao cliente quando não há atendentes online
+  absenceMessage: text("absence_message").default("No momento não há atendentes disponíveis. Por favor, tente novamente em instantes ou envie sua mensagem que responderemos assim que possível."),
+  
   // Metadados
   updatedBy: varchar("updated_by"),
   createdAt: timestamp("created_at").defaultNow(),

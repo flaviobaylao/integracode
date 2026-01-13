@@ -371,7 +371,7 @@ export interface IStorage {
   updateChatAgentStatus(id: string, status: string): Promise<ChatAgent>;
   updateChatAgentPresence(id: string, status: string): Promise<ChatAgent>;
   syncUsersAsAgents(): Promise<void>;
-  closeInactiveConversations(): Promise<number>;
+  closeInactiveConversations(): Promise<{ count: number; conversations: Array<{ id: string; customerPhone: string; customerName: string }> }>;
   getConversationsCountByAgent(): Promise<Array<{ agentId: string | null; agentName: string | null; count: number; conversations: ChatConversation[] }>>;
   transferConversation(conversationId: string, newAgentId: string): Promise<ChatConversation>;
   getChatAiSettings(): Promise<ChatAiSettings | null>;
@@ -5710,37 +5710,52 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // Encerrar conversas inativas (15+ minutos sem atividade)
-  async closeInactiveConversations(): Promise<number> {
+  // Encerrar conversas inativas (timeout configurável, padrão 30 min)
+  // Retorna objeto com conversas fechadas para envio de mensagem de finalização
+  async closeInactiveConversations(): Promise<{ count: number; conversations: Array<{ id: string; customerPhone: string; customerName: string }> }> {
     try {
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      // Buscar configurações de timeout
+      const aiSettings = await this.getChatAiSettings();
+      const timeoutMinutes = aiSettings?.inactivityTimeoutMinutes ?? 30;
+      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
       
-      // Encerrar todas as conversas não finalizadas que estão inativas há 15+ minutos
+      // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
       // Status a fechar: 'new', 'assigned', 'in-progress'
+      // Também limpa assignedAgentId para que cliente possa ser atendido novamente
       const result = await db
         .update(chatConversations)
         .set({ 
           status: 'resolved',
+          assignedAgentId: null,
+          assignedAgentColor: null,
           updatedAt: new Date()
         })
         .where(
           and(
             sql`${chatConversations.status} IN ('new', 'assigned', 'in-progress')`,
-            lt(chatConversations.lastMessageTime, fifteenMinutesAgo)
+            lt(chatConversations.lastMessageTime, cutoffTime)
           )
         )
         .returning();
       
       if (result.length > 0) {
-        console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade (15 min)`);
+        console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade (${timeoutMinutes} min)`);
         result.forEach(conv => {
-          console.log(`   📌 Conversa ${conv.id} (${conv.customerPhone}) finalizada`);
+          console.log(`   📌 Conversa ${conv.id} (${conv.customerPhone}) finalizada - atendente desvinculado`);
         });
       }
-      return result.length;
+      
+      return {
+        count: result.length,
+        conversations: result.map(c => ({
+          id: c.id,
+          customerPhone: c.customerPhone || '',
+          customerName: c.customerName || ''
+        }))
+      };
     } catch (error) {
       console.error(`❌ [INACTIVE-CONV] Erro ao encerrar conversas inativas:`, error);
-      return 0;
+      return { count: 0, conversations: [] };
     }
   }
   

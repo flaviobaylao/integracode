@@ -40,9 +40,40 @@ cron.schedule('0 6 * * *', async () => {
 })();
 
 // Job para encerrar conversas inativas a cada 5 minutos
+// Envia mensagem de finalização configurável ao cliente
 cron.schedule('*/5 * * * *', async () => {
   try {
-    await storage.closeInactiveConversations();
+    const result = await storage.closeInactiveConversations();
+    
+    if (result.count > 0) {
+      // Buscar mensagem de finalização configurada
+      const aiSettings = await storage.getChatAiSettings();
+      const finalizeMessage = aiSettings?.finalizeMessage || 
+        'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.';
+      
+      // Enviar mensagem de finalização para cada conversa fechada
+      for (const conv of result.conversations) {
+        if (conv.customerPhone) {
+          try {
+            // Enviar via Evolution API
+            await evolutionAPIService.sendText(conv.customerPhone, finalizeMessage);
+            console.log(`📩 [AUTO-FINALIZE] Mensagem de finalização enviada para ${conv.customerPhone}`);
+            
+            // Registrar mensagem no histórico
+            await storage.createChatMessage({
+              conversationId: conv.id,
+              senderId: 'system',
+              senderType: 'system',
+              content: `[Auto-finalização por inatividade] ${finalizeMessage}`,
+              messageType: 'text',
+              isRead: true
+            });
+          } catch (sendErr: any) {
+            console.error(`❌ [AUTO-FINALIZE] Erro ao enviar mensagem para ${conv.customerPhone}:`, sendErr.message);
+          }
+        }
+      }
+    }
   } catch (error) {
     console.error('❌ Erro ao encerrar conversas inativas:', error);
   }
