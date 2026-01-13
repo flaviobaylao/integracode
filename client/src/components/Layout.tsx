@@ -132,7 +132,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       id: 'hotsite-orders', 
       label: 'Pedidos do Site', 
       icon: 'fas fa-shopping-bag', 
-      available: canAccessReports,
+      available: canAccessReports || isTelemarketing,
       badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null
     },
     { 
