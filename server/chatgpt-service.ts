@@ -47,12 +47,19 @@ export async function handleIncomingMessage(
       status: 'success'
     });
 
-    // 4. Se a IA decidir que deve transferir, apenas atualizar status da conversa
+    // 4. Se a IA decidir que deve transferir, usar o serviço de distribuição
     if (result.response.shouldTransfer) {
       console.log(`🔀 [AI-SERVICE] IA solicitou transferência: ${result.response.transferReason}`);
-      await storage.updateChatConversation(conversation.id, {
-        status: 'new' // Volta para a fila de atendimento humano
-      });
+      
+      // Importar e usar o serviço de transferência
+      const { transferFromChatGptToHuman } = await import("./chat-distribution-service");
+      const transferResult = await transferFromChatGptToHuman(conversation.id);
+      
+      if (transferResult.success && transferResult.assignedTo) {
+        console.log(`✅ [AI-SERVICE] Conversa transferida para atendente ${transferResult.assignedTo}`);
+      } else if (transferResult.success && !transferResult.assignedTo) {
+        console.log(`⚠️ [AI-SERVICE] Nenhum atendente online - conversa aguardando na fila`);
+      }
     }
 
     // 5. Processar ações de pedido

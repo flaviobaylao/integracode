@@ -93,37 +93,33 @@ export async function assignConversationToAgent(
 }
 
 export async function distributeNewConversation(conversationId: string): Promise<{ assignedTo: string; isChatGpt: boolean }> {
-  // Buscar configurações de IA para verificar prioridade do ChatGPT
+  // Buscar configurações de IA
   const aiSettings = await db.select().from(chatAiSettings).limit(1);
   const settings = aiSettings[0];
-  const chatgptQueuePosition = settings?.chatgptQueuePosition ?? 0;
   const isChatGptEnabled = settings?.isEnabled ?? false;
   
-  // Se ChatGPT está habilitado e tem posição 1 (primeiro na fila), ele atende primeiro
-  if (isChatGptEnabled && chatgptQueuePosition === 1) {
-    console.log(`🤖 [DISTRIBUTION] ChatGPT configurado como primeiro na fila de atendimento.`);
+  // FLUXO SIMPLIFICADO:
+  // - Se ChatGPT ATIVADO: todas as conversas de clientes vão primeiro para o ChatGPT
+  // - Se ChatGPT DESATIVADO: conversas vão direto para atendente humano
+  
+  if (isChatGptEnabled) {
+    console.log(`🤖 [DISTRIBUTION] ChatGPT ATIVADO - Conversa ${conversationId} encaminhada para IA`);
     await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6");
     return { assignedTo: "chatgpt", isChatGpt: true };
   }
   
-  // Fluxo normal: distribuir para atendentes humanos via round-robin
+  // ChatGPT desativado: distribuir para atendentes humanos via round-robin
+  console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano`);
   const nextAgent = await getNextAgentRoundRobin();
   
   if (nextAgent) {
     await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor);
+    console.log(`✅ [DISTRIBUTION] Conversa ${conversationId} atribuída ao atendente ${nextAgent.agentId}`);
     return { assignedTo: nextAgent.agentId, isChatGpt: false };
   } else {
-    // Nenhum atendente online - verificar se ChatGPT pode assumir via standby
-    const isStandby = settings?.isStandby ?? true;
-    
-    if (isStandby && isChatGptEnabled) {
-      console.log(`🤖 [DISTRIBUTION] Nenhum atendente online. Ativando ChatGPT via standby.`);
-      await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6");
-      return { assignedTo: "chatgpt", isChatGpt: true };
-    } else {
-      console.log(`⚠️ [DISTRIBUTION] Nenhum atendente online e ChatGPT não está em standby.`);
-      return { assignedTo: "", isChatGpt: false };
-    }
+    // Nenhum atendente online - deixar sem atribuição
+    console.log(`⚠️ [DISTRIBUTION] Nenhum atendente online. Conversa aguardando na fila.`);
+    return { assignedTo: "", isChatGpt: false };
   }
 }
 
@@ -292,4 +288,45 @@ export async function deactivateChatGPTStandby(): Promise<void> {
     .where(eq(chatAiSettings.id, aiSettings[0].id));
   
   console.log('👤 [STANDBY] Modo standby do ChatGPT desativado - atendentes online disponíveis');
+}
+
+// Transferir conversa do ChatGPT para o primeiro atendente humano online
+export async function transferFromChatGptToHuman(conversationId: string): Promise<{ success: boolean; assignedTo: string | null; error?: string }> {
+  try {
+    // Buscar próximo atendente humano online via round-robin
+    const nextAgent = await getNextAgentRoundRobin();
+    
+    if (nextAgent) {
+      await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor);
+      
+      // Atualizar status para 'assigned'
+      await db
+        .update(chatConversations)
+        .set({
+          status: 'assigned',
+          updatedAt: new Date()
+        })
+        .where(eq(chatConversations.id, conversationId));
+      
+      console.log(`👤 [TRANSFER-TO-HUMAN] Conversa ${conversationId} transferida do ChatGPT para ${nextAgent.agentId}`);
+      return { success: true, assignedTo: nextAgent.agentId };
+    } else {
+      // Nenhum atendente online - manter a conversa com status 'new' para ser pega quando alguém ficar online
+      await db
+        .update(chatConversations)
+        .set({
+          assignedAgentId: null,
+          assignedAgentColor: null,
+          status: 'new',
+          updatedAt: new Date()
+        })
+        .where(eq(chatConversations.id, conversationId));
+      
+      console.log(`⚠️ [TRANSFER-TO-HUMAN] Nenhum atendente online. Conversa ${conversationId} aguardando na fila.`);
+      return { success: true, assignedTo: null, error: "Nenhum atendente online no momento. Você será atendido em breve." };
+    }
+  } catch (error: any) {
+    console.error(`❌ [TRANSFER-TO-HUMAN] Erro ao transferir conversa ${conversationId}:`, error.message);
+    return { success: false, assignedTo: null, error: error.message };
+  }
 }
