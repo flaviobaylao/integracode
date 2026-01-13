@@ -1565,11 +1565,13 @@ export default function ChatCenter() {
                     <SelectValue placeholder="Selecione um atendente" />
                   </SelectTrigger>
                   <SelectContent>
-                    {onlineAgents.map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name} {agent.id === 'chatgpt' ? '🤖' : ''}
-                      </SelectItem>
-                    ))}
+                    {onlineAgents
+                      .filter((agent) => agent.id && agent.id.trim() !== '')
+                      .map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name} {agent.id === 'chatgpt' ? '🤖' : ''}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

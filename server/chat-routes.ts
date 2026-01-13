@@ -4120,13 +4120,15 @@ export function registerChatRoutes(app: Express): void {
       };
       
       // Montar lista de agentes respeitando a posição do ChatGPT na fila
+      // Filtrar agentes com IDs válidos para evitar erro no Select do frontend
+      const validOnlineAgents = onlineAgents.filter(a => a.id && a.id.trim() !== '');
       let agents: any[] = [];
       
       if (isAiEnabled && chatgptQueuePosition === 1) {
         // ChatGPT primeiro na fila
         agents = [
           chatgptAgent,
-          ...onlineAgents.map(a => ({
+          ...validOnlineAgents.map(a => ({
             id: a.id,
             name: a.name,
             email: a.email,
@@ -4138,7 +4140,7 @@ export function registerChatRoutes(app: Express): void {
       } else {
         // Atendentes humanos primeiro, ChatGPT no final (standby)
         agents = [
-          ...onlineAgents.map(a => ({
+          ...validOnlineAgents.map(a => ({
             id: a.id,
             name: a.name,
             email: a.email,
