@@ -17548,18 +17548,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       billingSyncState.message = 'Buscando notas fiscais do Omie...';
 
+      let pagesWithErrors = 0;
+      const maxRetries = 3;
+
       while (hasMorePages && page <= 50) {
         billingSyncState.currentPage = page;
         billingSyncState.message = `Buscando página ${page}...`;
         console.log(`📄 Buscando página ${page}...`);
         
-        const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-          pagina: page,
-          registros_por_pagina: 50,
-          apenas_importado_api: 'N',
-          ordenar_por: 'DATA',
-          ordem_decrescente: 'S'
-        });
+        let response;
+        let retryCount = 0;
+        
+        while (retryCount < maxRetries) {
+          try {
+            response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
+              pagina: page,
+              registros_por_pagina: 50,
+              apenas_importado_api: 'N',
+              ordenar_por: 'DATA',
+              ordem_decrescente: 'S'
+            });
+            break;
+          } catch (pageError: any) {
+            retryCount++;
+            console.log(`⚠️ Erro na página ${page}, tentativa ${retryCount}/${maxRetries}: ${pageError.message}`);
+            if (retryCount < maxRetries) {
+              await new Promise(r => setTimeout(r, 2000 * retryCount));
+            } else {
+              console.log(`❌ Página ${page} falhou após ${maxRetries} tentativas. Continuando com dados coletados...`);
+              pagesWithErrors++;
+              hasMorePages = false;
+            }
+          }
+        }
+
+        if (!response) {
+          break;
+        }
 
         const invoices = response.nfCadastro || [];
         console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
@@ -17680,19 +17705,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       billingSyncState.status = 'completed';
-      billingSyncState.message = `Sincronização concluída! ${insertedCount} inseridos, ${updatedCount} atualizados.`;
+      const errorNote = pagesWithErrors > 0 ? ` (${pagesWithErrors} página(s) com erro no Omie)` : '';
+      billingSyncState.message = `Sincronização concluída! ${insertedCount} inseridos, ${updatedCount} atualizados.${errorNote}`;
       billingSyncState.completedAt = new Date();
 
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
-      console.log(`🔄 Atualizados: ${updatedCount}\n`);
+      console.log(`🔄 Atualizados: ${updatedCount}`);
+      if (pagesWithErrors > 0) {
+        console.log(`⚠️ Páginas com erro: ${pagesWithErrors}\n`);
+      }
 
       res.json({ 
         success: true,
-        message: 'Faturamentos sincronizados com sucesso',
+        message: pagesWithErrors > 0 
+          ? `Faturamentos sincronizados parcialmente (${pagesWithErrors} página(s) com erro no servidor Omie)`
+          : 'Faturamentos sincronizados com sucesso',
         inserted: insertedCount,
         updated: updatedCount,
-        total: allBillings.length
+        total: allBillings.length,
+        pagesWithErrors
       });
 
     } catch (error: any) {
