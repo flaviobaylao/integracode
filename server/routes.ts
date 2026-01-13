@@ -17550,11 +17550,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let pagesWithErrors = 0;
       const maxRetries = 3;
+      const delayBetweenPages = 1500;
+      const delayBetweenVendors = 300;
 
       while (hasMorePages && page <= 50) {
         billingSyncState.currentPage = page;
         billingSyncState.message = `Buscando página ${page}...`;
         console.log(`📄 Buscando página ${page}...`);
+        
+        if (page > 1) {
+          await new Promise(r => setTimeout(r, delayBetweenPages));
+        }
         
         let response;
         let retryCount = 0;
@@ -17573,7 +17579,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             retryCount++;
             console.log(`⚠️ Erro na página ${page}, tentativa ${retryCount}/${maxRetries}: ${pageError.message}`);
             if (retryCount < maxRetries) {
-              await new Promise(r => setTimeout(r, 2000 * retryCount));
+              await new Promise(r => setTimeout(r, 3000 * retryCount));
             } else {
               console.log(`❌ Página ${page} falhou após ${maxRetries} tentativas. Continuando com dados coletados...`);
               pagesWithErrors++;
@@ -17630,6 +17636,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (vendorCode) {
             try {
+              await new Promise(r => setTimeout(r, delayBetweenVendors));
               const vendorData = await omieService.fetchVendorData(vendorCode);
               vendorName = vendorData?.nome || vendorCode;
             } catch (error) {
