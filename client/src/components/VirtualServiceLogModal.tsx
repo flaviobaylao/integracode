@@ -53,8 +53,7 @@ export default function VirtualServiceLogModal({
 
   const createLogMutation = useMutation({
     mutationFn: async (data: { notes: string; images: string[] }) => {
-      const response = await apiRequest("POST", `/api/customers/${customerId}/service-logs`, data);
-      return response.json();
+      return await apiRequest("POST", `/api/customers/${customerId}/service-logs`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/customers/${customerId}/service-logs`] });
@@ -77,8 +76,7 @@ export default function VirtualServiceLogModal({
 
   const deleteLogMutation = useMutation({
     mutationFn: async (logId: string) => {
-      const response = await apiRequest("DELETE", `/api/service-logs/${logId}`);
-      return response.json();
+      return await apiRequest("DELETE", `/api/service-logs/${logId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/customers/${customerId}/service-logs`] });

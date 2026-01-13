@@ -93,9 +93,9 @@ async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: st
       resumable: false,
     });
     
-    // Retornar URL que passa pelo nosso servidor (endpoint /objects/*)
+    // Retornar URL que passa pelo nosso servidor (endpoint /api/storage-image/*)
     // Isso garante que a imagem seja acessível mesmo se o bucket for privado
-    const serverUrl = `/objects/${bucketName}/${objectName}`;
+    const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
     console.log(`✅ [PHOTO-UPLOAD] Foto salva: ${serverUrl}`);
     return serverUrl;
   } catch (error) {
@@ -2083,6 +2083,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error uploading image:", error);
       res.status(500).json({ message: "Falha ao fazer upload da imagem" });
+    }
+  });
+
+  // Proxy endpoint to serve images from Object Storage
+  // This works with both /api/storage-image/{bucket}/{path} format
+  app.get('/api/storage-image/*', async (req, res) => {
+    try {
+      const fullPath = req.params[0];
+      if (!fullPath) {
+        return res.status(400).json({ message: "Path não informado" });
+      }
+      
+      // Parse bucket and object path from the URL
+      const parts = fullPath.split('/');
+      if (parts.length < 2) {
+        return res.status(400).json({ message: "Path inválido" });
+      }
+      
+      const bucketName = parts[0];
+      const objectPath = parts.slice(1).join('/');
+      
+      console.log(`📸 [STORAGE-IMAGE] Buscando: bucket=${bucketName}, path=${objectPath}`);
+      
+      const bucket = objectStorageClient.bucket(bucketName);
+      const file = bucket.file(objectPath);
+      
+      const [exists] = await file.exists();
+      if (!exists) {
+        console.log(`❌ [STORAGE-IMAGE] Arquivo não encontrado: ${fullPath}`);
+        return res.status(404).json({ message: "Imagem não encontrada" });
+      }
+      
+      // Get metadata for content-type
+      const [metadata] = await file.getMetadata();
+      const contentType = metadata.contentType || 'image/jpeg';
+      
+      // Set cache headers
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      
+      // Stream the file
+      file.createReadStream().pipe(res);
+    } catch (error) {
+      console.error('❌ [STORAGE-IMAGE] Erro ao servir imagem:', error);
+      res.status(500).json({ message: "Erro ao carregar imagem" });
     }
   });
 
