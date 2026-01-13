@@ -8267,8 +8267,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allCustomers = await storage.getAllCustomers();
       const customerPhoneMap = new Map<string, string>();
       allCustomers.forEach(customer => {
-        if (customer.omieClientId && customer.phone) {
-          customerPhoneMap.set(customer.omieClientId, customer.phone);
+        if (customer.omieClientCode && customer.phone) {
+          customerPhoneMap.set(customer.omieClientCode, customer.phone);
         }
       });
 
