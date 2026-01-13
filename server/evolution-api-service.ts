@@ -1007,16 +1007,48 @@ class EvolutionAPIService {
   }
 
   // Download media as base64 from Evolution API
+  // Evolution API v2.3.6+ requires full message key (id, remoteJid, fromMe) to find the message
   public async getBase64FromMediaMessage(
     instanceName: string,
-    messageId: string
-  ): Promise<{ success: boolean; base64?: string; mimetype?: string; error?: string }> {
+    messageKey: { id: string; remoteJid?: string; fromMe?: boolean },
+    messageTimestamp?: number
+  ): Promise<{ success: boolean; base64?: string; mimetype?: string; fileName?: string; error?: string }> {
     if (!this.isConfigured()) {
       return { success: false, error: 'Evolution API não está configurada' };
     }
 
     try {
-      console.log(`📥 [EVOLUTION] Baixando mídia da mensagem: ${messageId}`);
+      const keyInfo = messageKey.remoteJid 
+        ? `${messageKey.id} (${messageKey.remoteJid}, fromMe: ${messageKey.fromMe})` 
+        : messageKey.id;
+      console.log(`📥 [EVOLUTION] Baixando mídia da mensagem: ${keyInfo}`);
+      
+      // Build the full message key object as required by Evolution API v2.3.6+
+      const fullKey: any = {
+        id: messageKey.id
+      };
+      
+      // Include remoteJid and fromMe if available (critical for Evolution API to find the message)
+      if (messageKey.remoteJid) {
+        fullKey.remoteJid = messageKey.remoteJid;
+      }
+      if (typeof messageKey.fromMe === 'boolean') {
+        fullKey.fromMe = messageKey.fromMe;
+      }
+      
+      const requestBody: any = {
+        message: {
+          key: fullKey
+        },
+        convertToMp4: true
+      };
+      
+      // Include timestamp if available (helps Evolution API find the message)
+      if (messageTimestamp) {
+        requestBody.message.messageTimestamp = messageTimestamp;
+      }
+      
+      console.log(`🔍 [EVOLUTION] Request body:`, JSON.stringify(requestBody));
       
       const response = await fetch(`${this.config!.apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
         method: 'POST',
@@ -1024,34 +1056,32 @@ class EvolutionAPIService {
           'Content-Type': 'application/json',
           'apikey': this.config!.apiKey
         },
-        body: JSON.stringify({
-          message: {
-            key: {
-              id: messageId
-            }
-          },
-          convertToMp4: true
-        }),
+        body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(60000) // 60 segundos para downloads grandes
       });
 
       const data = await response.json();
+      
+      // Log response details for debugging
+      console.log(`📦 [EVOLUTION] Response status: ${response.status}, hasBase64: ${!!data.base64}, mimetype: ${data.mimetype || 'unknown'}`);
 
       if (!response.ok) {
-        console.error(`❌ [EVOLUTION] Erro ao baixar mídia:`, data);
-        return { success: false, error: data.message || 'Erro ao baixar mídia' };
+        console.error(`❌ [EVOLUTION] Erro ao baixar mídia (${response.status}):`, JSON.stringify(data));
+        return { success: false, error: data.message || data.error || `HTTP ${response.status}` };
       }
 
       if (data.base64) {
-        console.log(`✅ [EVOLUTION] Mídia baixada com sucesso (${data.mimetype || 'unknown'})`);
+        console.log(`✅ [EVOLUTION] Mídia baixada com sucesso (${data.mimetype || 'unknown'}, ${Math.round(data.base64.length / 1024)}KB)`);
         return { 
           success: true, 
           base64: data.base64,
-          mimetype: data.mimetype
+          mimetype: data.mimetype,
+          fileName: data.fileName
         };
       }
 
-      return { success: false, error: 'Resposta sem base64' };
+      console.warn(`⚠️ [EVOLUTION] Resposta sem base64:`, JSON.stringify(data).substring(0, 500));
+      return { success: false, error: 'Resposta sem base64 - mensagem pode não estar no cache da Evolution API' };
     } catch (error: any) {
       console.error(`❌ [EVOLUTION] Erro ao baixar mídia:`, error.message);
       return { success: false, error: error.message };

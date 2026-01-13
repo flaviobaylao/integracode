@@ -195,10 +195,17 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       try {
         console.log(`📥 [MEDIA-DOWNLOAD] Baixando mídia para mensagem ${messageId}...`);
         
-        // Tentar baixar a mídia via Evolution API
+        // Tentar baixar a mídia via Evolution API (usando key completo)
         const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
         if (instanceName) {
-          const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageId);
+          // Passar o key completo para Evolution API v2.3.6+
+          const messageKey = {
+            id: messageId,
+            remoteJid: data.key?.remoteJid,
+            fromMe: data.key?.fromMe
+          };
+          const messageTimestamp = data.messageTimestamp;
+          const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageKey, messageTimestamp);
           
           if (mediaResult.success && mediaResult.base64) {
             // Upload para object storage
@@ -1087,7 +1094,14 @@ export function registerChatRoutes(app: Express): void {
           console.log(`📥 [WEBHOOK-MEDIA] Baixando mídia via getBase64FromMediaMessage: ${messageId}`);
           const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
           if (instanceName) {
-            const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageId);
+            // Passar o key completo para Evolution API v2.3.6+
+            const messageKey = {
+              id: messageId,
+              remoteJid: data.key?.remoteJid,
+              fromMe: data.key?.fromMe
+            };
+            const messageTimestamp = data.messageTimestamp;
+            const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageKey, messageTimestamp);
             if (mediaResult.success && mediaResult.base64) {
               const mimeType = mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream';
               finalMediaUrl = `data:${mimeType};base64,${mediaResult.base64}`;
@@ -3477,7 +3491,14 @@ export function registerChatRoutes(app: Express): void {
             if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
               try {
                 console.log(`📥 [SYNC-MEDIA] Baixando mídia para: ${messageId}`);
-                const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(config.instanceName, messageId);
+                // Passar o key completo para Evolution API v2.3.6+
+                const messageKey = {
+                  id: messageId,
+                  remoteJid: msg.key?.remoteJid,
+                  fromMe: msg.key?.fromMe
+                };
+                const messageTimestampSec = msg.messageTimestamp;
+                const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(config.instanceName, messageKey, messageTimestampSec);
                 if (mediaResult.success && mediaResult.base64) {
                   const mimeType = mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream';
                   const uploadResult = await uploadMediaFromBase64(
@@ -3707,9 +3728,11 @@ export function registerChatRoutes(app: Express): void {
         try {
           console.log(`📷 [FIX-MEDIA] Baixando mídia: ${msg.externalId} (${msg.messageType})`);
           
+          // Para mensagens antigas, só temos o messageId (externalId)
+          // Tentar com messageId apenas (pode funcionar se a mensagem ainda estiver no cache)
           const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
             config.instanceName,
-            msg.externalId
+            { id: msg.externalId }
           );
           
           if (!mediaResult.success || !mediaResult.base64) {

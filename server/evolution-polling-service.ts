@@ -253,7 +253,11 @@ class EvolutionPollingService {
   /**
    * Download media from Evolution API and upload to object storage
    */
-  private async downloadAndStoreMedia(messageId: string, messageType: string): Promise<string | null> {
+  private async downloadAndStoreMedia(
+    messageKey: { id: string; remoteJid?: string; fromMe?: boolean },
+    messageType: string,
+    messageTimestamp?: number
+  ): Promise<string | null> {
     try {
       const config = evolutionAPIService.getConfig();
       if (!config) {
@@ -261,21 +265,22 @@ class EvolutionPollingService {
         return null;
       }
 
-      console.log(`📷 [POLLING-MEDIA] Baixando mídia: ${messageId} (tipo: ${messageType})`);
+      console.log(`📷 [POLLING-MEDIA] Baixando mídia: ${messageKey.id} (tipo: ${messageType})`);
 
       const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(
         config.instanceName,
-        messageId
+        messageKey,
+        messageTimestamp
       );
 
       if (!mediaResult.success || !mediaResult.base64) {
-        console.warn(`⚠️  [POLLING-MEDIA] Falha ao baixar mídia ${messageId}: ${mediaResult.error || 'sem dados'}`);
+        console.warn(`⚠️  [POLLING-MEDIA] Falha ao baixar mídia ${messageKey.id}: ${mediaResult.error || 'sem dados'}`);
         return null;
       }
 
       const mimeType = mediaResult.mimetype || this.getMimeTypeFromMessageType(messageType);
       const extension = this.getExtensionFromMimeType(mimeType);
-      const fileName = `${messageId}.${extension}`;
+      const fileName = `${messageKey.id}.${extension}`;
 
       console.log(`📤 [POLLING-MEDIA] Fazendo upload: ${fileName} (${mimeType})`);
 
@@ -294,7 +299,7 @@ class EvolutionPollingService {
       return null;
 
     } catch (error: any) {
-      console.error(`❌ [POLLING-MEDIA] Erro ao processar mídia ${messageId}:`, error.message);
+      console.error(`❌ [POLLING-MEDIA] Erro ao processar mídia ${messageKey.id}:`, error.message);
       return null;
     }
   }
@@ -396,7 +401,14 @@ class EvolutionPollingService {
 
       if (hasMedia) {
         console.log(`📷 [POLLING] Mensagem com mídia detectada: ${messageId} (${messageType})`);
-        mediaUrl = await this.downloadAndStoreMedia(messageId, messageType);
+        // Passar o key completo para Evolution API v2.3.6+
+        const messageKey = {
+          id: messageId,
+          remoteJid: data.key?.remoteJid,
+          fromMe: data.key?.fromMe
+        };
+        const messageTimestamp = data.messageTimestamp;
+        mediaUrl = await this.downloadAndStoreMedia(messageKey, messageType, messageTimestamp);
         
         if (!content || content === '') {
           content = '[Mensagem de mídia]';
