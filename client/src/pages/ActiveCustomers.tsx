@@ -429,7 +429,8 @@ export default function ActiveCustomers() {
   const handleExportContacts = () => {
     const dataToExport = filteredCustomers.map((ac) => ({
       'Nome Fantasia': ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || '',
-      'Telefone': ac.customer?.phone || ''
+      'Telefone': ac.customer?.phone || '',
+      'Vendedor': ac.customer?.sellerName || ''
     }));
 
     if (dataToExport.length === 0) {
@@ -442,10 +443,11 @@ export default function ActiveCustomers() {
     }
 
     const csvContent = [
-      ['Nome Fantasia', 'Telefone'].join(';'),
+      ['Nome Fantasia', 'Telefone', 'Vendedor'].join(';'),
       ...dataToExport.map(row => [
         `"${(row['Nome Fantasia'] || '').replace(/"/g, '""')}"`,
-        `"${(row['Telefone'] || '').replace(/"/g, '""')}"`
+        `"${(row['Telefone'] || '').replace(/"/g, '""')}"`,
+        `"${(row['Vendedor'] || '').replace(/"/g, '""')}"`
       ].join(';'))
     ].join('\n');
 
