@@ -17463,17 +17463,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias)
+  // Estado global de sincronização para SSE
+  let billingSyncState: {
+    status: 'idle' | 'running' | 'completed' | 'error';
+    currentPage: number;
+    totalPages: number;
+    invoicesFound: number;
+    invoicesProcessed: number;
+    inserted: number;
+    updated: number;
+    currentInvoice: string;
+    message: string;
+    startedAt: Date | null;
+    completedAt: Date | null;
+  } = {
+    status: 'idle',
+    currentPage: 0,
+    totalPages: 0,
+    invoicesFound: 0,
+    invoicesProcessed: 0,
+    inserted: 0,
+    updated: 0,
+    currentInvoice: '',
+    message: '',
+    startedAt: null,
+    completedAt: null
+  };
+
+  // Endpoint SSE para progresso de sincronização
+  app.get('/api/omie/sync-billings/progress', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    const sendProgress = () => {
+      res.write(`data: ${JSON.stringify(billingSyncState)}\n\n`);
+    };
+
+    sendProgress();
+    const interval = setInterval(sendProgress, 500);
+
+    req.on('close', () => {
+      clearInterval(interval);
+    });
+  });
+
+  // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias) com progresso
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
+      if (billingSyncState.status === 'running') {
+        return res.status(409).json({ message: 'Sincronização já em andamento' });
+      }
+
+      billingSyncState = {
+        status: 'running',
+        currentPage: 0,
+        totalPages: 0,
+        invoicesFound: 0,
+        invoicesProcessed: 0,
+        inserted: 0,
+        updated: 0,
+        currentInvoice: '',
+        message: 'Iniciando sincronização...',
+        startedAt: new Date(),
+        completedAt: null
+      };
+
       console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
 
       const omieService = getOmieService();
       if (!omieService) {
+        billingSyncState.status = 'error';
+        billingSyncState.message = 'Omie não configurado';
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 60 dias atrás (otimizado para agilidade)
       const sixtyDaysAgo = new Date();
       sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
@@ -17481,8 +17546,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let page = 1;
       let hasMorePages = true;
 
-      // Buscar notas fiscais dos últimos 60 dias
+      billingSyncState.message = 'Buscando notas fiscais do Omie...';
+
       while (hasMorePages && page <= 50) {
+        billingSyncState.currentPage = page;
+        billingSyncState.message = `Buscando página ${page}...`;
         console.log(`📄 Buscando página ${page}...`);
         
         const response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
@@ -17497,35 +17565,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
 
         for (const invoice of invoices) {
+          const invoiceNumber = invoice.ide?.nNF || '';
+          billingSyncState.currentInvoice = invoiceNumber;
+
           const invoiceDate = invoice.ide?.dEmi;
           if (!invoiceDate) {
-            console.log(`⚠️ Nota sem data - pulando`);
             continue;
           }
 
           const [dia, mes, ano] = invoiceDate.split('/');
           const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
           
-          // Filtrar últimos 60 dias - PULAR nota antiga mas CONTINUAR buscando páginas
           if (invoiceDateObj < sixtyDaysAgo) {
-            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 60 dias (${invoiceDate}) - pulando`);
-            continue; // Pular essa nota mas continuar processando outras
-          }
-
-          // VERIFICAR CANCELAMENTO DIRETAMENTE NA NOTA FISCAL
-          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
-          
-          if (notaCancelada) {
-            console.log(`❌ Nota ${invoice.ide?.nNF} CANCELADA - pulando`);
             continue;
           }
 
-          // BUSCAR ETAPA DIRETAMENTE DA NOTA FISCAL (sem depender de pedido)
+          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
+          if (notaCancelada) {
+            continue;
+          }
+
           const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
           let stageName = '';
           
           if (nfStageCode) {
-            // Mapear código de etapa para nome
             const stageMap: Record<string, string> = {
               '10': 'Pedido de Venda',
               '20': 'Em Rota',
@@ -17535,12 +17598,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               '80': 'Aguardando Rota'
             };
             stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
-            console.log(`📋 Nota ${invoice.ide?.nNF} - Etapa: ${stageName} (código: ${nfStageCode})`);
-          } else {
-            console.log(`⚠️ Nota ${invoice.ide?.nNF} - SEM ETAPA encontrada (nfProdServStatus?.cEtapa: ${invoice.nfProdServStatus?.cEtapa}, cabecalho?.etapa: ${invoice.cabecalho?.etapa})`);
           }
 
-          // Buscar nome do vendedor pelo código
           const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
           let vendorName = '';
           
@@ -17549,17 +17608,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const vendorData = await omieService.fetchVendorData(vendorCode);
               vendorName = vendorData?.nome || vendorCode;
             } catch (error) {
-              console.log(`⚠️ Erro ao buscar vendedor ${vendorCode}:`, error);
-              vendorName = vendorCode; // Usar código se não encontrar nome
+              vendorName = vendorCode;
             }
           }
 
-          // Adicionar à lista de faturamentos
           const pedidoId = invoice.compl?.nIdPedido;
           
           allBillings.push({
             omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
-            invoiceNumber: invoice.ide?.nNF || '',
+            invoiceNumber: invoiceNumber,
             customerFantasyName: invoice.nfDestInt?.cRazao || '',
             totalValue: invoice.total?.ICMSTot?.vNF || 0,
             invoiceDate: invoiceDateObj,
@@ -17567,12 +17624,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sellerName: vendorName,
             stageName: stageName,
             cfop: invoice.det?.[0]?.prod?.CFOP || '',
-            isCancelled: false, // Já filtrado (notas canceladas são puladas acima)
+            isCancelled: false,
             omieOrderId: pedidoId?.toString() || '',
-            orderNumber: invoice.compl?.nPed || invoice.ide?.nNF || '',
+            orderNumber: invoice.compl?.nPed || invoiceNumber || '',
             orderDate: invoiceDateObj,
             billingType: 'venda' as const
           });
+
+          billingSyncState.invoicesFound = allBillings.length;
         }
 
         if (invoices.length < 50) {
@@ -17582,22 +17641,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         page++;
       }
 
+      billingSyncState.totalPages = page - 1;
+      billingSyncState.message = `Salvando ${allBillings.length} faturamentos no banco...`;
       console.log(`\n✅ Total de faturamentos coletados: ${allBillings.length}\n`);
 
-      // Salvar no banco de dados
       let insertedCount = 0;
       let updatedCount = 0;
 
-      for (const billing of allBillings) {
+      for (let i = 0; i < allBillings.length; i++) {
+        const billing = allBillings[i];
+        billingSyncState.invoicesProcessed = i + 1;
+        billingSyncState.currentInvoice = billing.invoiceNumber;
+        billingSyncState.message = `Salvando NF ${billing.invoiceNumber} (${i + 1}/${allBillings.length})`;
+
         try {
-          // Verificar se já existe
           const existing = await db.select()
             .from(billingsTable)
             .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber))
             .limit(1);
 
           if (existing.length > 0) {
-            // Atualizar
             await db.update(billingsTable)
               .set({
                 ...billing,
@@ -17605,15 +17668,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
               })
               .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
             updatedCount++;
+            billingSyncState.updated = updatedCount;
           } else {
-            // Inserir
             await db.insert(billingsTable).values(billing);
             insertedCount++;
+            billingSyncState.inserted = insertedCount;
           }
         } catch (error) {
           console.error(`Erro ao processar faturamento ${billing.invoiceNumber}:`, error);
         }
       }
+
+      billingSyncState.status = 'completed';
+      billingSyncState.message = `Sincronização concluída! ${insertedCount} inseridos, ${updatedCount} atualizados.`;
+      billingSyncState.completedAt = new Date();
 
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
@@ -17628,6 +17696,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error: any) {
+      billingSyncState.status = 'error';
+      billingSyncState.message = `Erro: ${error.message}`;
       console.error('Erro ao sincronizar faturamentos:', error);
       res.status(500).json({ 
         message: 'Erro ao sincronizar faturamentos',

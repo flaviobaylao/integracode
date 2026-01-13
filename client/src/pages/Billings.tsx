@@ -87,6 +87,18 @@ function getCfopDisplayName(cfop: string): string {
   return cfopMap[cfop] || cfop;
 }
 
+interface SyncProgress {
+  status: 'idle' | 'running' | 'completed' | 'error';
+  currentPage: number;
+  totalPages: number;
+  invoicesFound: number;
+  invoicesProcessed: number;
+  inserted: number;
+  updated: number;
+  currentInvoice: string;
+  message: string;
+}
+
 export default function Billings() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<BillingFilters>({
@@ -95,6 +107,43 @@ export default function Billings() {
   });
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+
+    if (isSyncing) {
+      eventSource = new EventSource('/api/omie/sync-billings/progress');
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.status !== 'idle') {
+            setSyncProgress(data);
+          }
+          
+          if (data.status === 'completed' || data.status === 'error') {
+            eventSource?.close();
+            setIsSyncing(false);
+            queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+          }
+        } catch (e) {
+          console.error('Erro ao processar SSE:', e);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+        setIsSyncing(false);
+      };
+    }
+
+    return () => {
+      eventSource?.close();
+    };
+  }, [isSyncing, queryClient]);
 
   // Query para buscar faturamentos (sem filtros - tudo client-side)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
@@ -215,7 +264,8 @@ export default function Billings() {
       });
       
       if (!response.ok) {
-        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Erro ${response.status}: ${response.statusText}`);
       }
       
       return response.json();
@@ -225,10 +275,10 @@ export default function Billings() {
         title: 'Faturamentos sincronizados com sucesso',
         description: `${result.total} faturamentos encontrados. ${result.inserted} inseridos, ${result.updated} atualizados.`,
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
     },
     onError: (error: any) => {
+      setIsSyncing(false);
+      setSyncProgress(null);
       toast({
         title: 'Erro ao sincronizar faturamentos',
         description: error.message || 'Erro desconhecido',
@@ -238,6 +288,18 @@ export default function Billings() {
   });
 
   const handleSyncOmieBillings = () => {
+    setSyncProgress({ 
+      status: 'running', 
+      currentPage: 0, 
+      totalPages: 0, 
+      invoicesFound: 0, 
+      invoicesProcessed: 0,
+      inserted: 0,
+      updated: 0,
+      currentInvoice: '',
+      message: 'Iniciando...' 
+    });
+    setIsSyncing(true);
     syncOmieBillingsMutation.mutate();
   };
 
@@ -408,15 +470,71 @@ export default function Billings() {
         </div>
       </div>
 
-      {syncOmieBillingsMutation.isPending && (
-        <Card className="border-green-500 bg-green-50">
+      {isSyncing && (
+        <Card className="border-green-500 bg-green-50 dark:bg-green-950/30">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-5 w-5 animate-spin text-green-600" />
-              <div>
-                <p className="font-medium text-green-700">Sincronizando faturamentos dos últimos 60 dias...</p>
-                <p className="text-sm text-green-600">Buscando notas fiscais do Omie ERP. Isso pode levar alguns segundos.</p>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+                <div className="flex-1">
+                  <p className="font-medium text-green-700 dark:text-green-400">
+                    Sincronizando faturamentos dos últimos 60 dias...
+                  </p>
+                  <p className="text-sm text-green-600 dark:text-green-500">
+                    {syncProgress?.message || 'Conectando ao Omie ERP...'}
+                  </p>
+                </div>
               </div>
+              
+              {syncProgress && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">Página</p>
+                    <p className="font-bold text-lg text-green-700 dark:text-green-400">
+                      {syncProgress.currentPage || '-'}
+                    </p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">NFs Encontradas</p>
+                    <p className="font-bold text-lg text-green-700 dark:text-green-400">
+                      {syncProgress.invoicesFound || 0}
+                    </p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">Inseridas</p>
+                    <p className="font-bold text-lg text-blue-600 dark:text-blue-400">
+                      {syncProgress.inserted || 0}
+                    </p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">Atualizadas</p>
+                    <p className="font-bold text-lg text-orange-600 dark:text-orange-400">
+                      {syncProgress.updated || 0}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {syncProgress?.invoicesFound > 0 && syncProgress?.invoicesProcessed > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
+                    <span>Salvando no banco de dados...</span>
+                    <span>{syncProgress.invoicesProcessed} / {syncProgress.invoicesFound}</span>
+                  </div>
+                  <div className="h-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-green-500 transition-all duration-300" 
+                      style={{ width: `${Math.round((syncProgress.invoicesProcessed / syncProgress.invoicesFound) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {syncProgress?.currentInvoice && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                  Processando NF: <span className="font-mono font-medium">{syncProgress.currentInvoice}</span>
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
