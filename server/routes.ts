@@ -17510,10 +17510,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias) com progresso
+  // Executa em background para permitir progresso em tempo real via SSE
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
       if (billingSyncState.status === 'running') {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
+      }
+
+      const omieService = getOmieService();
+      if (!omieService) {
+        return res.status(500).json({ message: 'Omie não configurado' });
       }
 
       billingSyncState = {
@@ -17530,14 +17536,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         completedAt: null
       };
 
-      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
+      res.status(202).json({ message: 'Sincronização iniciada em background. Acompanhe o progresso na tela.' });
 
-      const omieService = getOmieService();
-      if (!omieService) {
-        billingSyncState.status = 'error';
-        billingSyncState.message = 'Omie não configurado';
-        return res.status(500).json({ message: 'Omie não configurado' });
-      }
+      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
 
       const sixtyDaysAgo = new Date();
       sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
@@ -17723,25 +17724,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`⚠️ Páginas com erro: ${pagesWithErrors}\n`);
       }
 
-      res.json({ 
-        success: true,
-        message: pagesWithErrors > 0 
-          ? `Faturamentos sincronizados parcialmente (${pagesWithErrors} página(s) com erro no servidor Omie)`
-          : 'Faturamentos sincronizados com sucesso',
-        inserted: insertedCount,
-        updated: updatedCount,
-        total: allBillings.length,
-        pagesWithErrors
-      });
-
     } catch (error: any) {
       billingSyncState.status = 'error';
       billingSyncState.message = `Erro: ${error.message}`;
       console.error('Erro ao sincronizar faturamentos:', error);
-      res.status(500).json({ 
-        message: 'Erro ao sincronizar faturamentos',
-        error: error.message 
-      });
     }
   });
 

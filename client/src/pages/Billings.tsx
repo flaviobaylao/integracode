@@ -136,11 +136,25 @@ export default function Billings() {
           idleCount = 0;
           setSyncProgress(data);
           
-          if (data.status === 'completed' || data.status === 'error') {
+          if (data.status === 'completed') {
             eventSource?.close();
             setIsSyncing(false);
             queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
             queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+            toast({
+              title: 'Sincronização concluída',
+              description: data.message || `${data.inserted || 0} inseridos, ${data.updated || 0} atualizados.`,
+            });
+          } else if (data.status === 'error') {
+            eventSource?.close();
+            setIsSyncing(false);
+            queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+            toast({
+              title: 'Erro na sincronização',
+              description: data.message || 'Erro desconhecido',
+              variant: 'destructive',
+            });
           }
         } catch (e) {
           console.error('Erro ao processar SSE:', e);
@@ -271,6 +285,7 @@ export default function Billings() {
   });
 
   // Mutation para sincronização de faturamentos do Omie
+  // A sincronização agora roda em background (retorna 202) e o progresso vem via SSE
   const syncOmieBillingsMutation = useMutation({
     mutationFn: async () => {
       const response = await fetch('/api/omie/sync-billings', {
@@ -281,18 +296,17 @@ export default function Billings() {
         credentials: 'include'
       });
       
-      if (!response.ok) {
+      // 202 = Accepted (background job started) - é sucesso
+      if (!response.ok && response.status !== 202) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || `Erro ${response.status}: ${response.statusText}`);
       }
       
       return response.json();
     },
-    onSuccess: (result) => {
-      toast({
-        title: 'Faturamentos sincronizados com sucesso',
-        description: `${result.total} faturamentos encontrados. ${result.inserted} inseridos, ${result.updated} atualizados.`,
-      });
+    onSuccess: () => {
+      // Não mostrar toast aqui - o progresso é mostrado via SSE em tempo real
+      // O toast de conclusão será disparado quando o SSE reportar status 'completed'
     },
     onError: (error: any) => {
       setIsSyncing(false);
