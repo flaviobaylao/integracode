@@ -589,18 +589,18 @@ export class OmieService {
             };
 
             if (existingUser) {
-              // CRITICAL: NÃO sobrescrever usuários admin, coordinator ou administrative
-              // MAS ainda assim atualizar o omieVendorCode para mapeamento correto
-              const protectedRoles = ['admin', 'coordinator', 'administrative'];
+              // CRITICAL: NÃO sobrescrever o role de usuários com funções especiais
+              // Apenas atualizar dados básicos e omieVendorCode, preservando o role atual
+              const protectedRoles = ['admin', 'coordinator', 'administrative', 'telemarketing', 'motorista'];
               if (protectedRoles.includes(existingUser.role)) {
-                // Atualizar APENAS o omieVendorCode para usuários protegidos
+                // Atualizar APENAS o omieVendorCode para usuários protegidos (NÃO alterar role)
                 await this.storage.updateUser(existingUser.id, { omieVendorCode: vendorCode });
-                console.log(`✅ Código Omie ${vendorCode} vinculado ao usuário protegido: ${fullName} (${existingUser.role})`);
+                console.log(`✅ Código Omie ${vendorCode} vinculado ao usuário protegido: ${fullName} (${existingUser.role}) - role PRESERVADO`);
                 results.updated++;
                 continue;
               }
               
-              // Atualizar vendedor existente (apenas se for vendedor, motorista ou telemarketing)
+              // Atualizar vendedor existente (apenas se já for vendedor)
               await this.storage.updateUser(existingUser.id, userData);
               results.updated++;
               console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode}) - omieVendorCode: ${vendorCode}`);
