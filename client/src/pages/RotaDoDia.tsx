@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText } from "lucide-react";
+import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
 import { formatInTimeZone } from "date-fns-tz";
@@ -105,6 +106,9 @@ export default function RotaDoDia() {
   const [leadCheckInPhotoUrl, setLeadCheckInPhotoUrl] = useState<string | null>(null);
   const [checkInCoords, setCheckInCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [leadCheckInNotes, setLeadCheckInNotes] = useState('');
+  
+  // Estado para modal de atendimento virtual
+  const [virtualServiceCustomer, setVirtualServiceCustomer] = useState<{ id: string; name: string } | null>(null);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -167,6 +171,20 @@ export default function RotaDoDia() {
     },
     enabled: !!routeId && !!selectedDate,
     staleTime: 60000, // Cache por 1 minuto
+  });
+
+  // Query para contagem de atendimentos virtuais por vendedor na data
+  const { data: virtualServiceCount = 0 } = useQuery<number>({
+    queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return data.count || 0;
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
   });
 
   const generateFromPlannedVisitsMutation = useMutation({
@@ -924,6 +942,15 @@ export default function RotaDoDia() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
+                    <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Atend. Virtuais</p>
+                    <p className="text-2xl font-bold" data-testid="virtual-service-count">{virtualServiceCount}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
                   <div className="p-3 bg-red-100 dark:bg-red-900 rounded-lg">
                     <UtensilsCrossed className="h-6 w-6 text-red-600 dark:text-red-400" />
                   </div>
@@ -1264,6 +1291,26 @@ export default function RotaDoDia() {
                         </div>
                         
                         <div className="flex items-center gap-1">
+                          {/* Botão Atendimento Virtual (apenas para clientes, não leads) */}
+                          {!isLead && visit.customerId && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVirtualServiceCustomer({ 
+                                  id: visit.customerId, 
+                                  name: visit.customerName 
+                                });
+                              }}
+                              data-testid={`button-virtual-service-${visit.customerId}`}
+                              title="Registrar Atendimento Virtual"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          )}
+                          
                           {/* Botão Waze */}
                           {visit.customerLatitude && visit.customerLongitude && (
                             <Button
@@ -1824,6 +1871,23 @@ export default function RotaDoDia() {
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Atendimento Virtual */}
+      {virtualServiceCustomer && (
+        <VirtualServiceLogModal
+          open={!!virtualServiceCustomer}
+          onOpenChange={(open) => {
+            if (!open) setVirtualServiceCustomer(null);
+          }}
+          customerId={virtualServiceCustomer.id}
+          customerName={virtualServiceCustomer.name}
+          entityType="customer"
+          defaultServiceType="venda"
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate] });
+          }}
+        />
+      )}
     </div>
   );
 }
