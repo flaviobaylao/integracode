@@ -17701,21 +17701,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Endpoint SSE para progresso de sincronização
   app.get('/api/omie/sync-billings/progress', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
+    try {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
 
-    const sendProgress = () => {
-      res.write(`data: ${JSON.stringify(billingSyncState)}\n\n`);
-    };
+      const sendProgress = () => {
+        try {
+          // Serialize dates properly for JSON
+          const stateToSend = {
+            ...billingSyncState,
+            startedAt: billingSyncState.startedAt?.toISOString() || null,
+            completedAt: billingSyncState.completedAt?.toISOString() || null
+          };
+          res.write(`data: ${JSON.stringify(stateToSend)}\n\n`);
+        } catch (writeError) {
+          console.error('Error writing SSE progress:', writeError);
+        }
+      };
 
-    sendProgress();
-    const interval = setInterval(sendProgress, 500);
+      sendProgress();
+      const interval = setInterval(sendProgress, 500);
 
-    req.on('close', () => {
-      clearInterval(interval);
-    });
+      req.on('close', () => {
+        clearInterval(interval);
+      });
+    } catch (error) {
+      console.error('Error in SSE progress endpoint:', error);
+      res.status(500).json({ message: 'Erro no endpoint de progresso' });
+    }
   });
 
   // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias) com progresso
