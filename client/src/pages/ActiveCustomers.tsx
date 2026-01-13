@@ -324,6 +324,17 @@ export default function ActiveCustomers() {
     retry: 2,
   });
 
+  // Query para estatísticas de atendimentos virtuais
+  const { data: serviceLogsStats } = useQuery<{
+    total: number;
+    today: number;
+    month: number;
+    byAttendant: Array<{ attendant_name: string; count: string }>;
+  }>({
+    queryKey: ["/api/service-logs/stats"],
+    retry: 1,
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
@@ -697,7 +708,7 @@ export default function ActiveCustomers() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card data-testid="card-stat-total">
           <CardHeader className="pb-2">
             <CardDescription>Total na Lista</CardDescription>
@@ -720,6 +731,18 @@ export default function ActiveCustomers() {
           <CardHeader className="pb-2">
             <CardDescription>Virtuais</CardDescription>
             <CardTitle className="text-2xl text-blue-600">{stats.virtual}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card data-testid="card-stat-virtual-attendance">
+          <CardHeader className="pb-2">
+            <CardDescription>Atendimentos Virtuais</CardDescription>
+            <CardTitle className="text-2xl text-purple-600">
+              {serviceLogsStats?.month || 0}
+              <span className="text-xs font-normal text-muted-foreground ml-1">/ mês</span>
+            </CardTitle>
+            {serviceLogsStats?.today ? (
+              <span className="text-xs text-green-600">+{serviceLogsStats.today} hoje</span>
+            ) : null}
           </CardHeader>
         </Card>
       </div>

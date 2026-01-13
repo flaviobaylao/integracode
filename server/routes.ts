@@ -2009,6 +2009,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get virtual service logs statistics
+  app.get('/api/service-logs/stats', authenticateUser, async (req: any, res) => {
+    try {
+      // Total de atendimentos virtuais
+      const totalResult = await db.execute(sql`
+        SELECT COUNT(*) as total FROM virtual_service_logs
+      `);
+      
+      // Atendimentos do dia atual
+      const todayResult = await db.execute(sql`
+        SELECT COUNT(*) as today FROM virtual_service_logs 
+        WHERE DATE(attendance_date) = CURRENT_DATE
+      `);
+      
+      // Atendimentos do mês atual
+      const monthResult = await db.execute(sql`
+        SELECT COUNT(*) as month FROM virtual_service_logs 
+        WHERE EXTRACT(MONTH FROM attendance_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND EXTRACT(YEAR FROM attendance_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+      `);
+      
+      // Atendimentos por atendente (top 5)
+      const byAttendantResult = await db.execute(sql`
+        SELECT attendant_name, COUNT(*) as count 
+        FROM virtual_service_logs 
+        WHERE EXTRACT(MONTH FROM attendance_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND EXTRACT(YEAR FROM attendance_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        GROUP BY attendant_name 
+        ORDER BY count DESC 
+        LIMIT 5
+      `);
+      
+      res.json({
+        total: parseInt(totalResult.rows[0]?.total || '0'),
+        today: parseInt(todayResult.rows[0]?.today || '0'),
+        month: parseInt(monthResult.rows[0]?.month || '0'),
+        byAttendant: byAttendantResult.rows || []
+      });
+    } catch (error) {
+      console.error("Error fetching service logs stats:", error);
+      res.status(500).json({ message: "Falha ao buscar estatísticas de atendimentos" });
+    }
+  });
+
   // Upload image for service logs
   app.post('/api/upload-image', authenticateUser, upload.single('image'), async (req: any, res) => {
     try {
