@@ -305,8 +305,8 @@ export default function Billings() {
       return response.json();
     },
     onSuccess: () => {
-      // Não mostrar toast aqui - o progresso é mostrado via SSE em tempo real
-      // O toast de conclusão será disparado quando o SSE reportar status 'completed'
+      // Servidor confirmou que a sincronização iniciou - agora conectar o SSE para acompanhar o progresso
+      setIsSyncing(true);
     },
     onError: (error: any) => {
       setIsSyncing(false);
@@ -320,6 +320,7 @@ export default function Billings() {
   });
 
   const handleSyncOmieBillings = () => {
+    // Mostrar o card de progresso com estado inicial antes de chamar o servidor
     setSyncProgress({ 
       status: 'running', 
       currentPage: 0, 
@@ -329,9 +330,9 @@ export default function Billings() {
       inserted: 0,
       updated: 0,
       currentInvoice: '',
-      message: 'Iniciando...' 
+      message: 'Conectando ao servidor...' 
     });
-    setIsSyncing(true);
+    // Iniciar a sincronização - SSE será conectado após confirmação do servidor
     syncOmieBillingsMutation.mutate();
   };
 
