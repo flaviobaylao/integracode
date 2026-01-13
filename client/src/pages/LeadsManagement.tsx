@@ -715,6 +715,9 @@ export default function LeadsManagement() {
           customerName={selectedLeadForService.fantasyName}
           defaultServiceType="prospecao"
           entityType="lead"
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
+          }}
         />
       )}
     </div>

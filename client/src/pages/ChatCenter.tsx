@@ -204,6 +204,22 @@ export default function ChatCenter() {
     }
   });
 
+  // Mutation para finalizar atendimento
+  const finishMutation = useMutation({
+    mutationFn: async (conversationId: string) => {
+      const response = await apiRequest('PATCH', `/api/chat/conversations/${conversationId}/finish`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Atendimento finalizado com sucesso" });
+      setSelectedConversation(null);
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao finalizar atendimento", description: error.message, variant: "destructive" });
+    }
+  });
+
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
   useEffect(() => {
     try {
@@ -1128,27 +1144,57 @@ export default function ChatCenter() {
                            selectedChat.status === "assigned" ? "Atribuído" :
                            selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
                         </Badge>
-                        {isAdmin && (
+                        <div className="flex gap-1">
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="text-xs"
-                                  onClick={() => setShowTransferDialog(true)}
-                                  data-testid="button-transfer-conversation"
+                                  className="text-xs text-green-600 border-green-600 hover:bg-green-50"
+                                  onClick={() => {
+                                    if (selectedConversation) {
+                                      finishMutation.mutate(selectedConversation);
+                                    }
+                                  }}
+                                  disabled={finishMutation.isPending || selectedChat.status === 'resolved'}
+                                  data-testid="button-finish-conversation"
                                 >
-                                  <ArrowRightLeft className="h-3 w-3 mr-1" />
-                                  Transferir
+                                  {finishMutation.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                  ) : (
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                  )}
+                                  Finalizar
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>
-                                <p>Transferir conversa para outro atendente</p>
+                                <p>Finalizar atendimento</p>
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                        )}
+                          {isAdmin && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-xs"
+                                    onClick={() => setShowTransferDialog(true)}
+                                    data-testid="button-transfer-conversation"
+                                  >
+                                    <ArrowRightLeft className="h-3 w-3 mr-1" />
+                                    Transferir
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Transferir conversa para outro atendente</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
                         {isAdmin && selectedChat.assignedAgentName && (
                           <span 
                             className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"

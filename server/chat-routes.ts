@@ -2568,6 +2568,44 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // PATCH /api/chat/conversations/:conversationId/finish - Finalizar atendimento
+  app.patch("/api/chat/conversations/:conversationId/finish", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const userId = (req as any).currentUser?.id;
+      const currentUser = (req as any).currentUser;
+
+      // Buscar conversa
+      const conversation = await storage.getChatConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversa não encontrada" });
+      }
+
+      // Verificar permissão: admin pode finalizar qualquer conversa, atendentes apenas as suas
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      if (!isAdmin && conversation.assignedAgentId) {
+        const agents = await storage.getChatAgents();
+        const userAgent = agents.find(a => a.userId === userId);
+        if (!userAgent || userAgent.id !== conversation.assignedAgentId) {
+          return res.status(403).json({ error: "Você não tem permissão para finalizar esta conversa" });
+        }
+      }
+
+      // Finalizar conversa
+      const updated = await storage.updateChatConversation(conversationId, {
+        status: 'resolved',
+        assignedAgentId: null,
+        assignedAgentColor: null
+      });
+
+      console.log(`✅ [CHAT-FINISH] Conversa ${conversationId} finalizada por ${currentUser?.email || userId}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("[CHAT-FINISH] Erro:", error);
+      res.status(500).json({ error: "Erro ao finalizar conversa" });
+    }
+  });
+
   // PATCH /api/chat/conversations/:conversationId/transfer - Transferir conversa (admin only)
   app.patch("/api/chat/conversations/:conversationId/transfer", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
     try {
@@ -2640,12 +2678,26 @@ export function registerChatRoutes(app: Express): void {
 
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
 
-      // 🟢 Atualizar status para em-progresso
+      // 🟢 Atualizar status para em-progresso e atribuir ao atendente que enviou a mensagem
       if (storage.updateChatConversation) {
-        await storage.updateChatConversation(conversation.id, {
-          status: 'in-progress',
-          agentId: (currentUser?.id ? (await storage.getChatAgents()).find(a => a.userId === userId)?.id : undefined) || conversation.agentId
-        });
+        const agents = await storage.getChatAgents();
+        const userAgent = agents.find(a => a.userId === userId);
+        
+        if (userAgent) {
+          // Atribuir a conversa ao atendente que está enviando a mensagem
+          const agentColor = await getAgentColor(userAgent.id);
+          await storage.updateChatConversation(conversation.id, {
+            status: 'in-progress',
+            assignedAgentId: userAgent.id,
+            assignedAgentColor: agentColor,
+            lastAttendedAt: new Date()
+          });
+          console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atribuída ao atendente ${userAgent.name} (${userAgent.id})`);
+        } else {
+          await storage.updateChatConversation(conversation.id, {
+            status: 'in-progress'
+          });
+        }
       }
 
       // 📱 Enviar para WhatsApp via Evolution API

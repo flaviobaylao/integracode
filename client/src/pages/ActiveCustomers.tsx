@@ -1264,6 +1264,10 @@ export default function ActiveCustomers() {
             }}
             customerId={serviceLogCustomer.id}
             customerName={serviceLogCustomer.name}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/customer"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
+            }}
           />
         )}
 
