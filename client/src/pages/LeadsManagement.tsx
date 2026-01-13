@@ -59,6 +59,11 @@ export default function LeadsManagement() {
     queryKey: ['/api/auth/user'],
   });
 
+  // Fetch last service logs for leads
+  const { data: lastServiceLogs = {} } = useQuery<Record<string, { date: string; attendant: string; serviceType: string }>>({
+    queryKey: ['/api/service-logs/last/lead'],
+  });
+
   // Filter vendors from users
   const sellers = useMemo(() => {
     return (allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive);
@@ -450,6 +455,7 @@ export default function LeadsManagement() {
                   <th className="text-left py-3 px-4 font-semibold">Telefone</th>
                   <th className="text-left py-3 px-4 font-semibold">Coordenadas</th>
                   <th className="text-left py-3 px-4 font-semibold">Status</th>
+                  <th className="text-left py-3 px-4 font-semibold">Último Atendimento</th>
                   <th className="text-left py-3 px-4 font-semibold">Criado em</th>
                   {isAdmin && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
                 </tr>
@@ -457,7 +463,7 @@ export default function LeadsManagement() {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 7 : 6} className="text-center py-8 text-gray-500">
+                    <td colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -482,6 +488,18 @@ export default function LeadsManagement() {
                         <Badge className={statusColors[lead.status]}>
                           {statusLabels[lead.status]}
                         </Badge>
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {lastServiceLogs[lead.id] ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium">
+                              {formatInTimeZone(new Date(lastServiceLogs[lead.id].date), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                            </span>
+                            <span className="text-gray-500 dark:text-gray-400 truncate max-w-[120px]" title={lastServiceLogs[lead.id].attendant}>
+                              {lastServiceLogs[lead.id].attendant}
+                            </span>
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="py-3 px-4 text-xs">
                         {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}

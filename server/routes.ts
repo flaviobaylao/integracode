@@ -2071,6 +2071,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get last service log for each entity (batch query)
+  app.get('/api/service-logs/last/:entityType', authenticateUser, async (req: any, res) => {
+    try {
+      const { entityType } = req.params;
+      
+      const validEntityTypes = ['customer', 'lead'];
+      if (!validEntityTypes.includes(entityType)) {
+        return res.status(400).json({ message: "Tipo de entidade inválido" });
+      }
+      
+      // Get the last service log for each customer/lead using DISTINCT ON
+      const result = await db.execute(sql`
+        SELECT DISTINCT ON (customer_id) 
+          customer_id, 
+          attendance_date, 
+          attendant_name,
+          service_type
+        FROM virtual_service_logs 
+        WHERE entity_type = ${entityType}
+        ORDER BY customer_id, attendance_date DESC
+      `);
+      
+      // Return as a map for easy lookup
+      const lastLogsMap: Record<string, { date: string; attendant: string; serviceType: string }> = {};
+      for (const row of result.rows as any[]) {
+        lastLogsMap[row.customer_id] = {
+          date: row.attendance_date,
+          attendant: row.attendant_name,
+          serviceType: row.service_type
+        };
+      }
+      
+      res.json(lastLogsMap);
+    } catch (error) {
+      console.error("Error fetching last service logs:", error);
+      res.status(500).json({ message: "Falha ao buscar últimos atendimentos" });
+    }
+  });
+
   // Get virtual service logs statistics
   app.get('/api/service-logs/stats', authenticateUser, async (req: any, res) => {
     try {

@@ -336,6 +336,11 @@ export default function ActiveCustomers() {
     retry: 1,
   });
 
+  // Query para últimos atendimentos virtuais por cliente
+  const { data: lastServiceLogs = {} } = useQuery<Record<string, { date: string; attendant: string; serviceType: string }>>({
+    queryKey: ["/api/service-logs/last/customer"],
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
@@ -939,6 +944,7 @@ export default function ActiveCustomers() {
                           </button>
                         </TableHead>
                         <TableHead>Última Atividade</TableHead>
+                        <TableHead>Último Atend. Virtual</TableHead>
                         <TableHead>Próximas 3 Visitas</TableHead>
                         <TableHead>Ações</TableHead>
                       </TableRow>
@@ -946,7 +952,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -1058,6 +1064,20 @@ export default function ActiveCustomers() {
                                   ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR })
                                   : 'Nunca'}
                               </span>
+                            </TableCell>
+                            <TableCell>
+                              {ac.customer?.id && lastServiceLogs[ac.customer.id] ? (
+                                <div className="flex flex-col gap-0.5 text-xs">
+                                  <span className="font-medium">
+                                    {format(new Date(lastServiceLogs[ac.customer.id].date), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                                  </span>
+                                  <span className="text-muted-foreground truncate max-w-[100px]" title={lastServiceLogs[ac.customer.id].attendant}>
+                                    {lastServiceLogs[ac.customer.id].attendant}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-2">
