@@ -112,6 +112,8 @@ export default function Billings() {
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
+    let idleCount = 0;
+    const maxIdleBeforeClose = 120;
 
     if (isSyncing) {
       eventSource = new EventSource('/api/omie/sync-billings/progress');
@@ -119,9 +121,20 @@ export default function Billings() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.status !== 'idle') {
-            setSyncProgress(data);
+          
+          if (data.status === 'idle') {
+            idleCount++;
+            if (idleCount > maxIdleBeforeClose) {
+              console.log('SSE: Muitos eventos idle, fechando conexão');
+              eventSource?.close();
+              setIsSyncing(false);
+              setSyncProgress(null);
+            }
+            return;
           }
+          
+          idleCount = 0;
+          setSyncProgress(data);
           
           if (data.status === 'completed' || data.status === 'error') {
             eventSource?.close();
@@ -134,9 +147,14 @@ export default function Billings() {
         }
       };
 
-      eventSource.onerror = () => {
+      eventSource.onerror = (e) => {
+        console.error('SSE error:', e);
         eventSource?.close();
-        setIsSyncing(false);
+        setTimeout(() => {
+          if (isSyncing) {
+            console.log('SSE: Tentando reconectar...');
+          }
+        }, 2000);
       };
     }
 
@@ -515,7 +533,7 @@ export default function Billings() {
                 </div>
               )}
 
-              {syncProgress?.invoicesFound > 0 && syncProgress?.invoicesProcessed > 0 && (
+              {syncProgress && syncProgress.invoicesFound > 0 && syncProgress.invoicesProcessed > 0 && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
                     <span>Salvando no banco de dados...</span>
