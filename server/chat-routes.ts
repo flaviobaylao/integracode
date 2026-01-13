@@ -1088,13 +1088,15 @@ export function registerChatRoutes(app: Express): void {
       let finalMediaUrl = mediaInfo.mediaUrl || null;
       const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
       
-      // 🔧 Se for mídia mas não temos a URL/base64, tentar baixar via Evolution API
-      if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
-        try {
-          console.log(`📥 [WEBHOOK-MEDIA] Baixando mídia via getBase64FromMediaMessage: ${messageId}`);
-          const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
-          if (instanceName) {
-            // Passar o key completo para Evolution API v2.3.6+
+      // 🔧 MELHORADO: Se for mídia, garantir que temos a URL/base64
+      // Prioridade: 1) Tentar getBase64FromMediaMessage (mais confiável), 2) Usar URL do payload se disponível
+      if (finalMessageType !== 'text' && messageId) {
+        const instanceName = process.env.EVOLUTION_INSTANCE_NAME;
+        
+        // Sempre tentar baixar via getBase64FromMediaMessage primeiro (mais confiável que URLs que expiram)
+        if (instanceName) {
+          try {
+            console.log(`📥 [WEBHOOK-MEDIA] Baixando mídia via getBase64FromMediaMessage: ${messageId}`);
             const messageKey = {
               id: messageId,
               remoteJid: data.key?.remoteJid,
@@ -1105,13 +1107,24 @@ export function registerChatRoutes(app: Express): void {
             if (mediaResult.success && mediaResult.base64) {
               const mimeType = mediaResult.mimetype || mediaInfo.mediaType || 'application/octet-stream';
               finalMediaUrl = `data:${mimeType};base64,${mediaResult.base64}`;
-              console.log(`✅ [WEBHOOK-MEDIA] Mídia baixada com sucesso: ${mimeType}`);
+              console.log(`✅ [WEBHOOK-MEDIA] Mídia baixada com sucesso via API: ${mimeType}`);
             } else {
-              console.warn(`⚠️ [WEBHOOK-MEDIA] Falha ao baixar mídia: ${mediaResult.error}`);
+              console.warn(`⚠️ [WEBHOOK-MEDIA] Falha ao baixar via API: ${mediaResult.error}`);
             }
+          } catch (downloadErr: any) {
+            console.warn(`⚠️ [WEBHOOK-MEDIA] Erro ao baixar via API: ${downloadErr.message}`);
           }
-        } catch (downloadErr: any) {
-          console.warn(`⚠️ [WEBHOOK-MEDIA] Erro ao baixar mídia: ${downloadErr.message}`);
+        }
+        
+        // Fallback: Se não conseguiu baixar via API, tentar usar URL do WhatsApp (pode estar expirada)
+        if (!finalMediaUrl && mediaInfo.mediaUrl && mediaInfo.mediaUrl.startsWith('http')) {
+          console.log(`📥 [WEBHOOK-MEDIA] Tentando URL direta do WhatsApp: ${mediaInfo.mediaUrl.substring(0, 80)}...`);
+          finalMediaUrl = mediaInfo.mediaUrl;
+        }
+        
+        // Se ainda não temos mídia, logar mas continuar (mensagem será salva com placeholder)
+        if (!finalMediaUrl) {
+          console.warn(`⚠️ [WEBHOOK-MEDIA] Não foi possível obter mídia para mensagem ${messageId}. Será salva como placeholder.`);
         }
       }
       
