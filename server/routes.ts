@@ -17550,7 +17550,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.message = 'Buscando notas fiscais do Omie...';
 
       let pagesWithErrors = 0;
+      let consecutiveErrors = 0;
       const maxRetries = 3;
+      const maxConsecutiveErrors = 3;
       const delayBetweenPages = 1500;
       const delayBetweenVendors = 300;
 
@@ -17575,6 +17577,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ordenar_por: 'DATA',
               ordem_decrescente: 'S'
             });
+            consecutiveErrors = 0;
             break;
           } catch (pageError: any) {
             retryCount++;
@@ -17582,15 +17585,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (retryCount < maxRetries) {
               await new Promise(r => setTimeout(r, 3000 * retryCount));
             } else {
-              console.log(`❌ Página ${page} falhou após ${maxRetries} tentativas. Continuando com dados coletados...`);
+              console.log(`❌ Página ${page} falhou após ${maxRetries} tentativas.`);
               pagesWithErrors++;
-              hasMorePages = false;
+              consecutiveErrors++;
+              if (consecutiveErrors >= maxConsecutiveErrors) {
+                console.log(`❌ ${maxConsecutiveErrors} páginas consecutivas falharam. Salvando dados coletados...`);
+                hasMorePages = false;
+              }
             }
           }
         }
 
         if (!response) {
-          break;
+          page++;
+          continue;
         }
 
         const invoices = response.nfCadastro || [];
