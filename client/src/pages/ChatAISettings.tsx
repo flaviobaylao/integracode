@@ -39,6 +39,9 @@ interface ChatAiSettings {
   gptModel: string;
   assistantId: string | null;
   chatgptQueuePosition: number;
+  inactivityTimeoutMinutes: number;
+  finalizeMessage: string | null;
+  absenceMessage: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -153,6 +156,9 @@ export default function ChatAISettings() {
     gptModel: 'gpt-4o-mini',
     assistantId: null,
     chatgptQueuePosition: 0,
+    inactivityTimeoutMinutes: 30,
+    finalizeMessage: 'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.',
+    absenceMessage: 'No momento não há atendentes disponíveis. Por favor, tente novamente em instantes ou envie sua mensagem que responderemos assim que possível.',
     createdAt: null,
     updatedAt: null,
     updatedBy: null
@@ -593,6 +599,63 @@ export default function ChatAISettings() {
                 <Button variant="outline" onClick={handleAddKeyword} data-testid="button-add-keyword">
                   Adicionar
                 </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Finalização e Ausência
+              </CardTitle>
+              <CardDescription>
+                Configure mensagens automáticas de finalização de atendimento e ausência de atendentes
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label>Tempo de Inatividade para Finalização Automática (minutos)</Label>
+                <Input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={settings.inactivityTimeoutMinutes}
+                  onChange={(e) => setSettings({ ...settings, inactivityTimeoutMinutes: parseInt(e.target.value) || 30 })}
+                  className="w-32"
+                  data-testid="input-inactivity-timeout"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Conversas sem atividade por {settings.inactivityTimeoutMinutes} minutos serão finalizadas automaticamente
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mensagem de Finalização</Label>
+                <Textarea
+                  placeholder="Mensagem enviada ao cliente quando a conversa é finalizada..."
+                  value={settings.finalizeMessage || ''}
+                  onChange={(e) => setSettings({ ...settings, finalizeMessage: e.target.value })}
+                  className="min-h-[80px]"
+                  data-testid="input-finalize-message"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Mensagem enviada ao cliente quando o atendente finaliza a conversa ou por inatividade
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mensagem de Ausência</Label>
+                <Textarea
+                  placeholder="Mensagem enviada quando não há atendentes disponíveis..."
+                  value={settings.absenceMessage || ''}
+                  onChange={(e) => setSettings({ ...settings, absenceMessage: e.target.value })}
+                  className="min-h-[80px]"
+                  data-testid="input-absence-message"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Mensagem enviada ao cliente quando não há atendentes online e o ChatGPT está desativado
+                </p>
               </div>
             </CardContent>
           </Card>
