@@ -17463,25 +17463,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sincronizar faturamentos do Omie para banco de dados
+  // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias)
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
-      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE...\n');
+      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
 
       const omieService = getOmieService();
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
 
-      // Calcular data de 90 dias atrás (aumentado para garantir captura de todas as notas)
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      // Calcular data de 60 dias atrás (otimizado para agilidade)
+      const sixtyDaysAgo = new Date();
+      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
       const allBillings: any[] = [];
       let page = 1;
       let hasMorePages = true;
 
-      // Buscar notas fiscais dos últimos 90 dias
+      // Buscar notas fiscais dos últimos 60 dias
       while (hasMorePages && page <= 50) {
         console.log(`📄 Buscando página ${page}...`);
         
@@ -17506,9 +17506,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const [dia, mes, ano] = invoiceDate.split('/');
           const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
           
-          // Filtrar últimos 90 dias - PULAR nota antiga mas CONTINUAR buscando páginas
-          if (invoiceDateObj < ninetyDaysAgo) {
-            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 90 dias (${invoiceDate}) - pulando`);
+          // Filtrar últimos 60 dias - PULAR nota antiga mas CONTINUAR buscando páginas
+          if (invoiceDateObj < sixtyDaysAgo) {
+            console.log(`📅 Nota ${invoice.ide?.nNF} fora do período de 60 dias (${invoiceDate}) - pulando`);
             continue; // Pular essa nota mas continuar processando outras
           }
 

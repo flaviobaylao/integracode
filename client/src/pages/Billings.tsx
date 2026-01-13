@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Trash2, Home, Loader2, X } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2 } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Select,
@@ -18,7 +18,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { apiRequest } from '@/lib/queryClient';
-import { SyncButton } from '@/components/SyncButton';
 
 interface Billing {
   id: string;
@@ -242,123 +241,6 @@ export default function Billings() {
     syncOmieBillingsMutation.mutate();
   };
 
-  // Mutation para cancelar sincronização em andamento
-  const cancelSyncMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/billings/sync/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Erro ao cancelar');
-      }
-      
-      return response.json();
-    },
-    onSuccess: (result) => {
-      toast({
-        title: 'Sincronização cancelada',
-        description: result.message || 'A sincronização foi interrompida.',
-      });
-      // Invalidar todos os caches relacionados para forçar atualização
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/sync-status'] });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro ao cancelar',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  const handleCancelSync = () => {
-    cancelSyncMutation.mutate();
-  };
-
-  // Mutation para atualizar seller_names retroativamente
-  const updateSellerNamesMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/billings/update-seller-names');
-      return response;
-    },
-    onSuccess: (result) => {
-      toast({
-        title: 'Nomes de vendedores atualizados',
-        description: `${result.updated} faturamentos atualizados com sucesso. ${result.notFound} vendedores não encontrados.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro ao atualizar nomes',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  // Mutation para limpar notas canceladas
-  const cleanupCancelledMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/billings/cleanup-cancelled');
-      return response;
-    },
-    onSuccess: (result) => {
-      toast({
-        title: 'Limpeza de notas canceladas concluída',
-        description: `${result.totalChecked} notas verificadas. ${result.cancelledFound} notas canceladas removidas.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro ao limpar notas canceladas',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  // Mutation para sincronização TOTAL de faturamentos (limpa e reimporta tudo)
-  // Agora executa em background - retorna 202 imediatamente
-  const fullSyncMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/billings/sync-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
-      
-      if (!response.ok && response.status !== 202) {
-        const error = await response.json();
-        throw new Error(error.message || 'Erro desconhecido');
-      }
-      
-      return response.json();
-    },
-    onSuccess: (result: any) => {
-      // Agora recebe resposta imediata - sincronização acontece em background
-      toast({
-        title: 'Sincronização Total Iniciada',
-        description: result.message || 'A sincronização está sendo executada em background. Você pode acompanhar o progresso nesta tela.',
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Erro na sincronização total',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
       ...prev,
@@ -455,11 +337,7 @@ export default function Billings() {
     }
   });
 
-  const omieBillingsSync = syncStatuses?.find(s => s.syncType === 'omie_billings');
-  // Se não encontrar o tipo padrão, procurar pelo tipo de sincronização total usado anteriormente
-  const omieBillingsFullSync = syncStatuses?.find(s => s.syncType === 'omie_billings_full');
-  
-  const displaySync = omieBillingsSync || omieBillingsFullSync;
+  const displaySync = syncStatuses?.find(s => s.syncType === 'omie_billings');
 
   return (
     <div className="p-6 space-y-6">
@@ -482,68 +360,26 @@ export default function Billings() {
         <div>
           <h1 className="text-3xl font-bold" data-testid="page-title">Faturamentos</h1>
           <p className="text-muted-foreground">
-            Sincronize e visualize notas fiscais do Omie ERP
+            Sincronize e visualize notas fiscais dos últimos 60 dias do Omie ERP
           </p>
         </div>
         
         <div className="flex flex-col items-end gap-2">
-          <div className="flex gap-2">
-            <SyncButton
-              syncType="omie_billings"
-              onSync={handleSyncOmieBillings}
-              isLoading={syncOmieBillingsMutation.isPending}
-              label="Sincronizar Faturamentos"
-              variant="default"
-              data-testid="button-sync-billings"
-            />
-            
+          <div className="flex gap-2 flex-wrap justify-end">
             <Button 
-              variant="destructive" 
-              onClick={() => {
-                if (window.confirm('ATENÇÃO: Esta ação vai APAGAR todos os faturamentos existentes e reimportar TODAS as NFs do Omie. Isso pode demorar alguns minutos. Deseja continuar?')) {
-                  fullSyncMutation.mutate();
-                }
-              }}
-              disabled={fullSyncMutation.isPending || displaySync?.status === 'in_progress' || displaySync?.status === 'running'}
-              data-testid="button-full-sync"
-              title="Limpa todos os faturamentos e reimporta TODAS as NFs do Omie (sem filtro de data)"
+              variant="default" 
+              onClick={handleSyncOmieBillings}
+              disabled={syncOmieBillingsMutation.isPending}
+              data-testid="button-sync-billings"
+              title="Sincronizar faturamentos dos últimos 60 dias do Omie"
+              className="bg-green-600 hover:bg-green-700"
             >
-              {fullSyncMutation.isPending || displaySync?.status === 'in_progress' || displaySync?.status === 'running' ? (
+              {syncOmieBillingsMutation.isPending ? (
                 <RotateCw className="w-4 h-4 mr-2 animate-spin" />
               ) : (
                 <RefreshCw className="w-4 h-4 mr-2" />
               )}
-              Sync Total
-            </Button>
-            
-            <Button 
-              variant="secondary" 
-              onClick={() => updateSellerNamesMutation.mutate()}
-              disabled={updateSellerNamesMutation.isPending}
-              data-testid="button-update-sellers"
-              title="Atualizar nomes de vendedores retroativamente"
-            >
-              {updateSellerNamesMutation.isPending ? (
-                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RotateCw className="w-4 h-4 mr-2" />
-              )}
-              Atualizar Vendedores
-            </Button>
-            
-            <Button 
-              variant="destructive" 
-              onClick={() => cleanupCancelledMutation.mutate()}
-              disabled={cleanupCancelledMutation.isPending}
-              data-testid="button-cleanup-cancelled"
-              title="Remover notas fiscais canceladas do banco de dados"
-            >
-              {cleanupCancelledMutation.isPending ? (
-                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Trash2 className="w-4 h-4 mr-2" />
-              )}
-              Limpar Canceladas
+              Sincronizar (60 dias)
             </Button>
             
             <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
@@ -572,44 +408,15 @@ export default function Billings() {
         </div>
       </div>
 
-      {(displaySync?.status === 'in_progress' || displaySync?.status === 'running') && (
-        <Card className="border-honest-orange bg-honest-orange/5">
+      {syncOmieBillingsMutation.isPending && (
+        <Card className="border-green-500 bg-green-50">
           <CardContent className="pt-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-honest-orange font-medium">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Sincronização Total em Andamento...
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-sm font-bold">
-                    {displaySync.currentProgress || 0}%
-                  </div>
-                  <Button 
-                    variant="destructive" 
-                    size="sm"
-                    onClick={handleCancelSync}
-                    disabled={cancelSyncMutation.isPending}
-                    data-testid="button-cancel-sync"
-                  >
-                    {cancelSyncMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <X className="h-4 w-4 mr-2" />
-                    )}
-                    Cancelar
-                  </Button>
-                </div>
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+              <div>
+                <p className="font-medium text-green-700">Sincronizando faturamentos dos últimos 60 dias...</p>
+                <p className="text-sm text-green-600">Buscando notas fiscais do Omie ERP. Isso pode levar alguns segundos.</p>
               </div>
-              <div className="h-2 w-full bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-honest-orange transition-all duration-500" 
-                  style={{ width: `${displaySync.currentProgress || 0}%` }}
-                />
-              </div>
-              <p className="text-xs text-center text-muted-foreground">
-                Processados: {displaySync.recordsProcessed || 0} de {displaySync.totalRecords || '?'} faturamentos
-              </p>
             </div>
           </CardContent>
         </Card>

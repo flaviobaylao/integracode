@@ -1250,7 +1250,8 @@ export default function ChatCenter() {
                                     {msg.messageType === 'video' && <video src={msg.content} controls className="max-w-sm rounded" />}
                                   </div>
                                 ) : null}
-                                {msg.messageType !== 'location' && !msg.mediaUrl && (!msg.content?.startsWith('data:') || msg.messageType === 'text') && <p className="text-sm">{msg.content}</p>}
+                                {msg.messageType === 'text' && msg.content && <p className="text-sm">{msg.content}</p>}
+                                {msg.messageType !== 'text' && msg.messageType !== 'location' && msg.messageType !== 'image' && msg.messageType !== 'audio' && msg.messageType !== 'video' && msg.messageType !== 'document' && msg.content && !msg.content.startsWith('data:') && !msg.content.startsWith('/objects/') && !msg.content.startsWith('/uploads/') && !msg.content.includes('Erro:') && <p className="text-sm">{msg.content}</p>}
                                   <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>
