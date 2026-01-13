@@ -1928,13 +1928,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // VIRTUAL SERVICE LOGS - Registros de atendimento virtual
   // ============================================================================
 
-  // List service logs for a customer
-  app.get('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+  // List service logs for a customer or lead (with entity type)
+  app.get('/api/service-logs/:entityType/:entityId', authenticateUser, async (req: any, res) => {
     try {
-      const { id } = req.params;
+      const { entityType, entityId } = req.params;
+      
+      const validEntityTypes = ['customer', 'lead'];
+      if (!validEntityTypes.includes(entityType)) {
+        return res.status(400).json({ message: "Tipo de entidade inválido" });
+      }
+      
       const logs = await db.execute(sql`
         SELECT * FROM virtual_service_logs 
-        WHERE customer_id = ${id} 
+        WHERE customer_id = ${entityId} AND entity_type = ${entityType}
         ORDER BY attendance_date DESC
       `);
       res.json(logs.rows || []);
@@ -1944,20 +1950,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create a new service log
-  app.post('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+  // Create a new service log for customer or lead (with entity type)
+  app.post('/api/service-logs/:entityType/:entityId', authenticateUser, async (req: any, res) => {
     try {
-      const { id } = req.params;
+      const { entityType, entityId } = req.params;
       const user = req.currentUser;
-      const { notes, images } = req.body;
+      const { notes, images, serviceType } = req.body;
+
+      const validEntityTypes = ['customer', 'lead'];
+      if (!validEntityTypes.includes(entityType)) {
+        return res.status(400).json({ message: "Tipo de entidade inválido" });
+      }
 
       if (!notes && (!images || images.length === 0)) {
         return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
       }
 
+      const validServiceTypes = ['debito_vencido', 'venda', 'prospecao'];
+      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
+
       const result = await db.execute(sql`
-        INSERT INTO virtual_service_logs (customer_id, attendant_id, attendant_name, notes, images)
-        VALUES (${id}, ${user.id}, ${user.name || user.email}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb)
+        INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, service_type, notes, images)
+        VALUES (${entityId}, ${entityType}, ${user.id}, ${user.name || user.email}, ${finalServiceType}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb)
+        RETURNING *
+      `);
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error creating service log:", error);
+      res.status(500).json({ message: "Falha ao criar registro de atendimento" });
+    }
+  });
+
+  // Legacy: List service logs for a customer (backward compatibility)
+  app.get('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const logs = await db.execute(sql`
+        SELECT * FROM virtual_service_logs 
+        WHERE customer_id = ${id} AND (entity_type IS NULL OR entity_type = 'customer')
+        ORDER BY attendance_date DESC
+      `);
+      res.json(logs.rows || []);
+    } catch (error) {
+      console.error("Error fetching service logs:", error);
+      res.status(500).json({ message: "Falha ao buscar registros de atendimento" });
+    }
+  });
+
+  // Legacy: Create a new service log (backward compatibility)
+  app.post('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.currentUser;
+      const { notes, images, serviceType } = req.body;
+
+      if (!notes && (!images || images.length === 0)) {
+        return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
+      }
+
+      const validServiceTypes = ['debito_vencido', 'venda', 'prospecao'];
+      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
+
+      const result = await db.execute(sql`
+        INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, service_type, notes, images)
+        VALUES (${id}, 'customer', ${user.id}, ${user.name || user.email}, ${finalServiceType}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb)
         RETURNING *
       `);
 

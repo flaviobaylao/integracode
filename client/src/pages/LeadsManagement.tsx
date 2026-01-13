@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -21,10 +21,12 @@ import {
 import { type Lead } from "@shared/schema";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
+import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [selectedLeadForService, setSelectedLeadForService] = useState<Lead | null>(null);
   const [formData, setFormData] = useState({
     fantasyName: "",
     latitude: "",
@@ -461,10 +463,15 @@ export default function LeadsManagement() {
                   </tr>
                 ) : (
                   filteredLeads.map((lead) => (
-                    <tr key={lead.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-800" data-testid={`lead-row-${lead.id}`}>
+                    <tr 
+                      key={lead.id} 
+                      className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer" 
+                      data-testid={`lead-row-${lead.id}`}
+                      onClick={() => setSelectedLeadForService(lead)}
+                    >
                       <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
                       <td className="py-3 px-4">{lead.contact || '—'}</td>
-                      <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a> : '—'}</td>
+                      <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
                       <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
                         <div className="flex flex-col gap-1">
                           <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
@@ -480,8 +487,17 @@ export default function LeadsManagement() {
                         {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
                       </td>
                       {isAdmin && (
-                        <td className="py-3 px-4">
+                        <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setSelectedLeadForService(lead)}
+                              title="Registrar Atendimento"
+                              data-testid={`button-service-lead-${lead.id}`}
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -672,6 +688,17 @@ export default function LeadsManagement() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {selectedLeadForService && (
+        <VirtualServiceLogModal
+          open={!!selectedLeadForService}
+          onClose={() => setSelectedLeadForService(null)}
+          customerId={selectedLeadForService.id}
+          customerName={selectedLeadForService.fantasyName}
+          defaultServiceType="prospecao"
+          entityType="lead"
+        />
+      )}
     </div>
   );
 }

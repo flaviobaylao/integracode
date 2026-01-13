@@ -238,10 +238,12 @@ export const customers = pgTable("customers", {
 // Virtual Service Logs - Registros de atendimento virtual
 export const virtualServiceLogs = pgTable("virtual_service_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: varchar("customer_id").notNull(), // Cliente atendido
+  customerId: varchar("customer_id").notNull(), // ID do cliente ou lead atendido
+  entityType: varchar("entity_type").notNull().default('customer'), // Tipo de entidade: 'customer' ou 'lead'
   attendantId: varchar("attendant_id").notNull(), // Usuário que realizou o atendimento
   attendantName: varchar("attendant_name").notNull(), // Nome do atendente (snapshot)
   attendanceDate: timestamp("attendance_date").notNull().defaultNow(), // Data/hora do atendimento
+  serviceType: varchar("service_type").notNull().default('prospecao'), // Tipo de atendimento: 'debito_vencido', 'venda', 'prospecao'
   notes: text("notes"), // Notas escritas do atendimento
   images: jsonb("images").$type<string[]>().default([]), // URLs das imagens anexadas
   createdAt: timestamp("created_at").defaultNow(),

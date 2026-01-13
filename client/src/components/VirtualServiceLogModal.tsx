@@ -12,7 +12,15 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, Image, FileText, User, Clock, Trash2, Upload, X } from "lucide-react";
+import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search } from "lucide-react";
+
+type ServiceType = 'debito_vencido' | 'venda' | 'prospecao';
+
+const serviceTypeLabels: Record<ServiceType, { label: string; color: string; icon: typeof DollarSign }> = {
+  debito_vencido: { label: 'Débito Vencido', color: 'bg-red-100 text-red-700 border-red-200', icon: DollarSign },
+  venda: { label: 'Venda', color: 'bg-green-100 text-green-700 border-green-200', icon: ShoppingCart },
+  prospecao: { label: 'Prospecção', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: Search },
+};
 
 interface VirtualServiceLog {
   id: string;
@@ -20,45 +28,54 @@ interface VirtualServiceLog {
   attendant_id: string;
   attendant_name: string;
   attendance_date: string;
+  service_type?: ServiceType | null;
   notes: string | null;
   images: string[];
   created_at: string;
   updated_at: string;
 }
 
+type EntityType = 'customer' | 'lead';
+
 interface VirtualServiceLogModalProps {
   open: boolean;
   onClose: () => void;
   customerId: string;
   customerName: string;
+  defaultServiceType?: ServiceType;
+  entityType?: EntityType;
 }
 
 export default function VirtualServiceLogModal({ 
   open, 
   onClose, 
   customerId, 
-  customerName 
+  customerName,
+  defaultServiceType = 'prospecao',
+  entityType = 'customer'
 }: VirtualServiceLogModalProps) {
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [serviceType, setServiceType] = useState<ServiceType>(defaultServiceType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: logs, isLoading } = useQuery<VirtualServiceLog[]>({
-    queryKey: [`/api/customers/${customerId}/service-logs`],
+    queryKey: [`/api/service-logs/${entityType}/${customerId}`],
     enabled: open && !!customerId,
   });
 
   const createLogMutation = useMutation({
-    mutationFn: async (data: { notes: string; images: string[] }) => {
-      return await apiRequest("POST", `/api/customers/${customerId}/service-logs`, data);
+    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType }) => {
+      return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/customers/${customerId}/service-logs`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/service-logs/${entityType}/${customerId}`] });
       setNotes("");
       setImages([]);
+      setServiceType(defaultServiceType);
       setIsCreating(false);
       toast({
         title: "Atendimento registrado",
@@ -79,7 +96,7 @@ export default function VirtualServiceLogModal({
       return await apiRequest("DELETE", `/api/service-logs/${logId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/customers/${customerId}/service-logs`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/service-logs/${entityType}/${customerId}`] });
       toast({
         title: "Registro excluído",
         description: "O registro foi excluído com sucesso.",
@@ -151,13 +168,14 @@ export default function VirtualServiceLogModal({
       });
       return;
     }
-    createLogMutation.mutate({ notes, images });
+    createLogMutation.mutate({ notes, images, serviceType });
   };
 
   const handleClose = () => {
     setIsCreating(false);
     setNotes("");
     setImages([]);
+    setServiceType(defaultServiceType);
     onClose();
   };
 
@@ -186,6 +204,32 @@ export default function VirtualServiceLogModal({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div>
+                  <Label>Tipo de Atendimento</Label>
+                  <div className="mt-2 flex gap-2 flex-wrap">
+                    {(Object.keys(serviceTypeLabels) as ServiceType[]).map((type) => {
+                      const config = serviceTypeLabels[type];
+                      const Icon = config.icon;
+                      const isSelected = serviceType === type;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setServiceType(type)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
+                            isSelected 
+                              ? `${config.color} border-current font-medium shadow-sm` 
+                              : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {config.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                
                 <div>
                   <Label htmlFor="notes">Notas do Atendimento</Label>
                   <Textarea
@@ -275,7 +319,19 @@ export default function VirtualServiceLogModal({
                       <CardContent className="pt-4">
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              {(() => {
+                                const st = log.service_type || 'prospecao';
+                                const config = serviceTypeLabels[st as ServiceType];
+                                if (!config) return null;
+                                const Icon = config.icon;
+                                return (
+                                  <Badge className={`text-xs ${config.color}`}>
+                                    <Icon className="h-3 w-3 mr-1" />
+                                    {config.label}
+                                  </Badge>
+                                );
+                              })()}
                               <Badge variant="outline" className="text-xs">
                                 <User className="h-3 w-3 mr-1" />
                                 {log.attendant_name}
