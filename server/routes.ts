@@ -8263,13 +8263,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Buscar todos os clientes para mapear telefones
+      const allCustomers = await storage.getAllCustomers();
+      const customerPhoneMap = new Map<string, string>();
+      allCustomers.forEach(customer => {
+        if (customer.omieClientId && customer.phone) {
+          customerPhoneMap.set(customer.omieClientId, customer.phone);
+        }
+      });
+
       // Transformar dados do banco para o formato esperado pelo frontend
       // Cada linha já representa UM cliente com TODOS os seus débitos
       const debts = savedDebts.map(debt => ({
         cliente: {
           codigo_cliente_omie: parseInt(debt.omieClientId),
           nome_fantasia: debt.clientName,
-          cnpj_cpf: debt.clientDocument || ''
+          cnpj_cpf: debt.clientDocument || '',
+          telefone: customerPhoneMap.get(debt.omieClientId) || ''
         },
         debitos: debt.debts || [],
         valorTotal: parseFloat(debt.totalAmount),

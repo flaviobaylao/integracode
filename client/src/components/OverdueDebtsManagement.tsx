@@ -9,7 +9,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, RefreshCw, Search, Eye, Download } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle } from "lucide-react";
+import WhatsAppButton from "@/components/WhatsAppButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from 'xlsx';
 
@@ -18,6 +19,7 @@ interface OverdueDebt {
     codigo_cliente_omie: number;
     nome_fantasia: string;
     cnpj_cpf: string;
+    telefone?: string;
   };
   debitos: Array<{
     numero_documento: string;
@@ -672,21 +674,31 @@ export default function OverdueDebtsManagement() {
                             </Badge>
                           </td>
                           <td className="p-3 text-center">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleDownloadBoleto(documento.codigo_lancamento_omie, debt.cliente.nome_fantasia)}
-                              disabled={downloadingBoleto === documento.codigo_lancamento_omie}
-                              data-testid={`button-download-boleto-${debtIndex}-${docIndex}`}
-                              className="flex items-center gap-2"
-                            >
-                              {downloadingBoleto === documento.codigo_lancamento_omie ? (
-                                <RefreshCw className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Download className="h-4 w-4" />
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDownloadBoleto(documento.codigo_lancamento_omie, debt.cliente.nome_fantasia)}
+                                disabled={downloadingBoleto === documento.codigo_lancamento_omie}
+                                data-testid={`button-download-boleto-${debtIndex}-${docIndex}`}
+                                className="flex items-center gap-1"
+                              >
+                                {downloadingBoleto === documento.codigo_lancamento_omie ? (
+                                  <RefreshCw className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                                <span className="hidden sm:inline">Boleto</span>
+                              </Button>
+                              {debt.cliente.telefone && (
+                                <WhatsAppButton
+                                  phone={debt.cliente.telefone}
+                                  customerName={debt.cliente.nome_fantasia}
+                                  size="sm"
+                                  variant="outline"
+                                />
                               )}
-                              <span className="hidden sm:inline">Boleto</span>
-                            </Button>
+                            </div>
                           </td>
                         </tr>
                       ))
