@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -109,16 +109,22 @@ export default function Billings() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [sseReconnectKey, setSseReconnectKey] = useState(0);
+
+  const sseRetryCountRef = useRef(0);
+  const maxSseRetries = 3;
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let idleCount = 0;
     const maxIdleBeforeClose = 120;
+    let isMounted = true;
 
-    if (isSyncing) {
+    const createEventSource = () => {
       eventSource = new EventSource('/api/omie/sync-billings/progress');
       
       eventSource.onmessage = (event) => {
+        if (!isMounted) return;
         try {
           const data = JSON.parse(event.data);
           
@@ -129,16 +135,19 @@ export default function Billings() {
               eventSource?.close();
               setIsSyncing(false);
               setSyncProgress(null);
+              sseRetryCountRef.current = 0;
             }
             return;
           }
           
           idleCount = 0;
+          sseRetryCountRef.current = 0;
           setSyncProgress(data);
           
           if (data.status === 'completed') {
             eventSource?.close();
             setIsSyncing(false);
+            sseRetryCountRef.current = 0;
             queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
             queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
             toast({
@@ -148,6 +157,7 @@ export default function Billings() {
           } else if (data.status === 'error') {
             eventSource?.close();
             setIsSyncing(false);
+            sseRetryCountRef.current = 0;
             queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
             queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
             toast({
@@ -164,18 +174,39 @@ export default function Billings() {
       eventSource.onerror = (e) => {
         console.error('SSE error:', e);
         eventSource?.close();
-        setTimeout(() => {
-          if (isSyncing) {
-            console.log('SSE: Tentando reconectar...');
-          }
-        }, 2000);
+        if (!isMounted) return;
+        
+        sseRetryCountRef.current += 1;
+        if (sseRetryCountRef.current >= maxSseRetries) {
+          console.log('SSE: Máximo de tentativas atingido, encerrando');
+          setIsSyncing(false);
+          setSyncProgress(null);
+          sseRetryCountRef.current = 0;
+          toast({
+            title: 'Erro de conexão',
+            description: 'Não foi possível conectar ao servidor. Tente novamente.',
+            variant: 'destructive',
+          });
+        } else {
+          console.log(`SSE: Tentativa ${sseRetryCountRef.current}/${maxSseRetries}, reconectando em 2s...`);
+          setTimeout(() => {
+            if (isMounted && isSyncing) {
+              setSseReconnectKey(k => k + 1);
+            }
+          }, 2000);
+        }
       };
+    };
+
+    if (isSyncing) {
+      createEventSource();
     }
 
     return () => {
+      isMounted = false;
       eventSource?.close();
     };
-  }, [isSyncing, queryClient]);
+  }, [isSyncing, sseReconnectKey, queryClient]);
 
   // Query para buscar faturamentos (sem filtros - tudo client-side)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({

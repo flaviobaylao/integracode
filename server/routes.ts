@@ -2154,6 +2154,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Count virtual service logs by seller for a specific date
+  app.get('/api/service-logs/count/customer', authenticateUser, async (req: any, res) => {
+    try {
+      const { sellerId, date } = req.query;
+      
+      if (!sellerId || !date) {
+        return res.status(400).json({ message: "sellerId e date são obrigatórios" });
+      }
+      
+      // Single optimized query with JOIN to avoid N+1 pattern
+      const result = await db.execute(sql`
+        SELECT COUNT(vsl.id) as count 
+        FROM virtual_service_logs vsl
+        INNER JOIN customers c ON vsl.customer_id = c.id
+        WHERE c.seller_id = ${sellerId}
+        AND vsl.entity_type = 'customer'
+        AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+      `);
+      
+      const count = parseInt(result.rows[0]?.count || '0');
+      res.json({ count });
+    } catch (error) {
+      console.error("Error counting service logs:", error);
+      res.status(500).json({ message: "Falha ao contar atendimentos" });
+    }
+  });
+
   // Upload image for service logs
   app.post('/api/upload-image', authenticateUser, upload.single('image'), async (req: any, res) => {
     try {

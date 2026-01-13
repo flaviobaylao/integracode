@@ -1876,9 +1876,7 @@ export default function RotaDoDia() {
       {virtualServiceCustomer && (
         <VirtualServiceLogModal
           open={!!virtualServiceCustomer}
-          onOpenChange={(open) => {
-            if (!open) setVirtualServiceCustomer(null);
-          }}
+          onClose={() => setVirtualServiceCustomer(null)}
           customerId={virtualServiceCustomer.id}
           customerName={virtualServiceCustomer.name}
           entityType="customer"

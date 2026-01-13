@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ interface VirtualServiceLogModalProps {
   customerName: string;
   defaultServiceType?: ServiceType;
   entityType?: EntityType;
+  onSuccess?: () => void;
 }
 
 export default function VirtualServiceLogModal({ 
@@ -52,7 +53,8 @@ export default function VirtualServiceLogModal({
   customerId, 
   customerName,
   defaultServiceType = 'prospecao',
-  entityType = 'customer'
+  entityType = 'customer',
+  onSuccess
 }: VirtualServiceLogModalProps) {
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
@@ -61,6 +63,13 @@ export default function VirtualServiceLogModal({
   const [serviceType, setServiceType] = useState<ServiceType>(defaultServiceType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset serviceType when modal opens with a new defaultServiceType
+  useEffect(() => {
+    if (open) {
+      setServiceType(defaultServiceType);
+    }
+  }, [open, defaultServiceType]);
 
   const { data: logs, isLoading } = useQuery<VirtualServiceLog[]>({
     queryKey: [`/api/service-logs/${entityType}/${customerId}`],
@@ -81,6 +90,7 @@ export default function VirtualServiceLogModal({
         title: "Atendimento registrado",
         description: "O registro foi salvo com sucesso.",
       });
+      onSuccess?.();
     },
     onError: (error: any) => {
       toast({
