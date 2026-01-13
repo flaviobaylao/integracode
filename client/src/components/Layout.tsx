@@ -173,8 +173,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
     { id: 'validacao-rotas', label: 'Validação de Rotas', icon: 'fas fa-check-double', available: user?.role && ['admin', 'coordinator'].includes(user.role), badge: null },
-    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports || isTelemarketing, badge: null },
-    { id: 'telemarketing', label: 'Central de Telemarketing', icon: 'fas fa-comments', available: canAccessReports || isTelemarketing, badge: null },
+    { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
+    { id: 'central-atendimento', label: 'Central de Atendimento', icon: 'fas fa-headset', available: isTelemarketing, badge: null },
+    { id: 'telemarketing', label: 'Central de Telemarketing', icon: 'fas fa-comments', available: canAccessReports, badge: null },
     { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
   ];
 
@@ -226,6 +227,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       'telemarketing-telegram': '/telemarketing/analysis',
       'telemarketing-deliveries': '/telemarketing/analysis',
       'telemarketing-analysis': '/telemarketing/conversas',
+      'central-atendimento': '/telemarketing/atendimento',
     };
     
     if (telemarketingRoutes[itemId]) {
@@ -236,7 +238,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
@@ -287,7 +289,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {menuItems
                   .filter(item => item.available)
                   .filter(item => !isMotorista || item.id === 'rota-entrega')
-                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'whatsapp'].includes(item.id))
+                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'central-atendimento', 'overdue-debts', 'hotsite-orders'].includes(item.id))
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -491,7 +493,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               {menuItems
                 .filter(item => item.available)
                 .filter(item => !isMotorista || item.id === 'rota-entrega')
-                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'whatsapp'].includes(item.id))
+                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'central-atendimento', 'overdue-debts', 'hotsite-orders'].includes(item.id))
                 .map(item => (
                   <li key={item.id}>
                     <Button
