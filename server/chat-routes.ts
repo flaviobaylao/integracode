@@ -145,7 +145,16 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     const normalizedPhone = normalizePhoneNumber(targetPhone);
     const isFromMe = data.key?.fromMe === true;
     const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
-    const messageId = data.key?.id;
+    const rawMessageId = data.key?.id;
+    const messageTimestamp = data.messageTimestamp || Date.now();
+    
+    // CRITICAL: Generate fallback ID when Evolution API doesn't provide one
+    // This prevents message loss when webhook events arrive without valid key.id
+    const messageId = rawMessageId || `fallback-${normalizedPhone}-${messageTimestamp}-${Date.now()}`;
+    
+    if (!rawMessageId) {
+      console.warn(`⚠️ [PROCESS] Mensagem sem key.id recebida de ${normalizedPhone}, usando ID fallback: ${messageId}`);
+    }
 
     // Busca contato na agenda
     const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
@@ -177,10 +186,14 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     }
 
     // 2. Verifica duplicata (pelo externalId no banco)
-    const isDuplicate = await storage.getChatMessageByExternalId(messageId);
-    
-    if (isDuplicate) {
-      return false; // Já existe
+    // Only check for duplicates if we have a valid original messageId (not a fallback)
+    if (rawMessageId) {
+      const isDuplicate = await storage.getChatMessageByExternalId(messageId);
+      
+      if (isDuplicate) {
+        console.log(`🔄 [DEDUP] Mensagem duplicada ignorada: ${messageId} de ${normalizedPhone}, conteúdo: ${messageText?.substring(0, 50)}...`);
+        return false; // Já existe
+      }
     }
 
     // 3. Extrair informações de mídia usando extractMediaInfo
@@ -202,11 +215,10 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
         if (instanceName) {
           // Passar o key completo para Evolution API v2.3.6+
           const messageKey = {
-            id: messageId,
+            id: rawMessageId, // Use original ID for API calls, not fallback
             remoteJid: data.key?.remoteJid,
             fromMe: data.key?.fromMe
           };
-          const messageTimestamp = data.messageTimestamp;
           const mediaResult = await evolutionAPIService.getBase64FromMediaMessage(instanceName, messageKey, messageTimestamp);
           
           if (mediaResult.success && mediaResult.base64) {
