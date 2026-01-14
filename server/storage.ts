@@ -113,8 +113,10 @@ import {
   insertSystemSettingSchema,
   phonebookContacts,
   AGENT_COLORS,
+  virtualAttendanceStats,
   type PhonebookContact,
   type InsertPhonebookContact,
+  type VirtualAttendanceStat,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -456,6 +458,15 @@ export interface IStorage {
   createPhonebookContact(contact: InsertPhonebookContact): Promise<PhonebookContact>;
   updatePhonebookContact(id: string, contact: Partial<InsertPhonebookContact>): Promise<PhonebookContact>;
   deletePhonebookContact(id: string): Promise<void>;
+  
+  // Virtual Attendance Stats operations
+  logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void>;
+  getVirtualAttendanceSummary(filters: { startDate: Date; endDate: Date; agentId?: string }): Promise<Array<{
+    agentId: string;
+    agentName: string;
+    serviceDate: string;
+    conversationCount: number;
+  }>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7310,6 +7321,66 @@ export class DatabaseStorage implements IStorage {
 
   async deletePhonebookContact(id: string): Promise<void> {
     await db.delete(phonebookContacts).where(eq(phonebookContacts.id, id));
+  }
+  
+  // Virtual Attendance Stats operations
+  async logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void> {
+    const formattedDate = serviceDate.toISOString().split('T')[0];
+    
+    try {
+      await db.insert(virtualAttendanceStats).values({
+        conversationId,
+        agentId,
+        serviceDate: formattedDate,
+      }).onConflictDoNothing();
+    } catch (error) {
+      console.error('[STORAGE] Error logging virtual attendance:', error);
+    }
+  }
+  
+  async getVirtualAttendanceSummary(filters: { startDate: Date; endDate: Date; agentId?: string }): Promise<Array<{
+    agentId: string;
+    agentName: string;
+    serviceDate: string;
+    conversationCount: number;
+  }>> {
+    const startDateStr = filters.startDate.toISOString().split('T')[0];
+    const endDateStr = filters.endDate.toISOString().split('T')[0];
+    
+    const conditions = [
+      gte(virtualAttendanceStats.serviceDate, startDateStr),
+      lte(virtualAttendanceStats.serviceDate, endDateStr),
+    ];
+    
+    if (filters.agentId) {
+      conditions.push(eq(virtualAttendanceStats.agentId, filters.agentId));
+    }
+    
+    const results = await db
+      .select({
+        agentId: virtualAttendanceStats.agentId,
+        serviceDate: virtualAttendanceStats.serviceDate,
+        conversationCount: sql<number>`count(*)::int`,
+      })
+      .from(virtualAttendanceStats)
+      .where(and(...conditions))
+      .groupBy(virtualAttendanceStats.agentId, virtualAttendanceStats.serviceDate)
+      .orderBy(desc(virtualAttendanceStats.serviceDate), asc(virtualAttendanceStats.agentId));
+    
+    // Get agent names
+    const agentIds = [...new Set(results.map(r => r.agentId))];
+    const agents = agentIds.length > 0 
+      ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, agentIds))
+      : [];
+    
+    const agentNameMap = new Map(agents.map(a => [a.id, a.name]));
+    
+    return results.map(r => ({
+      agentId: r.agentId,
+      agentName: agentNameMap.get(r.agentId) || 'Desconhecido',
+      serviceDate: r.serviceDate,
+      conversationCount: r.conversationCount,
+    }));
   }
 }
 
