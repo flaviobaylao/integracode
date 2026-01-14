@@ -428,12 +428,16 @@ class EvolutionAPIService {
           payload.caption = caption;
         }
 
-        // Derive filename from options, URL, or use defaults
-        const derivedFileName = options?.fileName || this.getFileNameFromUrl(mediaUrl) || this.getDefaultFileName(mediaType);
-
         // CRITICAL: Evolution API requires 'mediatype' discriminator and 'fileName' for ALL media types
         // Default to 'image' (not 'document') since most uploads are images
         payload.mediatype = mediaType || 'image';
+        
+        // Derive filename from options, URL, or generate based on mimetype to avoid mismatch
+        // PNG files need .png extension, JPEG files need .jpg, etc.
+        const derivedFileName = options?.fileName || 
+                               this.getFileNameFromUrl(mediaUrl) || 
+                               this.getFileNameFromMimetype(payload.mimetype) ||
+                               this.getDefaultFileName(mediaType);
         payload.fileName = derivedFileName;
         
         console.log(`📤 [EVOLUTION-MEDIA] Payload final: mediatype=${payload.mediatype}, fileName=${payload.fileName}, mimetype=${payload.mimetype}, hasMedia=${!!payload.media}, isBase64=${isBase64}`);
@@ -535,6 +539,30 @@ class EvolutionAPIService {
     } catch {
       return null;
     }
+  }
+
+  // Helper to derive filename from mimetype (ensures extension matches mimetype)
+  private getFileNameFromMimetype(mimetype?: string): string | null {
+    if (!mimetype) return null;
+    
+    const mimeToExtension: Record<string, string> = {
+      'image/jpeg': 'image.jpg',
+      'image/png': 'image.png',
+      'image/gif': 'image.gif',
+      'image/webp': 'image.webp',
+      'video/mp4': 'video.mp4',
+      'video/webm': 'video.webm',
+      'audio/mpeg': 'audio.mp3',
+      'audio/ogg': 'audio.ogg',
+      'audio/wav': 'audio.wav',
+      'application/pdf': 'document.pdf',
+      'application/msword': 'document.doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'document.docx',
+      'application/vnd.ms-excel': 'document.xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'document.xlsx'
+    };
+    
+    return mimeToExtension[mimetype] || null;
   }
 
   // Helper to get default filename for media type
