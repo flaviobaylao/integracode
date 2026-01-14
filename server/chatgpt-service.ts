@@ -603,10 +603,8 @@ export async function generateAutoResponse(
   const companyContext = settings.companyContext || DEFAULT_COMPANY_CONTEXT;
   const model = settings.gptModel || "gpt-4o-mini";
   
-  const aiReports = await getAiReportsForContext();
-  const fullCompanyContext = aiReports 
-    ? `${companyContext}\n\n--- DADOS ATUALIZADOS DO SISTEMA ---\n${aiReports}`
-    : companyContext;
+  // Usar apenas o contexto da empresa configurado, sem relatórios de IA
+  const fullCompanyContext = companyContext;
 
   // Construir histórico de mensagens para contexto
   const messageHistory = context.recentMessages.slice(-10).map(msg => ({
