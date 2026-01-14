@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -73,6 +73,146 @@ interface Agent {
   id: string;
   name: string;
   status: string;
+}
+
+interface VirtualAttendanceStat {
+  agentId: string;
+  agentName: string;
+  serviceDate: string;
+  conversationCount: number;
+}
+
+// Componente para painel de estatísticas de atendimentos virtuais
+function VirtualAttendancePanel() {
+  const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: now.toISOString().split('T')[0]
+    };
+  });
+
+  const { data, isLoading, refetch } = useQuery<{ summaries: VirtualAttendanceStat[] }>({
+    queryKey: ['/api/chat/virtual-attendance', dateRange.start, dateRange.end],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        startDate: dateRange.start,
+        endDate: dateRange.end
+      });
+      const res = await fetch(`/api/chat/virtual-attendance?${params}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Erro ao buscar estatísticas');
+      return res.json();
+    }
+  });
+
+  const summaries = data?.summaries || [];
+
+  // Agrupar por agente para totais
+  const agentTotals = summaries.reduce((acc, stat) => {
+    if (!acc[stat.agentId]) {
+      acc[stat.agentId] = { agentName: stat.agentName, total: 0 };
+    }
+    acc[stat.agentId].total += stat.conversationCount;
+    return acc;
+  }, {} as Record<string, { agentName: string; total: number }>);
+
+  // Agrupar por data para totais diários
+  const dailyTotals = summaries.reduce((acc, stat) => {
+    if (!acc[stat.serviceDate]) {
+      acc[stat.serviceDate] = 0;
+    }
+    acc[stat.serviceDate] += stat.conversationCount;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalGeral = summaries.reduce((sum, stat) => sum + stat.conversationCount, 0);
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center gap-4 mb-4">
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-gray-500" />
+          <Input
+            type="date"
+            value={dateRange.start}
+            onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+            className="h-8 text-xs w-36"
+          />
+          <span className="text-gray-500">até</span>
+          <Input
+            type="date"
+            value={dateRange.end}
+            onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+            className="h-8 text-xs w-36"
+          />
+        </div>
+        <Button size="sm" variant="outline" onClick={() => refetch()} className="h-8">
+          <RefreshCw className="w-3 h-3 mr-1" />
+          Atualizar
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        </div>
+      ) : summaries.length === 0 ? (
+        <div className="text-center py-8 text-gray-500 text-sm">
+          Nenhum atendimento encontrado no período selecionado
+        </div>
+      ) : (
+        <ScrollArea className="flex-1">
+          {/* Resumo por Agente */}
+          <div className="mb-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Resumo por Atendente</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {Object.entries(agentTotals).map(([agentId, { agentName, total }]) => (
+                <div key={agentId} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <p className="text-xs text-gray-600 truncate">{agentName}</p>
+                  <p className="text-lg font-bold text-green-700">{total}</p>
+                  <p className="text-[10px] text-gray-500">atendimentos</p>
+                </div>
+              ))}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-gray-600">Total Geral</p>
+                <p className="text-lg font-bold text-blue-700">{totalGeral}</p>
+                <p className="text-[10px] text-gray-500">atendimentos</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tabela Detalhada */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Detalhamento por Data</h3>
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="text-left p-2 font-medium">Data</th>
+                    <th className="text-left p-2 font-medium">Atendente</th>
+                    <th className="text-right p-2 font-medium">Conversas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaries.map((stat, idx) => (
+                    <tr key={`${stat.agentId}-${stat.serviceDate}-${idx}`} className="border-t hover:bg-gray-50">
+                      <td className="p-2">
+                        {format(new Date(stat.serviceDate + 'T12:00:00'), 'dd/MM/yyyy', { locale: ptBR })}
+                      </td>
+                      <td className="p-2">{stat.agentName}</td>
+                      <td className="p-2 text-right font-semibold">{stat.conversationCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </ScrollArea>
+      )}
+    </div>
+  );
 }
 
 // Componente Auxiliar para Item de Conversa
@@ -986,7 +1126,7 @@ export default function ChatCenter() {
               <Card className="h-full flex flex-col overflow-hidden">
                 <CardHeader className="shrink-0 pb-3">
                   <div className="flex items-center justify-between mb-3">
-                    <TabsList className="grid w-full grid-cols-2 max-w-[240px]">
+                    <TabsList className="grid w-full grid-cols-3 max-w-[360px]">
                       <TabsTrigger value="conversas" className="gap-1 text-xs" data-testid="tab-conversas">
                         <Phone className="w-3 h-3" />
                         Conversas
@@ -994,6 +1134,10 @@ export default function ChatCenter() {
                       <TabsTrigger value="agenda" className="gap-1 text-xs" data-testid="tab-agenda">
                         <BookOpen className="w-3 h-3" />
                         Agenda
+                      </TabsTrigger>
+                      <TabsTrigger value="atendimentos" className="gap-1 text-xs" data-testid="tab-atendimentos">
+                        <BarChart2 className="w-3 h-3" />
+                        Atendimentos
                       </TabsTrigger>
                     </TabsList>
                   </div>
@@ -1091,6 +1235,10 @@ export default function ChatCenter() {
                       setShowNewConversation(true);
                     }}
                   />
+                </TabsContent>
+
+                <TabsContent value="atendimentos" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                  <VirtualAttendancePanel />
                 </TabsContent>
               </Card>
             </Tabs>
