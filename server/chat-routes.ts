@@ -2981,6 +2981,7 @@ export function registerChatRoutes(app: Express): void {
                 let finalMediaUrl = mediaUrl;
                 let detectedMimetype: string | undefined;
                 let detectedFileName: string | undefined;
+                let conversionSuccess = false;
                 
                 const mimeTypes: Record<string, string> = {
                   '.jpg': 'image/jpeg',
@@ -3021,6 +3022,7 @@ export function registerChatRoutes(app: Express): void {
                       
                       if (!exists) {
                         console.error(`❌ [SEND-WHATSAPP] Arquivo não encontrado no Object Storage: ${objectPath}`);
+                        sendResult = { success: false, error: 'Arquivo de mídia não encontrado no storage' };
                       } else {
                         const [fileBuffer] = await file.download();
                         const base64Data = fileBuffer.toString('base64');
@@ -3031,11 +3033,16 @@ export function registerChatRoutes(app: Express): void {
                         detectedFileName = filename;
                         
                         finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+                        conversionSuccess = true;
                         console.log(`📤 [SEND-WHATSAPP] Object Storage convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
                       }
+                    } else {
+                      console.error(`❌ [SEND-WHATSAPP] Regex não encontrou bucket/path na URL: ${mediaUrl}`);
+                      sendResult = { success: false, error: 'URL de mídia inválida' };
                     }
                   } catch (storageErr: any) {
                     console.error(`❌ [SEND-WHATSAPP] Erro ao buscar do Object Storage:`, storageErr.message, storageErr.stack);
+                    sendResult = { success: false, error: `Erro ao acessar storage: ${storageErr.message}` };
                   }
                 }
                 // Handle legacy /uploads/chat/ paths (fallback for old uploads)
@@ -3056,38 +3063,57 @@ export function registerChatRoutes(app: Express): void {
                       detectedFileName = filename;
                       
                       finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+                      conversionSuccess = true;
                       console.log(`📤 [SEND-WHATSAPP] Arquivo local convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
                     } else {
                       console.error(`❌ [SEND-WHATSAPP] Arquivo local não encontrado: ${filePath}`);
+                      sendResult = { success: false, error: 'Arquivo de mídia local não encontrado' };
                     }
                   } catch (fileErr: any) {
                     console.error(`❌ [SEND-WHATSAPP] Erro ao converter arquivo local para base64:`, fileErr.message);
+                    sendResult = { success: false, error: `Erro ao processar arquivo local: ${fileErr.message}` };
                   }
                 }
+                // Handle external URLs or already base64
+                else if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://') || mediaUrl.startsWith('data:')) {
+                  console.log(`📤 [SEND-WHATSAPP] URL externa ou base64 detectada, enviando diretamente`);
+                  conversionSuccess = true;
+                }
+                else {
+                  console.error(`❌ [SEND-WHATSAPP] Tipo de URL de mídia não suportado: ${mediaUrl.substring(0, 50)}...`);
+                  sendResult = { success: false, error: 'Tipo de mídia não suportado' };
+                }
                 
-                // Map frontend messageType to Evolution API expected mediaType
-                let evolutionMediaType: 'image' | 'audio' | 'video' | 'document' = 'document';
-                if (messageType === 'image') evolutionMediaType = 'image';
-                else if (messageType === 'audio') evolutionMediaType = 'audio';
-                else if (messageType === 'video') evolutionMediaType = 'video';
-                
-                sendResult = await evolutionAPIService.sendMediaMessage(
-                  config.instanceName,
-                  phoneFormatted,
-                  finalMediaUrl,
-                  mediaCaption || content || undefined,
-                  evolutionMediaType,
-                  3,
-                  { mimetype: detectedMimetype, fileName: detectedFileName }
-                );
+                // Only send if conversion was successful or URL is external
+                if (conversionSuccess) {
+                  // Map frontend messageType to Evolution API expected mediaType
+                  let evolutionMediaType: 'image' | 'audio' | 'video' | 'document' = 'document';
+                  if (messageType === 'image') evolutionMediaType = 'image';
+                  else if (messageType === 'audio') evolutionMediaType = 'audio';
+                  else if (messageType === 'video') evolutionMediaType = 'video';
+                  
+                  console.log(`📤 [SEND-WHATSAPP] Enviando para Evolution API: tipo=${evolutionMediaType}, tamanho=${Math.round(finalMediaUrl.length/1024)}KB`);
+                  
+                  sendResult = await evolutionAPIService.sendMediaMessage(
+                    config.instanceName,
+                    phoneFormatted,
+                    finalMediaUrl,
+                    mediaCaption || content || undefined,
+                    evolutionMediaType,
+                    3,
+                    { mimetype: detectedMimetype, fileName: detectedFileName }
+                  );
+                }
               } else {
                 sendResult = { success: false, error: 'Tipo de mensagem não suportado' };
               }
               
-              if (sendResult.success) {
+              if (sendResult?.success) {
                 console.log(`✅ [SEND-WHATSAPP] Mensagem entregue com sucesso! ID:`, sendResult.messageId);
-              } else {
+              } else if (sendResult) {
                 console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar:`, sendResult.error);
+              } else {
+                console.warn(`⚠️ [SEND-WHATSAPP] Nenhum resultado de envio disponível`);
               }
             }
           }
