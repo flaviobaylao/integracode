@@ -1,6 +1,6 @@
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Bot, Clock, Calendar, Power, Play, Zap, Settings, MessageSquare, AlertCircle, CheckCircle, RefreshCw, Database } from "lucide-react";
+import { Loader2, Bot, Clock, Calendar, Power, Play, Zap, Settings, MessageSquare, AlertCircle, CheckCircle, RefreshCw, Database, Upload, ImageIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -170,6 +170,8 @@ export default function ChatAISettings() {
   const [testResponse, setTestResponse] = useState<{ response?: string; shouldTransfer?: boolean; transferReason?: string; tokensUsed?: number; responseTimeMs?: number } | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: settingsData, isLoading: isLoadingSettings } = useQuery<{ success: boolean; settings: ChatAiSettings }>({
     queryKey: ['/api/chat/ai-settings'],
@@ -274,6 +276,55 @@ export default function ChatAISettings() {
       ...settings,
       handoffKeywords: settings.handoffKeywords.filter(k => k !== keyword)
     });
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploadingImage(true);
+    try {
+      const uploadedUrls: string[] = [];
+      
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith('image/')) {
+          toast({ title: 'Erro', description: `${file.name} não é uma imagem válida`, variant: 'destructive' });
+          continue;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/api/chat/upload', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          throw new Error(`Erro ao fazer upload de ${file.name}`);
+        }
+
+        const data = await response.json();
+        if (data.file?.url) {
+          uploadedUrls.push(data.file.url);
+        }
+      }
+
+      if (uploadedUrls.length > 0) {
+        const newImages = [...(settings.chatgptImages || []), ...uploadedUrls];
+        setSettings({ ...settings, chatgptImages: newImages });
+        updateMutation.mutate({ chatgptImages: newImages });
+        toast({ title: 'Sucesso', description: `${uploadedUrls.length} imagem(ns) adicionada(s)` });
+      }
+    } catch (error: any) {
+      toast({ title: 'Erro no upload', description: error.message, variant: 'destructive' });
+    } finally {
+      setIsUploadingImage(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   if (authLoading || isLoadingSettings) {
@@ -649,6 +700,49 @@ export default function ChatAISettings() {
                   </p>
                 )}
               </div>
+              <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageUpload}
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  data-testid="input-image-file"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingImage}
+                  className="w-full"
+                  data-testid="button-upload-image"
+                >
+                  {isUploadingImage ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Fazer Upload de Imagem
+                    </>
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Clique para selecionar imagens do seu computador
+                </p>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-white px-2 text-muted-foreground">ou cole uma URL</span>
+                </div>
+              </div>
+
               <div className="flex gap-2">
                 <Input
                   placeholder="Cole a URL da imagem aqui..."
@@ -680,9 +774,6 @@ export default function ChatAISettings() {
                   Adicionar
                 </Button>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Adicione URLs de imagens hospedadas (ex: Object Storage do sistema) que o ChatGPT pode enviar aos clientes
-              </p>
             </CardContent>
           </Card>
 
