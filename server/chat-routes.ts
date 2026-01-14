@@ -1013,6 +1013,9 @@ export function registerChatRoutes(app: Express): void {
   // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
   app.post("/api/chat/webhook/messages", async (req, res) => {
+    // CRITICAL: Log immediately when webhook is called to confirm Evolution API connectivity
+    console.log(`📥 [WEBHOOK-HIT] Webhook recebido às ${new Date().toISOString()}, evento=${req.body?.event || 'unknown'}`);
+    
     const debugInfo: any = { 
       timestamp: new Date().toISOString(),
       steps: [],
