@@ -2812,6 +2812,30 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/virtual-attendance - Estatísticas de atendimentos virtuais por agente/data
+  app.get("/api/chat/virtual-attendance", authenticateUser, requireRole(["admin", "coordinator", "administrative", "telemarketing"]), async (req, res) => {
+    try {
+      const { startDate, endDate, agentId } = req.query;
+      
+      // Default: últimos 30 dias se não especificado
+      const now = new Date();
+      const defaultStartDate = new Date(now);
+      defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+      
+      const filters = {
+        startDate: startDate ? new Date(startDate as string) : defaultStartDate,
+        endDate: endDate ? new Date(endDate as string) : now,
+        agentId: agentId as string | undefined,
+      };
+      
+      const summary = await storage.getVirtualAttendanceSummary(filters);
+      res.json({ summaries: summary });
+    } catch (error: any) {
+      console.error("[VIRTUAL-ATTENDANCE] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar estatísticas de atendimentos" });
+    }
+  });
+
   // PATCH /api/chat/conversations/:conversationId/finish - Finalizar atendimento
   app.patch("/api/chat/conversations/:conversationId/finish", authenticateUser, async (req, res) => {
     try {
@@ -2857,6 +2881,16 @@ export function registerChatRoutes(app: Express): void {
           });
         } catch (sendErr: any) {
           console.error(`⚠️ [CHAT-FINISH] Erro ao enviar mensagem de finalização:`, sendErr.message);
+        }
+      }
+
+      // Registrar atendimento virtual se havia agente humano atribuído
+      if (conversation.assignedAgentId && conversation.assignedAgentId !== 'chatgpt') {
+        const agents = await storage.getChatAgents();
+        const assignedAgent = agents.find(a => a.id === conversation.assignedAgentId);
+        if (assignedAgent?.userId) {
+          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, new Date());
+          console.log(`📊 [VIRTUAL-ATTENDANCE] Registrado atendimento: agente=${assignedAgent.userId}, conversa=${conversationId}`);
         }
       }
 
