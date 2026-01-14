@@ -1451,7 +1451,105 @@ export function registerChatRoutes(app: Express): void {
 
       let result;
       if (isMediaMessage && mediaUrl) {
-        result = await evolutionAPIService.sendMediaMessage(config.instanceName, normalizedPhone, mediaUrl, caption, actualMediaType as 'image' | 'audio' | 'video' | 'document');
+        console.log(`📤 [WHATSAPP-SEND] Processando mídia: ${mediaUrl}`);
+        
+        // Convert Object Storage URLs to base64 for Evolution API
+        let finalMediaUrl = mediaUrl;
+        let detectedMimetype: string | undefined;
+        let detectedFileName: string | undefined;
+        
+        const mimeTypes: Record<string, string> = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.mp4': 'video/mp4',
+          '.webm': 'video/webm',
+          '.mp3': 'audio/mpeg',
+          '.ogg': 'audio/ogg',
+          '.wav': 'audio/wav',
+          '.pdf': 'application/pdf',
+          '.doc': 'application/msword',
+          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          '.xls': 'application/vnd.ms-excel',
+          '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        };
+        
+        // Handle Object Storage URLs - convert to base64
+        if (mediaUrl.startsWith('/api/storage-image/')) {
+          try {
+            const storagePathMatch = mediaUrl.match(/^\/api\/storage-image\/([^/]+)\/(.+)$/);
+            console.log(`📤 [WHATSAPP-SEND] Object Storage match: ${storagePathMatch ? 'success' : 'failed'}`);
+            if (storagePathMatch) {
+              const [, bucketName, objectPath] = storagePathMatch;
+              console.log(`📤 [WHATSAPP-SEND] Buscando do Object Storage: bucket=${bucketName}, object=${objectPath}`);
+              
+              const bucket = objectStorageClient.bucket(bucketName);
+              const file = bucket.file(objectPath);
+              
+              const [exists] = await file.exists();
+              console.log(`📤 [WHATSAPP-SEND] Arquivo existe: ${exists}`);
+              
+              if (exists) {
+                const [fileBuffer] = await file.download();
+                const base64Data = fileBuffer.toString('base64');
+                const filename = path.basename(objectPath);
+                
+                const ext = path.extname(filename).toLowerCase();
+                detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
+                detectedFileName = filename;
+                
+                finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+                console.log(`📤 [WHATSAPP-SEND] Convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
+              } else {
+                console.error(`❌ [WHATSAPP-SEND] Arquivo não encontrado: ${objectPath}`);
+                return res.status(404).json({ error: "Arquivo de mídia não encontrado" });
+              }
+            }
+          } catch (storageErr: any) {
+            console.error(`❌ [WHATSAPP-SEND] Erro ao buscar do Object Storage:`, storageErr.message);
+            return res.status(500).json({ error: "Erro ao processar arquivo de mídia" });
+          }
+        }
+        // Handle legacy /uploads/ paths
+        else if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
+          try {
+            let filePath = mediaUrl;
+            if (mediaUrl.startsWith('/uploads/')) {
+              filePath = path.join(process.cwd(), mediaUrl.substring(1));
+            }
+            
+            if (fs.existsSync(filePath)) {
+              const fileBuffer = fs.readFileSync(filePath);
+              const base64Data = fileBuffer.toString('base64');
+              const filename = path.basename(filePath);
+              
+              const ext = path.extname(filename).toLowerCase();
+              detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
+              detectedFileName = filename;
+              
+              finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+              console.log(`📤 [WHATSAPP-SEND] Arquivo local convertido: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
+            } else {
+              console.error(`❌ [WHATSAPP-SEND] Arquivo local não encontrado: ${filePath}`);
+              return res.status(404).json({ error: "Arquivo de mídia não encontrado" });
+            }
+          } catch (fileErr: any) {
+            console.error(`❌ [WHATSAPP-SEND] Erro ao processar arquivo local:`, fileErr.message);
+            return res.status(500).json({ error: "Erro ao processar arquivo de mídia" });
+          }
+        }
+        
+        result = await evolutionAPIService.sendMediaMessage(
+          config.instanceName, 
+          normalizedPhone, 
+          finalMediaUrl, 
+          caption, 
+          actualMediaType as 'image' | 'audio' | 'video' | 'document',
+          3,
+          { mimetype: detectedMimetype, fileName: detectedFileName }
+        );
       } else if (messageType === 'location' && req.body.latitude && req.body.longitude) {
         result = await evolutionAPIService.sendLocationMessage(config.instanceName, normalizedPhone, req.body.latitude, req.body.longitude, caption);
       } else {
