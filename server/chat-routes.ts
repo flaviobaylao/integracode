@@ -3305,33 +3305,31 @@ export function registerChatRoutes(app: Express): void {
 
   // DEBUG: Test apenas 3 primeiros chats com logging detalhado
 
-    // 🔄 Rota para reconfigurar webhook (Modo Dev ou Emergência)
+    // 🔄 Rota para reconfigurar webhook (SEMPRE para PRODUÇÃO - fix critical issue)
   app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
-      const isDev = process.env.NODE_ENV === 'development';
-      const devDomain = process.env.REPLIT_DEV_DOMAIN;
-      const prodDomain = process.env.REPLIT_DOMAIN || (process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',')[0] : null);
+      // SEMPRE usar o domínio de produção estável - NUNCA o domínio de dev
+      const prodDomain = 'integrahonest.replit.app';
+      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
       
-      if (!prodDomain && !devDomain) {
-        throw new Error("Domínio não configurado no ambiente");
-      }
-
-      let webhookUrl = `https://${prodDomain}/api/chat/webhook`;
-      
-      // Prioridade absoluta para o domínio de dev se estivermos em dev
-      if (isDev && devDomain) {
-        webhookUrl = `https://${devDomain}/api/chat/webhook`;
-      }
-      
-      console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook para: ${webhookUrl}`);
+      console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook SEMPRE para PRODUÇÃO: ${webhookUrl}`);
       
       const config = evolutionAPIService.getConfig();
       if (!config) throw new Error("Evolution API não configurada");
       
-      const result = await evolutionAPIService.configureWebhook(config.instanceName, webhookUrl);
+      const webhookEvents = [
+        'MESSAGES_UPSERT',
+        'SEND_MESSAGE',
+        'MESSAGES_UPDATE',
+        'MESSAGES_SET',
+        'MESSAGES_EDITED'
+      ];
+      
+      const result = await evolutionAPIService.setWebhook(config.instanceName, webhookUrl, webhookEvents);
       
       if (result.success) {
-        res.json({ success: true, message: `Webhook reconfigurado com sucesso para: ${webhookUrl}` });
+        console.log(`✅ [WEBHOOK-FORCE] Webhook fixado para produção: ${webhookUrl}`);
+        res.json({ success: true, message: `Webhook reconfigurado com sucesso para PRODUÇÃO: ${webhookUrl}` });
       } else {
         res.status(500).json({ error: result.error || "Falha ao configurar na Evolution API" });
       }
