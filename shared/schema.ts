@@ -2322,3 +2322,39 @@ export const insertPhonebookContactSchema = createInsertSchema(phonebookContacts
 export type PhonebookContact = typeof phonebookContacts.$inferSelect;
 export type InsertPhonebookContact = z.infer<typeof insertPhonebookContactSchema>;
 
+// ============================================================================
+// VIRTUAL ATTENDANCE STATS - Estatísticas de atendimentos virtuais por agente/data
+// ============================================================================
+
+export const virtualAttendanceStats = pgTable("virtual_attendance_stats", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  agentId: varchar("agent_id").notNull(),
+  serviceDate: date("service_date").notNull(),
+  countedAt: timestamp("counted_at").defaultNow(),
+}, (table) => [
+  unique("unique_conversation_agent_date").on(table.conversationId, table.agentId, table.serviceDate),
+  index("idx_attendance_agent").on(table.agentId),
+  index("idx_attendance_date").on(table.serviceDate),
+  index("idx_attendance_agent_date").on(table.agentId, table.serviceDate),
+]);
+
+export const virtualAttendanceStatsRelations = relations(virtualAttendanceStats, ({ one }) => ({
+  agent: one(users, {
+    fields: [virtualAttendanceStats.agentId],
+    references: [users.id],
+  }),
+  conversation: one(chatConversations, {
+    fields: [virtualAttendanceStats.conversationId],
+    references: [chatConversations.id],
+  }),
+}));
+
+export const insertVirtualAttendanceStatsSchema = createInsertSchema(virtualAttendanceStats).omit({
+  id: true,
+  countedAt: true,
+});
+
+export type VirtualAttendanceStat = typeof virtualAttendanceStats.$inferSelect;
+export type InsertVirtualAttendanceStat = z.infer<typeof insertVirtualAttendanceStatsSchema>;
+
