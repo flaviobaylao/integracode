@@ -321,8 +321,12 @@ async function consolidateDuplicateConversations(storage: any): Promise<{ consol
 // Helper function to upload chat media to Object Storage
 async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, originalFilename: string): Promise<string | null> {
   try {
+    console.log(`📤 [CHAT-UPLOAD] Iniciando upload: ${originalFilename} (${mimetype}, ${Math.round(buffer.length / 1024)}KB)`);
+    
     const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
     const privateDir = process.env.PRIVATE_OBJECT_DIR;
+    
+    console.log(`📤 [CHAT-UPLOAD] ENV: PUBLIC_PATHS=${publicPaths ? 'set' : 'not set'}, PRIVATE_DIR=${privateDir ? 'set' : 'not set'}`);
     
     let baseDirEnv = publicPaths || privateDir;
     if (!baseDirEnv) {
@@ -331,6 +335,7 @@ async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, origin
     }
     
     const baseDir = baseDirEnv.split(',')[0].trim();
+    console.log(`📤 [CHAT-UPLOAD] baseDir: ${baseDir}`);
     
     // Parse path to get bucket and object name
     let pathNorm = baseDir.startsWith('/') ? baseDir : `/${baseDir}`;
@@ -341,6 +346,8 @@ async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, origin
     const fileId = nanoid(12);
     const ext = path.extname(originalFilename).toLowerCase() || '.bin';
     const objectName = `${basePath}/chat-media/${fileId}${ext}`;
+    
+    console.log(`📤 [CHAT-UPLOAD] Salvando: bucket=${bucketName}, object=${objectName}`);
     
     const bucket = objectStorageClient.bucket(bucketName);
     const file = bucket.file(objectName);
@@ -354,8 +361,8 @@ async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, origin
     const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
     console.log(`✅ [CHAT-UPLOAD] Arquivo salvo: ${serverUrl} (${Math.round(buffer.length / 1024)}KB)`);
     return serverUrl;
-  } catch (error) {
-    console.error('❌ [CHAT-UPLOAD] Erro ao fazer upload:', error);
+  } catch (error: any) {
+    console.error('❌ [CHAT-UPLOAD] Erro ao fazer upload:', error.message, error.stack);
     return null;
   }
 }
@@ -2895,30 +2902,42 @@ export function registerChatRoutes(app: Express): void {
                   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 };
                 
+                console.log(`📤 [SEND-WHATSAPP] mediaUrl recebida: ${mediaUrl}`);
+                
                 // Handle Object Storage URLs (new method - persistent)
                 if (mediaUrl.startsWith('/api/storage-image/')) {
                   try {
                     // Parse /api/storage-image/{bucket}/{objectPath}
                     const storagePathMatch = mediaUrl.match(/^\/api\/storage-image\/([^/]+)\/(.+)$/);
+                    console.log(`📤 [SEND-WHATSAPP] Regex match: ${storagePathMatch ? 'success' : 'failed'}`);
                     if (storagePathMatch) {
                       const [, bucketName, objectPath] = storagePathMatch;
                       console.log(`📤 [SEND-WHATSAPP] Buscando do Object Storage: bucket=${bucketName}, object=${objectPath}`);
                       
                       const bucket = objectStorageClient.bucket(bucketName);
                       const file = bucket.file(objectPath);
-                      const [fileBuffer] = await file.download();
-                      const base64Data = fileBuffer.toString('base64');
-                      const filename = path.basename(objectPath);
                       
-                      const ext = path.extname(filename).toLowerCase();
-                      detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
-                      detectedFileName = filename;
+                      console.log(`📤 [SEND-WHATSAPP] Verificando existência do arquivo...`);
+                      const [exists] = await file.exists();
+                      console.log(`📤 [SEND-WHATSAPP] Arquivo existe: ${exists}`);
                       
-                      finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
-                      console.log(`📤 [SEND-WHATSAPP] Object Storage convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
+                      if (!exists) {
+                        console.error(`❌ [SEND-WHATSAPP] Arquivo não encontrado no Object Storage: ${objectPath}`);
+                      } else {
+                        const [fileBuffer] = await file.download();
+                        const base64Data = fileBuffer.toString('base64');
+                        const filename = path.basename(objectPath);
+                        
+                        const ext = path.extname(filename).toLowerCase();
+                        detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
+                        detectedFileName = filename;
+                        
+                        finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
+                        console.log(`📤 [SEND-WHATSAPP] Object Storage convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
+                      }
                     }
                   } catch (storageErr: any) {
-                    console.error(`❌ [SEND-WHATSAPP] Erro ao buscar do Object Storage:`, storageErr.message);
+                    console.error(`❌ [SEND-WHATSAPP] Erro ao buscar do Object Storage:`, storageErr.message, storageErr.stack);
                   }
                 }
                 // Handle legacy /uploads/chat/ paths (fallback for old uploads)
