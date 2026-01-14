@@ -2165,6 +2165,9 @@ export const chatAiSettings = pgTable("chat_ai_settings", {
   // ID do Assistente OpenAI (ex: asst_4AM6M50fsOXKXlz5Ijc7IA9k)
   assistantId: varchar("assistant_id"),
   
+  // URLs das imagens que o ChatGPT pode enviar durante conversas
+  chatgptImages: text("chatgpt_images").array(),
+  
   // ============================================================================
   // CONFIGURAÇÕES DE FINALIZAÇÃO E AUSÊNCIA
   // ============================================================================

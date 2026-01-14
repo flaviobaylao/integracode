@@ -42,6 +42,7 @@ interface ChatAiSettings {
   inactivityTimeoutMinutes: number;
   finalizeMessage: string | null;
   absenceMessage: string | null;
+  chatgptImages: string[];
   createdAt: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -159,6 +160,7 @@ export default function ChatAISettings() {
     inactivityTimeoutMinutes: 30,
     finalizeMessage: 'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.',
     absenceMessage: 'No momento não há atendentes disponíveis. Por favor, tente novamente em instantes ou envie sua mensagem que responderemos assim que possível.',
+    chatgptImages: [],
     createdAt: null,
     updatedAt: null,
     updatedBy: null
@@ -167,6 +169,7 @@ export default function ChatAISettings() {
   const [testMessage, setTestMessage] = useState('');
   const [testResponse, setTestResponse] = useState<{ response?: string; shouldTransfer?: boolean; transferReason?: string; tokensUsed?: number; responseTimeMs?: number } | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
+  const [newImageUrl, setNewImageUrl] = useState('');
 
   const { data: settingsData, isLoading: isLoadingSettings } = useQuery<{ success: boolean; settings: ChatAiSettings }>({
     queryKey: ['/api/chat/ai-settings'],
@@ -600,6 +603,86 @@ export default function ChatAISettings() {
                   Adicionar
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Imagens do ChatGPT</CardTitle>
+              <CardDescription>
+                URLs de imagens que o ChatGPT pode enviar durante conversas com clientes
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                {(settings.chatgptImages || []).map((imageUrl, index) => (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <img 
+                      src={imageUrl} 
+                      alt={`Imagem ${index + 1}`}
+                      className="w-16 h-16 object-cover rounded border"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="%23ddd" width="64" height="64"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%23999" font-size="10">Erro</text></svg>';
+                      }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{imageUrl}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => {
+                        const newImages = [...(settings.chatgptImages || [])];
+                        newImages.splice(index, 1);
+                        setSettings({ ...settings, chatgptImages: newImages });
+                        updateMutation.mutate({ chatgptImages: newImages });
+                      }}
+                    >
+                      Remover
+                    </Button>
+                  </div>
+                ))}
+                {(settings.chatgptImages || []).length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Nenhuma imagem cadastrada
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Cole a URL da imagem aqui..."
+                  value={newImageUrl}
+                  onChange={(e) => setNewImageUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newImageUrl.trim()) {
+                      const newImages = [...(settings.chatgptImages || []), newImageUrl.trim()];
+                      setSettings({ ...settings, chatgptImages: newImages });
+                      updateMutation.mutate({ chatgptImages: newImages });
+                      setNewImageUrl('');
+                    }
+                  }}
+                  className="flex-1"
+                  data-testid="input-new-image-url"
+                />
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    if (newImageUrl.trim()) {
+                      const newImages = [...(settings.chatgptImages || []), newImageUrl.trim()];
+                      setSettings({ ...settings, chatgptImages: newImages });
+                      updateMutation.mutate({ chatgptImages: newImages });
+                      setNewImageUrl('');
+                    }
+                  }}
+                  data-testid="button-add-image"
+                >
+                  Adicionar
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Adicione URLs de imagens hospedadas (ex: Object Storage do sistema) que o ChatGPT pode enviar aos clientes
+              </p>
             </CardContent>
           </Card>
 
