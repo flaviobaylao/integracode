@@ -394,21 +394,22 @@ class EvolutionAPIService {
         };
 
         // Add media-specific properties based on type and format
-        // Evolution API uses 'base64' for base64 data and 'mediaUrl' for URLs
+        // Evolution API v2 uses 'media' field for BOTH base64 and URL
         if (isBase64) {
           // Extract mimetype and base64 data from data URI
           const dataUriMatch = mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
           if (dataUriMatch) {
-            payload.base64 = dataUriMatch[2];
+            // CRITICAL: Evolution API v2 expects pure base64 without prefix in 'media' field
+            payload.media = dataUriMatch[2];
             payload.mimetype = options?.mimetype || dataUriMatch[1];
           } else {
-            payload.base64 = mediaUrl.replace(/^data:[^;]+;base64,/, '');
+            payload.media = mediaUrl.replace(/^data:[^;]+;base64,/, '');
             payload.mimetype = options?.mimetype || this.getDefaultMimetype(mediaType);
           }
-          console.log(`📤 [EVOLUTION-MEDIA] Enviando como base64 (${Math.round(payload.base64.length / 1024)}KB, mimetype: ${payload.mimetype})`);
+          console.log(`📤 [EVOLUTION-MEDIA] Enviando como base64 (${Math.round(payload.media.length / 1024)}KB, mimetype: ${payload.mimetype})`);
         } else {
-          // URL-based media
-          payload.mediaUrl = mediaUrl;
+          // URL-based media - Evolution API v2 uses 'media' field for URLs too
+          payload.media = mediaUrl;
           // Include mimetype if provided or derivable from URL
           if (options?.mimetype) {
             payload.mimetype = options.mimetype;
@@ -435,7 +436,7 @@ class EvolutionAPIService {
         payload.mediatype = mediaType || 'image';
         payload.fileName = derivedFileName;
         
-        console.log(`📤 [EVOLUTION-MEDIA] Payload final: mediatype=${payload.mediatype}, fileName=${payload.fileName}, mimetype=${payload.mimetype}, hasBase64=${!!payload.base64}, hasMediaUrl=${!!payload.mediaUrl}`);
+        console.log(`📤 [EVOLUTION-MEDIA] Payload final: mediatype=${payload.mediatype}, fileName=${payload.fileName}, mimetype=${payload.mimetype}, hasMedia=${!!payload.media}, isBase64=${isBase64}`);
 
         const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
           method: 'POST',
