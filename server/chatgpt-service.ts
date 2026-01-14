@@ -561,6 +561,9 @@ let aiReportsCache: string | null = null;
 let aiReportsCacheTime: number = 0;
 const AI_REPORTS_CACHE_TTL = 60 * 60 * 1000; // 1 hora
 
+// Limite de caracteres para o contexto dos relatórios de IA (evita estouro de tokens)
+const AI_REPORTS_MAX_CHARS = 20000; // ~5k tokens
+
 async function getAiReportsForContext(): Promise<string> {
   try {
     const now = Date.now();
@@ -570,7 +573,13 @@ async function getAiReportsForContext(): Promise<string> {
     }
 
     const { getAiReportsContext } = await import('./ai-reports-service');
-    const reportsContext = await getAiReportsContext();
+    let reportsContext = await getAiReportsContext();
+    
+    // Limitar tamanho para evitar estouro do limite de contexto do modelo
+    if (reportsContext.length > AI_REPORTS_MAX_CHARS) {
+      console.log(`⚠️ [AI-CONTEXT] Relatórios muito grandes (${reportsContext.length} chars), truncando para ${AI_REPORTS_MAX_CHARS}`);
+      reportsContext = reportsContext.substring(0, AI_REPORTS_MAX_CHARS) + '\n\n[... dados adicionais omitidos para otimização ...]';
+    }
     
     aiReportsCache = reportsContext;
     aiReportsCacheTime = now;
