@@ -430,10 +430,11 @@ class EvolutionAPIService {
         // Derive filename from options, URL, or use defaults
         const derivedFileName = options?.fileName || this.getFileNameFromUrl(mediaUrl) || this.getDefaultFileName(mediaType);
 
-        // Add fileName for document, video, and audio (required by Evolution API)
-        if (mediaType === 'document' || mediaType === 'video' || mediaType === 'audio') {
-          payload.fileName = derivedFileName;
-        }
+        // CRITICAL: Evolution API requires 'mediatype' discriminator and 'fileName' for ALL media types
+        payload.mediatype = mediaType || 'document';
+        payload.fileName = derivedFileName;
+        
+        console.log(`📤 [EVOLUTION-MEDIA] Payload final: mediatype=${payload.mediatype}, fileName=${payload.fileName}, mimetype=${payload.mimetype}, hasBase64=${!!payload.base64}, hasMediaUrl=${!!payload.mediaUrl}`);
 
         const response = await fetch(`${this.config!.apiUrl}/message/${endpoint}/${instanceName}`, {
           method: 'POST',
