@@ -58,6 +58,7 @@ import ChatAISettings from "@/pages/ChatAISettings";
 import BulkMessage from "@/pages/BulkMessage";
 import SDRDigital from "@/pages/SDRDigital";
 import PedidoRapido from "@/pages/PedidoRapido";
+import VendasDigitais from "@/pages/VendasDigitais";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -184,6 +185,7 @@ function Router() {
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/leads" component={LeadsManagement} />
+          <Route path="/vendas-digitais" component={VendasDigitais} />
           <Route path="/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
           <Route path="/telemarketing/whatsapp" component={WhatsAppSetup} />

@@ -2013,6 +2013,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all service logs for a date range (for Vendas Digitais dashboard)
+  app.get('/api/service-logs/all', authenticateUser, async (req: any, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      
+      if (!startDate || !endDate) {
+        return res.status(400).json({ message: "startDate e endDate são obrigatórios" });
+      }
+      
+      const result = await db.execute(sql`
+        SELECT 
+          id,
+          customer_id,
+          entity_type,
+          attendant_id,
+          attendant_name,
+          attendance_date,
+          CASE 
+            WHEN service_type IN ('debito_vencido', 'venda', 'prospecao') THEN service_type
+            ELSE 'prospecao'
+          END as service_type,
+          notes,
+          images,
+          created_at
+        FROM virtual_service_logs 
+        WHERE attendance_date >= ${startDate}::timestamptz 
+        AND attendance_date <= ${endDate}::timestamptz
+        ORDER BY attendance_date DESC
+      `);
+      
+      res.json(result.rows || []);
+    } catch (error) {
+      console.error("Error fetching all service logs:", error);
+      res.status(500).json({ message: "Falha ao buscar registros de atendimento" });
+    }
+  });
+
   // List service logs for a customer or lead (with entity type)
   app.get('/api/service-logs/:entityType/:entityId', authenticateUser, async (req: any, res) => {
     try {
