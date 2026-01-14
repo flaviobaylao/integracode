@@ -6,6 +6,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { 
   BarChart3, 
   Users, 
@@ -14,9 +16,10 @@ import {
   DollarSign,
   ShoppingCart,
   Search,
-  ArrowLeft
+  ArrowLeft,
+  Filter
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, subMonths, eachDayOfInterval, isSameDay, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, subMonths, parseISO, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -59,6 +62,7 @@ const serviceTypeConfig: Record<ServiceType, { label: string; color: string; bgC
 
 export default function VendasDigitais() {
   const [selectedMonth, setSelectedMonth] = useState<'current' | 'previous'>('current');
+  const [activeTab, setActiveTab] = useState<'by-attendant' | 'by-day'>('by-attendant');
   
   const now = new Date();
   const currentMonthStart = startOfMonth(now);
@@ -69,7 +73,10 @@ export default function VendasDigitais() {
   const monthStart = selectedMonth === 'current' ? currentMonthStart : previousMonthStart;
   const monthEnd = selectedMonth === 'current' ? currentMonthEnd : previousMonthEnd;
   
-  // Create explicit UTC boundaries for the month (Brazil timezone is UTC-3)
+  const [attendantStartDate, setAttendantStartDate] = useState(format(monthStart, 'yyyy-MM-dd'));
+  const [attendantEndDate, setAttendantEndDate] = useState(format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd'));
+  const [selectedAttendant, setSelectedAttendant] = useState<string>('all');
+  
   const getUTCBoundary = (date: Date, isEnd: boolean) => {
     const d = new Date(date);
     if (isEnd) {
@@ -77,7 +84,6 @@ export default function VendasDigitais() {
     } else {
       d.setHours(0, 0, 0, 0);
     }
-    // Add 3 hours to convert from Brazil time to UTC
     d.setHours(d.getHours() + 3);
     return d.toISOString();
   };
@@ -94,6 +100,16 @@ export default function VendasDigitais() {
       return response.json();
     }
   });
+
+  const uniqueAttendants = useMemo(() => {
+    const attendants = new Map<string, string>();
+    for (const log of allLogs) {
+      if (!attendants.has(log.attendant_id)) {
+        attendants.set(log.attendant_id, log.attendant_name);
+      }
+    }
+    return Array.from(attendants.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allLogs]);
 
   const stats = useMemo(() => {
     const byType: Record<ServiceType, number> = {
@@ -134,14 +150,73 @@ export default function VendasDigitais() {
     return {
       total: allLogs.length,
       byType,
-      byAttendant: Object.values(byAttendant).sort((a, b) => b.total - a.total),
+      byAttendant: Object.entries(byAttendant).map(([id, data]) => ({ id, ...data })).sort((a, b) => b.total - a.total),
       byDay: Object.values(byDay).sort((a, b) => b.date.localeCompare(a.date))
     };
   }, [allLogs]);
 
-  const daysInMonth = useMemo(() => {
-    return eachDayOfInterval({ start: monthStart, end: new Date() > monthEnd ? monthEnd : new Date() });
-  }, [monthStart, monthEnd]);
+  const filteredAttendantDays = useMemo(() => {
+    const startFilter = startOfDay(parseISO(attendantStartDate));
+    const endFilter = endOfDay(parseISO(attendantEndDate));
+    
+    const byAttendantDay: Record<string, Record<string, { date: string; total: number; byType: Record<ServiceType, number> }>> = {};
+    
+    for (const log of allLogs) {
+      const logDate = parseISO(log.attendance_date);
+      if (!isWithinInterval(logDate, { start: startFilter, end: endFilter })) continue;
+      
+      const attendantId = log.attendant_id;
+      const dateKey = format(logDate, 'yyyy-MM-dd');
+      const type = (log.service_type || 'prospecao') as ServiceType;
+      
+      if (!byAttendantDay[attendantId]) {
+        byAttendantDay[attendantId] = {};
+      }
+      
+      if (!byAttendantDay[attendantId][dateKey]) {
+        byAttendantDay[attendantId][dateKey] = {
+          date: dateKey,
+          total: 0,
+          byType: { debito_vencido: 0, venda: 0, prospecao: 0 }
+        };
+      }
+      
+      byAttendantDay[attendantId][dateKey].total++;
+      byAttendantDay[attendantId][dateKey].byType[type]++;
+    }
+    
+    return stats.byAttendant.map(attendant => ({
+      ...attendant,
+      days: Object.values(byAttendantDay[attendant.id] || {}).sort((a, b) => b.date.localeCompare(a.date))
+    }));
+  }, [allLogs, attendantStartDate, attendantEndDate, stats.byAttendant]);
+
+  const filteredDaysByAttendant = useMemo(() => {
+    if (selectedAttendant === 'all') {
+      return stats.byDay;
+    }
+    
+    const filteredByDay: Record<string, { date: string; total: number; byType: Record<ServiceType, number> }> = {};
+    
+    for (const log of allLogs) {
+      if (log.attendant_id !== selectedAttendant) continue;
+      
+      const type = (log.service_type || 'prospecao') as ServiceType;
+      const dateKey = format(parseISO(log.attendance_date), 'yyyy-MM-dd');
+      
+      if (!filteredByDay[dateKey]) {
+        filteredByDay[dateKey] = {
+          date: dateKey,
+          total: 0,
+          byType: { debito_vencido: 0, venda: 0, prospecao: 0 }
+        };
+      }
+      filteredByDay[dateKey].total++;
+      filteredByDay[dateKey].byType[type]++;
+    }
+    
+    return Object.values(filteredByDay).sort((a, b) => b.date.localeCompare(a.date));
+  }, [allLogs, selectedAttendant, stats.byDay]);
 
   if (isLoading) {
     return (
@@ -177,7 +252,13 @@ export default function VendasDigitais() {
           </div>
         </div>
         
-        <Select value={selectedMonth} onValueChange={(v) => setSelectedMonth(v as 'current' | 'previous')}>
+        <Select value={selectedMonth} onValueChange={(v) => {
+          setSelectedMonth(v as 'current' | 'previous');
+          const newMonthStart = v === 'current' ? currentMonthStart : previousMonthStart;
+          const newMonthEnd = v === 'current' ? currentMonthEnd : previousMonthEnd;
+          setAttendantStartDate(format(newMonthStart, 'yyyy-MM-dd'));
+          setAttendantEndDate(format(newMonthEnd > now ? now : newMonthEnd, 'yyyy-MM-dd'));
+        }}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
@@ -256,7 +337,7 @@ export default function VendasDigitais() {
         </Card>
       </div>
 
-      <Tabs defaultValue="by-attendant" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'by-attendant' | 'by-day')} className="space-y-4">
         <TabsList>
           <TabsTrigger value="by-attendant" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
@@ -271,66 +352,125 @@ export default function VendasDigitais() {
         <TabsContent value="by-attendant">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Atendimentos por Atendente
-              </CardTitle>
-              <CardDescription>
-                Ranking de atendentes por quantidade de atendimentos virtuais
-              </CardDescription>
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Atendimentos por Atendente
+                  </CardTitle>
+                  <CardDescription>
+                    Detalhamento diário por atendente no período selecionado
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Período:</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="startDate" className="text-sm">De:</Label>
+                    <Input
+                      id="startDate"
+                      type="date"
+                      value={attendantStartDate}
+                      onChange={(e) => setAttendantStartDate(e.target.value)}
+                      className="w-[150px]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="endDate" className="text-sm">Até:</Label>
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={attendantEndDate}
+                      onChange={(e) => setAttendantEndDate(e.target.value)}
+                      className="w-[150px]"
+                    />
+                  </div>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
-              {stats.byAttendant.length === 0 ? (
+            <CardContent className="space-y-6">
+              {filteredAttendantDays.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   Nenhum atendimento registrado neste período
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">#</TableHead>
-                      <TableHead>Atendente</TableHead>
-                      <TableHead className="text-center">
-                        <span className="text-red-600">Débito</span>
-                      </TableHead>
-                      <TableHead className="text-center">
-                        <span className="text-green-600">Venda</span>
-                      </TableHead>
-                      <TableHead className="text-center">
-                        <span className="text-purple-600">Prospecção</span>
-                      </TableHead>
-                      <TableHead className="text-center">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {stats.byAttendant.map((attendant, index) => (
-                      <TableRow key={attendant.name}>
-                        <TableCell className="font-medium">{index + 1}</TableCell>
-                        <TableCell className="font-medium">{attendant.name}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">
-                            {attendant.byType.debito_vencido}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">
-                            {attendant.byType.venda}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge className="bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-100">
-                            {attendant.byType.prospecao}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge variant="secondary" className="font-bold">
-                            {attendant.total}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                filteredAttendantDays.map((attendant) => (
+                  <div key={attendant.id} className="border rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                          <Users className="h-5 w-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold">{attendant.name}</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {attendant.days.reduce((sum, d) => sum + d.total, 0)} atendimentos no período
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Badge className="bg-red-100 text-red-700 border-red-200">
+                          {attendant.days.reduce((sum, d) => sum + d.byType.debito_vencido, 0)} Débitos
+                        </Badge>
+                        <Badge className="bg-green-100 text-green-700 border-green-200">
+                          {attendant.days.reduce((sum, d) => sum + d.byType.venda, 0)} Vendas
+                        </Badge>
+                        <Badge className="bg-purple-100 text-purple-700 border-purple-200">
+                          {attendant.days.reduce((sum, d) => sum + d.byType.prospecao, 0)} Prosp.
+                        </Badge>
+                      </div>
+                    </div>
+                    
+                    {attendant.days.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-2">
+                        Sem atendimentos no período selecionado
+                      </p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Data</TableHead>
+                            <TableHead className="text-center text-red-600">Débito</TableHead>
+                            <TableHead className="text-center text-green-600">Venda</TableHead>
+                            <TableHead className="text-center text-purple-600">Prospecção</TableHead>
+                            <TableHead className="text-center">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {attendant.days.map((day) => (
+                            <TableRow key={day.date}>
+                              <TableCell className="font-medium">
+                                {format(parseISO(day.date), "dd/MM/yyyy (EEE)", { locale: ptBR })}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">
+                                  {day.byType.debito_vencido}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">
+                                  {day.byType.venda}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge className="bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-100">
+                                  {day.byType.prospecao}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant="secondary" className="font-bold">
+                                  {day.total}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                ))
               )}
             </CardContent>
           </Card>
@@ -339,16 +479,39 @@ export default function VendasDigitais() {
         <TabsContent value="by-day">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                Atendimentos por Dia
-              </CardTitle>
-              <CardDescription>
-                Histórico diário de atendimentos virtuais
-              </CardDescription>
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5" />
+                    Atendimentos por Dia
+                  </CardTitle>
+                  <CardDescription>
+                    Histórico diário de atendimentos virtuais
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Atendente:</span>
+                  </div>
+                  <Select value={selectedAttendant} onValueChange={setSelectedAttendant}>
+                    <SelectTrigger className="w-[250px]">
+                      <SelectValue placeholder="Todos os atendentes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os atendentes</SelectItem>
+                      {uniqueAttendants.map((att) => (
+                        <SelectItem key={att.id} value={att.id}>
+                          {att.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {stats.byDay.length === 0 ? (
+              {filteredDaysByAttendant.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   Nenhum atendimento registrado neste período
                 </div>
@@ -370,7 +533,7 @@ export default function VendasDigitais() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {stats.byDay.map((day) => (
+                    {filteredDaysByAttendant.map((day) => (
                       <TableRow key={day.date}>
                         <TableCell className="font-medium">
                           {format(parseISO(day.date), "EEEE, dd 'de' MMMM", { locale: ptBR })}
