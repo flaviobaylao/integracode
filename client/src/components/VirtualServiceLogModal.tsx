@@ -81,7 +81,12 @@ export default function VirtualServiceLogModal({
       return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
+      // Invalidate specific customer logs
       queryClient.invalidateQueries({ queryKey: [`/api/service-logs/${entityType}/${customerId}`] });
+      // Invalidate the batch query used by Active Customers list
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/customer"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
       setNotes("");
       setImages([]);
       setServiceType(defaultServiceType);
@@ -106,7 +111,12 @@ export default function VirtualServiceLogModal({
       return await apiRequest("DELETE", `/api/service-logs/${logId}`);
     },
     onSuccess: () => {
+      // Invalidate specific customer logs
       queryClient.invalidateQueries({ queryKey: [`/api/service-logs/${entityType}/${customerId}`] });
+      // Invalidate the batch query used by Active Customers list
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/customer"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
       toast({
         title: "Registro excluído",
         description: "O registro foi excluído com sucesso.",
