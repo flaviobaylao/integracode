@@ -311,10 +311,10 @@ export default function ChatCenter() {
     };
   }, []);
 
-  // Fetch conversations - CORREÇÃO: polling cada 500ms para real-time melhor
+  // Fetch conversations - polling a cada 3 segundos (evita rate limiting)
   const { data: conversationsData, isLoading: convLoading, refetch: refetchConversations } = useQuery({
     queryKey: ["/api/chat/conversations"],
-    refetchInterval: 500,
+    refetchInterval: 3000,
     select: (data: Conversation[]) => {
       // DEBUG log para verificar dados recebidos (ajuda na depuração remota)
       if (data && data.length > 0) {
@@ -353,11 +353,11 @@ export default function ChatCenter() {
     conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
   );
 
-  // Fetch messages para a conversa selecionada - CORREÇÃO: polling cada 300ms
+  // Fetch messages para a conversa selecionada - polling a cada 2 segundos (evita rate limiting)
   const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["/api/chat/conversations", selectedConversation, "messages"],
     enabled: !!selectedConversation,
-    refetchInterval: 300,
+    refetchInterval: 2000,
     queryFn: async () => {
       const response = await fetch(`/api/chat/conversations/${selectedConversation}/messages`);
       if (!response.ok) throw new Error("Falha ao buscar mensagens");
