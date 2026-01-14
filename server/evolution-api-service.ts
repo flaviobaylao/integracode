@@ -431,7 +431,8 @@ class EvolutionAPIService {
         const derivedFileName = options?.fileName || this.getFileNameFromUrl(mediaUrl) || this.getDefaultFileName(mediaType);
 
         // CRITICAL: Evolution API requires 'mediatype' discriminator and 'fileName' for ALL media types
-        payload.mediatype = mediaType || 'document';
+        // Default to 'image' (not 'document') since most uploads are images
+        payload.mediatype = mediaType || 'image';
         payload.fileName = derivedFileName;
         
         console.log(`📤 [EVOLUTION-MEDIA] Payload final: mediatype=${payload.mediatype}, fileName=${payload.fileName}, mimetype=${payload.mimetype}, hasBase64=${!!payload.base64}, hasMediaUrl=${!!payload.mediaUrl}`);
