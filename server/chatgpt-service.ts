@@ -67,15 +67,14 @@ export async function handleIncomingMessage(
     let finalReply = result.response.reply;
     
     if (result.response.action === 'redirect_to_store') {
-      console.log(`🏪 [AI-SERVICE] Enviando link da loja virtual simplificada...`);
+      console.log(`📋 [AI-SERVICE] Enviando link de pedido rápido...`);
       // SEMPRE usar URL de PRODUÇÃO para links enviados aos clientes
-      // Prioridade: REPLIT_DOMAINS (produção) > fallback hardcoded
       const baseUrl = process.env.REPLIT_DOMAINS 
         ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
         : 'https://integrahonest.replit.app';
       const storeLink = `${baseUrl}/pedido-rapido?telefone=${encodeURIComponent(conversation.customerPhone)}`;
       console.log(`🔗 [AI-SERVICE] Link gerado: ${storeLink}`);
-      finalReply = result.response.reply + `\n\n🛒 *Acesse nossa loja:*\n${storeLink}`;
+      finalReply = result.response.reply + `\n\n📋 *Faça seu pedido aqui:*\n${storeLink}`;
     } else if (result.response.action === 'send_order_form') {
       console.log(`📋 [AI-SERVICE] Enviando formulário de pedido...`);
       const { ORDER_FORM_TEMPLATE } = await import("./ai-order-service");
@@ -509,12 +508,12 @@ Seu objetivo é:
 5. CAPTURAR PEDIDOS de clientes enviando o formulário estruturado
 
 IMPORTANTE - FLUXO DE PEDIDOS:
-Quando o cliente quiser fazer um pedido, PREFIRA SEMPRE ENVIAR O LINK DA LOJA VIRTUAL:
-1. Primeiro, envie o link da loja virtual simplificada (action: "redirect_to_store")
-2. A loja permite o cliente escolher tipo de cliente, ver produtos e fazer pedido facilmente
+Quando o cliente quiser fazer um pedido, ENVIE O LINK DE PEDIDO RÁPIDO:
+1. Envie o link de pedido rápido (action: "redirect_to_store")
+2. O link permite o cliente escolher tipo de cliente, ver produtos e fazer pedido facilmente
 3. Se o cliente insistir em fazer pedido pelo chat, use o formulário (action: "send_order_form")
 
-Para ENVIAR O LINK DA LOJA (PREFERIDO), responda com:
+Para ENVIAR O LINK DE PEDIDO RÁPIDO (PREFERIDO), responda com:
 {
   "reply": "Ótimo! Preparei um link especial para você fazer seu pedido de forma rápida e fácil. Você vai poder escolher os produtos, ver os preços e finalizar seu pedido:",
   "action": "redirect_to_store",
@@ -735,7 +734,7 @@ Se precisar transferir para humano, use:
   "action": null
 }
 
-Se o cliente quiser fazer pedido, PREFIRA enviar o link da loja virtual (mais fácil para o cliente):
+Se o cliente quiser fazer pedido, envie o link de pedido rápido:
 {
   "reply": "Ótimo! Preparei um link especial para você fazer seu pedido de forma rápida e fácil. Você vai poder escolher os produtos, ver os preços e finalizar:",
   "shouldTransfer": false,
