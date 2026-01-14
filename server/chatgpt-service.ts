@@ -68,12 +68,13 @@ export async function handleIncomingMessage(
     
     if (result.response.action === 'redirect_to_store') {
       console.log(`🏪 [AI-SERVICE] Enviando link da loja virtual simplificada...`);
-      const baseUrl = process.env.REPLIT_DEV_DOMAIN 
-        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-        : process.env.REPLIT_DOMAINS 
-          ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-          : 'https://honest-sucos.replit.app';
+      // SEMPRE usar URL de PRODUÇÃO para links enviados aos clientes
+      // Prioridade: REPLIT_DOMAINS (produção) > fallback hardcoded
+      const baseUrl = process.env.REPLIT_DOMAINS 
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
+        : 'https://integrahonest.replit.app';
       const storeLink = `${baseUrl}/pedido-rapido?telefone=${encodeURIComponent(conversation.customerPhone)}`;
+      console.log(`🔗 [AI-SERVICE] Link gerado: ${storeLink}`);
       finalReply = result.response.reply + `\n\n🛒 *Acesse nossa loja:*\n${storeLink}`;
     } else if (result.response.action === 'send_order_form') {
       console.log(`📋 [AI-SERVICE] Enviando formulário de pedido...`);
