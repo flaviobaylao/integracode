@@ -2867,8 +2867,11 @@ export function registerChatRoutes(app: Express): void {
       // Enviar mensagem de finalização ao cliente via WhatsApp
       if (conversation.customerPhone) {
         try {
-          await evolutionAPIService.sendText(conversation.customerPhone, finalizeMessage);
-          console.log(`📩 [CHAT-FINISH] Mensagem de finalização enviada para ${conversation.customerPhone}`);
+          const config = await evolutionAPIService.getConfig();
+          if (config?.instanceName) {
+            await evolutionAPIService.sendTextMessage(config.instanceName, conversation.customerPhone, finalizeMessage);
+            console.log(`📩 [CHAT-FINISH] Mensagem de finalização enviada para ${conversation.customerPhone}`);
+          }
           
           // Registrar mensagem no histórico
           await storage.createChatMessage({
