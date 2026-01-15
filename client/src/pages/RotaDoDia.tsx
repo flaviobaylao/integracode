@@ -1366,8 +1366,16 @@ export default function RotaDoDia() {
                         {virtualVisits.map((visit, index) => (
                           <div
                             key={visit.id || visit.customerId}
-                            className="p-3 border border-blue-200 dark:border-blue-700 rounded-lg bg-blue-50 dark:bg-blue-950 hover:shadow-md transition-all"
+                            className="p-3 border border-blue-200 dark:border-blue-700 rounded-lg bg-blue-50 dark:bg-blue-950 hover:shadow-md transition-all cursor-pointer"
                             data-testid={`virtual-visit-${visit.customerId}`}
+                            onClick={() => {
+                              if (visit.customerId) {
+                                setVirtualServiceCustomer({ 
+                                  id: visit.customerId, 
+                                  name: visit.customerName 
+                                });
+                              }
+                            }}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1">
