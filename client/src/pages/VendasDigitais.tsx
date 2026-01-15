@@ -17,7 +17,8 @@ import {
   ShoppingCart,
   Search,
   ArrowLeft,
-  Filter
+  Filter,
+  MessageSquare
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, subMonths, parseISO, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -62,7 +63,7 @@ const serviceTypeConfig: Record<ServiceType, { label: string; color: string; bgC
 
 export default function VendasDigitais() {
   const [selectedMonth, setSelectedMonth] = useState<'current' | 'previous'>('current');
-  const [activeTab, setActiveTab] = useState<'by-attendant' | 'by-day'>('by-attendant');
+  const [activeTab, setActiveTab] = useState<'by-attendant' | 'by-day' | 'chat-center'>('by-attendant');
   
   const now = new Date();
   const currentMonthStart = startOfMonth(now);
@@ -100,6 +101,47 @@ export default function VendasDigitais() {
       return response.json();
     }
   });
+
+  // Buscar atendimentos do Chat Center
+  interface ChatAttendanceStat {
+    agentId: string;
+    agentName: string;
+    serviceDate: string;
+    conversationCount: number;
+  }
+  
+  const { data: chatAttendanceData } = useQuery<{ summaries: ChatAttendanceStat[] }>({
+    queryKey: ["/api/chat/virtual-attendance", format(monthStart, 'yyyy-MM-dd'), format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd')],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        startDate: format(monthStart, 'yyyy-MM-dd'),
+        endDate: format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd')
+      });
+      const res = await fetch(`/api/chat/virtual-attendance?${params}`, { credentials: 'include' });
+      if (!res.ok) return { summaries: [] };
+      return res.json();
+    }
+  });
+
+  const chatStats = useMemo(() => {
+    const summaries = chatAttendanceData?.summaries || [];
+    const total = summaries.reduce((sum, s) => sum + s.conversationCount, 0);
+    
+    // Agrupar por agente
+    const byAgent: Record<string, { name: string; total: number }> = {};
+    for (const s of summaries) {
+      if (!byAgent[s.agentId]) {
+        byAgent[s.agentId] = { name: s.agentName, total: 0 };
+      }
+      byAgent[s.agentId].total += s.conversationCount;
+    }
+    
+    return {
+      total,
+      byAgent: Object.entries(byAgent).map(([id, data]) => ({ id, ...data })).sort((a, b) => b.total - a.total),
+      byDay: summaries
+    };
+  }, [chatAttendanceData]);
 
   const uniqueAttendants = useMemo(() => {
     const attendants = new Map<string, string>();
@@ -273,7 +315,7 @@ export default function VendasDigitais() {
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -335,9 +377,25 @@ export default function VendasDigitais() {
             </div>
           </CardContent>
         </Card>
+
+        <Card className="bg-cyan-100 dark:bg-cyan-900/30 border-cyan-200 dark:border-cyan-800">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-cyan-700 dark:text-cyan-400">
+              Chat Center
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-8 w-8 text-cyan-700 dark:text-cyan-400" />
+              <span className="text-3xl font-bold text-cyan-700 dark:text-cyan-400">
+                {chatStats.total}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'by-attendant' | 'by-day')} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'by-attendant' | 'by-day' | 'chat-center')} className="space-y-4">
         <TabsList>
           <TabsTrigger value="by-attendant" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
@@ -346,6 +404,10 @@ export default function VendasDigitais() {
           <TabsTrigger value="by-day" className="flex items-center gap-2">
             <Calendar className="h-4 w-4" />
             Por Dia
+          </TabsTrigger>
+          <TabsTrigger value="chat-center" className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" />
+            Chat Center
           </TabsTrigger>
         </TabsList>
 
@@ -562,6 +624,72 @@ export default function VendasDigitais() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="chat-center">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="h-5 w-5" />
+                Atendimentos do Chat Center
+              </CardTitle>
+              <CardDescription>
+                Conversas finalizadas por atendentes humanos no período
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {chatStats.total === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  Nenhum atendimento do Chat Center registrado neste período
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Resumo por Agente */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Resumo por Atendente</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {chatStats.byAgent.map((agent) => (
+                        <div key={agent.id} className="bg-cyan-50 dark:bg-cyan-900/30 border border-cyan-200 dark:border-cyan-800 rounded-lg p-3">
+                          <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{agent.name}</p>
+                          <p className="text-lg font-bold text-cyan-700 dark:text-cyan-400">{agent.total}</p>
+                          <p className="text-[10px] text-gray-500">conversas</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Tabela Detalhada */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Detalhamento por Data</h3>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Atendente</TableHead>
+                          <TableHead className="text-center">Conversas</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {chatStats.byDay.map((stat, idx) => (
+                          <TableRow key={`${stat.agentId}-${stat.serviceDate}-${idx}`}>
+                            <TableCell className="font-medium">
+                              {format(parseISO(stat.serviceDate + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                            </TableCell>
+                            <TableCell>{stat.agentName}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge className="bg-cyan-100 text-cyan-700 border-cyan-200 hover:bg-cyan-100">
+                                {stat.conversationCount}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
