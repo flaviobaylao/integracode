@@ -1416,6 +1416,28 @@ export default function RotaDoDia() {
                                   )}
                                 </div>
                               </div>
+                              {/* Botões de ação para visitas virtuais */}
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {/* Botão de Registro de Atendimento Virtual */}
+                                {visit.customerId && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setVirtualServiceCustomer({ 
+                                        id: visit.customerId!, 
+                                        name: visit.customerName 
+                                      });
+                                    }}
+                                    title="Registrar Atendimento Virtual"
+                                    data-testid={`button-virtual-service-virtual-${visit.customerId}`}
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ))}
