@@ -1,7 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -13,7 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { 
   Loader2, Upload, Send, Download, Users, Phone, CheckCircle, 
-  AlertCircle, FileSpreadsheet, Clock, X, Info
+  AlertCircle, FileSpreadsheet, Clock, X, Info, Pause, Play, Square
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -32,11 +32,22 @@ interface ParseResult {
   contacts: Contact[];
 }
 
+interface JobStatus {
+  active: boolean;
+  status?: 'running' | 'paused' | 'stopped' | 'completed';
+  totalContacts?: number;
+  sentCount?: number;
+  successCount?: number;
+  errorCount?: number;
+  progress?: number;
+}
+
 export default function BulkMessage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [message, setMessage] = useState("");
@@ -44,6 +55,28 @@ export default function BulkMessage() {
   const [parseStats, setParseStats] = useState<{ totalRows: number; validContacts: number } | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ totalContacts: number; estimatedTimeMinutes: number } | null>(null);
+
+  // Polling do status do disparo
+  const { data: jobStatus, refetch: refetchStatus } = useQuery<JobStatus>({
+    queryKey: ["/api/chat/bulk-message/status"],
+    refetchInterval: isSending ? 2000 : false,
+    enabled: isSending,
+  });
+
+  // Atualizar estado baseado no status do job
+  useEffect(() => {
+    if (jobStatus) {
+      if (jobStatus.status === 'completed' || jobStatus.status === 'stopped') {
+        setIsSending(false);
+        if (jobStatus.status === 'completed') {
+          toast({
+            title: "Disparo concluído!",
+            description: `${jobStatus.successCount || 0} mensagens enviadas com sucesso, ${jobStatus.errorCount || 0} erros.`,
+          });
+        }
+      }
+    }
+  }, [jobStatus]);
 
   const parseMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -87,6 +120,7 @@ export default function BulkMessage() {
     onSuccess: (data: any) => {
       setSendResult(data);
       setIsSending(true);
+      refetchStatus();
       toast({ 
         title: "Disparo iniciado!",
         description: `Enviando para ${data.totalContacts} contatos. Tempo estimado: ${data.estimatedTimeMinutes} minutos`
@@ -98,6 +132,48 @@ export default function BulkMessage() {
         description: error.message,
         variant: "destructive"
       });
+    }
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/chat/bulk-message/pause", {});
+    },
+    onSuccess: () => {
+      refetchStatus();
+      toast({ title: "Disparo pausado" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao pausar", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/chat/bulk-message/resume", {});
+    },
+    onSuccess: () => {
+      refetchStatus();
+      toast({ title: "Disparo retomado" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao retomar", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/chat/bulk-message/stop", {});
+    },
+    onSuccess: (data: any) => {
+      setIsSending(false);
+      toast({ 
+        title: "Disparo encerrado",
+        description: `${data.sentCount} mensagens enviadas (${data.successCount} sucesso, ${data.errorCount} erros)`
+      });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao encerrar", description: error.message, variant: "destructive" });
     }
   });
 
@@ -346,51 +422,98 @@ export default function BulkMessage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {sendResult && isSending && (
-                <div className="space-y-2">
-                  <Alert className="bg-green-50 border-green-200">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <AlertDescription className="text-green-800">
-                      Disparo em andamento! {sendResult.totalContacts} mensagens sendo enviadas.
-                      O processo continua em segundo plano.
+              {isSending && jobStatus && (
+                <div className="space-y-3">
+                  <Alert className={jobStatus.status === 'paused' ? "bg-yellow-50 border-yellow-200" : "bg-green-50 border-green-200"}>
+                    {jobStatus.status === 'paused' ? (
+                      <Pause className="h-4 w-4 text-yellow-600" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    )}
+                    <AlertDescription className={jobStatus.status === 'paused' ? "text-yellow-800" : "text-green-800"}>
+                      {jobStatus.status === 'paused' ? 'Disparo pausado!' : 'Disparo em andamento!'}{' '}
+                      <strong>{jobStatus.sentCount || 0}</strong> de <strong>{jobStatus.totalContacts}</strong> enviados
+                      {jobStatus.errorCount ? ` (${jobStatus.errorCount} erros)` : ''}
                     </AlertDescription>
                   </Alert>
-                  <Progress value={100} className="animate-pulse" />
+                  <Progress value={jobStatus.progress || 0} />
                   <p className="text-sm text-muted-foreground text-center">
-                    Tempo estimado: {sendResult.estimatedTimeMinutes} minutos
+                    {jobStatus.successCount || 0} sucesso • {jobStatus.errorCount || 0} erros
                   </p>
+                  
+                  <div className="flex gap-2">
+                    {jobStatus.status === 'running' ? (
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => pauseMutation.mutate()}
+                        disabled={pauseMutation.isPending}
+                      >
+                        {pauseMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Pause className="h-4 w-4 mr-2" />
+                        )}
+                        Pausar
+                      </Button>
+                    ) : jobStatus.status === 'paused' ? (
+                      <Button
+                        variant="outline"
+                        className="flex-1 border-green-500 text-green-600 hover:bg-green-50"
+                        onClick={() => resumeMutation.mutate()}
+                        disabled={resumeMutation.isPending}
+                      >
+                        {resumeMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4 mr-2" />
+                        )}
+                        Continuar
+                      </Button>
+                    ) : null}
+                    
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => stopMutation.mutate()}
+                      disabled={stopMutation.isPending}
+                    >
+                      {stopMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Square className="h-4 w-4 mr-2" />
+                      )}
+                      Encerrar
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              <Button
-                className="w-full"
-                size="lg"
-                onClick={handleSend}
-                disabled={contacts.length === 0 || !message.trim() || sendMutation.isPending || isSending}
-                data-testid="button-send"
-              >
-                {sendMutation.isPending ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Iniciando disparo...
-                  </>
-                ) : isSending ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Disparo em andamento...
-                  </>
-                ) : (
-                  <>
-                    <Send className="h-5 w-5 mr-2" />
-                    Enviar para {contacts.length} contatos
-                  </>
-                )}
-              </Button>
-
               {!isSending && (
-                <p className="text-sm text-muted-foreground text-center">
-                  As mensagens serão enviadas em segundo plano. Você pode fechar esta página.
-                </p>
+                <>
+                  <Button
+                    className="w-full"
+                    size="lg"
+                    onClick={handleSend}
+                    disabled={contacts.length === 0 || !message.trim() || sendMutation.isPending}
+                    data-testid="button-send"
+                  >
+                    {sendMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                        Iniciando disparo...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-5 w-5 mr-2" />
+                        Enviar para {contacts.length} contatos
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-sm text-muted-foreground text-center">
+                    As mensagens serão enviadas em segundo plano. Você pode fechar esta página.
+                  </p>
+                </>
               )}
             </CardContent>
           </Card>

@@ -1648,6 +1648,107 @@ export function registerChatRoutes(app: Express): void {
   // DISPARO EM MASSA - BULK WHATSAPP MESSAGING
   // ============================================================
 
+  // Estado global do disparo em massa (por usuário)
+  const bulkMessageJobs: Map<string, {
+    status: 'running' | 'paused' | 'stopped' | 'completed';
+    totalContacts: number;
+    sentCount: number;
+    successCount: number;
+    errorCount: number;
+    startedAt: Date;
+    pausedAt?: Date;
+  }> = new Map();
+
+  // Verificar status do disparo
+  app.get("/api/chat/bulk-message/status", authenticateUser, async (req, res) => {
+    try {
+      const userId = (req as any).currentUser?.id || 'default';
+      const job = bulkMessageJobs.get(userId);
+      
+      if (!job) {
+        return res.json({ active: false });
+      }
+      
+      res.json({
+        active: job.status === 'running' || job.status === 'paused',
+        status: job.status,
+        totalContacts: job.totalContacts,
+        sentCount: job.sentCount,
+        successCount: job.successCount,
+        errorCount: job.errorCount,
+        progress: Math.round((job.sentCount / job.totalContacts) * 100),
+        startedAt: job.startedAt
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Pausar disparo
+  app.post("/api/chat/bulk-message/pause", authenticateUser, async (req, res) => {
+    try {
+      const userId = (req as any).currentUser?.id || 'default';
+      const job = bulkMessageJobs.get(userId);
+      
+      if (!job || job.status !== 'running') {
+        return res.status(400).json({ error: "Nenhum disparo em andamento" });
+      }
+      
+      job.status = 'paused';
+      job.pausedAt = new Date();
+      console.log(`⏸️ [BULK] Disparo pausado pelo usuário ${userId}`);
+      
+      res.json({ success: true, message: "Disparo pausado" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Continuar disparo
+  app.post("/api/chat/bulk-message/resume", authenticateUser, async (req, res) => {
+    try {
+      const userId = (req as any).currentUser?.id || 'default';
+      const job = bulkMessageJobs.get(userId);
+      
+      if (!job || job.status !== 'paused') {
+        return res.status(400).json({ error: "Nenhum disparo pausado" });
+      }
+      
+      job.status = 'running';
+      delete job.pausedAt;
+      console.log(`▶️ [BULK] Disparo retomado pelo usuário ${userId}`);
+      
+      res.json({ success: true, message: "Disparo retomado" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Encerrar disparo
+  app.post("/api/chat/bulk-message/stop", authenticateUser, async (req, res) => {
+    try {
+      const userId = (req as any).currentUser?.id || 'default';
+      const job = bulkMessageJobs.get(userId);
+      
+      if (!job || (job.status !== 'running' && job.status !== 'paused')) {
+        return res.status(400).json({ error: "Nenhum disparo em andamento" });
+      }
+      
+      job.status = 'stopped';
+      console.log(`⏹️ [BULK] Disparo encerrado pelo usuário ${userId} - ${job.sentCount}/${job.totalContacts} enviados`);
+      
+      res.json({ 
+        success: true, 
+        message: "Disparo encerrado",
+        sentCount: job.sentCount,
+        successCount: job.successCount,
+        errorCount: job.errorCount
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Upload spreadsheet and parse phone numbers
   app.post("/api/chat/bulk-message/parse", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), upload.single("file"), async (req, res) => {
     try {
@@ -1774,6 +1875,7 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/bulk-message/send", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), async (req, res) => {
     try {
       const { contacts, message, delaySeconds = 3 } = req.body;
+      const userId = (req as any).currentUser?.id || 'default';
 
       console.log(`[BULK] Starting message blast...`, { 
         contactsCount: contacts?.length,
@@ -1789,6 +1891,12 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Mensagem é obrigatória" });
       }
 
+      // Verificar se já há um disparo ativo
+      const existingJob = bulkMessageJobs.get(userId);
+      if (existingJob && (existingJob.status === 'running' || existingJob.status === 'paused')) {
+        return res.status(400).json({ error: "Já existe um disparo em andamento. Encerre-o antes de iniciar outro." });
+      }
+
       // Get Evolution API config
       const config = evolutionAPIService.getConfig();
       if (!config || !config.instanceName) {
@@ -1797,9 +1905,18 @@ export function registerChatRoutes(app: Express): void {
 
       console.log(`📤 [BULK] Iniciando disparo em massa para ${contacts.length} contatos`);
 
-      // Process in background - don't block the response
-      const results: Array<{ phone: string; name: string; success: boolean; error?: string }> = [];
-      const delay = Math.max(1, Math.min(30, delaySeconds || 3)) * 1000; // 1-30 seconds delay
+      // Criar job de controle
+      const job = {
+        status: 'running' as const,
+        totalContacts: contacts.length,
+        sentCount: 0,
+        successCount: 0,
+        errorCount: 0,
+        startedAt: new Date()
+      };
+      bulkMessageJobs.set(userId, job);
+
+      const delay = Math.max(1, Math.min(30, delaySeconds || 3)) * 1000;
 
       // Return immediately with job started
       res.json({
@@ -1812,10 +1929,28 @@ export function registerChatRoutes(app: Express): void {
       // Process messages in background
       (async () => {
         for (let i = 0; i < contacts.length; i++) {
+          const currentJob = bulkMessageJobs.get(userId);
+          
+          // Verificar se foi parado
+          if (!currentJob || currentJob.status === 'stopped') {
+            console.log(`⏹️ [BULK] Disparo encerrado pelo usuário após ${i} mensagens`);
+            break;
+          }
+          
+          // Se pausado, aguardar até retomar ou parar
+          while (currentJob && currentJob.status === 'paused') {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const updatedJob = bulkMessageJobs.get(userId);
+            if (!updatedJob || updatedJob.status === 'stopped') {
+              console.log(`⏹️ [BULK] Disparo encerrado enquanto pausado`);
+              return;
+            }
+            if (updatedJob.status === 'running') break;
+          }
+          
           const contact = contacts[i];
           
           try {
-            // Personalize message with {{name}} placeholder
             const personalizedMessage = message.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
             
             const result = await evolutionAPIService.sendTextMessage(
@@ -1824,32 +1959,37 @@ export function registerChatRoutes(app: Express): void {
               personalizedMessage
             );
 
-            results.push({
-              phone: contact.phone,
-              name: contact.name,
-              success: result.success,
-              error: result.error
-            });
+            const jobRef = bulkMessageJobs.get(userId);
+            if (jobRef) {
+              jobRef.sentCount++;
+              if (result.success) {
+                jobRef.successCount++;
+              } else {
+                jobRef.errorCount++;
+              }
+            }
 
             console.log(`📤 [BULK] ${i + 1}/${contacts.length}: ${contact.phone} - ${result.success ? '✅' : '❌ ' + result.error}`);
 
-            // Delay between messages to avoid rate limiting
             if (i < contacts.length - 1) {
               await new Promise(resolve => setTimeout(resolve, delay));
             }
           } catch (error: any) {
-            results.push({
-              phone: contact.phone,
-              name: contact.name,
-              success: false,
-              error: error.message
-            });
+            const jobRef = bulkMessageJobs.get(userId);
+            if (jobRef) {
+              jobRef.sentCount++;
+              jobRef.errorCount++;
+            }
             console.error(`❌ [BULK] Erro ao enviar para ${contact.phone}:`, error.message);
           }
         }
 
-        const successCount = results.filter(r => r.success).length;
-        console.log(`📊 [BULK] Disparo concluído: ${successCount}/${contacts.length} enviados com sucesso`);
+        // Marcar como concluído
+        const finalJob = bulkMessageJobs.get(userId);
+        if (finalJob && finalJob.status === 'running') {
+          finalJob.status = 'completed';
+        }
+        console.log(`📊 [BULK] Disparo concluído: ${finalJob?.successCount || 0}/${contacts.length} enviados com sucesso`);
       })();
 
     } catch (error: any) {
