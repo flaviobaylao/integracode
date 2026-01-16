@@ -4477,24 +4477,34 @@ export function registerChatRoutes(app: Express): void {
   app.put("/api/chat/ai-settings", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       const userId = (req.user as any)?.id;
-      const { isEnabled, mode, businessHours, timeoutMinutes, maxTurnsBeforeEscalation, 
-              handoffKeywords, systemPrompt, companyContext, gptModel } = req.body;
       
-      const settings = await storage.upsertChatAiSettings({
-        isEnabled: isEnabled ?? false,
-        mode: mode || 'disabled',
-        businessHours: businessHours || null,
-        timeoutMinutes: timeoutMinutes ?? 5,
-        maxTurnsBeforeEscalation: maxTurnsBeforeEscalation ?? 10,
-        handoffKeywords: handoffKeywords || [],
-        systemPrompt: systemPrompt || null,
-        companyContext: companyContext || null,
-        gptModel: gptModel || 'gpt-4o-mini',
+      // Buscar configurações existentes para fazer merge
+      const existingSettings = await storage.getChatAiSettings();
+      
+      // Fazer merge das configurações existentes com as novas (permite atualização parcial)
+      const mergedSettings = {
+        isEnabled: req.body.isEnabled ?? existingSettings?.isEnabled ?? false,
+        mode: req.body.mode ?? existingSettings?.mode ?? 'disabled',
+        businessHours: req.body.businessHours ?? existingSettings?.businessHours ?? null,
+        timeoutMinutes: req.body.timeoutMinutes ?? existingSettings?.timeoutMinutes ?? 5,
+        maxTurnsBeforeEscalation: req.body.maxTurnsBeforeEscalation ?? existingSettings?.maxTurnsBeforeEscalation ?? 10,
+        handoffKeywords: req.body.handoffKeywords ?? existingSettings?.handoffKeywords ?? [],
+        systemPrompt: req.body.systemPrompt ?? existingSettings?.systemPrompt ?? null,
+        companyContext: req.body.companyContext ?? existingSettings?.companyContext ?? null,
+        gptModel: req.body.gptModel ?? existingSettings?.gptModel ?? 'gpt-4o-mini',
+        chatgptImages: req.body.chatgptImages ?? existingSettings?.chatgptImages ?? [],
+        inactivityTimeoutMinutes: req.body.inactivityTimeoutMinutes ?? existingSettings?.inactivityTimeoutMinutes ?? 30,
+        finalizeMessage: req.body.finalizeMessage ?? existingSettings?.finalizeMessage ?? null,
+        absenceMessage: req.body.absenceMessage ?? existingSettings?.absenceMessage ?? null,
+        isStandby: req.body.isStandby ?? existingSettings?.isStandby ?? true,
+        chatgptQueuePosition: req.body.chatgptQueuePosition ?? existingSettings?.chatgptQueuePosition ?? 0,
         updatedBy: userId
-      });
+      };
+      
+      const settings = await storage.upsertChatAiSettings(mergedSettings);
       
       console.log(`✅ [AI-SETTINGS] Configurações atualizadas por usuário ${userId}:`, 
-                  { isEnabled, mode, timeoutMinutes });
+                  { isEnabled: mergedSettings.isEnabled, mode: mergedSettings.mode, chatgptImages: mergedSettings.chatgptImages?.length || 0 });
       
       res.json({ success: true, settings });
     } catch (error: any) {
