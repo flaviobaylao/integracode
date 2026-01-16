@@ -133,8 +133,11 @@ export async function distributeNewConversation(conversationId: string): Promise
         'No momento não há atendentes disponíveis. Por favor, tente novamente em instantes ou envie sua mensagem que responderemos assim que possível.';
       
       try {
-        await evolutionAPIService.sendText(conversation.customerPhone, absenceMessage);
-        console.log(`📩 [DISTRIBUTION] Mensagem de ausência enviada para ${conversation.customerPhone}`);
+        const config = evolutionAPIService.getConfig();
+        if (config?.instanceName) {
+          await evolutionAPIService.sendTextMessage(config.instanceName, conversation.customerPhone, absenceMessage);
+          console.log(`📩 [DISTRIBUTION] Mensagem de ausência enviada para ${conversation.customerPhone}`);
+        }
         
         // Registrar mensagem no histórico
         await db.insert(chatMessages).values({

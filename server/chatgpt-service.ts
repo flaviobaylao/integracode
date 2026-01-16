@@ -133,6 +133,55 @@ export async function handleIncomingMessage(
         });
         
         console.log(`✅ [AI-SERVICE] Resposta enviada e registrada com sucesso!`);
+        
+        // 8. Enviar imagens configuradas do ChatGPT (apenas na primeira resposta da conversa)
+        // Verificar se esta é a primeira resposta do bot na conversa
+        const botMessages = messages.filter((m: any) => m.senderId === 'system' && m.senderType === 'agent');
+        const isFirstBotResponse = botMessages.length === 0;
+        
+        if (isFirstBotResponse && settings.chatgptImages && Array.isArray(settings.chatgptImages) && settings.chatgptImages.length > 0) {
+          console.log(`🖼️ [AI-SERVICE] Primeira resposta - Enviando ${settings.chatgptImages.length} imagem(ns) configurada(s)...`);
+          
+          for (let i = 0; i < settings.chatgptImages.length; i++) {
+            const imageUrl = settings.chatgptImages[i];
+            if (!imageUrl || typeof imageUrl !== 'string') continue;
+            
+            try {
+              // Pequeno delay entre imagens para evitar rate limit
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              const imageResult = await evolutionAPIService.sendMediaMessage(
+                config.instanceName,
+                conversation.customerPhone,
+                imageUrl,
+                '', // sem legenda
+                'image'
+              );
+              
+              if (imageResult.success) {
+                console.log(`✅ [AI-SERVICE] Imagem ${i + 1}/${settings.chatgptImages.length} enviada com sucesso`);
+                
+                // Registrar imagem no histórico
+                await storage.createChatMessage({
+                  conversationId: conversation.id,
+                  senderId: 'system',
+                  senderType: 'agent',
+                  content: '[Imagem]',
+                  messageType: 'image',
+                  mediaUrl: imageUrl,
+                  externalId: imageResult.messageId || `ai_img_${Date.now()}_${i}`,
+                  isRead: true
+                });
+              } else {
+                console.error(`❌ [AI-SERVICE] Erro ao enviar imagem ${i + 1}:`, imageResult.error);
+              }
+            } catch (imgErr: any) {
+              console.error(`❌ [AI-SERVICE] Erro ao enviar imagem ${i + 1}:`, imgErr.message);
+            }
+          }
+        } else if (!isFirstBotResponse && settings.chatgptImages?.length) {
+          console.log(`🖼️ [AI-SERVICE] Não é primeira resposta (${botMessages.length} msgs anteriores) - imagens não enviadas`);
+        }
       } else {
         console.error(`❌ [AI-SERVICE] Erro ao enviar via Evolution API:`, sendResult.error);
       }
