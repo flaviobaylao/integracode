@@ -139,6 +139,15 @@ export async function handleIncomingMessage(
         const botMessages = messages.filter((m: any) => m.senderId === 'system' && m.senderType === 'agent');
         const isFirstBotResponse = botMessages.length === 0;
         
+        console.log(`🔍 [AI-SERVICE] DEBUG Imagens:`, {
+          totalMessages: messages.length,
+          botMessagesCount: botMessages.length,
+          isFirstBotResponse,
+          hasImages: !!settings.chatgptImages,
+          imagesCount: settings.chatgptImages?.length || 0,
+          imagesArray: settings.chatgptImages
+        });
+        
         if (isFirstBotResponse && settings.chatgptImages && Array.isArray(settings.chatgptImages) && settings.chatgptImages.length > 0) {
           console.log(`🖼️ [AI-SERVICE] Primeira resposta - Enviando ${settings.chatgptImages.length} imagem(ns) configurada(s)...`);
           
