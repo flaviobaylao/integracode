@@ -1663,33 +1663,25 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Nenhum arquivo enviado" });
       }
 
-      // Check if file exists on disk
-      if (req.file.path && !fs.existsSync(req.file.path)) {
-        console.error(`[BULK] Multer reported path ${req.file.path} but file does not exist on disk`);
-        return res.status(500).json({ error: "Arquivo temporário não encontrado no servidor" });
-      }
-
       const XLSX = await import("xlsx");
       let workbook;
       
-      // Since we use diskStorage, req.file.path should be populated
-      if (req.file.path) {
+      // Using memoryStorage - read from buffer first (primary method)
+      if (req.file.buffer && req.file.buffer.length > 0) {
+        console.log(`[BULK] Reading file from buffer (${req.file.buffer.length} bytes)`);
+        workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      } else if (req.file.path && fs.existsSync(req.file.path)) {
+        // Fallback to disk if buffer not available
         console.log(`[BULK] Reading file from path: ${req.file.path}`);
         try {
-          // Force a small delay to ensure OS file system has settled (sometimes helps with 500s on rapid uploads)
-          await new Promise(resolve => setTimeout(resolve, 100));
           workbook = XLSX.readFile(req.file.path);
         } catch (readErr: any) {
           console.error(`[BULK] Error reading file via XLSX.readFile:`, readErr.message);
-          // Fallback to reading as buffer
           const fileBuffer = fs.readFileSync(req.file.path);
           workbook = XLSX.read(fileBuffer, { type: "buffer" });
         }
-      } else if (req.file.buffer) {
-        console.log(`[BULK] Reading file from buffer`);
-        workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       } else {
-        console.error(`[BULK] No file path or buffer found`);
+        console.error(`[BULK] No file buffer or valid path found`);
         return res.status(400).json({ error: "Dados do arquivo não encontrados no servidor" });
       }
       const sheetName = workbook.SheetNames[0];
