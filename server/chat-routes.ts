@@ -3412,8 +3412,8 @@ export function registerChatRoutes(app: Express): void {
   // ENDPOINTS PARA TEMPLATES DE RESPOSTA RÁPIDA
   // ============================================================
 
-  // GET /api/chat/quick-templates - Lista de templates
-  app.get("/api/chat/quick-templates", async (req, res) => {
+  // GET /api/chat/quick-templates - Lista de templates (requer autenticação)
+  app.get("/api/chat/quick-templates", authenticateUser, async (req, res) => {
     try {
       const templates = await storage.getChatQuickMessages() || [];
       res.json(templates);
@@ -3423,24 +3423,47 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // POST /api/chat/quick-templates - Criar template
-  app.post("/api/chat/quick-templates", authenticateUser, async (req, res) => {
+  // GET /api/chat/quick-templates/:id - Buscar template específico
+  app.get("/api/chat/quick-templates/:id", authenticateUser, async (req, res) => {
     try {
-      const { title, content, category } = req.body;
+      const { id } = req.params;
+      const template = await storage.getChatQuickMessage(id);
+      if (!template) {
+        return res.status(404).json({ error: "Template não encontrado" });
+      }
+      res.json(template);
+    } catch (error: any) {
+      console.error("[CHAT-TEMPLATE-GET] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar template" });
+    }
+  });
+
+  // POST /api/chat/quick-templates - Criar template (apenas admin/coordinator/administrative)
+  app.post("/api/chat/quick-templates", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    try {
+      const { title, content, category, imageUrl, messageType, sortOrder } = req.body;
       const userId = (req as any).currentUser?.id;
 
-      if (!title || !content) {
-        return res.status(400).json({ error: "Título e conteúdo são obrigatórios" });
+      if (!title) {
+        return res.status(400).json({ error: "Título é obrigatório" });
+      }
+
+      if (!content && !imageUrl) {
+        return res.status(400).json({ error: "Conteúdo ou imagem são obrigatórios" });
       }
 
       const template = await storage.createChatQuickMessage({
         title,
-        content,
-        messageType: "text",
+        content: content || "",
+        messageType: imageUrl ? "image" : (messageType || "text"),
+        imageUrl: imageUrl || null,
+        category: category || null,
+        sortOrder: sortOrder || 0,
         isActive: true,
         createdBy: userId
       });
 
+      console.log(`✅ [TEMPLATE] Template criado: ${template.id} - ${template.title}`);
       res.json(template);
     } catch (error: any) {
       console.error("[CHAT-TEMPLATE-CREATE] Erro:", error);
@@ -3448,11 +3471,47 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // DELETE /api/chat/quick-templates/:id - Deletar template
-  app.delete("/api/chat/quick-templates/:id", authenticateUser, async (req, res) => {
+  // PUT /api/chat/quick-templates/:id - Atualizar template (apenas admin/coordinator/administrative)
+  app.put("/api/chat/quick-templates/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const { id } = req.params;
-      // Implementar quando houver método delete na storage
+      const { title, content, category, imageUrl, messageType, sortOrder, isActive } = req.body;
+
+      const existing = await storage.getChatQuickMessage(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Template não encontrado" });
+      }
+
+      const updateData: any = {};
+      if (title !== undefined) updateData.title = title;
+      if (content !== undefined) updateData.content = content;
+      if (category !== undefined) updateData.category = category;
+      if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+      if (messageType !== undefined) updateData.messageType = messageType;
+      if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
+      if (isActive !== undefined) updateData.isActive = isActive;
+
+      const template = await storage.updateChatQuickMessage(id, updateData);
+      console.log(`✅ [TEMPLATE] Template atualizado: ${id}`);
+      res.json(template);
+    } catch (error: any) {
+      console.error("[CHAT-TEMPLATE-UPDATE] Erro:", error);
+      res.status(500).json({ error: "Erro ao atualizar template" });
+    }
+  });
+
+  // DELETE /api/chat/quick-templates/:id - Deletar template (apenas admin/coordinator/administrative)
+  app.delete("/api/chat/quick-templates/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const existing = await storage.getChatQuickMessage(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Template não encontrado" });
+      }
+      
+      await storage.deleteChatQuickMessage(id);
+      console.log(`🗑️ [TEMPLATE] Template deletado: ${id}`);
       res.json({ success: true, message: "Template deletado" });
     } catch (error: any) {
       console.error("[CHAT-TEMPLATE-DELETE] Erro:", error);

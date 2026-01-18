@@ -408,7 +408,10 @@ export interface IStorage {
   
   // Chat Quick Messages operations
   getChatQuickMessages(): Promise<ChatQuickMessage[]>;
+  getChatQuickMessage(id: string): Promise<ChatQuickMessage | undefined>;
   createChatQuickMessage(message: InsertChatQuickMessage): Promise<ChatQuickMessage>;
+  updateChatQuickMessage(id: string, message: Partial<InsertChatQuickMessage>): Promise<ChatQuickMessage>;
+  deleteChatQuickMessage(id: string): Promise<void>;
   
   // Chat Orders operations
   getChatOrders(): Promise<ChatOrder[]>;
@@ -6169,12 +6172,30 @@ export class DatabaseStorage implements IStorage {
   
   // Chat Quick Messages operations
   async getChatQuickMessages(): Promise<ChatQuickMessage[]> {
-    return await db.select().from(chatQuickMessages).where(eq(chatQuickMessages.isActive, true));
+    return await db.select().from(chatQuickMessages).where(eq(chatQuickMessages.isActive, true)).orderBy(chatQuickMessages.sortOrder);
+  }
+  
+  async getChatQuickMessage(id: string): Promise<ChatQuickMessage | undefined> {
+    const [message] = await db.select().from(chatQuickMessages).where(eq(chatQuickMessages.id, id));
+    return message;
   }
   
   async createChatQuickMessage(messageData: InsertChatQuickMessage): Promise<ChatQuickMessage> {
     const [message] = await db.insert(chatQuickMessages).values(messageData).returning();
     return message;
+  }
+  
+  async updateChatQuickMessage(id: string, messageData: Partial<InsertChatQuickMessage>): Promise<ChatQuickMessage> {
+    const [message] = await db
+      .update(chatQuickMessages)
+      .set({ ...messageData, updatedAt: new Date() })
+      .where(eq(chatQuickMessages.id, id))
+      .returning();
+    return message;
+  }
+  
+  async deleteChatQuickMessage(id: string): Promise<void> {
+    await db.update(chatQuickMessages).set({ isActive: false }).where(eq(chatQuickMessages.id, id));
   }
   
   // Chat Orders operations

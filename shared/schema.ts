@@ -1699,7 +1699,7 @@ export const chatProducts = pgTable("chat_products", {
 });
 
 // Chat Quick Messages type enum
-export const chatQuickMessageTypeEnum = pgEnum('chat_quick_message_type', ['text', 'product_menu', 'order_form']);
+export const chatQuickMessageTypeEnum = pgEnum('chat_quick_message_type', ['text', 'product_menu', 'order_form', 'image']);
 
 // Chat Quick Messages table
 export const chatQuickMessages = pgTable("chat_quick_messages", {
@@ -1707,9 +1707,13 @@ export const chatQuickMessages = pgTable("chat_quick_messages", {
   title: text("title").notNull(),
   content: text("content").notNull(),
   messageType: chatQuickMessageTypeEnum("message_type").notNull().default("text"),
+  imageUrl: text("image_url"),
+  category: text("category"),
+  sortOrder: integer("sort_order").default(0),
   isActive: boolean("is_active").notNull().default(true),
   createdBy: varchar("created_by").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Chat Orders status enum
@@ -1848,7 +1852,15 @@ export const insertChatProductSchema = createInsertSchema(chatProducts).omit({
 export const insertChatQuickMessageSchema = createInsertSchema(chatQuickMessages).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 });
+
+export const updateChatQuickMessageSchema = createInsertSchema(chatQuickMessages).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  createdBy: true,
+}).partial();
 
 export const insertChatOrderSchema = createInsertSchema(chatOrders).omit({
   id: true,

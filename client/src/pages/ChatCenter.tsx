@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PhonebookPanel } from "@/components/PhonebookPanel";
+import { TemplatesPanel } from "@/components/TemplatesPanel";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -1083,7 +1084,7 @@ export default function ChatCenter() {
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-7" : "lg:grid-cols-5"} gap-6`}>
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-8" : "lg:grid-cols-6"} gap-6`}>
           {isAdmin && (
             // Sidebar esquerda com stats de agentes
             <div className="lg:col-span-1">
@@ -1631,6 +1632,34 @@ export default function ChatCenter() {
                 </div>
               </Card>
             )}
+          </div>
+
+          {/* Painel de Templates à direita */}
+          <div className="lg:col-span-1 hidden lg:block" style={{ height: 'calc(100vh - 200px)' }}>
+            <TemplatesPanel
+              onSelectTemplate={(template) => {
+                if (template.content) {
+                  setMessageText(template.content);
+                }
+              }}
+              onSendImage={async (imageUrl, caption) => {
+                if (selectedConversation) {
+                  try {
+                    await apiRequest("POST", `/api/chat/conversations/${selectedConversation}/messages/media`, {
+                      mediaUrl: imageUrl,
+                      mediaType: "image",
+                      caption: caption || ""
+                    });
+                    queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+                    toast({ title: "Imagem enviada com sucesso" });
+                  } catch (error: any) {
+                    toast({ title: "Erro ao enviar imagem", description: error.message, variant: "destructive" });
+                  }
+                }
+              }}
+              isAdmin={isAdmin}
+              hasActiveConversation={!!selectedConversation}
+            />
           </div>
         </div>
 
