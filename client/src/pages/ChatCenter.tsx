@@ -1500,7 +1500,7 @@ export default function ChatCenter() {
                         data-testid="input-media-caption"
                       />
                     )}
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-end">
                       <Textarea
                         placeholder="Digite sua mensagem (Ctrl+Enter para enviar)..."
                         value={messageText}
@@ -1511,11 +1511,11 @@ export default function ChatCenter() {
                           }
                         }}
                         data-testid="textarea-message"
-                        className="resize-none"
-                        rows={3}
+                        className="resize-none flex-1"
+                        rows={2}
                         disabled={!!selectedFile}
                       />
-                      <div className="flex flex-col gap-2 self-end">
+                      <div className="flex gap-1">
                         {!selectedFile ? (
                           <>
                             <input
@@ -1560,6 +1560,14 @@ export default function ChatCenter() {
                                 <Sparkles className="w-4 h-4 text-purple-600" />
                               )}
                             </Button>
+                            <Button
+                              onClick={handleSendMessage}
+                              disabled={!messageText.trim() || sendMessageMutation.isPending}
+                              data-testid="button-send"
+                              className="bg-green-600 hover:bg-green-700"
+                            >
+                              <Send className="w-4 h-4" />
+                            </Button>
                           </>
                         ) : (
                           <Button
@@ -1569,15 +1577,6 @@ export default function ChatCenter() {
                             className="bg-blue-600"
                           >
                             {uploadFileMutation.isPending ? "Enviando..." : <Send className="w-4 h-4" />}
-                          </Button>
-                        )}
-                        {!selectedFile && (
-                          <Button
-                            onClick={handleSendMessage}
-                            disabled={!messageText.trim() || sendMessageMutation.isPending}
-                            data-testid="button-send"
-                          >
-                            <Send className="w-4 h-4" />
                           </Button>
                         )}
                       </div>
