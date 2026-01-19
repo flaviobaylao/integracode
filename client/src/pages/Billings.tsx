@@ -525,10 +525,10 @@ export default function Billings() {
           
           <div className="text-right">
             {displaySync?.lastSyncAt && (
-              <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR')}</p>
+              <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
             )}
             {displaySync?.lastFinishedAt && (
-              <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR')}</p>
+              <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
             )}
           </div>
         </div>

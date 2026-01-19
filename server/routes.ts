@@ -17960,12 +17960,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           } catch (pageError: any) {
             retryCount++;
-            const isRateLimited = pageError.message?.includes('429') || pageError.message?.toLowerCase().includes('rate') || pageError.message?.toLowerCase().includes('limit');
+            const errorMsg = pageError.message || '';
+            const isRateLimited = errorMsg.includes('429') || 
+              errorMsg.toLowerCase().includes('rate') || 
+              errorMsg.toLowerCase().includes('limit') ||
+              errorMsg.includes('MISUSE_API') ||
+              errorMsg.toLowerCase().includes('bloqueada') ||
+              errorMsg.toLowerCase().includes('consumo indevido');
             
             if (isRateLimited) {
-              console.log(`⚠️ Rate limit detectado na página ${page}. Aguardando 60s...`);
-              billingSyncState.message = `Rate limit detectado. Aguardando 60s...`;
-              await new Promise(r => setTimeout(r, 60000));
+              const waitMatch = errorMsg.match(/(\d+)\s*segundos/);
+              const waitSeconds = waitMatch ? Math.min(parseInt(waitMatch[1], 10) + 5, 1200) : 60;
+              const waitMinutes = Math.ceil(waitSeconds / 60);
+              const waitStartTime = Date.now();
+              
+              console.log(`⚠️ Rate limit detectado na página ${page}. Aguardando ${waitSeconds}s (~${waitMinutes} min)...`);
+              billingSyncState.message = `⏳ API Omie bloqueada. Aguardando ${waitMinutes} min para continuar...`;
+              
+              const updateInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - waitStartTime) / 1000);
+                const remaining = Math.max(0, waitSeconds - elapsed);
+                const remainingMin = Math.ceil(remaining / 60);
+                billingSyncState.message = `⏳ API Omie bloqueada. Aguardando liberação (~${remainingMin} min restantes)...`;
+              }, 10000);
+              
+              await new Promise(r => setTimeout(r, waitSeconds * 1000));
+              clearInterval(updateInterval);
+              
+              billingSyncState.message = `Retomando sincronização após espera...`;
               minuteStart = Date.now();
               requestsThisMinute = 0;
               retryCount--;
@@ -18041,10 +18063,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const vendorData = await omieService.fetchVendorData(vendorCode);
               vendorName = vendorData?.nome || vendorCode;
             } catch (error: any) {
-              const isRateLimited = error.message?.includes('429') || error.message?.toLowerCase().includes('rate');
+              const errorMsg = error.message || '';
+              const isRateLimited = errorMsg.includes('429') || 
+                errorMsg.toLowerCase().includes('rate') ||
+                errorMsg.includes('MISUSE_API') ||
+                errorMsg.toLowerCase().includes('bloqueada') ||
+                errorMsg.toLowerCase().includes('consumo indevido');
               if (isRateLimited) {
-                console.log(`⚠️ Rate limit em lookup de vendedor. Aguardando 60s...`);
-                await new Promise(r => setTimeout(r, 60000));
+                const waitMatch = errorMsg.match(/(\d+)\s*segundos/);
+                const waitSeconds = waitMatch ? Math.min(parseInt(waitMatch[1], 10) + 5, 1200) : 60;
+                const waitMinutes = Math.ceil(waitSeconds / 60);
+                
+                console.log(`⚠️ Rate limit em lookup de vendedor. Aguardando ${waitSeconds}s (~${waitMinutes} min)...`);
+                billingSyncState.message = `⏳ API Omie bloqueada. Aguardando ${waitMinutes} min...`;
+                await new Promise(r => setTimeout(r, waitSeconds * 1000));
+                billingSyncState.message = `Retomando sincronização...`;
                 minuteStart = Date.now();
                 requestsThisMinute = 0;
               }
