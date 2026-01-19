@@ -223,6 +223,18 @@ export default function HotsiteOrders() {
     return '-';
   };
 
+  const extractOrderNumber = (notes?: string): string => {
+    if (!notes) return '-';
+    const match = notes.match(/WEB-\d+/);
+    return match ? match[0] : '-';
+  };
+
+  const getDeliveryAddress = (order: HotsiteOrder, customer?: Customer): string | null => {
+    if (order.customerAddress) return order.customerAddress;
+    if (customer?.address) return customer.address;
+    return null;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50">
       <div className="container mx-auto px-4 py-6 max-w-7xl">
@@ -386,13 +398,13 @@ export default function HotsiteOrders() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Pedido</TableHead>
                       <TableHead>Data</TableHead>
                       <TableHead>Cliente</TableHead>
-                      <TableHead>CPF/CNPJ</TableHead>
+                      <TableHead>Endereço de Entrega</TableHead>
                       <TableHead>Produtos</TableHead>
                       <TableHead>Valor</TableHead>
                       <TableHead>Pagamento</TableHead>
-                      <TableHead>Tipo</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-center">Ações</TableHead>
                     </TableRow>
@@ -401,14 +413,21 @@ export default function HotsiteOrders() {
                     {filteredOrders.map((order) => {
                       const customer = customersMap[order.customerId];
                       const customerName = customer?.fantasy_name || customer?.name || 'Cliente não encontrado';
+                      const deliveryAddress = getDeliveryAddress(order, customer);
+                      const orderNumber = extractOrderNumber(order.notes);
                       
                       return (
                         <TableRow 
                           key={order.id} 
                           data-testid={`row-order-${order.id}`}
-                          className="cursor-pointer hover:bg-gray-50"
+                          className={`cursor-pointer hover:bg-gray-50 ${deliveryAddress ? 'bg-green-50 hover:bg-green-100' : ''}`}
                           onClick={() => setSelectedOrder(order)}
                         >
+                          <TableCell>
+                            <div className="font-mono text-sm font-medium text-blue-600">
+                              {orderNumber}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4 text-gray-400" />
@@ -427,9 +446,16 @@ export default function HotsiteOrders() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div className="text-sm font-mono">
-                              {formatDocument(customer?.cpf, customer?.cnpj)}
-                            </div>
+                            {deliveryAddress ? (
+                              <div className="flex items-start gap-1 max-w-xs">
+                                <MapPin className="h-4 w-4 text-green-600 flex-shrink-0 mt-0.5" />
+                                <span className="text-sm text-gray-700 truncate" title={deliveryAddress}>
+                                  {deliveryAddress.length > 40 ? deliveryAddress.substring(0, 40) + '...' : deliveryAddress}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 text-sm">Não informado</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="max-w-xs">
@@ -452,7 +478,6 @@ export default function HotsiteOrders() {
                             </div>
                           </TableCell>
                           <TableCell>{getPaymentMethodLabel(order.paymentMethod)}</TableCell>
-                          <TableCell>{getOperationTypeLabel(order.operationType)}</TableCell>
                           <TableCell>{getStatusBadge(order.status)}</TableCell>
                           <TableCell className="text-center">
                             <Button
@@ -486,6 +511,9 @@ export default function HotsiteOrders() {
                   <DialogTitle className="flex items-center gap-2">
                     <ShoppingCart className="h-5 w-5" />
                     Detalhes do Pedido
+                    <Badge variant="outline" className="ml-2 font-mono text-blue-600">
+                      {extractOrderNumber(selectedOrder.notes)}
+                    </Badge>
                   </DialogTitle>
                   <DialogDescription>
                     Pedido realizado em {format(new Date(selectedOrder.scheduledDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -563,21 +591,39 @@ export default function HotsiteOrders() {
                   </Card>
 
                   {/* Endereço de Entrega */}
-                  {selectedOrder.customerAddress && (
-                    <Card className="border-green-200 bg-green-50">
-                      <CardHeader>
-                        <CardTitle className="text-lg flex items-center gap-2 text-green-800">
-                          <MapPin className="h-5 w-5" />
-                          Endereço de Entrega
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-gray-700 font-medium">
-                          {selectedOrder.customerAddress}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
+                  {(() => {
+                    const customer = customersMap[selectedOrder.customerId];
+                    const deliveryAddress = getDeliveryAddress(selectedOrder, customer);
+                    return deliveryAddress ? (
+                      <Card className="border-green-200 bg-green-50">
+                        <CardHeader>
+                          <CardTitle className="text-lg flex items-center gap-2 text-green-800">
+                            <MapPin className="h-5 w-5" />
+                            Endereço de Entrega
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-gray-700 font-medium">
+                            {deliveryAddress}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <Card className="border-yellow-200 bg-yellow-50">
+                        <CardHeader>
+                          <CardTitle className="text-lg flex items-center gap-2 text-yellow-800">
+                            <MapPin className="h-5 w-5" />
+                            Endereço de Entrega
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-yellow-700">
+                            Endereço não informado
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
 
                   {/* Produtos */}
                   <Card>
