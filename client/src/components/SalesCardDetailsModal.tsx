@@ -808,7 +808,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         )}
 
         {/* Botões de Ação */}
-        {(card.status === 'open' || card.status === 'pending' || card.status === 'in_progress') && (
+        {(card.status === 'open' || card.status === 'pending' || card.status === 'in_progress' || card.status === 'scheduled') && (
           <div className="border-t pt-4 space-y-4">
             {/* Botões de Check-in e Check-out */}
             <div className="flex flex-wrap justify-center gap-3">
