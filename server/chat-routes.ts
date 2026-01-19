@@ -2590,7 +2590,8 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/conversations", authenticateUser, async (req, res) => {
     try {
       const currentUser = (req as any).currentUser;
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      // 🔧 Telemarketing também pode ver TODAS as conversas para visualizar/transferir conversas do ChatGPT
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative' || currentUser?.role === 'telemarketing';
       
       let conversations: any[] = [];
       let agents: any[] = [];
