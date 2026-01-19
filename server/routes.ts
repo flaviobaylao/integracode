@@ -1179,9 +1179,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const user = req.currentUser;
       
-      // Only admin, coordinator, and administrative can update customer data
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem editar dados de clientes." });
+      // Telemarketing can only update phone and contact fields
+      const telemarketingAllowedFields = ['phone', 'contact'];
+      
+      if (user.role === 'telemarketing') {
+        // Filter request body to only allow phone and contact fields
+        const requestedFields = Object.keys(req.body);
+        const disallowedFields = requestedFields.filter(field => !telemarketingAllowedFields.includes(field));
+        
+        if (disallowedFields.length > 0) {
+          return res.status(403).json({ 
+            message: "Telemarketing só pode editar campos de telefone e contato.",
+            disallowedFields 
+          });
+        }
+      } else if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        // Other roles (vendedor, motorista) cannot update customer data
+        return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
       }
       
       // Se o ID começa com "billing-", estamos atualizando coordenadas de um billing
@@ -1712,6 +1726,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const user = req.currentUser;
+      
+      // Telemarketing can only update phone and contact fields
+      const telemarketingAllowedFields = ['phone', 'contact'];
+      
+      if (user.role === 'telemarketing') {
+        // Filter request body to only allow phone and contact fields
+        const requestedFields = Object.keys(req.body);
+        const disallowedFields = requestedFields.filter(field => !telemarketingAllowedFields.includes(field));
+        
+        if (disallowedFields.length > 0) {
+          return res.status(403).json({ 
+            message: "Telemarketing só pode editar campos de telefone e contato.",
+            disallowedFields 
+          });
+        }
+      } else if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        // Other roles (vendedor, motorista) cannot update customer data
+        return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
+      }
       
       // DEBUG: Log do payload recebido
       console.log('📍 PUT /api/customers/:id - Payload recebido:', {
@@ -1801,8 +1835,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Extract customer data from the result
       const currentCustomer = currentCustomerResult;
-      
-      const user = req.currentUser;
       
       // Check permissions for reassigning customers
       // Apenas vendedores NÃO podem alterar sellerId
