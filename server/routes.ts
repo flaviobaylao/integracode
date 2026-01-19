@@ -3464,8 +3464,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       console.log('🔍 [HOTSITE-ORDERS] User requesting:', user.email, 'Role:', user.role);
       
-      // Apenas admin, coordinator e administrative podem ver pedidos do hotsite
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+      // Admin, coordinator, administrative e telemarketing podem ver pedidos do hotsite
+      if (!['admin', 'coordinator', 'administrative', 'telemarketing'].includes(user.role)) {
         console.log('⛔ [HOTSITE-ORDERS] Access denied for role:', user.role);
         return res.status(403).json({ message: "Access denied" });
       }
