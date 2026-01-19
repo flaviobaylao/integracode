@@ -1944,10 +1944,18 @@ export default function RotaDoDia() {
                 onClick={async () => {
                   if (virtualActionCustomer) {
                     setLoadingCardId(virtualActionCustomer.id);
+                    setShowVirtualActionModal(false);
                     try {
-                      const res = await apiRequest('GET', `/api/sales-cards/customer/${virtualActionCustomer.id}/today`);
-                      if (res && res.id) {
-                        setSelectedCard(res);
+                      const dateToUse = selectedDate || new Date().toISOString().split('T')[0];
+                      const response = await fetch(`/api/customers/${virtualActionCustomer.id}/sales-card/${dateToUse}`, {
+                        credentials: 'include'
+                      });
+                      if (!response.ok) {
+                        throw new Error(`Falha ao buscar card de vendas: ${response.status}`);
+                      }
+                      const card = await response.json();
+                      if (card && card.id) {
+                        setSelectedCard(card);
                         setShowCardModal(true);
                       } else {
                         toast({
@@ -1960,13 +1968,12 @@ export default function RotaDoDia() {
                       toast({
                         variant: "destructive",
                         title: "Erro",
-                        description: "Erro ao buscar card de venda",
+                        description: error instanceof Error ? error.message : "Erro ao buscar card de venda",
                       });
                     } finally {
                       setLoadingCardId(null);
                     }
                   }
-                  setShowVirtualActionModal(false);
                 }}
                 data-testid="btn-virtual-register-order"
               >
