@@ -162,8 +162,8 @@ export function TemplatesPanel({ onSelectTemplate, onSendImage, isAdmin, hasActi
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 overflow-hidden p-2">
-        <ScrollArea className="h-full">
+      <CardContent className="flex-1 min-h-0 overflow-hidden p-2">
+        <ScrollArea className="h-full pr-2" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
