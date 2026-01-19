@@ -654,7 +654,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                     <div className="flex flex-wrap gap-2">
                       {((card as any).vehicleTypes || []).map((vehicle: string) => (
                         <Badge key={vehicle} variant="outline" className="bg-orange-50 text-orange-700 border-orange-300">
-                          {vehicle === 'caminhao' ? '🚛 Caminhão' : vehicle === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                          {vehicle === 'caminhao' ? '🚛 Caminhão' : vehicle === 'carro' ? '🚗 Carro' : vehicle === 'baruc' ? '🚐 Baruc' : '🏍️ Moto'}
                         </Badge>
                       ))}
                     </div>

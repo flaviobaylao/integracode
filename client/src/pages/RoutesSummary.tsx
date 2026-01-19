@@ -555,7 +555,7 @@ export default function RoutesSummary() {
       doc.text(`Rota: ${selectedRouteData.routeName}`, 14, infoY);
       doc.text(`Motorista: ${selectedRouteData.driverName}`, 14, infoY + 7);
       doc.text(`Data: ${format(parseISO(selectedRouteData.routeDate), 'dd/MM/yyyy')}`, 14, infoY + 14);
-      doc.text(`Veículo: ${selectedRouteData.vehicleType === 'caminhao' ? 'Caminhão' : selectedRouteData.vehicleType === 'carro' ? 'Carro' : 'Moto'}`, 14, infoY + 21);
+      doc.text(`Veículo: ${selectedRouteData.vehicleType === 'caminhao' ? 'Caminhão' : selectedRouteData.vehicleType === 'carro' ? 'Carro' : selectedRouteData.vehicleType === 'baruc' ? 'Baruc' : 'Moto'}`, 14, infoY + 21);
       
       // Seção 2: Métricas
       doc.setFontSize(12);
@@ -775,7 +775,7 @@ export default function RoutesSummary() {
                   </div>
                   <div className="flex items-center text-muted-foreground">
                     <Truck className="h-4 w-4 mr-2" />
-                    {route.driverName} • {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                    {route.driverName} • {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : route.vehicleType === 'baruc' ? '🚐 Baruc' : '🏍️ Moto'}
                   </div>
                   <div className="flex items-center text-muted-foreground">
                     <Package className="h-4 w-4 mr-2" />
@@ -1482,6 +1482,7 @@ export default function RoutesSummary() {
                   <SelectItem value="moto">🏍️ Moto</SelectItem>
                   <SelectItem value="carro">🚗 Carro</SelectItem>
                   <SelectItem value="caminhao">🚛 Caminhão</SelectItem>
+                  <SelectItem value="baruc">🚐 Baruc</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -1238,7 +1238,7 @@ export const insertSalesCardSchema = createInsertSchema(salesCards).omit({
   
   // Validação de configuração de veículo exclusivo
   exclusiveVehicle: z.boolean().default(false),
-  vehicleTypes: z.array(z.enum(['caminhao', 'carro', 'moto'])).max(2, 'Selecione no máximo 2 tipos de veículos').default([]),
+  vehicleTypes: z.array(z.enum(['caminhao', 'carro', 'moto', 'baruc'])).max(2, 'Selecione no máximo 2 tipos de veículos').default([]),
 });
 
 export const insertOrderHistorySchema = createInsertSchema(orderHistory).omit({

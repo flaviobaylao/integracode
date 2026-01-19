@@ -86,7 +86,7 @@ interface DeliveryOrder {
 }
 
 interface VehicleConfig {
-  type: 'caminhao' | 'carro' | 'moto';
+  type: 'caminhao' | 'carro' | 'moto' | 'baruc';
   driverId?: string;
   driverName?: string;
   startLatitude: number;
@@ -994,7 +994,7 @@ export default function DeliveryManagement() {
                             <span className="flex items-center text-orange-600">
                               <Truck className="h-3 w-3 mr-1" />
                               Veículo: {order.vehicleTypes.map(v => 
-                                v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : '🏍️'
+                                v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : v === 'baruc' ? '🚐' : '🏍️'
                               ).join(' ')}
                             </span>
                           )}
@@ -1060,7 +1060,7 @@ export default function DeliveryManagement() {
                                 <div className="text-orange-900 font-bold text-xs">🚛 ENTREGA EM VEÍCULO EXCLUSIVO</div>
                                 {order.vehicleTypes?.length > 0 && (
                                   <span className="text-xs bg-orange-200 text-orange-900 px-2 py-0.5 rounded">
-                                    {order.vehicleTypes.map(v => v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : '🏍️').join(' ')}
+                                    {order.vehicleTypes.map(v => v === 'caminhao' ? '🚛' : v === 'carro' ? '🚗' : v === 'baruc' ? '🚐' : '🏍️').join(' ')}
                                   </span>
                                 )}
                               </div>
@@ -1172,6 +1172,7 @@ export default function DeliveryManagement() {
                               <SelectItem value="caminhao">🚛 Caminhão</SelectItem>
                               <SelectItem value="carro">🚗 Carro</SelectItem>
                               <SelectItem value="moto">🏍️ Moto</SelectItem>
+                              <SelectItem value="baruc">🚐 Baruc</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1367,7 +1368,7 @@ export default function DeliveryManagement() {
                           />
                           <CardTitle className="flex items-center">
                             <Truck className="h-5 w-5 mr-2" />
-                            Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : '🏍️ Moto'}
+                            Rota {idx + 1} - {route.vehicleType === 'caminhao' ? '🚛 Caminhão' : route.vehicleType === 'carro' ? '🚗 Carro' : route.vehicleType === 'baruc' ? '🚐 Baruc' : '🏍️ Moto'}
                             {route.driverName && (
                               <Badge variant="secondary" className="ml-2">
                                 {route.driverName}
@@ -1750,7 +1751,8 @@ export default function DeliveryManagement() {
                     {[
                       { value: 'caminhao', label: '🚛 Caminhão' },
                       { value: 'carro', label: '🚗 Carro' },
-                      { value: 'moto', label: '🏍️ Moto' }
+                      { value: 'moto', label: '🏍️ Moto' },
+                      { value: 'baruc', label: '🚐 Baruc' }
                     ].map((vehicle) => (
                       <div key={vehicle.value} className="flex items-center space-x-2">
                         <Checkbox
