@@ -131,6 +131,26 @@ export default function VirtualServiceLogModal({
     },
   });
 
+  const uploadImageFile = async (file: File) => {
+    const formData = new FormData();
+    formData.append("image", file);
+    
+    const response = await fetch("/api/upload-image", {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+    
+    if (!response.ok) {
+      throw new Error("Falha ao enviar imagem");
+    }
+    
+    const result = await response.json();
+    if (result.url) {
+      setImages(prev => [...prev, result.url]);
+    }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -139,23 +159,7 @@ export default function VirtualServiceLogModal({
     
     try {
       for (const file of Array.from(files)) {
-        const formData = new FormData();
-        formData.append("image", file);
-        
-        const response = await fetch("/api/upload-image", {
-          method: "POST",
-          body: formData,
-          credentials: "include",
-        });
-        
-        if (!response.ok) {
-          throw new Error("Falha ao enviar imagem");
-        }
-        
-        const result = await response.json();
-        if (result.url) {
-          setImages(prev => [...prev, result.url]);
-        }
+        await uploadImageFile(file);
       }
       toast({
         title: "Imagem(ns) enviada(s)",
@@ -172,6 +176,44 @@ export default function VirtualServiceLogModal({
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          imageFiles.push(file);
+        }
+      }
+    }
+
+    if (imageFiles.length === 0) return;
+
+    e.preventDefault();
+    setUploadingImage(true);
+
+    try {
+      for (const file of imageFiles) {
+        await uploadImageFile(file);
+      }
+      toast({
+        title: "Imagem colada",
+        description: `${imageFiles.length} imagem(ns) anexada(s) com sucesso.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro ao colar imagem",
+        description: error.message || "Não foi possível processar a imagem colada.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -254,12 +296,16 @@ export default function VirtualServiceLogModal({
                   <Label htmlFor="notes">Notas do Atendimento</Label>
                   <Textarea
                     id="notes"
-                    placeholder="Descreva o que foi tratado no atendimento..."
+                    placeholder="Descreva o que foi tratado no atendimento... (Você pode colar imagens aqui com Ctrl+V)"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
+                    onPaste={handlePaste}
                     rows={4}
                     className="mt-1"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Dica: Cole imagens diretamente com Ctrl+V ou Cmd+V
+                  </p>
                 </div>
 
                 <div>
