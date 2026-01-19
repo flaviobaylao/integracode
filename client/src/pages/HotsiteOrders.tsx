@@ -34,6 +34,7 @@ interface HotsiteOrder {
   operationType?: string;
   notes?: string;
   source?: string;
+  customerAddress?: string;
 }
 
 interface Customer {
@@ -555,17 +556,28 @@ export default function HotsiteOrders() {
                                 {customer.email}
                               </div>
                             )}
-                            {customer?.address && (
-                              <div className="flex items-center gap-2 text-gray-700">
-                                <MapPin className="h-4 w-4" />
-                                {customer.address}
-                              </div>
-                            )}
                           </>
                         );
                       })()}
                     </CardContent>
                   </Card>
+
+                  {/* Endereço de Entrega */}
+                  {selectedOrder.customerAddress && (
+                    <Card className="border-green-200 bg-green-50">
+                      <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2 text-green-800">
+                          <MapPin className="h-5 w-5" />
+                          Endereço de Entrega
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-gray-700 font-medium">
+                          {selectedOrder.customerAddress}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
 
                   {/* Produtos */}
                   <Card>
