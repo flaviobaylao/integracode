@@ -414,6 +414,7 @@ export const salesCards = pgTable("sales_cards", {
   // Georreferenciamento do cliente
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }), // Latitude da localização do cliente
   customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }), // Longitude da localização do cliente
+  customerAddress: text("customer_address"), // Endereço de entrega informado pelo cliente (usado principalmente no hotsite)
   
   // Controle de check-in e check-out do vendedor
   checkInTime: timestamp("check_in_time"), // Horário de check-in do vendedor

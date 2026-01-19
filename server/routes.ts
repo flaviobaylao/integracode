@@ -19555,7 +19555,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveryTimeSlots: [],
         deliverySaturdayTimeSlots: [],
         boletoDays: validatedData.paymentMethod === 'boleto' ? 7 : null,
-        source: validatedData.source
+        source: validatedData.source,
+        customerAddress: validatedData.customer.address // Endereço de entrega informado pelo cliente no hotsite
       };
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
