@@ -1657,6 +1657,7 @@ export const chatMessages = pgTable("chat_messages", {
   metadata: jsonb("metadata"),
   isRead: boolean("is_read").notNull().default(false),
   externalId: varchar("external_id"), // ID externo do WhatsApp para evitar duplicatas de mensagens
+  ack: integer("ack").default(0), // Status de entrega: 0=pending, 1=sent, 2=delivered, 3=read
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   unique("unique_external_id").on(table.externalId),
