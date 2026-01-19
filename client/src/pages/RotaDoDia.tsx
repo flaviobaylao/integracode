@@ -109,6 +109,10 @@ export default function RotaDoDia() {
   
   // Estado para modal de atendimento virtual
   const [virtualServiceCustomer, setVirtualServiceCustomer] = useState<{ id: string; name: string } | null>(null);
+  
+  // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
+  const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
+  const [virtualActionCustomer, setVirtualActionCustomer] = useState<{ id: string; name: string } | null>(null);
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users?role=vendedor'],
@@ -1370,10 +1374,11 @@ export default function RotaDoDia() {
                             data-testid={`virtual-visit-${visit.customerId}`}
                             onClick={() => {
                               if (visit.customerId) {
-                                setVirtualServiceCustomer({ 
+                                setVirtualActionCustomer({ 
                                   id: visit.customerId, 
                                   name: visit.customerName 
                                 });
+                                setShowVirtualActionModal(true);
                               }
                             }}
                           >
@@ -1899,6 +1904,80 @@ export default function RotaDoDia() {
               )}
             </TabsContent>
           </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Ações para Cliente Virtual */}
+      <Dialog open={showVirtualActionModal} onOpenChange={setShowVirtualActionModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Phone className="h-5 w-5 text-blue-600" />
+              Cliente Virtual
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground mb-4">
+              Cliente: <span className="font-semibold text-foreground">{virtualActionCustomer?.name}</span>
+            </p>
+            <div className="flex flex-col gap-3">
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-left"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    setVirtualServiceCustomer(virtualActionCustomer);
+                  }
+                  setShowVirtualActionModal(false);
+                }}
+                data-testid="btn-virtual-register-service"
+              >
+                <FileText className="h-5 w-5 mr-3 text-blue-600" />
+                <div>
+                  <div className="font-medium">Registrar Atendimento</div>
+                  <div className="text-xs text-muted-foreground">Registrar log de atendimento virtual</div>
+                </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-left"
+                onClick={async () => {
+                  if (virtualActionCustomer) {
+                    setLoadingCardId(virtualActionCustomer.id);
+                    try {
+                      const res = await apiRequest('GET', `/api/sales-cards/customer/${virtualActionCustomer.id}/today`);
+                      if (res && res.id) {
+                        setSelectedCard(res);
+                        setShowCardModal(true);
+                      } else {
+                        toast({
+                          variant: "destructive",
+                          title: "Erro",
+                          description: "Não foi possível encontrar o card de venda para este cliente",
+                        });
+                      }
+                    } catch (error) {
+                      toast({
+                        variant: "destructive",
+                        title: "Erro",
+                        description: "Erro ao buscar card de venda",
+                      });
+                    } finally {
+                      setLoadingCardId(null);
+                    }
+                  }
+                  setShowVirtualActionModal(false);
+                }}
+                data-testid="btn-virtual-register-order"
+              >
+                <ShoppingCart className="h-5 w-5 mr-3 text-green-600" />
+                <div>
+                  <div className="font-medium">Registrar Pedido</div>
+                  <div className="text-xs text-muted-foreground">Abrir card de venda para registro de pedido</div>
+                </div>
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
