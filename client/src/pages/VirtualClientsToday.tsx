@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,9 @@ interface VirtualClient {
 
 export default function VirtualClientsToday() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const isTelemarketing = user?.role === 'telemarketing';
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSeller, setSelectedSeller] = useState("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState("");
@@ -66,6 +70,13 @@ export default function VirtualClientsToday() {
   const [selectedCardForEdit, setSelectedCardForEdit] = useState<any>(null);
   const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<any>(null);
   const { toast } = useToast();
+
+  // Para telemarketing, inicializar filtro com seu próprio ID (sua carteira)
+  useEffect(() => {
+    if (isTelemarketing && user?.id && !selectedSeller) {
+      setSelectedSeller(user.id);
+    }
+  }, [isTelemarketing, user?.id, selectedSeller]);
 
   const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery({
     queryKey: ['/api/active-customers'],
@@ -156,7 +167,9 @@ export default function VirtualClientsToday() {
 
   const handleClearFilters = () => {
     setSearchTerm("");
-    setSelectedSeller("");
+    if (!isTelemarketing) {
+      setSelectedSeller("");
+    }
     setSelectedDayOfRoute("");
     setSelectedPeriodicity("");
     setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
@@ -271,18 +284,20 @@ export default function VirtualClientsToday() {
 
               <Filter className="h-4 w-4 text-muted-foreground" />
 
-              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger className="w-[140px] h-9" data-testid="select-seller-filter">
-                  <SelectValue placeholder="Vendedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sellers.map((seller) => (
-                    <SelectItem key={seller.id} value={seller.id}>
-                      {seller.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!isTelemarketing && (
+                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                  <SelectTrigger className="w-[140px] h-9" data-testid="select-seller-filter">
+                    <SelectValue placeholder="Vendedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sellers.map((seller) => (
+                      <SelectItem key={seller.id} value={seller.id}>
+                        {seller.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
 
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
                 <SelectTrigger className="w-[100px] h-9" data-testid="select-day-filter">

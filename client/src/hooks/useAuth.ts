@@ -6,7 +6,7 @@ interface User {
   firstName: string;
   lastName: string;
   profileImageUrl?: string;
-  role: 'admin' | 'coordinator' | 'administrative' | 'vendedor';
+  role: 'admin' | 'coordinator' | 'administrative' | 'vendedor' | 'telemarketing' | 'motorista';
   route?: string;
   isActive: boolean;
   homeLatitude?: string;
