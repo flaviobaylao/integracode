@@ -603,16 +603,31 @@ export function registerChatRoutes(app: Express): void {
 
       // Create or get customer
       console.log(`👤 [START-CONVERSATION] Criando cliente...`);
-      let createdCustomer = await storage.createChatCustomer({
-        name: customerName || `Cliente ${normalizedPhone}`,
-        phone: normalizedPhone
-      }).catch((err) => {
-        console.warn(`⚠️  [START-CONVERSATION] Erro ao criar cliente (pode ser duplicado):`, err.message);
-        return null;
-      });
+      
+      // First, try to find existing customer by phone
+      let existingCustomer = await storage.getChatCustomerByPhone(normalizedPhone);
+      let createdCustomer: typeof existingCustomer | null = existingCustomer || null;
+      
+      if (!existingCustomer) {
+        // Customer doesn't exist, create new one
+        createdCustomer = await storage.createChatCustomer({
+          name: customerName || `Cliente ${normalizedPhone}`,
+          phone: normalizedPhone
+        }).catch((err) => {
+          console.warn(`⚠️  [START-CONVERSATION] Erro ao criar cliente (pode ser duplicado):`, err.message);
+          return null;
+        });
+        
+        // If creation failed, try to fetch again (race condition)
+        if (!createdCustomer) {
+          createdCustomer = await storage.getChatCustomerByPhone(normalizedPhone);
+        }
+      } else {
+        console.log(`👤 [START-CONVERSATION] Cliente existente encontrado:`, existingCustomer.id);
+      }
 
       if (!createdCustomer) {
-        console.warn(`⚠️  [START-CONVERSATION] Cliente não foi criado`);
+        console.warn(`⚠️  [START-CONVERSATION] Cliente não foi criado nem encontrado`);
         return res.status(400).json({ error: "Erro ao criar cliente para a conversa" });
       }
       console.log(`✅ [START-CONVERSATION] Cliente criado/obtido:`, createdCustomer.id);
