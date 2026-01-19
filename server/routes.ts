@@ -8430,29 +8430,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Buscar todos os clientes para mapear telefones
+      // Buscar todos os clientes para mapear telefones e vendedores
       const allCustomers = await storage.getAllCustomers();
-      const customerPhoneMap = new Map<string, string>();
+      const customerDataMap = new Map<string, { phone?: string; sellerId?: string }>();
+      
+      // Buscar todos os usuários para mapear sellerId -> omieVendorCode
+      const allUsers = await storage.getAllUsers();
+      const userVendorCodeMap = new Map<string, string>();
+      allUsers.forEach((user: any) => {
+        if (user.id && user.omieVendorCode) {
+          userVendorCodeMap.set(user.id, user.omieVendorCode);
+        }
+      });
+      
       allCustomers.forEach(customer => {
-        if (customer.omieClientCode && customer.phone) {
-          customerPhoneMap.set(customer.omieClientCode, customer.phone);
+        if (customer.omieClientCode) {
+          // Obter código do vendedor do Omie via sellerId do cliente
+          let vendorCode = '';
+          if (customer.sellerId && userVendorCodeMap.has(customer.sellerId)) {
+            vendorCode = userVendorCodeMap.get(customer.sellerId) || '';
+          }
+          
+          customerDataMap.set(customer.omieClientCode, {
+            phone: customer.phone || '',
+            sellerId: vendorCode
+          });
         }
       });
 
       // Transformar dados do banco para o formato esperado pelo frontend
       // Cada linha já representa UM cliente com TODOS os seus débitos
-      const debts = savedDebts.map(debt => ({
-        cliente: {
-          codigo_cliente_omie: parseInt(debt.omieClientId),
-          nome_fantasia: debt.clientName,
-          cnpj_cpf: debt.clientDocument || '',
-          telefone: customerPhoneMap.get(debt.omieClientId) || ''
-        },
-        debitos: debt.debts || [],
-        valorTotal: parseFloat(debt.totalAmount),
-        diasMaximoAtraso: debt.maxDaysOverdue,
-        vendedores: debt.vendedores || [] // Usar vendedores salvos no banco
-      }));
+      const debts = savedDebts.map(debt => {
+        const customerData = customerDataMap.get(debt.omieClientId);
+        
+        // Se não temos vendedores dos títulos, usar o vendedor do cliente
+        let vendedoresFinais = debt.vendedores || [];
+        if (vendedoresFinais.length === 0 && customerData?.sellerId) {
+          const vendorCode = parseInt(customerData.sellerId);
+          if (!isNaN(vendorCode)) {
+            vendedoresFinais = [vendorCode];
+          }
+        }
+        
+        return {
+          cliente: {
+            codigo_cliente_omie: parseInt(debt.omieClientId),
+            nome_fantasia: debt.clientName,
+            cnpj_cpf: debt.clientDocument || '',
+            telefone: customerData?.phone || ''
+          },
+          debitos: debt.debts || [],
+          valorTotal: parseFloat(debt.totalAmount),
+          diasMaximoAtraso: debt.maxDaysOverdue,
+          vendedores: vendedoresFinais
+        };
+      });
 
       const totalAmount = debts.reduce((sum, d) => sum + d.valorTotal, 0);
 
