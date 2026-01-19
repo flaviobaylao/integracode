@@ -1127,15 +1127,15 @@ export default function ActiveCustomers() {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
-                                {ac.customer?.id && ac.customer?.virtualService && (
+                                {ac.customer?.id && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={(e) => handleOpenServiceLog(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name)}
-                                    title="Registrar atendimento virtual"
+                                    title={ac.customer?.virtualService ? "Registrar atendimento virtual" : "Registrar atendimento presencial"}
                                     data-testid={`button-service-log-${ac.id}`}
                                   >
-                                    <FileText className="h-4 w-4 text-green-500" />
+                                    <FileText className={`h-4 w-4 ${ac.customer?.virtualService ? 'text-green-500' : 'text-orange-500'}`} />
                                   </Button>
                                 )}
                                 {ac.customer?.id && (
