@@ -690,13 +690,23 @@ export default function OverdueDebtsManagement() {
                                 )}
                                 <span className="hidden sm:inline">Boleto</span>
                               </Button>
-                              {debt.cliente.telefone && (
+                              {debt.cliente.telefone && debt.cliente.telefone !== '(00) 00000-0000' && !debt.cliente.telefone.includes('00000-0000') ? (
                                 <WhatsAppButton
                                   phone={debt.cliente.telefone}
                                   customerName={debt.cliente.nome_fantasia}
                                   size="sm"
                                   variant="outline"
                                 />
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                  title="Telefone não cadastrado"
+                                  className="text-gray-400"
+                                >
+                                  <MessageCircle className="h-4 w-4" />
+                                </Button>
                               )}
                             </div>
                           </td>
