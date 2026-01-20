@@ -8600,8 +8600,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error fetching cached overdue debts:", error);
+      console.error("Error stack:", error instanceof Error ? error.stack : 'No stack trace');
       res.status(500).json({ 
-        message: "Erro ao buscar débitos salvos",
+        message: "Erro ao buscar débitos salvos: " + (error instanceof Error ? error.message : 'Erro desconhecido'),
         debts: [],
         totalAmount: 0,
         totalClients: 0
@@ -8756,6 +8757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error fetching report info:", error);
+      console.error("Error stack:", error instanceof Error ? error.stack : 'No stack trace');
       res.status(500).json({ 
         message: "Erro ao buscar informações da planilha",
         error: error instanceof Error ? error.message : 'Erro desconhecido'
