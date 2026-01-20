@@ -37,13 +37,27 @@ interface MonthlyMetric {
   customersWithHigherSales: number;
 }
 
+interface DailyServiceMetric {
+  agentId: string;
+  agentName: string;
+  agentRole: string;
+  date: string;
+  day: number;
+  totalServices: number;
+  vendas: number;
+  debitos: number;
+  prospeccoes: number;
+}
+
 interface DailyMetricsResponse {
   month: number;
   year: number;
   daysInMonth: number;
   sellers: { id: string; name: string }[];
+  agents: { id: string; name: string; role: string }[];
   dailyData: DailyMetric[];
   monthlyData: MonthlyMetric[];
+  dailyServiceData: DailyServiceMetric[];
 }
 
 interface SalesGoalsDashboardProps {
@@ -182,6 +196,51 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
 
   // Filtrar vendedor no dashboard diário
   const [dailyViewSeller, setDailyViewSeller] = useState<string>('all');
+
+  // Estado para paginação por dia e filtro por agente na seção de atendimentos
+  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
+  const [selectedAgent, setSelectedAgent] = useState<string>('all');
+
+  // Agrupar dados de atendimentos por dia
+  const groupedServiceByDay = useMemo(() => {
+    if (!dailyMetricsData?.dailyServiceData) return {};
+    
+    const grouped: Record<number, DailyServiceMetric[]> = {};
+    dailyMetricsData.dailyServiceData.forEach((metric) => {
+      if (!grouped[metric.day]) {
+        grouped[metric.day] = [];
+      }
+      grouped[metric.day].push(metric);
+    });
+    return grouped;
+  }, [dailyMetricsData]);
+
+  // Filtrar dados de atendimentos pelo dia e agente selecionados
+  const filteredServiceData = useMemo(() => {
+    if (!dailyMetricsData?.dailyServiceData) return [];
+    
+    let data = dailyMetricsData.dailyServiceData;
+    
+    if (selectedDay) {
+      data = data.filter(d => d.day === selectedDay);
+    }
+    
+    if (selectedAgent !== 'all') {
+      data = data.filter(d => d.agentId === selectedAgent);
+    }
+    
+    return data;
+  }, [dailyMetricsData, selectedDay, selectedAgent]);
+
+  // Totais do dia selecionado
+  const dayTotals = useMemo(() => {
+    return {
+      total: filteredServiceData.reduce((sum, d) => sum + d.totalServices, 0),
+      vendas: filteredServiceData.reduce((sum, d) => sum + d.vendas, 0),
+      debitos: filteredServiceData.reduce((sum, d) => sum + d.debitos, 0),
+      prospeccoes: filteredServiceData.reduce((sum, d) => sum + d.prospeccoes, 0)
+    };
+  }, [filteredServiceData]);
 
   const months = [
     { value: 1, label: 'Janeiro' },
@@ -725,6 +784,143 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                     ))}
                   </TableBody>
                 </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* QUADRO 3: Atendimentos Diários por Agente (Vendedores + Telemarketing) */}
+      {canViewAllSellers && (
+        <Card className="mt-6">
+          <CardHeader>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5" />
+                Atendimentos Diários - {months.find(m => m.value === selectedMonth)?.label}/{selectedYear}
+              </CardTitle>
+              <div className="flex flex-wrap gap-2">
+                <Select value={String(selectedDay)} onValueChange={(v) => setSelectedDay(parseInt(v))}>
+                  <SelectTrigger className="w-28" data-testid="select-service-day">
+                    <SelectValue placeholder="Dia" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: dailyMetricsData?.daysInMonth || 31 }, (_, i) => i + 1).map((day) => (
+                      <SelectItem key={day} value={String(day)}>
+                        Dia {String(day).padStart(2, '0')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                  <SelectTrigger className="w-48" data-testid="select-service-agent">
+                    <SelectValue placeholder="Agente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os agentes</SelectItem>
+                    {dailyMetricsData?.agents?.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name} ({agent.role === 'vendedor' ? 'Vendedor' : 'Telemarketing'})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isLoadingDailyMetrics ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+                Carregando atendimentos...
+              </div>
+            ) : filteredServiceData.length > 0 ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg text-center">
+                    <p className="text-2xl font-bold text-blue-600">{dayTotals.total}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Total Atendimentos</p>
+                  </div>
+                  <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg text-center">
+                    <p className="text-2xl font-bold text-green-600">{dayTotals.vendas}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Vendas</p>
+                  </div>
+                  <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg text-center">
+                    <p className="text-2xl font-bold text-red-600">{dayTotals.debitos}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Débitos Vencidos</p>
+                  </div>
+                  <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg text-center">
+                    <p className="text-2xl font-bold text-purple-600">{dayTotals.prospeccoes}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Prospecções</p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="sticky left-0 bg-white z-10">Agente</TableHead>
+                        <TableHead className="text-center">Tipo</TableHead>
+                        <TableHead className="text-center">
+                          <div className="flex flex-col items-center">
+                            <span>Total</span>
+                            <span className="text-xs text-gray-500">Atendimentos</span>
+                          </div>
+                        </TableHead>
+                        <TableHead className="text-center">
+                          <div className="flex flex-col items-center">
+                            <Badge className="bg-green-100 text-green-800 text-xs">Vendas</Badge>
+                          </div>
+                        </TableHead>
+                        <TableHead className="text-center">
+                          <div className="flex flex-col items-center">
+                            <Badge className="bg-red-100 text-red-800 text-xs">Débitos</Badge>
+                          </div>
+                        </TableHead>
+                        <TableHead className="text-center">
+                          <div className="flex flex-col items-center">
+                            <Badge className="bg-purple-100 text-purple-800 text-xs">Prospecção</Badge>
+                          </div>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredServiceData.map((metric) => (
+                        <TableRow key={`${metric.agentId}-${metric.day}`}>
+                          <TableCell className="sticky left-0 bg-white font-medium">{metric.agentName}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className={
+                              metric.agentRole === 'vendedor' 
+                                ? 'bg-orange-50 text-orange-700 border-orange-200' 
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }>
+                              {metric.agentRole === 'vendedor' ? 'Vendedor' : 'Telemarketing'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center font-semibold text-lg">{metric.totalServices}</TableCell>
+                          <TableCell className="text-center">
+                            <span className={metric.vendas > 0 ? 'text-green-600 font-semibold' : 'text-gray-400'}>
+                              {metric.vendas || '-'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <span className={metric.debitos > 0 ? 'text-red-600 font-semibold' : 'text-gray-400'}>
+                              {metric.debitos || '-'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <span className={metric.prospeccoes > 0 ? 'text-purple-600 font-semibold' : 'text-gray-400'}>
+                              {metric.prospeccoes || '-'}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            ) : (
+              <div className="text-center text-gray-500 py-8">
+                Nenhum atendimento registrado para o dia selecionado.
               </div>
             )}
           </CardContent>

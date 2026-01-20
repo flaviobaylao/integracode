@@ -3078,6 +3078,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
         distanceMap[row.seller_id][dateKey] = parseFloat(row.distance || '0');
       });
       
+      // QUERY AGREGADA 4: Atendimentos virtuais por agente/dia (vendedores + telemarketing)
+      const virtualServiceResult = await db.execute(sql`
+        SELECT 
+          vsl.attendant_id,
+          DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') as service_date,
+          COUNT(*) as count,
+          COUNT(*) FILTER (WHERE vsl.service_type = 'venda') as vendas,
+          COUNT(*) FILTER (WHERE vsl.service_type = 'debito_vencido') as debitos,
+          COUNT(*) FILTER (WHERE vsl.service_type = 'prospeccao') as prospeccoes
+        FROM virtual_service_logs vsl
+        WHERE DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+          AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+          AND vsl.attendant_id IS NOT NULL
+        GROUP BY vsl.attendant_id, DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo')
+      `);
+      
+      // Buscar todos os usuários que podem fazer atendimentos (vendedores + telemarketing)
+      const allAgents = await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role
+      })
+      .from(users)
+      .where(and(
+        inArray(users.role, ['vendedor', 'telemarketing']),
+        eq(users.isActive, true)
+      ));
+      
+      // Indexar atendimentos virtuais por agente/dia
+      const virtualServiceMap: Record<string, Record<string, { total: number; vendas: number; debitos: number; prospeccoes: number }>> = {};
+      (virtualServiceResult.rows as any[]).forEach(row => {
+        if (!virtualServiceMap[row.attendant_id]) virtualServiceMap[row.attendant_id] = {};
+        const dateKey = new Date(row.service_date).toISOString().split('T')[0];
+        virtualServiceMap[row.attendant_id][dateKey] = {
+          total: parseInt(row.count || '0'),
+          vendas: parseInt(row.vendas || '0'),
+          debitos: parseInt(row.debitos || '0'),
+          prospeccoes: parseInt(row.prospeccoes || '0')
+        };
+      });
+      
+      // Montar dados de atendimentos diários por agente
+      const dailyServiceData: any[] = [];
+      
+      for (const agent of allAgents) {
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          
+          const services = virtualServiceMap[agent.id]?.[dateStr] || { total: 0, vendas: 0, debitos: 0, prospeccoes: 0 };
+          
+          // Só adiciona dias com atendimentos
+          if (services.total > 0) {
+            dailyServiceData.push({
+              agentId: agent.id,
+              agentName: `${agent.firstName} ${agent.lastName || ''}`.trim(),
+              agentRole: agent.role,
+              date: dateStr,
+              day,
+              totalServices: services.total,
+              vendas: services.vendas,
+              debitos: services.debitos,
+              prospeccoes: services.prospeccoes
+            });
+          }
+        }
+      }
+      
       // Montar dados diários para TODOS os vendedores e TODOS os dias
       const dailyData: any[] = [];
       
@@ -3273,15 +3341,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      console.log(`📊 [DAILY-METRICS] Retornando ${dailyData.length} registros diários e ${monthlyData.length} registros mensais`);
+      console.log(`📊 [DAILY-METRICS] Retornando ${dailyData.length} registros diários, ${monthlyData.length} registros mensais e ${dailyServiceData.length} registros de atendimentos`);
       
       res.json({
         month: targetMonth,
         year: targetYear,
         daysInMonth,
         sellers: activeSellers.map(s => ({ id: s.id, name: `${s.firstName} ${s.lastName || ''}`.trim() })),
+        agents: allAgents.map(a => ({ id: a.id, name: `${a.firstName} ${a.lastName || ''}`.trim(), role: a.role })),
         dailyData,
-        monthlyData
+        monthlyData,
+        dailyServiceData
       });
       
     } catch (error) {
