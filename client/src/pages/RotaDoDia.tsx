@@ -178,18 +178,24 @@ export default function RotaDoDia() {
   });
 
   // Query para contagem de atendimentos virtuais por vendedor na data
-  const { data: virtualServiceCount = 0 } = useQuery<number>({
+  interface VirtualServiceData {
+    count: number;
+    attendedCustomerIds: string[];
+  }
+  const { data: virtualServiceData } = useQuery<VirtualServiceData>({
     queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate],
     queryFn: async () => {
       const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}`, {
         credentials: 'include',
       });
-      if (!res.ok) return 0;
+      if (!res.ok) return { count: 0, attendedCustomerIds: [] };
       const data = await res.json();
-      return data.count || 0;
+      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [] };
     },
     enabled: !!selectedSellerId && !!selectedDate,
   });
+  const virtualServiceCount = virtualServiceData?.count || 0;
+  const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
 
   const generateFromPlannedVisitsMutation = useMutation({
     mutationFn: async () => {
@@ -1376,10 +1382,16 @@ export default function RotaDoDia() {
                         Atendimentos Virtuais ({virtualVisits.length})
                       </h3>
                       <div className="space-y-2">
-                        {virtualVisits.map((visit, index) => (
+                        {virtualVisits.map((visit, index) => {
+                          const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
+                          return (
                           <div
                             key={visit.id || visit.customerId}
-                            className="p-3 border border-blue-200 dark:border-blue-700 rounded-lg bg-blue-50 dark:bg-blue-950 hover:shadow-md transition-all cursor-pointer"
+                            className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${
+                              isAttended 
+                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950' 
+                                : 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-950'
+                            }`}
                             data-testid={`virtual-visit-${visit.customerId}`}
                             onClick={() => {
                               if (visit.customerId) {
@@ -1393,7 +1405,7 @@ export default function RotaDoDia() {
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1">
-                                <div className="flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold bg-blue-500">
+                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isAttended ? 'bg-green-500' : 'bg-blue-500'}`}>
                                   {index + 1}
                                 </div>
                                 <div className="flex-1">
@@ -1462,7 +1474,8 @@ export default function RotaDoDia() {
                               </div>
                             </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     </div>
                   );

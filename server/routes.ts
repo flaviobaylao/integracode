@@ -2234,9 +2234,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "sellerId e date são obrigatórios" });
       }
       
-      // Single optimized query with JOIN to avoid N+1 pattern
+      // Query to get count and distinct customer IDs that were attended
       const result = await db.execute(sql`
-        SELECT COUNT(vsl.id) as count 
+        SELECT 
+          COUNT(DISTINCT vsl.id) as count,
+          ARRAY_AGG(DISTINCT vsl.customer_id) as attended_customer_ids
         FROM virtual_service_logs vsl
         INNER JOIN customers c ON vsl.customer_id = c.id
         WHERE c.seller_id = ${sellerId}
@@ -2245,7 +2247,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       
       const count = parseInt(result.rows[0]?.count || '0');
-      res.json({ count });
+      const attendedCustomerIds = result.rows[0]?.attended_customer_ids || [];
+      res.json({ count, attendedCustomerIds: attendedCustomerIds.filter(Boolean) });
     } catch (error) {
       console.error("Error counting service logs:", error);
       res.status(500).json({ message: "Falha ao contar atendimentos" });
