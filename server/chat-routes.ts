@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, and, eq, inArray, isNull } from "drizzle-orm";
+import { sql, and, eq, inArray, isNull, desc } from "drizzle-orm";
 import { whatsappService } from "./whatsapp-service";
 import { telegramService } from "./telegram-service";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -25,6 +25,8 @@ import {
   chatConversations,
   chatCustomers,
   chatAiLogs,
+  virtualAttendanceStats,
+  users,
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -2981,6 +2983,62 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[VIRTUAL-ATTENDANCE] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar estatísticas de atendimentos" });
+    }
+  });
+
+  // GET /api/chat/virtual-attendance/details - Detalhes dos atendimentos (clientes atendidos) por data/agente
+  app.get("/api/chat/virtual-attendance/details", authenticateUser, requireRole(["admin", "coordinator", "administrative", "telemarketing"]), async (req, res) => {
+    try {
+      const { date, agentId } = req.query;
+      
+      if (!date) {
+        return res.status(400).json({ error: "Data é obrigatória" });
+      }
+      
+      const targetDate = date as string;
+      
+      // Buscar atendimentos com detalhes da conversa e cliente
+      const details = await db.select({
+        id: virtualAttendanceStats.id,
+        conversationId: virtualAttendanceStats.conversationId,
+        agentId: virtualAttendanceStats.agentId,
+        serviceDate: virtualAttendanceStats.serviceDate,
+        countedAt: virtualAttendanceStats.countedAt,
+        agentFirstName: users.firstName,
+        agentLastName: users.lastName,
+        customerName: chatConversations.customerName,
+        customerPhone: chatConversations.customerPhone,
+        customerId: chatConversations.customerId,
+        conversationStatus: chatConversations.status,
+      })
+      .from(virtualAttendanceStats)
+      .leftJoin(users, eq(virtualAttendanceStats.agentId, users.id))
+      .leftJoin(chatConversations, eq(virtualAttendanceStats.conversationId, chatConversations.id))
+      .where(
+        and(
+          eq(virtualAttendanceStats.serviceDate, targetDate),
+          agentId ? eq(virtualAttendanceStats.agentId, agentId as string) : undefined
+        )
+      )
+      .orderBy(desc(virtualAttendanceStats.countedAt));
+      
+      const result = details.map(d => ({
+        id: d.id,
+        conversationId: d.conversationId,
+        agentId: d.agentId,
+        agentName: `${d.agentFirstName || ''} ${d.agentLastName || ''}`.trim() || 'Desconhecido',
+        serviceDate: d.serviceDate,
+        countedAt: d.countedAt,
+        customerName: d.customerName || 'Cliente não identificado',
+        customerPhone: d.customerPhone || '',
+        customerId: d.customerId,
+        conversationStatus: d.conversationStatus
+      }));
+      
+      res.json({ details: result });
+    } catch (error: any) {
+      console.error("[VIRTUAL-ATTENDANCE-DETAILS] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar detalhes de atendimentos" });
     }
   });
 

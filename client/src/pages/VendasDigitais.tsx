@@ -18,8 +18,19 @@ import {
   Search,
   ArrowLeft,
   Filter,
-  MessageSquare
+  MessageSquare,
+  Phone,
+  User,
+  X,
+  Eye
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { format, startOfMonth, endOfMonth, subMonths, parseISO, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Link } from "wouter";
@@ -61,9 +72,25 @@ const serviceTypeConfig: Record<ServiceType, { label: string; color: string; bgC
   },
 };
 
+interface AttendanceDetail {
+  id: string;
+  conversationId: string;
+  agentId: string;
+  agentName: string;
+  serviceDate: string;
+  countedAt: string;
+  customerName: string;
+  customerPhone: string;
+  customerId: string | null;
+  conversationStatus: string;
+}
+
 export default function VendasDigitais() {
   const [selectedMonth, setSelectedMonth] = useState<'current' | 'previous'>('current');
   const [activeTab, setActiveTab] = useState<'by-attendant' | 'by-day' | 'chat-center'>('by-attendant');
+  const [selectedDetailDate, setSelectedDetailDate] = useState<string | null>(null);
+  const [selectedDetailAgentId, setSelectedDetailAgentId] = useState<string | null>(null);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   
   const now = new Date();
   const currentMonthStart = startOfMonth(now);
@@ -142,6 +169,28 @@ export default function VendasDigitais() {
       byDay: summaries
     };
   }, [chatAttendanceData]);
+
+  // Buscar detalhes dos atendimentos quando uma data for selecionada
+  const { data: attendanceDetailsData, isLoading: isLoadingDetails } = useQuery<{ details: AttendanceDetail[] }>({
+    queryKey: ["/api/chat/virtual-attendance/details", selectedDetailDate, selectedDetailAgentId],
+    queryFn: async () => {
+      if (!selectedDetailDate) return { details: [] };
+      const params = new URLSearchParams({ date: selectedDetailDate });
+      if (selectedDetailAgentId) {
+        params.append('agentId', selectedDetailAgentId);
+      }
+      const res = await fetch(`/api/chat/virtual-attendance/details?${params}`, { credentials: 'include' });
+      if (!res.ok) return { details: [] };
+      return res.json();
+    },
+    enabled: !!selectedDetailDate && detailsModalOpen
+  });
+
+  const handleViewDetails = (date: string, agentId?: string) => {
+    setSelectedDetailDate(date);
+    setSelectedDetailAgentId(agentId || null);
+    setDetailsModalOpen(true);
+  };
 
   const uniqueAttendants = useMemo(() => {
     const attendants = new Map<string, string>();
@@ -670,6 +719,7 @@ export default function VendasDigitais() {
                           <TableHead>Data</TableHead>
                           <TableHead>Atendente</TableHead>
                           <TableHead className="text-center">Conversas</TableHead>
+                          <TableHead className="text-center">Ações</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -684,6 +734,17 @@ export default function VendasDigitais() {
                                 {stat.conversationCount}
                               </Badge>
                             </TableCell>
+                            <TableCell className="text-center">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewDetails(stat.serviceDate, stat.agentId)}
+                                className="hover:bg-cyan-50"
+                                title="Ver clientes atendidos"
+                              >
+                                <Eye className="h-4 w-4 text-cyan-600" />
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -695,6 +756,63 @@ export default function VendasDigitais() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Modal de detalhes dos clientes atendidos */}
+      <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Clientes Atendidos
+            </DialogTitle>
+            <DialogDescription>
+              {selectedDetailDate && format(parseISO(selectedDetailDate + 'T12:00:00'), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            {isLoadingDetails ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin h-6 w-6 border-2 border-cyan-500 rounded-full border-t-transparent"></div>
+                <span className="ml-2 text-gray-500">Carregando...</span>
+              </div>
+            ) : attendanceDetailsData?.details && attendanceDetailsData.details.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500 mb-4">
+                  {attendanceDetailsData.details.length} cliente(s) atendido(s)
+                </p>
+                {attendanceDetailsData.details.map((detail) => (
+                  <div 
+                    key={detail.id}
+                    className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-cyan-100 dark:bg-cyan-900 flex items-center justify-center shrink-0">
+                      <User className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {detail.customerName}
+                      </p>
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Phone className="h-3 w-3" />
+                        <span>{detail.customerPhone || 'Não informado'}</span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-500">Atendido por</p>
+                      <p className="text-sm font-medium text-cyan-600">{detail.agentName}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                Nenhum detalhe de atendimento encontrado para esta data.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
