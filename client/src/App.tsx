@@ -59,6 +59,7 @@ import BulkMessage from "@/pages/BulkMessage";
 import SDRDigital from "@/pages/SDRDigital";
 import PedidoRapido from "@/pages/PedidoRapido";
 import VendasDigitais from "@/pages/VendasDigitais";
+import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -200,6 +201,7 @@ function Router() {
           <Route path="/telemarketing/ai-settings" component={ChatAISettings} />
           <Route path="/telemarketing/sdr-digital" component={SDRDigital} />
           <Route path="/telemarketing/disparo-em-massa" component={BulkMessage} />
+          <Route path="/telemarketing/rota-do-dia" component={TelemarketingRotaDoDia} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/validacao-rotas" component={RoutesValidation} />

@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { MessageCircle, BarChart3, Settings, FileText, Bot, Send, Search } from "lucide-react";
+import { MessageCircle, BarChart3, Settings, FileText, Bot, Send, Search, Route } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 export default function TelemarketingHub() {
@@ -61,6 +61,14 @@ export default function TelemarketingHub() {
       href: "/telemarketing/sdr-digital",
       color: "bg-indigo-100 text-indigo-700",
       testid: "card-sdr-digital"
+    },
+    {
+      icon: Route,
+      title: "Rota Virtual do Dia",
+      description: "Veja os clientes virtuais programados para atendimento",
+      href: "/telemarketing/rota-do-dia",
+      color: "bg-teal-100 text-teal-700",
+      testid: "card-rota-virtual"
     }
   ];
 
