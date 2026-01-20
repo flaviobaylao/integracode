@@ -520,6 +520,11 @@ export default function RotaDoDia() {
 
   const route = response?.route;
 
+  const virtualVisitsCount = useMemo(() => {
+    if (!route?.visits) return 0;
+    return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
+  }, [route?.visits]);
+
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -951,7 +956,11 @@ export default function RotaDoDia() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Atend. Virtuais</p>
-                    <p className="text-2xl font-bold" data-testid="virtual-service-count">{virtualServiceCount}</p>
+                    <p className="text-2xl font-bold" data-testid="virtual-service-count">
+                      <span className="text-green-600">{virtualServiceCount}</span>
+                      <span className="text-gray-400 mx-1">/</span>
+                      <span>{virtualVisitsCount}</span>
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
