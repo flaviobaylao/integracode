@@ -1994,28 +1994,6 @@ export interface ChatDeliveryWithRelations extends ChatDelivery {
 // PENDING DELIVERY TYPE (for getPendingDeliveries from billings)
 // ============================================================================
 
-// Backup table for all orders (sales_cards and blocked_orders) - automatic daily backups
-export const ordersBackup = pgTable("orders_backup", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  backupType: varchar("backup_type").notNull(), // 'sales_card' or 'blocked_order'
-  sourceId: varchar("source_id").notNull(), // ID do pedido original
-  sourceData: jsonb("source_data").notNull(), // Dados completos do pedido
-  customerId: varchar("customer_id"),
-  sellerId: varchar("seller_id"),
-  status: varchar("status"), // 'pending', 'completed', 'blocked', 'released', etc
-  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
-  backupDate: timestamp("backup_date").notNull(), // Data do backup
-  createdAt: timestamp("created_at").defaultNow(),
-}, (table) => [
-  index("idx_backup_type_date").on(table.backupType, table.backupDate),
-  index("idx_backup_source_id").on(table.sourceId),
-  index("idx_backup_customer").on(table.customerId),
-]);
-
-export const insertOrdersBackupSchema = createInsertSchema(ordersBackup).omit({ id: true, createdAt: true });
-export type OrdersBackup = typeof ordersBackup.$inferSelect;
-export type InsertOrdersBackup = z.infer<typeof insertOrdersBackupSchema>;
-
 export interface PendingDelivery {
   id: string;
   invoiceNumber: string;

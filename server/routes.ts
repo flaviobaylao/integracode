@@ -21523,42 +21523,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
-  // BACKUP ENDPOINTS - Backup automático de pedidos e bloqueados
-  // ============================================================================
-  app.get('/api/admin/backups', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
-    try {
-      const { startDate, endDate, backupType } = req.query;
-      if (!startDate || !endDate) return res.status(400).json({ message: 'Informe startDate e endDate' });
-      const { getBackupsByDateRange } = await import('./backup-service.js');
-      const backups = await getBackupsByDateRange(new Date(startDate), new Date(endDate), backupType);
-      res.json({ total: backups.length, backups, salesCards: backups.filter(b => b.backupType === 'sales_card').length, blockedOrders: backups.filter(b => b.backupType === 'blocked_order').length });
-    } catch (error) {
-      res.status(500).json({ message: 'Erro ao listar backups' });
-    }
-  });
-
-  app.get('/api/admin/backups/blocked-orders', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
-    try {
-      const { getBlockedOrdersBackups } = await import('./backup-service.js');
-      const backups = await getBlockedOrdersBackups();
-      res.json({ total: backups.length, backups, message: `${backups.length} pedido(s) bloqueado(s)` });
-    } catch (error) {
-      res.status(500).json({ message: 'Erro ao buscar backups' });
-    }
-  });
-
-  app.post('/api/admin/backups/run', authenticateUser, requireRole(['admin']), async (req: any, res) => {
-    try {
-      const { backupAllOrders } = await import('./backup-service.js');
-      const result = await backupAllOrders();
-      console.log(`✅ Backup manual: ${result.backedUp} pedidos por ${req.currentUser.email}`);
-      res.json({ ...result, timestamp: new Date() });
-    } catch (error) {
-      res.status(500).json({ message: 'Erro ao executar backup', error: String(error) });
-    }
-  });
-
-  // ============================================================================
   // SELLER-CUSTOMER MAPPING BACKFILL - Fix omie-vendor-* to real user IDs
   // ============================================================================
   app.post('/api/admin/backfill-seller-mapping', authenticateUser, requireRole(['admin']), async (req: any, res) => {
