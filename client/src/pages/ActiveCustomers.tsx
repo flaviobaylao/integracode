@@ -41,8 +41,20 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  FileText
+  FileText,
+  UserX
 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { format, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -173,6 +185,8 @@ function parseWeekdaysArray(input: any): string[] {
 
 export default function ActiveCustomers() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const [selectedSeller, setSelectedSeller] = useState<string>("");
@@ -198,6 +212,8 @@ export default function ActiveCustomers() {
   const [serviceLogCustomer, setServiceLogCustomer] = useState<{id: string; name: string} | null>(null);
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{id: string; name: string} | null>(null);
+  const [showInactivateDialog, setShowInactivateDialog] = useState(false);
+  const [customerToInactivate, setCustomerToInactivate] = useState<{id: string; name: string; activeCustomerId: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -221,6 +237,49 @@ export default function ActiveCustomers() {
       toast({ variant: "destructive", title: "Erro", description: error.message || "Falha ao atualizar dados" });
     }
   });
+
+  const inactivateMutation = useMutation({
+    mutationFn: async ({ customerId, activeCustomerId }: { customerId: string; activeCustomerId: string }) => {
+      const response = await fetch(`/api/customers/${customerId}/inactivate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cardId: activeCustomerId })
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Falha ao inativar cliente');
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({ 
+        title: "Cliente inativado!", 
+        description: data.message || "O cliente foi removido da lista de clientes ativos." 
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      setShowInactivateDialog(false);
+      setCustomerToInactivate(null);
+    },
+    onError: (error: any) => {
+      toast({ variant: "destructive", title: "Erro", description: error.message || "Falha ao inativar cliente" });
+    }
+  });
+
+  const handleInactivateCustomer = (e: React.MouseEvent, customerId: string, customerName: string, activeCustomerId: string) => {
+    e.stopPropagation();
+    setCustomerToInactivate({ id: customerId, name: customerName, activeCustomerId });
+    setShowInactivateDialog(true);
+  };
+
+  const confirmInactivate = () => {
+    if (customerToInactivate) {
+      inactivateMutation.mutate({ 
+        customerId: customerToInactivate.id, 
+        activeCustomerId: customerToInactivate.activeCustomerId 
+      });
+    }
+  };
 
   const handleEditPhone = (e: React.MouseEvent, customerId: string, customerName: string, currentPhone: string, currentContact: string) => {
     e.stopPropagation();
@@ -1160,6 +1219,18 @@ export default function ActiveCustomers() {
                                     <Pencil className="h-4 w-4" />
                                   </Button>
                                 )}
+                                {isAdmin && ac.customer?.id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => handleInactivateCustomer(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.id)}
+                                    title="Inativar cliente"
+                                    data-testid={`button-inactivate-${ac.id}`}
+                                    className="hover:bg-red-50"
+                                  >
+                                    <UserX className="h-4 w-4 text-red-500" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1402,6 +1473,32 @@ export default function ActiveCustomers() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Dialog de Confirmação para Inativar Cliente */}
+      <AlertDialog open={showInactivateDialog} onOpenChange={setShowInactivateDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Inativar Cliente</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja inativar o cliente <strong>{customerToInactivate?.name}</strong>?
+              <br /><br />
+              Esta ação irá remover o cliente da lista de clientes ativos. O cliente poderá ser reativado posteriormente através de um novo upload de planilha.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setCustomerToInactivate(null)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmInactivate}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={inactivateMutation.isPending}
+            >
+              {inactivateMutation.isPending ? "Inativando..." : "Inativar Cliente"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
