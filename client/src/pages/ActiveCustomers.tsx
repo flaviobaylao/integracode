@@ -195,6 +195,7 @@ export default function ActiveCustomers() {
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
+  const [selectedPhone, setSelectedPhone] = useState<string>("");
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showCardModal, setShowCardModal] = useState(false);
@@ -640,7 +641,12 @@ export default function ActiveCustomers() {
       const matchesPositivation = !selectedPositivation || 
         (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
       
-      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation;
+      // Filtro de telefone
+      const phoneDigits = selectedPhone.replace(/\D/g, '');
+      const customerPhone = (ac.customer?.phone || '').replace(/\D/g, '');
+      const matchesPhone = !phoneDigits || customerPhone.includes(phoneDigits);
+      
+      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -921,6 +927,17 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
+              <div className="relative">
+                <Phone className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Telefone"
+                  value={selectedPhone}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSelectedPhone(e.target.value)}
+                  className="w-[130px] h-9 pl-8"
+                  data-testid="input-phone-filter"
+                />
+              </div>
+
               <Input
                 type="date"
                 value={selectedDate}
@@ -940,6 +957,7 @@ export default function ActiveCustomers() {
                   setSelectedPeriodicity("");
                   setSelectedDate("");
                   setSelectedPositivation("");
+                  setSelectedPhone("");
                 }}
                 className="h-9"
                 data-testid="button-clear-all-filters"
@@ -952,7 +970,7 @@ export default function ActiveCustomers() {
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation) && (
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1034,7 +1052,7 @@ export default function ActiveCustomers() {
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
-                            {searchTerm || selectedSeller ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                            {searchTerm || selectedSeller || selectedPhone ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
