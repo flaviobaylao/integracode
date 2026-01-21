@@ -1,36 +1,34 @@
 // Service Worker para PWA - Sistema Integra
-const CACHE_NAME = 'integra-v16-2026-01-06-debug-response';
+const CACHE_NAME = 'integra-v17-stable';
 const urlsToCache = [
   '/manifest.json'
 ];
 
-// Instalar e FORÇAR atualização imediata
+// Flag para evitar logs repetitivos
+let isInstalled = false;
+
+// Instalar
 self.addEventListener('install', (event) => {
-  console.log('[SW] Instalando nova versão:', CACHE_NAME);
-  self.skipWaiting(); // Força ativação imediata
+  if (!isInstalled) {
+    console.log('[SW] Instalando versão:', CACHE_NAME);
+    isInstalled = true;
+  }
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(urlsToCache))
   );
 });
 
-// Ativar e APAGAR TODOS os caches antigos
+// Ativar e limpar caches antigos
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Ativando e limpando caches antigos');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[SW] Deletando cache antigo:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
+        cacheNames.filter(name => name !== CACHE_NAME)
+          .map(name => caches.delete(name))
       );
-    }).then(() => {
-      console.log('[SW] Assumindo controle de todas as páginas');
-      return self.clients.claim(); // Força controle imediato
-    })
+    }).then(() => self.clients.claim())
   );
 });
 
@@ -58,9 +56,6 @@ self.addEventListener('fetch', (event) => {
       isScriptRequest ||
       url.includes('/api/') || 
       url.endsWith('.html')) {
-    
-    console.log('[SW] Bypass cache para:', url);
-    
     // Sempre busca do servidor, SEM CACHE
     event.respondWith(
       fetch(event.request, { cache: 'no-store' }).catch(() => {
