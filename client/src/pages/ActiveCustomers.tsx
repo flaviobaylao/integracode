@@ -284,29 +284,24 @@ export default function ActiveCustomers() {
     setLastOrderCustomerId(customerId);
     setLastOrderLoading(true);
     setShowLastOrderModal(true);
+    setLastOrderData(null);
     
     try {
       const response = await fetch(`/api/customers/${customerId}/last-order`, {
         credentials: 'include'
       });
       
-      if (response.status === 404) {
-        setLastOrderData(null);
-        toast({ 
-          variant: "destructive", 
-          title: "Sem pedidos", 
-          description: "Este cliente ainda não possui nenhum pedido registrado." 
-        });
-        setShowLastOrderModal(false);
-        return;
-      }
-      
       if (!response.ok) {
         throw new Error('Falha ao buscar pedido');
       }
       
       const data = await response.json();
-      setLastOrderData(data);
+      
+      if (!data.hasOrder) {
+        setLastOrderData(null);
+      } else {
+        setLastOrderData(data);
+      }
     } catch (error) {
       console.error('Erro ao buscar último pedido:', error);
       toast({ 

@@ -2184,10 +2184,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       
       if (!result.rows || result.rows.length === 0) {
-        return res.status(404).json({ message: "Nenhum pedido encontrado para este cliente" });
+        return res.json({ hasOrder: false, message: "Nenhum pedido encontrado para este cliente" });
       }
       
-      res.json(result.rows[0]);
+      const order = result.rows[0] as any;
+      
+      // Garantir que products seja um array
+      let products = order.products;
+      if (typeof products === 'string') {
+        try {
+          products = JSON.parse(products);
+        } catch {
+          products = [];
+        }
+      }
+      
+      res.json({ 
+        hasOrder: true,
+        ...order,
+        products: Array.isArray(products) ? products : []
+      });
     } catch (error) {
       console.error("Error fetching last order:", error);
       res.status(500).json({ message: "Falha ao buscar último pedido" });
