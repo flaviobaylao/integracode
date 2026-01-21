@@ -1179,6 +1179,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const user = req.currentUser;
       
+      console.log(`📝 [CUSTOMER-UPDATE] Iniciando atualização para ID: ${id}`);
+      console.log(`📝 [CUSTOMER-UPDATE] Usuário: ${user?.email} (${user?.role})`);
+      console.log(`📝 [CUSTOMER-UPDATE] Campos enviados:`, Object.keys(req.body));
+      
       // Telemarketing can only update phone and contact fields
       const telemarketingAllowedFields = ['phone', 'contact'];
       
@@ -1350,9 +1354,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.json(updatedCustomer);
-    } catch (error) {
-      console.error("Error updating customer:", error);
-      res.status(500).json({ message: "Falha ao atualizar cliente" });
+    } catch (error: any) {
+      console.error("❌ [CUSTOMER-UPDATE] Error:", error);
+      console.error("❌ [CUSTOMER-UPDATE] Stack:", error?.stack);
+      res.status(500).json({ message: "Falha ao atualizar cliente", error: error?.message });
     }
   });
 
