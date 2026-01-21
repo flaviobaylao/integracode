@@ -281,21 +281,26 @@ export default function ActiveCustomers() {
 
   const handleViewLastOrder = async (e: React.MouseEvent, customerId: string) => {
     e.stopPropagation();
+    console.log('[LastOrder] Opening modal for customer:', customerId);
     setLastOrderCustomerId(customerId);
     setLastOrderLoading(true);
     setShowLastOrderModal(true);
     setLastOrderData(null);
     
     try {
+      console.log('[LastOrder] Fetching from:', `/api/customers/${customerId}/last-order`);
       const response = await fetch(`/api/customers/${customerId}/last-order`, {
         credentials: 'include'
       });
+      
+      console.log('[LastOrder] Response status:', response.status);
       
       if (!response.ok) {
         throw new Error('Falha ao buscar pedido');
       }
       
       const data = await response.json();
+      console.log('[LastOrder] Data received:', data);
       
       if (!data.hasOrder) {
         setLastOrderData(null);
@@ -303,7 +308,7 @@ export default function ActiveCustomers() {
         setLastOrderData(data);
       }
     } catch (error) {
-      console.error('Erro ao buscar último pedido:', error);
+      console.error('[LastOrder] Erro ao buscar último pedido:', error);
       toast({ 
         variant: "destructive", 
         title: "Erro", 
