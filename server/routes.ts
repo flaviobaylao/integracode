@@ -2157,8 +2157,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
-      // Buscar o último pedido do cliente através do sales_card
-      const result = await db.execute(sql`
+      // Primeiro, buscar o último pedido do cliente através do sales_card (pedidos internos)
+      const orderHistoryResult = await db.execute(sql`
         SELECT 
           oh.id,
           oh.order_date,
@@ -2173,7 +2173,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.phone as customer_phone,
           c.address as customer_address,
           c.city as customer_city,
-          c.neighborhood as customer_neighborhood
+          c.neighborhood as customer_neighborhood,
+          'order_history' as source
         FROM order_history oh
         INNER JOIN sales_cards sc ON sc.id = oh.sales_card_id
         INNER JOIN customers c ON c.id = sc.customer_id
@@ -2182,14 +2183,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
         LIMIT 1
       `);
       
-      if (!result.rows || result.rows.length === 0) {
+      if (orderHistoryResult.rows && orderHistoryResult.rows.length > 0) {
+        const order = orderHistoryResult.rows[0] as any;
+        let products = order.products;
+        if (typeof products === 'string') {
+          try {
+            products = JSON.parse(products);
+          } catch {
+            products = [];
+          }
+        }
+        return res.json({ 
+          hasOrder: true,
+          ...order,
+          products: Array.isArray(products) ? products : []
+        });
+      }
+      
+      // Se não encontrou em order_history, buscar nos faturamentos do Omie (billings)
+      // O customer id tem formato omie-client-{codigo}, extrair o codigo
+      const omieCustomerCode = id.replace('omie-client-', '');
+      
+      const billingResult = await db.execute(sql`
+        SELECT 
+          b.id,
+          b.invoice_date as order_date,
+          b.products,
+          b.total_value,
+          b.invoice_number,
+          b.invoice_status as status,
+          b.payment_method,
+          b.customer_fantasy_name,
+          b.omie_customer_code,
+          c.name as customer_name,
+          c.phone as customer_phone,
+          c.address as customer_address,
+          c.city as customer_city,
+          c.neighborhood as customer_neighborhood,
+          'billing' as source
+        FROM billings b
+        LEFT JOIN customers c ON c.omie_code = b.omie_customer_code::text
+        WHERE b.omie_customer_code::text = ${omieCustomerCode}
+        ORDER BY b.invoice_date DESC
+        LIMIT 1
+      `);
+      
+      if (!billingResult.rows || billingResult.rows.length === 0) {
         return res.json({ hasOrder: false, message: "Nenhum pedido encontrado para este cliente" });
       }
       
-      const order = result.rows[0] as any;
+      const billing = billingResult.rows[0] as any;
       
       // Garantir que products seja um array
-      let products = order.products;
+      let products = billing.products;
       if (typeof products === 'string') {
         try {
           products = JSON.parse(products);
@@ -2200,7 +2246,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ 
         hasOrder: true,
-        ...order,
+        ...billing,
+        customer_fantasy_name: billing.customer_fantasy_name || billing.customer_name,
         products: Array.isArray(products) ? products : []
       });
     } catch (error) {
