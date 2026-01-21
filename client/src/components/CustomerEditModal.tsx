@@ -132,6 +132,7 @@ export default function CustomerEditModal({
         refetchType: 'all'
       });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       onClose();
     },
     onError: (error: any) => {
