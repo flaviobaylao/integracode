@@ -1087,7 +1087,7 @@ export default function ActiveCustomers() {
                         <TableHead className="min-w-[80px]">Última Atividade</TableHead>
                         <TableHead className="min-w-[100px]">Último Atend. Virtual</TableHead>
                         <TableHead className="min-w-[140px]">Próximas 3 Visitas</TableHead>
-                        <TableHead className="min-w-[160px] sticky right-0 bg-background">Ações</TableHead>
+                        <TableHead className="min-w-[160px] sticky right-0 bg-background z-20">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1244,7 +1244,7 @@ export default function ActiveCustomers() {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell className="sticky right-0 bg-background">
+                            <TableCell className="sticky right-0 bg-background z-10">
                               <div className="flex gap-1">
                                 {ac.customer?.id && (
                                   <Button
