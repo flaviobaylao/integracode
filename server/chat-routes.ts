@@ -2954,11 +2954,14 @@ export function registerChatRoutes(app: Express): void {
   // GET /api/chat/agents/detailed-stats - Stats detalhadas por agente (admin only)
   app.get("/api/chat/agents/detailed-stats", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
     try {
+      console.log("[CHAT-AGENT-DETAILED-STATS] Iniciando busca de stats...");
       const stats = await storage.getAgentDetailedStats();
+      console.log("[CHAT-AGENT-DETAILED-STATS] Stats obtidas:", stats.length, "agentes");
       res.json(stats);
     } catch (error: any) {
-      console.error("[CHAT-AGENT-DETAILED-STATS] Erro:", error);
-      res.status(500).json({ error: "Erro ao buscar stats detalhadas de agentes" });
+      console.error("[CHAT-AGENT-DETAILED-STATS] Erro detalhado:", error.message);
+      console.error("[CHAT-AGENT-DETAILED-STATS] Stack:", error.stack);
+      res.status(500).json({ error: "Erro ao buscar stats detalhadas de agentes", details: error.message });
     }
   });
 
