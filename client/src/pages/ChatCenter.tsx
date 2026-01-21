@@ -507,6 +507,17 @@ export default function ChatCenter() {
   });
   const messages = (messagesData as ChatMessage[]) || [];
 
+  // Query para buscar histórico de atribuições
+  const { data: assignmentHistory } = useQuery({
+    queryKey: ["/api/chat/conversations", selectedConversation, "assignment-history"],
+    enabled: !!selectedConversation,
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/conversations/${selectedConversation}/assignment-history`);
+      if (!response.ok) throw new Error("Falha ao buscar histórico");
+      return response.json();
+    }
+  });
+
   // Fetch agents
   const { data: agentsData } = useQuery({
     queryKey: ["/api/chat/agents"],
@@ -1365,6 +1376,30 @@ export default function ChatCenter() {
                         )}
                       </div>
                     </div>
+                    {/* Histórico de Atribuições */}
+                    {assignmentHistory && assignmentHistory.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <p className="text-xs font-semibold text-gray-600 mb-2">📋 Histórico de Atribuições:</p>
+                        <div className="space-y-1 max-h-24 overflow-y-auto">
+                          {(assignmentHistory as any[]).map((item: any, idx: number) => (
+                            <div key={idx} className="text-[10px] text-gray-500 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              <span>
+                                {format(new Date(item.createdAt), "dd/MM/yy HH:mm", { locale: ptBR })}
+                                {" - "}
+                                <span className="font-medium">{item.assignedAgentName || item.assignedAgentId}</span>
+                                {item.assignedByUserName && item.assignedByUserName !== 'Sistema' && (
+                                  <span className="text-gray-400"> (por {item.assignedByUserName})</span>
+                                )}
+                                {item.reason === 'transfer' && <span className="text-blue-500"> [Transferido]</span>}
+                                {item.reason === 'initial_user' && <span className="text-green-500"> [Iniciado]</span>}
+                                {item.reason === 'initial_customer' && <span className="text-purple-500"> [Cliente]</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </CardHeader>
                 </Card>
 

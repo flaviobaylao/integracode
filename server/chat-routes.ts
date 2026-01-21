@@ -27,6 +27,7 @@ import {
   chatAiLogs,
   virtualAttendanceStats,
   users,
+  chatAssignmentHistory,
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -2940,6 +2941,19 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // GET /api/chat/conversations/:conversationId/assignment-history - Histórico de atribuições
+  app.get("/api/chat/conversations/:conversationId/assignment-history", authenticateUser, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { getAssignmentHistory } = await import("./chat-distribution-service");
+      const history = await getAssignmentHistory(conversationId);
+      res.json(history);
+    } catch (error: any) {
+      console.error("[CHAT-ASSIGNMENT-HISTORY] Erro:", error);
+      res.status(500).json({ error: "Erro ao buscar histórico de atribuições" });
+    }
+  });
+
   // GET /api/chat/agents/stats - Stats de conversas por agente (admin only)
   app.get("/api/chat/agents/stats", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
     try {
@@ -3199,15 +3213,55 @@ export function registerChatRoutes(app: Express): void {
         const userAgent = agents.find(a => a.userId === userId);
         
         if (userAgent) {
-          // Atribuir a conversa ao atendente que está enviando a mensagem
+          const { assignConversationToAgent } = await import("./chat-distribution-service");
           const agentColor = await getAgentColor(userAgent.id);
-          await storage.updateChatConversation(conversation.id, {
-            status: 'in-progress',
-            assignedAgentId: userAgent.id,
-            assignedAgentColor: agentColor,
-            lastAttendedAt: new Date()
-          });
-          console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atribuída ao atendente ${userAgent.name} (${userAgent.id})`);
+          
+          // Verificar se é a primeira atribuição ou mudança de atendente
+          const isFirstAssignment = !conversation.assignedAgentId || conversation.assignedAgentId === 'chatgpt';
+          const isAgentChange = conversation.assignedAgentId && 
+                                conversation.assignedAgentId !== userAgent.id && 
+                                conversation.assignedAgentId !== 'chatgpt';
+          
+          if (isFirstAssignment) {
+            // Primeira atribuição - conversa iniciada pelo usuário
+            await assignConversationToAgent(conversation.id, userAgent.id, agentColor, {
+              assignedByUserId: userId,
+              assignedByUserName: userAgent.name,
+              reason: 'initial_user',
+              agentName: userAgent.name
+            });
+            
+            // Atualizar também o status e info do iniciador
+            await storage.updateChatConversation(conversation.id, {
+              status: 'in-progress',
+              initiatedBy: 'user',
+              initiatedByUserId: userId
+            });
+            
+            console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} iniciada pelo atendente ${userAgent.name}`);
+          } else if (isAgentChange) {
+            // Outro atendente pegou a conversa - registrar takeover
+            await assignConversationToAgent(conversation.id, userAgent.id, agentColor, {
+              assignedByUserId: userId,
+              assignedByUserName: userAgent.name,
+              reason: 'manual_takeover',
+              agentName: userAgent.name
+            });
+            
+            await storage.updateChatConversation(conversation.id, {
+              status: 'in-progress'
+            });
+            
+            console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} assumida pelo atendente ${userAgent.name}`);
+          } else {
+            // Mesmo atendente - apenas atualizar lastAttendedAt
+            await storage.updateChatConversation(conversation.id, {
+              status: 'in-progress',
+              lastAttendedAt: new Date()
+            });
+            
+            console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atualizada pelo atendente ${userAgent.name}`);
+          }
         } else {
           await storage.updateChatConversation(conversation.id, {
             status: 'in-progress'

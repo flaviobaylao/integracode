@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { chatAgents, chatConversations, chatDistributionState, chatAiSettings, chatMessages, AGENT_COLORS } from "@shared/schema";
+import { chatAgents, chatConversations, chatDistributionState, chatAiSettings, chatMessages, chatAssignmentHistory, AGENT_COLORS } from "@shared/schema";
 import { eq, and, desc, isNull, lt, ne, sql } from "drizzle-orm";
 import { evolutionAPIService } from "./evolution-api-service";
 
@@ -77,7 +77,13 @@ export async function getNextAgentRoundRobin(): Promise<{ agentId: string; agent
 export async function assignConversationToAgent(
   conversationId: string,
   agentId: string | null,
-  agentColor: string | null = null
+  agentColor: string | null = null,
+  options?: {
+    assignedByUserId?: string;
+    assignedByUserName?: string;
+    reason?: string;
+    agentName?: string;
+  }
 ): Promise<void> {
   await db
     .update(chatConversations)
@@ -90,31 +96,119 @@ export async function assignConversationToAgent(
     })
     .where(eq(chatConversations.id, conversationId));
   
+  // Registrar no histórico de atribuições
+  if (agentId) {
+    await db.insert(chatAssignmentHistory).values({
+      conversationId,
+      assignedAgentId: agentId,
+      assignedAgentName: options?.agentName || (agentId === 'chatgpt' ? 'ChatGPT' : null),
+      assignedByUserId: options?.assignedByUserId || null,
+      assignedByUserName: options?.assignedByUserName || 'Sistema',
+      reason: options?.reason || 'initial'
+    });
+  }
+  
   console.log(`🔄 [DISTRIBUTION] Conversa ${conversationId} atribuída ao agente ${agentId || 'ChatGPT'}`);
 }
 
-export async function distributeNewConversation(conversationId: string): Promise<{ assignedTo: string; isChatGpt: boolean }> {
+/**
+ * Distribui uma nova conversa baseado em quem a iniciou:
+ * - Iniciada pelo CLIENTE: vai para ChatGPT (se ativado) ou round-robin
+ * - Iniciada pelo USUÁRIO: vai direto para esse usuário
+ */
+export async function distributeNewConversation(
+  conversationId: string,
+  options?: {
+    initiatedBy?: 'customer' | 'user';
+    initiatedByUserId?: string;
+    initiatedByUserName?: string;
+  }
+): Promise<{ assignedTo: string; isChatGpt: boolean }> {
+  const initiatedBy = options?.initiatedBy || 'customer';
+  
+  // Se a conversa foi iniciada por um USUÁRIO, atribuir diretamente a ele
+  if (initiatedBy === 'user' && options?.initiatedByUserId) {
+    console.log(`👤 [DISTRIBUTION] Conversa ${conversationId} iniciada por usuário ${options.initiatedByUserId}`);
+    
+    // Buscar o chatAgent correspondente ao userId
+    const userAgent = await db
+      .select()
+      .from(chatAgents)
+      .where(eq(chatAgents.userId, options.initiatedByUserId))
+      .limit(1);
+    
+    if (userAgent.length === 0) {
+      console.warn(`⚠️ [DISTRIBUTION] Usuário ${options.initiatedByUserId} não tem agente de chat - usando round-robin`);
+      // Fallback para round-robin se não encontrar agente
+      const nextAgent = await getNextAgentRoundRobin();
+      if (nextAgent) {
+        const agent = await db.select().from(chatAgents).where(eq(chatAgents.id, nextAgent.agentId)).limit(1);
+        await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor, {
+          reason: 'initial_user',
+          agentName: agent[0]?.name || undefined
+        });
+        return { assignedTo: nextAgent.agentId, isChatGpt: false };
+      }
+      return { assignedTo: "", isChatGpt: false };
+    }
+    
+    const agentId = userAgent[0].id;
+    const agentName = userAgent[0].name;
+    
+    // Atualizar a conversa com info do iniciador
+    await db.update(chatConversations).set({
+      initiatedBy: 'user',
+      initiatedByUserId: options.initiatedByUserId,
+      updatedAt: new Date()
+    }).where(eq(chatConversations.id, conversationId));
+    
+    // Buscar cor do agente
+    const agentColor = await getAgentColor(agentId);
+    
+    await assignConversationToAgent(conversationId, agentId, agentColor, {
+      assignedByUserId: options.initiatedByUserId,
+      assignedByUserName: agentName || options.initiatedByUserName || 'Usuário',
+      reason: 'initial_user',
+      agentName: agentName
+    });
+    
+    return { assignedTo: agentId, isChatGpt: false };
+  }
+  
+  // Conversa iniciada pelo CLIENTE
+  // Atualizar a conversa com info do iniciador
+  await db.update(chatConversations).set({
+    initiatedBy: 'customer',
+    updatedAt: new Date()
+  }).where(eq(chatConversations.id, conversationId));
+  
   // Buscar configurações de IA
   const aiSettings = await db.select().from(chatAiSettings).limit(1);
   const settings = aiSettings[0];
   const isChatGptEnabled = settings?.isEnabled ?? false;
   
-  // FLUXO SIMPLIFICADO:
-  // - Se ChatGPT ATIVADO: todas as conversas de clientes vão primeiro para o ChatGPT
-  // - Se ChatGPT DESATIVADO: conversas vão direto para atendente humano
-  
+  // Se ChatGPT ATIVADO: conversas de clientes vão para o ChatGPT
   if (isChatGptEnabled) {
-    console.log(`🤖 [DISTRIBUTION] ChatGPT ATIVADO - Conversa ${conversationId} encaminhada para IA`);
-    await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6");
+    console.log(`🤖 [DISTRIBUTION] Conversa ${conversationId} iniciada por cliente - encaminhada para ChatGPT`);
+    await assignConversationToAgent(conversationId, "chatgpt", "#9B59B6", {
+      reason: 'initial_customer',
+      agentName: 'ChatGPT'
+    });
     return { assignedTo: "chatgpt", isChatGpt: true };
   }
   
   // ChatGPT desativado: distribuir para atendentes humanos via round-robin
-  console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano`);
+  console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano para conversa ${conversationId}`);
   const nextAgent = await getNextAgentRoundRobin();
   
   if (nextAgent) {
-    await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor);
+    // Buscar nome do agente
+    const agent = await db.select().from(chatAgents).where(eq(chatAgents.id, nextAgent.agentId)).limit(1);
+    
+    await assignConversationToAgent(conversationId, nextAgent.agentId, nextAgent.agentColor, {
+      reason: 'initial_customer',
+      agentName: agent[0]?.name || undefined
+    });
     console.log(`✅ [DISTRIBUTION] Conversa ${conversationId} atribuída ao atendente ${nextAgent.agentId}`);
     return { assignedTo: nextAgent.agentId, isChatGpt: false };
   } else {
@@ -155,6 +249,15 @@ export async function distributeNewConversation(conversationId: string): Promise
     
     return { assignedTo: "", isChatGpt: false };
   }
+}
+
+// Função para buscar histórico de atribuições de uma conversa
+export async function getAssignmentHistory(conversationId: string) {
+  return await db
+    .select()
+    .from(chatAssignmentHistory)
+    .where(eq(chatAssignmentHistory.conversationId, conversationId))
+    .orderBy(desc(chatAssignmentHistory.createdAt));
 }
 
 export async function redistributeTimedOutConversations(): Promise<number> {
@@ -211,7 +314,8 @@ export async function transferConversation(
   fromAgentId: string,
   toAgentId: string,
   requestingUserId: string,
-  isAdmin: boolean
+  isAdmin: boolean,
+  requestingUserName?: string
 ): Promise<{ success: boolean; error?: string }> {
   const conversation = await db
     .select()
@@ -227,6 +331,8 @@ export async function transferConversation(
     return { success: false, error: "Você não pode transferir uma conversa que não está atribuída a você" };
   }
   
+  let targetAgentName: string | undefined;
+  
   if (toAgentId !== "chatgpt") {
     const targetAgent = await db
       .select()
@@ -238,9 +344,13 @@ export async function transferConversation(
       return { success: false, error: "Atendente de destino não encontrado" };
     }
     
+    targetAgentName = targetAgent[0]?.name || undefined;
+    
     if (!isAdmin && targetAgent[0].status !== "online") {
       return { success: false, error: "Atendente de destino não está online" };
     }
+  } else {
+    targetAgentName = 'ChatGPT';
   }
   
   const onlineAgents = await getOnlineTelemarketingAgents();
@@ -249,7 +359,12 @@ export async function transferConversation(
     ? "#9B59B6" 
     : AGENT_COLORS[agentIndex >= 0 ? agentIndex % AGENT_COLORS.length : 0];
   
-  await assignConversationToAgent(conversationId, toAgentId, agentColor);
+  await assignConversationToAgent(conversationId, toAgentId, agentColor, {
+    assignedByUserId: requestingUserId,
+    assignedByUserName: requestingUserName || 'Usuário',
+    reason: 'transfer',
+    agentName: targetAgentName
+  });
   
   console.log(`🔄 [TRANSFER] Conversa ${conversationId} transferida de ${fromAgentId} para ${toAgentId} por ${requestingUserId}`);
   
