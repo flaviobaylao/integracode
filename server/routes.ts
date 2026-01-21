@@ -2152,6 +2152,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get last order for a customer
+  app.get('/api/customers/:id/last-order', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Buscar o último pedido do cliente através do sales_card
+      const result = await db.execute(sql`
+        SELECT 
+          oh.id,
+          oh.order_date,
+          oh.products,
+          oh.total_value,
+          oh.notes,
+          oh.status,
+          oh.payment_method,
+          oh.payment_condition,
+          sc.customer_id,
+          c.name as customer_name,
+          c.fantasy_name as customer_fantasy_name,
+          c.phone as customer_phone,
+          c.address as customer_address,
+          c.city as customer_city,
+          c.neighborhood as customer_neighborhood
+        FROM order_history oh
+        INNER JOIN sales_cards sc ON sc.id = oh.sales_card_id
+        INNER JOIN customers c ON c.id = sc.customer_id
+        WHERE sc.customer_id = ${id}
+        ORDER BY oh.order_date DESC
+        LIMIT 1
+      `);
+      
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ message: "Nenhum pedido encontrado para este cliente" });
+      }
+      
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error fetching last order:", error);
+      res.status(500).json({ message: "Falha ao buscar último pedido" });
+    }
+  });
+
   // Legacy: Create a new service log (backward compatibility)
   app.post('/api/customers/:id/service-logs', authenticateUser, async (req: any, res) => {
     try {
