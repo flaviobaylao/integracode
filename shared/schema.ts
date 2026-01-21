@@ -1622,6 +1622,9 @@ export const phoneNumberMappings = pgTable("phone_number_mappings", {
 export const chatConversationStatusEnum = pgEnum('chat_conversation_status', ['new', 'assigned', 'in-progress', 'resolved']);
 export const chatPriorityEnum = pgEnum('chat_priority', ['normal', 'urgent']);
 
+// Iniciador da conversa enum
+export const chatInitiatedByEnum = pgEnum('chat_initiated_by', ['customer', 'user']);
+
 // Chat Conversations table
 export const chatConversations = pgTable("chat_conversations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1632,6 +1635,8 @@ export const chatConversations = pgTable("chat_conversations", {
   assignedAgentId: varchar("assigned_agent_id"), // 🔄 Atendente atribuído via round-robin
   assignedAgentColor: varchar("assigned_agent_color"), // 🎨 Cor do atendente para visualização
   lastAttendedAt: timestamp("last_attended_at"), // ⏱️ Última interação do atendente
+  initiatedBy: chatInitiatedByEnum("initiated_by").default("customer"), // Quem iniciou: cliente ou usuário
+  initiatedByUserId: varchar("initiated_by_user_id"), // Se iniciado por usuário, qual usuário
   status: chatConversationStatusEnum("status").notNull().default("new"),
   priority: chatPriorityEnum("priority").notNull().default("normal"),
   lastMessageTime: timestamp("last_message_time").defaultNow(),
@@ -1641,6 +1646,18 @@ export const chatConversations = pgTable("chat_conversations", {
 }, (table) => [
   unique("unique_customer_phone").on(table.customerPhone),
 ]);
+
+// Histórico de atribuições de conversas
+export const chatAssignmentHistory = pgTable("chat_assignment_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull(),
+  assignedAgentId: varchar("assigned_agent_id").notNull(), // ID do atendente (ou 'chatgpt')
+  assignedAgentName: varchar("assigned_agent_name"), // Nome do atendente para fácil visualização
+  assignedByUserId: varchar("assigned_by_user_id"), // Quem fez a atribuição (null = sistema)
+  assignedByUserName: varchar("assigned_by_user_name"), // Nome de quem atribuiu
+  reason: varchar("reason"), // Motivo: 'initial', 'transfer', 'redistribution', 'manual'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 // Chat Messages type enum
 export const chatMessageTypeEnum = pgEnum('chat_message_type', ['text', 'image', 'file', 'audio', 'video', 'document', 'location']);
