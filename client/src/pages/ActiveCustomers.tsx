@@ -42,7 +42,9 @@ import {
   ArrowUp,
   ArrowDown,
   FileText,
-  UserX
+  UserX,
+  ShoppingCart,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -215,6 +217,10 @@ export default function ActiveCustomers() {
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{id: string; name: string} | null>(null);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const [customerToInactivate, setCustomerToInactivate] = useState<{id: string; name: string; activeCustomerId: string} | null>(null);
+  const [showLastOrderModal, setShowLastOrderModal] = useState(false);
+  const [lastOrderCustomerId, setLastOrderCustomerId] = useState<string | null>(null);
+  const [lastOrderData, setLastOrderData] = useState<any>(null);
+  const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -271,6 +277,47 @@ export default function ActiveCustomers() {
     e.stopPropagation();
     setCustomerToInactivate({ id: customerId, name: customerName, activeCustomerId });
     setShowInactivateDialog(true);
+  };
+
+  const handleViewLastOrder = async (e: React.MouseEvent, customerId: string) => {
+    e.stopPropagation();
+    setLastOrderCustomerId(customerId);
+    setLastOrderLoading(true);
+    setShowLastOrderModal(true);
+    
+    try {
+      const response = await fetch(`/api/customers/${customerId}/last-order`, {
+        credentials: 'include'
+      });
+      
+      if (response.status === 404) {
+        setLastOrderData(null);
+        toast({ 
+          variant: "destructive", 
+          title: "Sem pedidos", 
+          description: "Este cliente ainda não possui nenhum pedido registrado." 
+        });
+        setShowLastOrderModal(false);
+        return;
+      }
+      
+      if (!response.ok) {
+        throw new Error('Falha ao buscar pedido');
+      }
+      
+      const data = await response.json();
+      setLastOrderData(data);
+    } catch (error) {
+      console.error('Erro ao buscar último pedido:', error);
+      toast({ 
+        variant: "destructive", 
+        title: "Erro", 
+        description: "Não foi possível carregar o último pedido." 
+      });
+      setShowLastOrderModal(false);
+    } finally {
+      setLastOrderLoading(false);
+    }
   };
 
   const confirmInactivate = () => {
@@ -1219,6 +1266,17 @@ export default function ActiveCustomers() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
+                                    onClick={(e) => handleViewLastOrder(e, ac.customer!.id)}
+                                    title="Ver último pedido"
+                                    data-testid={`button-last-order-${ac.id}`}
+                                  >
+                                    <ShoppingCart className="h-4 w-4 text-purple-500" />
+                                  </Button>
+                                )}
+                                {ac.customer?.id && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
                                     onClick={(e) => handleEditPhone(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.customer!.phone || '', ac.customer!.contact || '')}
                                     title="Editar telefone"
                                     data-testid={`button-edit-phone-${ac.id}`}
@@ -1410,6 +1468,118 @@ export default function ActiveCustomers() {
                 </Button>
               </div>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Último Pedido */}
+        <Dialog open={showLastOrderModal} onOpenChange={setShowLastOrderModal}>
+          <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShoppingCart className="h-5 w-5 text-purple-600" />
+                Último Pedido
+              </DialogTitle>
+            </DialogHeader>
+            
+            {lastOrderLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+                <span className="ml-2">Carregando...</span>
+              </div>
+            ) : lastOrderData ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Cliente</p>
+                    <p className="font-semibold">{lastOrderData.customer_fantasy_name || lastOrderData.customer_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Data do Pedido</p>
+                    <p className="font-semibold">
+                      {lastOrderData.order_date 
+                        ? format(new Date(lastOrderData.order_date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                        : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Valor Total</p>
+                    <p className="font-semibold text-green-600 text-lg">
+                      R$ {Number(lastOrderData.total_value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Método de Pagamento</p>
+                    <p className="font-semibold">{lastOrderData.payment_method || 'Não informado'}</p>
+                  </div>
+                  {lastOrderData.payment_condition && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Condição de Pagamento</p>
+                      <p className="font-semibold">{lastOrderData.payment_condition}</p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-sm text-muted-foreground">Status</p>
+                    <Badge variant={lastOrderData.status === 'completed' || lastOrderData.status === 'delivered' ? 'default' : 'secondary'}>
+                      {lastOrderData.status === 'completed' ? 'Concluído' : 
+                       lastOrderData.status === 'delivered' ? 'Entregue' :
+                       lastOrderData.status === 'pending' ? 'Pendente' :
+                       lastOrderData.status === 'cancelled' ? 'Cancelado' : lastOrderData.status}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <ShoppingCart className="h-4 w-4" />
+                    Itens do Pedido
+                  </h4>
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Produto</TableHead>
+                          <TableHead className="text-center">Qtd</TableHead>
+                          <TableHead className="text-right">Preço Unit.</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(lastOrderData.products || []).map((item: any, index: number) => (
+                          <TableRow key={index}>
+                            <TableCell className="font-medium">{item.name}</TableCell>
+                            <TableCell className="text-center">{item.quantity}</TableCell>
+                            <TableCell className="text-right">
+                              R$ {Number(item.unitPrice || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              R$ {Number(item.totalPrice || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                {lastOrderData.notes && (
+                  <div>
+                    <h4 className="font-semibold mb-2">Observações</h4>
+                    <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">{lastOrderData.notes}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>Nenhum pedido encontrado para este cliente.</p>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowLastOrderModal(false)}>
+                Fechar
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
