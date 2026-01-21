@@ -2167,7 +2167,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           oh.notes,
           oh.status,
           sc.payment_method,
-          sc.payment_condition,
           sc.customer_id,
           c.name as customer_name,
           c.fantasy_name as customer_fantasy_name,
