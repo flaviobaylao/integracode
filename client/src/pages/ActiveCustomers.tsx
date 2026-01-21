@@ -1026,7 +1026,7 @@ export default function ActiveCustomers() {
           </div>
 
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="p-0 relative">
               {isLoadingCustomers ? (
                 <div className="p-4 space-y-4">
                   {[1, 2, 3].map((i) => (
@@ -1034,7 +1034,16 @@ export default function ActiveCustomers() {
                   ))}
                 </div>
               ) : (
-                <div className="overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
+                <div 
+                  className="overflow-x-scroll" 
+                  style={{ 
+                    scrollbarWidth: 'auto',
+                    position: 'sticky',
+                    bottom: 0,
+                    maxHeight: 'calc(100vh - 280px)',
+                    overflowY: 'auto'
+                  }}
+                >
                   <Table className="min-w-[1800px]">
                     <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
