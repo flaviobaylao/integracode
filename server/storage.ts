@@ -834,7 +834,19 @@ export class DatabaseStorage implements IStorage {
       .where(eq(customers.id, customerId))
       .returning();
     
-    // 2. Delete all future pending sales cards for this customer, except the current one
+    // 2. Also update activeCustomers table to remove from active list
+    await db
+      .update(activeCustomers)
+      .set({ 
+        isActive: false, 
+        deactivatedAt: new Date(),
+        updatedAt: new Date() 
+      })
+      .where(eq(activeCustomers.customerId, customerId));
+    
+    console.log(`✅ Cliente ${customerId} removido da lista de clientes ativos`);
+    
+    // 3. Delete all future pending sales cards for this customer, except the current one
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
