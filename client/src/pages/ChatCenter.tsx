@@ -1023,9 +1023,9 @@ export default function ChatCenter() {
         </DialogContent>
       </Dialog>
 
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full">
         {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Central de Atendimento WhatsApp</h1>
             <p className="text-gray-600">Gerencie conversas e atenda clientes em tempo real</p>
@@ -1084,17 +1084,17 @@ export default function ChatCenter() {
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-8" : "lg:grid-cols-6"} gap-6`}>
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-12" : "lg:grid-cols-10"} gap-4`}>
           {isAdmin && (
             // Sidebar esquerda com stats de agentes
-            <div className="lg:col-span-1">
+            <div className="lg:col-span-2">
               <Card className="h-full">
-                <CardHeader className="pb-3">
+                <CardHeader className="pb-2">
                   <CardTitle className="text-sm">Atendentes</CardTitle>
-                  <CardDescription>Status e performance</CardDescription>
+                  <CardDescription className="text-xs">Status e performance</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[600px] pr-4">
+                <CardContent className="pt-0">
+                  <ScrollArea className="h-[calc(100vh-220px)] pr-2">
                     {agentStats.length === 0 ? (
                       <div className="text-center py-8 text-gray-500 text-xs">Carregando...</div>
                     ) : (
@@ -1121,8 +1121,8 @@ export default function ChatCenter() {
             </div>
           )}
           
-          {/* Lista de Conversas + Agenda Telefônica - Coluna reduzida em 30% */}
-          <div className={`${isAdmin ? "lg:col-span-2" : "lg:col-span-2"} flex flex-col`} style={{ height: 'calc(100vh - 200px)' }}>
+          {/* Lista de Conversas + Agenda Telefônica */}
+          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"} flex flex-col`} style={{ height: 'calc(100vh - 180px)' }}>
             <Tabs defaultValue="conversas" className="h-full flex flex-col">
               <Card className="h-full flex flex-col overflow-hidden">
                 <CardHeader className="shrink-0 pb-3">
@@ -1246,7 +1246,7 @@ export default function ChatCenter() {
           </div>
 
           {/* Chat - Coluna expandida para mais espaço */}
-          <div className={`${isAdmin ? "lg:col-span-4" : "lg:col-span-3"} space-y-4`}>
+          <div className={`${isAdmin ? "lg:col-span-5" : "lg:col-span-5"} space-y-3`}>
             {selectedChat ? (
               <>
                 {/* Info do Cliente */}
@@ -1369,9 +1369,9 @@ export default function ChatCenter() {
                 </Card>
 
                 {/* Área de Chat + Input de Mensagem - Tudo junto */}
-                <Card className="flex flex-col h-[500px]">
+                <Card className="flex flex-col" style={{ height: 'calc(100vh - 380px)' }}>
                   <CardContent className="flex-1 overflow-hidden p-4">
-                    <ScrollArea ref={scrollRef} className="h-[300px]">
+                    <ScrollArea ref={scrollRef} className="h-full">
                       <div className="space-y-4">
                         {messagesLoading ? (
                           <div className="text-center py-8 text-gray-500">Carregando mensagens...</div>
@@ -1634,7 +1634,7 @@ export default function ChatCenter() {
           </div>
 
           {/* Painel de Templates à direita */}
-          <div className="lg:col-span-1 hidden lg:block" style={{ height: 'calc(100vh - 200px)' }}>
+          <div className="lg:col-span-2 hidden lg:block" style={{ height: 'calc(100vh - 180px)' }}>
             <TemplatesPanel
               onSelectTemplate={(template) => {
                 if (template.content) {
