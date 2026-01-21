@@ -130,8 +130,10 @@ export default function OverdueDebtsManagement() {
   // Query para buscar débitos vencidos do banco (dados persistidos)
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
     queryKey: ['/api/omie/overdue-debts/cached'],
-    staleTime: 1000 * 60 * 30, // 30 minutos - dados considerados "frescos"
-    gcTime: 1000 * 60 * 60 * 24, // 24 horas - mantém em cache mesmo sem uso
+    staleTime: 1000 * 60 * 2, // 2 minutos - dados considerados "frescos"
+    gcTime: 1000 * 60 * 60, // 1 hora - mantém em cache
+    refetchOnMount: 'always', // Sempre buscar ao montar o componente
+    refetchOnWindowFocus: true, // Atualizar ao voltar para a aba
   });
 
   // Query para buscar vendedores
