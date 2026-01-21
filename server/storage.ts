@@ -5952,7 +5952,7 @@ export class DatabaseStorage implements IStorage {
         email: agent.email,
         status: agent.status === 'online' ? 'online' : 'offline',
         color: agentColor,
-        lastActivity: agent.lastActivity,
+        lastActivity: agent.lastSeenAt,
         messagesAnswered: agentMessages.length,
         messagesToRespond: unreadMessages.length
       };
