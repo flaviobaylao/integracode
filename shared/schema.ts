@@ -212,6 +212,9 @@ export const customers = pgTable("customers", {
   // Lead flag (se é um lead ou cliente)
   isLead: boolean("is_lead").notNull().default(false),
   
+  // Cliente Consumidor flag (cliente especial com destaque verde)
+  isConsumerClient: boolean("is_consumer_client").notNull().default(false),
+  
   // Data de início do fornecimento - só pode ser alterada por admins
   serviceStartDate: timestamp("service_start_date"),
   
