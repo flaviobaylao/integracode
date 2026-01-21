@@ -1404,9 +1404,9 @@ export default function ChatCenter() {
                 </Card>
 
                 {/* Área de Chat + Input de Mensagem - Tudo junto */}
-                <Card className="flex flex-col" style={{ height: 'calc(100vh - 380px)' }}>
-                  <CardContent className="flex-1 overflow-hidden p-4">
-                    <ScrollArea ref={scrollRef} className="h-full">
+                <Card className="flex flex-col" style={{ height: 'calc(100vh - 300px)', minHeight: '400px' }}>
+                  <CardContent className="flex-1 overflow-hidden p-4 flex flex-col">
+                    <ScrollArea ref={scrollRef} className="flex-1" style={{ maxHeight: 'calc(100% - 120px)' }}>
                       <div className="space-y-4">
                         {messagesLoading ? (
                           <div className="text-center py-8 text-gray-500">Carregando mensagens...</div>
