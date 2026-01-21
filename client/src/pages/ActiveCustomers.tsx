@@ -1029,14 +1029,14 @@ export default function ActiveCustomers() {
                   ))}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
+                <div className="overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
+                  <Table className="min-w-[1800px]">
+                    <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
-                        <TableHead>Status</TableHead>
-                        <TableHead>CPF/CNPJ</TableHead>
-                        <TableHead>Nome</TableHead>
-                        <TableHead>Telefone</TableHead>
+                        <TableHead className="min-w-[60px]">Status</TableHead>
+                        <TableHead className="min-w-[120px]">CPF/CNPJ</TableHead>
+                        <TableHead className="min-w-[180px]">Nome</TableHead>
+                        <TableHead className="min-w-[120px]">Telefone</TableHead>
                         <TableHead>Vendedor</TableHead>
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
@@ -1084,10 +1084,10 @@ export default function ActiveCustomers() {
                             )}
                           </button>
                         </TableHead>
-                        <TableHead>Última Atividade</TableHead>
-                        <TableHead>Último Atend. Virtual</TableHead>
-                        <TableHead>Próximas 3 Visitas</TableHead>
-                        <TableHead>Ações</TableHead>
+                        <TableHead className="min-w-[80px]">Última Atividade</TableHead>
+                        <TableHead className="min-w-[100px]">Último Atend. Virtual</TableHead>
+                        <TableHead className="min-w-[140px]">Próximas 3 Visitas</TableHead>
+                        <TableHead className="min-w-[160px] sticky right-0 bg-background">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1132,7 +1132,7 @@ export default function ActiveCustomers() {
                               {formatDocument(ac.document, ac.documentType)}
                             </TableCell>
                             <TableCell>
-                              <div className="font-medium">
+                              <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
                                 {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                               </div>
                               {ac.customer?.address && (
@@ -1244,7 +1244,7 @@ export default function ActiveCustomers() {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="sticky right-0 bg-background">
                               <div className="flex gap-1">
                                 {ac.customer?.id && (
                                   <Button

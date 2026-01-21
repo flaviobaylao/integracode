@@ -91,6 +91,7 @@ export default function CustomerEditModal({
     receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
+    isConsumerClient: false, // Cliente Consumidor - destaque verde
   });
 
   const createLeadMutation = useMutation({
@@ -296,6 +297,7 @@ export default function CustomerEditModal({
         receivingWeekdays: Array.isArray((customer as any).receivingWeekdays) ? (customer as any).receivingWeekdays : [],
         deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
+        isConsumerClient: (customer as any).isConsumerClient || false,
       });
     }
   }, [customer]);
@@ -526,6 +528,27 @@ export default function CustomerEditModal({
                 <SelectItem value="bimestral">Bimestral</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Cliente Consumidor */}
+          <div className="flex items-center space-x-3 p-4 border border-green-200 bg-green-50 rounded-lg">
+            <Checkbox
+              id="is-consumer-client"
+              checked={formData.isConsumerClient}
+              onCheckedChange={(checked) => {
+                setFormData(prev => ({
+                  ...prev,
+                  isConsumerClient: checked as boolean
+                }));
+              }}
+              data-testid="checkbox-consumer-client"
+            />
+            <div>
+              <label htmlFor="is-consumer-client" className="text-sm font-medium cursor-pointer text-green-900">
+                Cliente Consumidor
+              </label>
+              <p className="text-xs text-green-700">Marque esta opção para destacar o cliente com fundo verde na lista</p>
+            </div>
           </div>
 
           {/* Configurações de Recebimento */}
