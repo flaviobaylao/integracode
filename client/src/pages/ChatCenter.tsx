@@ -1266,7 +1266,7 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 280px)' }}>
                     <ScrollArea className="h-full pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
@@ -1345,7 +1345,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 280px)' }}>
                     <ScrollArea className="h-full pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
@@ -1396,7 +1396,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 280px)' }}>
                     <ScrollArea className="h-full pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
