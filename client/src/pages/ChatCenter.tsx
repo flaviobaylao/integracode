@@ -1186,7 +1186,7 @@ export default function ChatCenter() {
           )}
           
           {/* Lista de Conversas + Agenda Telefônica */}
-          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"} flex flex-col`} style={{ height: 'calc(100vh - 180px)' }}>
+          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"} flex flex-col`} style={{ height: 'calc(100vh - 100px)' }}>
             <Tabs defaultValue="conversas" className="h-full flex flex-col">
               <Card className="h-full flex flex-col overflow-hidden">
                 <CardHeader className="shrink-0 pb-3">
