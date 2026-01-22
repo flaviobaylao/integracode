@@ -1266,8 +1266,7 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CardContent className="p-0 px-4 pb-4" style={{ height: 'calc(100vh - 240px)', overflow: 'hidden' }}>
-                    <ScrollArea style={{ height: '100%' }}>
+                  <CardContent className="p-0 px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 240px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1323,7 +1322,6 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                    </ScrollArea>
                   </CardContent>
                 </TabsContent>
 
@@ -1345,8 +1343,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="p-0 px-4 pb-4" style={{ height: 'calc(100vh - 240px)', overflow: 'hidden' }}>
-                    <ScrollArea style={{ height: '100%' }}>
+                  <CardContent className="p-0 px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 240px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1374,7 +1371,6 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                    </ScrollArea>
                   </CardContent>
                 </TabsContent>
 
@@ -1396,8 +1392,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="p-0 px-4 pb-4" style={{ height: 'calc(100vh - 240px)', overflow: 'hidden' }}>
-                    <ScrollArea style={{ height: '100%' }}>
+                  <CardContent className="p-0 px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 240px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1425,7 +1420,6 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                    </ScrollArea>
                   </CardContent>
                 </TabsContent>
 
