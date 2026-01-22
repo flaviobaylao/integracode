@@ -19,7 +19,8 @@ import {
   Filter, 
   X,
   Calendar,
-  Users
+  Users,
+  MessageCircle
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -439,14 +440,33 @@ export default function VirtualClientsToday() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {e.stopPropagation(); handleWhatsAppClick();}}
-                            data-testid={`button-whatsapp-${client.id}`}
-                          >
-                            <Phone className="h-4 w-4" />
-                          </Button>
+                          <div className="flex gap-1">
+                            {client.customer?.phone && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const phone = client.customer!.phone.replace(/\D/g, '');
+                                  const normalizedPhone = phone.startsWith('55') ? phone : `55${phone}`;
+                                  window.location.href = `/telemarketing/atendimento?phone=${normalizedPhone}`;
+                                }}
+                                title="Abrir conversa no Chat Center"
+                                data-testid={`button-chat-center-${client.id}`}
+                              >
+                                <MessageCircle className="h-4 w-4 text-green-600" />
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {e.stopPropagation(); handleWhatsAppClick();}}
+                              title="Ligar via WhatsApp"
+                              data-testid={`button-whatsapp-${client.id}`}
+                            >
+                              <Phone className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
