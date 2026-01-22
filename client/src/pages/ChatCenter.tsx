@@ -366,7 +366,8 @@ export default function ChatCenter() {
   useEffect(() => {
     const handlePhoneParam = async () => {
       try {
-        const params = new URLSearchParams(location.split('?')[1]);
+        // Usar window.location.search pois wouter location não inclui query params
+        const params = new URLSearchParams(window.location.search);
         const conversationId = params.get('conversationId');
         const phoneParam = params.get('phone');
         
@@ -389,6 +390,8 @@ export default function ChatCenter() {
                 setSelectedConversation(data.conversationId);
                 refetchConversations();
               }
+            } else {
+              console.warn('⚠️ [ChatCenter] Erro na resposta:', response.status);
             }
           } catch (err) {
             console.warn('⚠️ [ChatCenter] Erro ao buscar conversa por telefone:', err);
@@ -400,7 +403,7 @@ export default function ChatCenter() {
       }
     };
     handlePhoneParam();
-  }, [location]);
+  }, []);
 
   // 🟢 HEARTBEAT - Enviar presença a cada 30 segundos quando ChatCenter estiver aberto
   useEffect(() => {
