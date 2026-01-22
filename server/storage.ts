@@ -7355,6 +7355,65 @@ export class DatabaseStorage implements IStorage {
   async deletePhonebookContact(id: string): Promise<void> {
     await db.delete(phonebookContacts).where(eq(phonebookContacts.id, id));
   }
+
+  async upsertPhonebookContactByPhone(contact: InsertPhonebookContact): Promise<PhonebookContact> {
+    const cleanPhone = contact.phone.replace(/\D/g, '');
+    const existing = await this.getPhonebookContactByPhone(cleanPhone);
+    
+    if (existing) {
+      return await this.updatePhonebookContact(existing.id, {
+        name: contact.name,
+        customerId: contact.customerId,
+        notes: contact.notes,
+      });
+    } else {
+      return await this.createPhonebookContact(contact);
+    }
+  }
+
+  async syncActiveCustomersToPhonebook(): Promise<{ synced: number; errors: number }> {
+    const activeCustomers = await db.select().from(customers).where(eq(customers.isActive, true));
+    let synced = 0;
+    let errors = 0;
+
+    for (const customer of activeCustomers) {
+      try {
+        if (!customer.phone) continue;
+        
+        const cleanPhone = customer.phone.replace(/\D/g, '');
+        const normalizedPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+        const displayName = customer.fantasyName || customer.name;
+        
+        await this.upsertPhonebookContactByPhone({
+          name: displayName,
+          phone: normalizedPhone,
+          customerId: customer.id,
+          notes: `Cliente ativo - ${customer.customerType === 'pj' ? 'PJ' : 'PF'}`,
+        });
+        synced++;
+      } catch (err) {
+        console.error(`[SYNC-PHONEBOOK] Erro ao sincronizar cliente ${customer.id}:`, err);
+        errors++;
+      }
+    }
+
+    console.log(`✅ [SYNC-PHONEBOOK] Sincronizados ${synced} clientes para agenda (${errors} erros)`);
+    return { synced, errors };
+  }
+
+  async getCustomerByPhone(phone: string): Promise<typeof customers.$inferSelect | undefined> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const phoneWithoutCountry = cleanPhone.startsWith('55') ? cleanPhone.slice(2) : cleanPhone;
+    
+    const [customer] = await db.select().from(customers)
+      .where(
+        or(
+          like(customers.phone, `%${phoneWithoutCountry}%`),
+          like(customers.phone, `%${cleanPhone}%`)
+        )
+      );
+    return customer;
+  }
   
   // Virtual Attendance Stats operations
   async logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void> {
