@@ -637,6 +637,7 @@ export default function OverdueDebtsManagement() {
                     <tr className="bg-gray-50 border-b">
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Cliente</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">CNPJ/CPF</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Telefone</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Nº Nota Fiscal</th>
                       <th className="text-right p-3 font-semibold text-sm text-gray-700">Valor</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Data Vencimento</th>
@@ -656,6 +657,11 @@ export default function OverdueDebtsManagement() {
                             <div className="font-medium text-gray-900">{debt.cliente.nome_fantasia}</div>
                           </td>
                           <td className="p-3 text-sm text-gray-600">{debt.cliente.cnpj_cpf}</td>
+                          <td className="p-3 text-sm text-gray-600">
+                            {debt.cliente.telefone && debt.cliente.telefone !== '(00) 00000-0000' && !debt.cliente.telefone.includes('00000-0000') 
+                              ? debt.cliente.telefone 
+                              : <span className="text-gray-400">Não cadastrado</span>}
+                          </td>
                           <td className="p-3">
                             <div className="font-medium text-gray-900">{documento.numero_documento_fiscal || documento.numero_documento || 'N/A'}</div>
                           </td>
