@@ -1377,10 +1377,14 @@ export function registerChatRoutes(app: Express): void {
             
             console.log(`🔍 [WEBHOOK-AI] Status: ${currentConversation.status} | Agent: ${currentConversation.assignedAgentId || 'nenhum'} | isNew: ${isNewOrReopened} | isHuman: ${isAssignedToHuman} | isChatGPT: ${isAssignedToChatGpt}`);
             
-            // 🚫 SPAM FILTER: Não processar mensagens de contatos marcados como SPAM
+            // 🚫 SPAM/GRUPO FILTER: Não processar mensagens de contatos marcados como SPAM ou GRUPO
             const isSpamContact = identifiedName.toUpperCase().includes('SPAM');
+            const isGrupoContact = identifiedName.toUpperCase().includes('GRUPO');
             if (isSpamContact) {
               console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" marcado como SPAM - IGNORANDO resposta automática`);
+              // Não distribuir nem responder - apenas arquivar silenciosamente
+            } else if (isGrupoContact) {
+              console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" marcado como GRUPO - IGNORANDO resposta automática`);
               // Não distribuir nem responder - apenas arquivar silenciosamente
             } else if (isAssignedToHuman) {
               // 🔒 REGRA: Conversas atribuídas a humanos PERMANECEM com eles até serem finalizadas
