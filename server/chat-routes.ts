@@ -1377,7 +1377,12 @@ export function registerChatRoutes(app: Express): void {
             
             console.log(`🔍 [WEBHOOK-AI] Status: ${currentConversation.status} | Agent: ${currentConversation.assignedAgentId || 'nenhum'} | isNew: ${isNewOrReopened} | isHuman: ${isAssignedToHuman} | isChatGPT: ${isAssignedToChatGpt}`);
             
-            if (isAssignedToHuman) {
+            // 🚫 SPAM FILTER: Não processar mensagens de contatos marcados como SPAM
+            const isSpamContact = identifiedName.toUpperCase().includes('SPAM');
+            if (isSpamContact) {
+              console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" marcado como SPAM - IGNORANDO resposta automática`);
+              // Não distribuir nem responder - apenas arquivar silenciosamente
+            } else if (isAssignedToHuman) {
               // 🔒 REGRA: Conversas atribuídas a humanos PERMANECEM com eles até serem finalizadas
               console.log(`👤 [WEBHOOK-AI] Conversa ${conversation.id} atribuída a atendente humano (${currentConversation.assignedAgentId}) - MANTENDO atribuição`);
             } else if (isAssignedToChatGpt) {
