@@ -278,6 +278,114 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
   }
 }
 
+// 🔧 FUNÇÃO PARA PROCESSAR MENSAGEM DE GRUPO WHATSAPP
+export async function processGroupMessage(data: any): Promise<boolean> {
+  try {
+    const rawRemoteJid = data.key?.remoteJid;
+    if (!rawRemoteJid || !rawRemoteJid.includes('@g.us')) {
+      return false;
+    }
+
+    const groupId = rawRemoteJid.split('@')[0];
+    const isFromMe = data.key?.fromMe === true;
+    const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
+    const rawMessageId = data.key?.id;
+    const messageTimestamp = data.messageTimestamp || Date.now();
+    
+    const messageId = rawMessageId || `group-${groupId}-${messageTimestamp}-${Date.now()}`;
+    
+    const participant = data.key?.participant || data.participant || '';
+    const participantPhone = participant ? participant.split('@')[0].replace(/\D/g, '') : '';
+    const senderName = data.pushName || (participantPhone ? `Membro ${participantPhone}` : 'Membro do Grupo');
+    
+    const groupName = data.groupMetadata?.subject || data.verifiedBizName || `Grupo ${groupId}`;
+
+    console.log(`👥 [GROUP] Processando mensagem de grupo: ${groupName} (${groupId}) | FromMe: ${isFromMe} | Sender: ${senderName}`);
+
+    let conversation = await storage.getChatConversationByPhone(groupId);
+    
+    if (!conversation) {
+      let customer = await storage.getChatCustomerByPhone(groupId);
+      
+      if (!customer) {
+        customer = await storage.createChatCustomer({
+          name: `GRUPO - ${groupName}`,
+          phone: groupId,
+          email: null,
+          notes: `Grupo WhatsApp: ${groupName}`,
+          tags: 'grupo,whatsapp',
+          avatar: null
+        });
+        console.log(`👥 [GROUP] Novo grupo criado: ${customer.name}`);
+      }
+
+      conversation = await storage.createChatConversation({
+        customerId: customer.id,
+        customerName: customer.name,
+        customerPhone: groupId,
+        status: 'active',
+        agentId: null,
+        channel: 'whatsapp',
+        lastMessageAt: new Date(),
+        unreadCount: isFromMe ? 0 : 1
+      });
+      console.log(`👥 [GROUP] Nova conversa de grupo criada: ${conversation.id}`);
+    } else {
+      await storage.updateChatConversation(conversation.id, {
+        lastMessageAt: new Date(),
+        unreadCount: isFromMe ? 0 : (conversation.unreadCount || 0) + 1
+      });
+    }
+
+    const existingMessage = await storage.getChatMessageByExternalId(messageId);
+    if (existingMessage) {
+      console.log(`⚠️ [GROUP] Mensagem duplicada ignorada: ${messageId}`);
+      return true;
+    }
+
+    let mediaUrl: string | null = null;
+    let mediaType: string | null = null;
+    const messageTypes = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+    
+    for (const type of messageTypes) {
+      if (data.message?.[type]) {
+        mediaType = type.replace('Message', '');
+        if (data.message[type].url) {
+          mediaUrl = data.message[type].url;
+        }
+        break;
+      }
+    }
+
+    await storage.createChatMessage({
+      conversationId: conversation.id,
+      senderId: isFromMe ? 'system' : (participantPhone || groupId),
+      senderType: isFromMe ? 'agent' : 'customer',
+      content: messageText || (mediaType ? `[${mediaType.toUpperCase()}]` : '[Mensagem sem texto]'),
+      messageType: mediaType || 'text',
+      mediaUrl: mediaUrl,
+      metadata: {
+        whatsappMessageId: messageId,
+        participant: participantPhone,
+        participantName: senderName,
+        groupId: groupId,
+        groupName: groupName,
+        fromMe: isFromMe,
+        timestamp: messageTimestamp,
+        isGroup: true
+      },
+      externalMessageId: messageId
+    });
+
+    console.log(`✅ [GROUP] Mensagem de grupo salva: ${groupName} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
+    return true;
+
+  } catch (error: any) {
+    console.error('❌ [GROUP] Erro ao processar mensagem de grupo:', error.message);
+    return false;
+  }
+}
+
 // 🔧 FUNÇÃO PARA CONSOLIDAR CONVERSAS DUPLICADAS POR TELEFONE
 async function consolidateDuplicateConversations(storage: any): Promise<{ consolidated: number; merged: number }> {
   const conversations = await storage.getChatConversations();
@@ -1079,8 +1187,12 @@ export function registerChatRoutes(app: Express): void {
       const rawRemoteJid = data.key.remoteJid;
       debugInfo.rawRemoteJid = rawRemoteJid;
       
+      // 👥 GRUPOS: Processar mensagens de grupos separadamente
       if (rawRemoteJid.includes('@g.us')) {
-        return res.json({ received: false, reason: 'Grupo ignorado', debug: debugInfo });
+        debugInfo.steps.push('2-process-group');
+        const groupProcessed = await processGroupMessage(data);
+        debugInfo.groupProcessed = groupProcessed;
+        return res.json({ received: groupProcessed, reason: 'Grupo processado', debug: debugInfo });
       }
 
       // 🎯 NOVO: Usar resolveCanonicalPhone para buscar número real automaticamente
