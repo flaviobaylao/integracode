@@ -473,14 +473,22 @@ export default function ChatCenter() {
   const conversations = (conversationsData as Conversation[]) || [];
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
+  const phoneParamProcessed = useRef(false);
   useEffect(() => {
+    // Só processar uma vez e quando não estiver carregando
+    if (phoneParamProcessed.current || convLoading) return;
+    
+    const params = new URLSearchParams(window.location.search);
+    const conversationId = params.get('conversationId');
+    const phoneParam = params.get('phone');
+    
+    // Marcar como processado se tiver parâmetros
+    if (conversationId || phoneParam) {
+      phoneParamProcessed.current = true;
+    }
+    
     const handlePhoneParam = async () => {
       try {
-        // Usar window.location.search pois wouter location não inclui query params
-        const params = new URLSearchParams(window.location.search);
-        const conversationId = params.get('conversationId');
-        const phoneParam = params.get('phone');
-        
         if (conversationId) {
           console.log('🎯 [ChatCenter] Abrindo conversa por ID:', conversationId);
           setSelectedConversation(conversationId);
@@ -493,15 +501,18 @@ export default function ChatCenter() {
               headers: { 'Content-Type': 'application/json' },
               credentials: 'include'
             });
+            console.log('🔍 [ChatCenter] Resposta by-phone:', response.status);
             if (response.ok) {
               const data = await response.json();
+              console.log('🔍 [ChatCenter] Dados recebidos:', data);
               if (data.conversationId) {
                 console.log('✅ [ChatCenter] Conversa encontrada/criada:', data.conversationId);
                 setSelectedConversation(data.conversationId);
                 refetchConversations();
               }
             } else {
-              console.warn('⚠️ [ChatCenter] Erro na resposta:', response.status);
+              const errorText = await response.text();
+              console.warn('⚠️ [ChatCenter] Erro na resposta:', response.status, errorText);
             }
           } catch (err) {
             console.warn('⚠️ [ChatCenter] Erro ao buscar conversa por telefone:', err);
@@ -512,8 +523,11 @@ export default function ChatCenter() {
         console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
       }
     };
-    handlePhoneParam();
-  }, [refetchConversations]);
+    
+    if (conversationId || phoneParam) {
+      handlePhoneParam();
+    }
+  }, [convLoading, refetchConversations]);
 
   // Separar conversas SPAM (contatos com "SPAM" no nome)
   const spamConversations = conversations.filter(conv => 
