@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -488,8 +488,24 @@ export default function ChatCenter() {
   });
   const conversations = (conversationsData as Conversation[]) || [];
 
-  // Filtrar conversas por termo de busca
-  const filteredConversations = conversations.filter(conv => 
+  // Separar conversas SPAM (contatos com "SPAM" no nome)
+  const spamConversations = conversations.filter(conv => 
+    conv.customerName.toUpperCase().includes('SPAM')
+  );
+
+  // Conversas normais (excluindo SPAM)
+  const normalConversations = conversations.filter(conv => 
+    !conv.customerName.toUpperCase().includes('SPAM')
+  );
+
+  // Filtrar conversas por termo de busca (apenas as normais)
+  const filteredConversations = normalConversations.filter(conv => 
+    conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
+  );
+
+  // Filtrar conversas SPAM por termo de busca
+  const filteredSpamConversations = spamConversations.filter(conv => 
     conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
   );
@@ -1138,10 +1154,19 @@ export default function ChatCenter() {
               <Card className="h-full flex flex-col overflow-hidden">
                 <CardHeader className="shrink-0 pb-3">
                   <div className="flex items-center justify-between mb-3">
-                    <TabsList className="grid w-full grid-cols-3 max-w-[360px]">
+                    <TabsList className="grid w-full grid-cols-4 max-w-[480px]">
                       <TabsTrigger value="conversas" className="gap-1 text-xs" data-testid="tab-conversas">
                         <Phone className="w-3 h-3" />
                         Conversas
+                      </TabsTrigger>
+                      <TabsTrigger value="spam" className="gap-1 text-xs relative" data-testid="tab-spam">
+                        <Archive className="w-3 h-3" />
+                        SPAM
+                        {spamConversations.length > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
+                            {spamConversations.length}
+                          </span>
+                        )}
                       </TabsTrigger>
                       <TabsTrigger value="agenda" className="gap-1 text-xs" data-testid="tab-agenda">
                         <BookOpen className="w-3 h-3" />
@@ -1232,6 +1257,57 @@ export default function ChatCenter() {
                                 ))}
                               </div>
                             </div>
+                          </div>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </CardContent>
+                </TabsContent>
+
+                <TabsContent value="spam" className="flex-1 overflow-hidden m-0 flex flex-col">
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Archive className="w-5 h-5 text-orange-500" />
+                        Mensagens Arquivadas (SPAM)
+                      </CardTitle>
+                      <CardDescription>{filteredSpamConversations.length} conversas arquivadas</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 flex-1 max-w-[200px]">
+                      <Input 
+                        placeholder="Buscar..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                    <ScrollArea className="h-full pr-2">
+                      <div className="space-y-2">
+                        {convLoading ? (
+                          <div className="text-center py-4 text-gray-500">Carregando...</div>
+                        ) : filteredSpamConversations.length === 0 ? (
+                          <div className="text-center py-8 text-gray-500">
+                            <Archive className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                            <p className="font-medium">Nenhuma conversa SPAM</p>
+                            <p className="text-sm mt-1">Contatos salvos com "SPAM" no nome aparecem aqui</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 pb-8">
+                            {filteredSpamConversations.map((conv) => (
+                              <ConversationItem 
+                                key={conv.id} 
+                                conv={conv} 
+                                selectedConversation={selectedConversation}
+                                setSelectedConversation={setSelectedConversation}
+                                getStatusColor={getStatusColor}
+                                formatLastMessageTime={formatLastMessageTime}
+                                onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
+                                setPhonebookData={setPhonebookData}
+                                isAdmin={isAdmin}
+                              />
+                            ))}
                           </div>
                         )}
                       </div>
