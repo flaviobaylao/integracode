@@ -1266,8 +1266,8 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 200px)' }}>
-                    <ScrollArea className="h-full pr-2">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1345,8 +1345,8 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 200px)' }}>
-                    <ScrollArea className="h-full pr-2">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1396,8 +1396,8 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4" style={{ height: 'calc(100vh - 200px)' }}>
-                    <ScrollArea className="h-full pr-2">
+                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
+                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
                       <div className="space-y-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
