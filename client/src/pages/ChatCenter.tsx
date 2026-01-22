@@ -1267,8 +1267,8 @@ export default function ChatCenter() {
                     </Button>
                   </div>
                   <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
-                      <div className="space-y-2">
+                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                      <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
                         ) : filteredConversations.length === 0 ? (
@@ -1346,8 +1346,8 @@ export default function ChatCenter() {
                     </div>
                   </div>
                   <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
-                      <div className="space-y-2">
+                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                      <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
                         ) : filteredGrupoConversations.length === 0 ? (
@@ -1397,8 +1397,8 @@ export default function ChatCenter() {
                     </div>
                   </div>
                   <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-280px)] pr-2">
-                      <div className="space-y-2">
+                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                      <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
                         ) : filteredSpamConversations.length === 0 ? (
