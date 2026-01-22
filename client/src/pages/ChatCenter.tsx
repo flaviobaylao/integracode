@@ -362,20 +362,44 @@ export default function ChatCenter() {
     }
   });
 
-  // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp
+  // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(location.split('?')[1]);
-      const conversationId = params.get('conversationId');
-      if (conversationId) {
-        console.log('🎯 [ChatCenter] Abrindo conversa:', conversationId);
-        setSelectedConversation(conversationId);
-        // Remover o parâmetro da URL para limpar
-        window.history.replaceState({}, '', '/telemarketing/atendimento');
+    const handlePhoneParam = async () => {
+      try {
+        const params = new URLSearchParams(location.split('?')[1]);
+        const conversationId = params.get('conversationId');
+        const phoneParam = params.get('phone');
+        
+        if (conversationId) {
+          console.log('🎯 [ChatCenter] Abrindo conversa:', conversationId);
+          setSelectedConversation(conversationId);
+          window.history.replaceState({}, '', '/telemarketing/atendimento');
+        } else if (phoneParam) {
+          console.log('🎯 [ChatCenter] Buscando/criando conversa por telefone:', phoneParam);
+          try {
+            const response = await fetch(`/api/chat/conversations/by-phone/${phoneParam}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include'
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data.conversationId) {
+                console.log('✅ [ChatCenter] Conversa encontrada/criada:', data.conversationId);
+                setSelectedConversation(data.conversationId);
+                refetchConversations();
+              }
+            }
+          } catch (err) {
+            console.warn('⚠️ [ChatCenter] Erro ao buscar conversa por telefone:', err);
+          }
+          window.history.replaceState({}, '', '/telemarketing/atendimento');
+        }
+      } catch (error) {
+        console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
       }
-    } catch (error) {
-      console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
-    }
+    };
+    handlePhoneParam();
   }, [location]);
 
   // 🟢 HEARTBEAT - Enviar presença a cada 30 segundos quando ChatCenter estiver aberto

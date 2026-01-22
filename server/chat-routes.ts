@@ -541,6 +541,71 @@ export function registerChatRoutes(app: Express): void {
   );
 
   // ============================================================
+  // BUSCAR/CRIAR CONVERSA POR TELEFONE
+  // ============================================================
+  
+  app.post("/api/chat/conversations/by-phone/:phone", authenticateUser, async (req, res) => {
+    try {
+      const { phone } = req.params;
+      const cleanPhone = phone.replace(/\D/g, '');
+      const normalizedPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+      
+      console.log(`🔍 [BY-PHONE] Buscando conversa para: ${normalizedPhone}`);
+      
+      let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+      
+      if (!conversation) {
+        const phoneVariants = getPhoneVariants(normalizedPhone);
+        for (const variant of phoneVariants) {
+          conversation = await storage.getChatConversationByPhone(variant);
+          if (conversation) {
+            console.log(`✅ [BY-PHONE] Conversa encontrada com variante: ${variant}`);
+            break;
+          }
+        }
+      }
+      
+      if (!conversation) {
+        let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+        
+        if (!customer) {
+          const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
+          
+          customer = await storage.createChatCustomer({
+            name: phonebookContact?.name || `Cliente ${normalizedPhone}`,
+            phone: normalizedPhone,
+            email: null,
+            notes: phonebookContact ? `Contato da agenda: ${phonebookContact.name}` : null,
+            tags: null,
+            avatar: null
+          });
+          console.log(`👤 [BY-PHONE] Cliente criado: ${customer.name}`);
+        }
+        
+        const user = req.user as any;
+        const agent = user?.email ? await storage.getChatAgentByEmail(user.email) : null;
+        
+        conversation = await storage.createChatConversation({
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPhone: normalizedPhone,
+          status: 'active',
+          agentId: agent?.id || null,
+          channel: 'whatsapp',
+          lastMessageAt: new Date(),
+          unreadCount: 0
+        });
+        console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id}`);
+      }
+      
+      res.json({ conversationId: conversation.id, phone: normalizedPhone });
+    } catch (error: any) {
+      console.error('[BY-PHONE] Erro:', error.message);
+      res.status(500).json({ error: 'Erro ao buscar/criar conversa' });
+    }
+  });
+
+  // ============================================================
   // CHAT AGENTS CRUD
   // ============================================================
 

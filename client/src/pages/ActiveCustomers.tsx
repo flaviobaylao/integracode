@@ -44,7 +44,8 @@ import {
   FileText,
   UserX,
   ShoppingCart,
-  Loader2
+  Loader2,
+  MessageCircle
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -1260,6 +1261,22 @@ export default function ActiveCustomers() {
                             </TableCell>
                             <TableCell className="sticky right-0 bg-background z-10">
                               <div className="flex gap-1">
+                                {ac.customer?.phone && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const phone = ac.customer!.phone!.replace(/\D/g, '');
+                                      const normalizedPhone = phone.startsWith('55') ? phone : `55${phone}`;
+                                      window.location.href = `/telemarketing/atendimento?phone=${normalizedPhone}`;
+                                    }}
+                                    title="Abrir conversa no Chat Center"
+                                    data-testid={`button-chat-center-${ac.id}`}
+                                  >
+                                    <MessageCircle className="h-4 w-4 text-green-600" />
+                                  </Button>
+                                )}
                                 {ac.customer?.id && (
                                   <Button
                                     variant="ghost"
