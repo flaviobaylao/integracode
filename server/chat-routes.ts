@@ -601,10 +601,9 @@ export function registerChatRoutes(app: Express): void {
           customerId: customer.id,
           customerName: customer.name,
           customerPhone: normalizedPhone,
-          status: 'active',
+          status: 'new',
           agentId: agent?.id || null,
-          channel: 'whatsapp',
-          lastMessageAt: new Date(),
+          lastMessageTime: new Date(),
           unreadCount: 0
         });
         console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id}`);
