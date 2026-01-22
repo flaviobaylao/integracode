@@ -362,49 +362,6 @@ export default function ChatCenter() {
     }
   });
 
-  // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
-  useEffect(() => {
-    const handlePhoneParam = async () => {
-      try {
-        // Usar window.location.search pois wouter location não inclui query params
-        const params = new URLSearchParams(window.location.search);
-        const conversationId = params.get('conversationId');
-        const phoneParam = params.get('phone');
-        
-        if (conversationId) {
-          console.log('🎯 [ChatCenter] Abrindo conversa:', conversationId);
-          setSelectedConversation(conversationId);
-          window.history.replaceState({}, '', '/telemarketing/atendimento');
-        } else if (phoneParam) {
-          console.log('🎯 [ChatCenter] Buscando/criando conversa por telefone:', phoneParam);
-          try {
-            const response = await fetch(`/api/chat/conversations/by-phone/${phoneParam}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include'
-            });
-            if (response.ok) {
-              const data = await response.json();
-              if (data.conversationId) {
-                console.log('✅ [ChatCenter] Conversa encontrada/criada:', data.conversationId);
-                setSelectedConversation(data.conversationId);
-                refetchConversations();
-              }
-            } else {
-              console.warn('⚠️ [ChatCenter] Erro na resposta:', response.status);
-            }
-          } catch (err) {
-            console.warn('⚠️ [ChatCenter] Erro ao buscar conversa por telefone:', err);
-          }
-          window.history.replaceState({}, '', '/telemarketing/atendimento');
-        }
-      } catch (error) {
-        console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
-      }
-    };
-    handlePhoneParam();
-  }, []);
-
   // 🟢 HEARTBEAT - Enviar presença a cada 30 segundos quando ChatCenter estiver aberto
   useEffect(() => {
     const sendHeartbeat = async () => {
@@ -514,6 +471,49 @@ export default function ChatCenter() {
     }
   });
   const conversations = (conversationsData as Conversation[]) || [];
+
+  // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
+  useEffect(() => {
+    const handlePhoneParam = async () => {
+      try {
+        // Usar window.location.search pois wouter location não inclui query params
+        const params = new URLSearchParams(window.location.search);
+        const conversationId = params.get('conversationId');
+        const phoneParam = params.get('phone');
+        
+        if (conversationId) {
+          console.log('🎯 [ChatCenter] Abrindo conversa por ID:', conversationId);
+          setSelectedConversation(conversationId);
+          window.history.replaceState({}, '', '/telemarketing/atendimento');
+        } else if (phoneParam) {
+          console.log('🎯 [ChatCenter] Buscando/criando conversa por telefone:', phoneParam);
+          try {
+            const response = await fetch(`/api/chat/conversations/by-phone/${phoneParam}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include'
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data.conversationId) {
+                console.log('✅ [ChatCenter] Conversa encontrada/criada:', data.conversationId);
+                setSelectedConversation(data.conversationId);
+                refetchConversations();
+              }
+            } else {
+              console.warn('⚠️ [ChatCenter] Erro na resposta:', response.status);
+            }
+          } catch (err) {
+            console.warn('⚠️ [ChatCenter] Erro ao buscar conversa por telefone:', err);
+          }
+          window.history.replaceState({}, '', '/telemarketing/atendimento');
+        }
+      } catch (error) {
+        console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
+      }
+    };
+    handlePhoneParam();
+  }, [refetchConversations]);
 
   // Separar conversas SPAM (contatos com "SPAM" no nome)
   const spamConversations = conversations.filter(conv => 
