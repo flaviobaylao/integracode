@@ -552,10 +552,14 @@ export function registerChatRoutes(app: Express): void {
       
       console.log(`🔍 [BY-PHONE] Buscando conversa para: ${normalizedPhone}`);
       
+      // Passo 1: Buscar conversa existente
       let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+      console.log(`🔍 [BY-PHONE] Conversa direta:`, conversation?.id || 'não encontrada');
       
+      // Passo 2: Tentar variantes do número
       if (!conversation) {
         const phoneVariants = getPhoneVariants(normalizedPhone);
+        console.log(`🔍 [BY-PHONE] Tentando ${phoneVariants.length} variantes...`);
         for (const variant of phoneVariants) {
           conversation = await storage.getChatConversationByPhone(variant);
           if (conversation) {
@@ -565,11 +569,17 @@ export function registerChatRoutes(app: Express): void {
         }
       }
       
+      // Passo 3: Criar nova conversa se não existir
       if (!conversation) {
+        console.log(`🔍 [BY-PHONE] Criando nova conversa...`);
+        
+        // Buscar ou criar cliente
         let customer = await storage.getChatCustomerByPhone(normalizedPhone);
+        console.log(`🔍 [BY-PHONE] Cliente existente:`, customer?.id || 'não encontrado');
         
         if (!customer) {
           const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
+          console.log(`🔍 [BY-PHONE] Contato da agenda:`, phonebookContact?.name || 'não encontrado');
           
           customer = await storage.createChatCustomer({
             name: phonebookContact?.name || `Cliente ${normalizedPhone}`,
@@ -579,11 +589,13 @@ export function registerChatRoutes(app: Express): void {
             tags: null,
             avatar: null
           });
-          console.log(`👤 [BY-PHONE] Cliente criado: ${customer.name}`);
+          console.log(`👤 [BY-PHONE] Cliente criado: ${customer.id}`);
         }
         
         const user = req.user as any;
+        console.log(`🔍 [BY-PHONE] Usuário logado:`, user?.email || 'desconhecido');
         const agent = user?.email ? await storage.getChatAgentByEmail(user.email) : null;
+        console.log(`🔍 [BY-PHONE] Agente:`, agent?.id || 'não encontrado');
         
         conversation = await storage.createChatConversation({
           customerId: customer.id,
@@ -598,10 +610,12 @@ export function registerChatRoutes(app: Express): void {
         console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id}`);
       }
       
+      console.log(`✅ [BY-PHONE] Retornando conversationId: ${conversation.id}`);
       res.json({ conversationId: conversation.id, phone: normalizedPhone });
     } catch (error: any) {
-      console.error('[BY-PHONE] Erro:', error.message);
-      res.status(500).json({ error: 'Erro ao buscar/criar conversa' });
+      console.error('[BY-PHONE] Erro completo:', error);
+      console.error('[BY-PHONE] Stack:', error.stack);
+      res.status(500).json({ error: 'Erro ao buscar/criar conversa', details: error.message });
     }
   });
 
