@@ -1243,8 +1243,8 @@ export default function ChatCenter() {
                   </div>
                 </CardHeader>
 
-                <TabsContent value="conversas" className="flex-1 overflow-hidden m-0 flex flex-col">
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
+                <TabsContent value="conversas" className="flex-1 overflow-hidden m-0 flex flex-col" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
                     <div className="flex-1">
                       <CardTitle className="text-lg">Conversas</CardTitle>
                       <CardDescription>{filteredConversations.length} conversas</CardDescription>
@@ -1266,8 +1266,8 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                  <CardContent className="flex-1 overflow-auto p-0 px-4 pb-4" style={{ minHeight: 0 }}>
+                    <ScrollArea className="h-full">
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1327,8 +1327,8 @@ export default function ChatCenter() {
                   </CardContent>
                 </TabsContent>
 
-                <TabsContent value="grupo" className="flex-1 overflow-hidden m-0 flex flex-col">
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
+                <TabsContent value="grupo" className="flex-1 overflow-hidden m-0 flex flex-col" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
                     <div className="flex-1">
                       <CardTitle className="text-lg flex items-center gap-2">
                         <Users className="w-5 h-5 text-blue-500" />
@@ -1345,8 +1345,8 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                  <CardContent className="flex-1 overflow-auto p-0 px-4 pb-4" style={{ minHeight: 0 }}>
+                    <ScrollArea className="h-full">
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1378,8 +1378,8 @@ export default function ChatCenter() {
                   </CardContent>
                 </TabsContent>
 
-                <TabsContent value="spam" className="flex-1 overflow-hidden m-0 flex flex-col">
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
+                <TabsContent value="spam" className="flex-1 overflow-hidden m-0 flex flex-col" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
                     <div className="flex-1">
                       <CardTitle className="text-lg flex items-center gap-2">
                         <Archive className="w-5 h-5 text-orange-500" />
@@ -1396,8 +1396,8 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 overflow-hidden p-0 px-4 pb-4">
-                    <ScrollArea className="h-[calc(100vh-200px)]" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                  <CardContent className="flex-1 overflow-auto p-0 px-4 pb-4" style={{ minHeight: 0 }}>
+                    <ScrollArea className="h-full">
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
