@@ -461,6 +461,9 @@ export interface IStorage {
   createPhonebookContact(contact: InsertPhonebookContact): Promise<PhonebookContact>;
   updatePhonebookContact(id: string, contact: Partial<InsertPhonebookContact>): Promise<PhonebookContact>;
   deletePhonebookContact(id: string): Promise<void>;
+  upsertPhonebookContactByPhone(contact: InsertPhonebookContact): Promise<PhonebookContact>;
+  syncActiveCustomersToPhonebook(): Promise<{ synced: number; errors: number }>;
+  getCustomerByPhone(phone: string): Promise<Customer | undefined>;
   
   // Virtual Attendance Stats operations
   logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void>;

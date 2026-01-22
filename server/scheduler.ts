@@ -34,9 +34,13 @@ cron.schedule('0 6 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Sincronizar usuários como agentes na inicialização
+// Sincronizar usuários como agentes e clientes para agenda na inicialização
 (async () => {
   await storage.syncUsersAsAgents();
+  
+  // Sincronizar clientes ativos para agenda do Chat Center
+  console.log(`📞 [STARTUP] Iniciando sincronização de clientes ativos para agenda...`);
+  await storage.syncActiveCustomersToPhonebook();
 })();
 
 // Job para encerrar conversas inativas a cada 5 minutos

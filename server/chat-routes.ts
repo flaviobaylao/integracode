@@ -573,23 +573,32 @@ export function registerChatRoutes(app: Express): void {
       if (!conversation) {
         console.log(`🔍 [BY-PHONE] Criando nova conversa...`);
         
-        // Buscar ou criar cliente
+        // Buscar cliente real pelo telefone para obter nome fantasia
+        const realCustomer = await storage.getCustomerByPhone(normalizedPhone);
+        const customerDisplayName = realCustomer?.fantasyName || realCustomer?.name || null;
+        console.log(`🔍 [BY-PHONE] Cliente real:`, realCustomer?.id || 'não encontrado', `Nome: ${customerDisplayName}`);
+        
+        // Buscar ou criar cliente do chat
         let customer = await storage.getChatCustomerByPhone(normalizedPhone);
-        console.log(`🔍 [BY-PHONE] Cliente existente:`, customer?.id || 'não encontrado');
+        console.log(`🔍 [BY-PHONE] Cliente chat existente:`, customer?.id || 'não encontrado');
         
         if (!customer) {
           const phonebookContact = await storage.getPhonebookContactByPhone(normalizedPhone);
           console.log(`🔍 [BY-PHONE] Contato da agenda:`, phonebookContact?.name || 'não encontrado');
           
+          // Prioridade: nome fantasia do cliente > nome da agenda > número
+          const displayName = customerDisplayName || phonebookContact?.name || `Cliente ${normalizedPhone}`;
+          
           customer = await storage.createChatCustomer({
-            name: phonebookContact?.name || `Cliente ${normalizedPhone}`,
+            name: displayName,
             phone: normalizedPhone,
             email: null,
-            notes: phonebookContact ? `Contato da agenda: ${phonebookContact.name}` : null,
+            notes: realCustomer ? `Cliente ativo: ${realCustomer.fantasyName || realCustomer.name}` : 
+                   phonebookContact ? `Contato da agenda: ${phonebookContact.name}` : null,
             tags: null,
             avatar: null
           });
-          console.log(`👤 [BY-PHONE] Cliente criado: ${customer.id}`);
+          console.log(`👤 [BY-PHONE] Cliente criado: ${customer.id} - ${customer.name}`);
         }
         
         const user = req.user as any;
@@ -597,16 +606,19 @@ export function registerChatRoutes(app: Express): void {
         const agent = user?.email ? await storage.getChatAgentByEmail(user.email) : null;
         console.log(`🔍 [BY-PHONE] Agente:`, agent?.id || 'não encontrado');
         
+        // Usar o nome fantasia do cliente real como título da conversa
+        const conversationName = customerDisplayName || customer.name;
+        
         conversation = await storage.createChatConversation({
           customerId: customer.id,
-          customerName: customer.name,
+          customerName: conversationName,
           customerPhone: normalizedPhone,
           status: 'new',
           agentId: agent?.id || null,
           lastMessageTime: new Date(),
           unreadCount: 0
         });
-        console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id}`);
+        console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id} - Nome: ${conversationName}`);
       }
       
       console.log(`✅ [BY-PHONE] Retornando conversationId: ${conversation.id}`);
@@ -615,6 +627,25 @@ export function registerChatRoutes(app: Express): void {
       console.error('[BY-PHONE] Erro completo:', error);
       console.error('[BY-PHONE] Stack:', error.stack);
       res.status(500).json({ error: 'Erro ao buscar/criar conversa', details: error.message });
+    }
+  });
+
+  // ============================================================
+  // SINCRONIZAR CLIENTES ATIVOS PARA AGENDA
+  // ============================================================
+
+  app.post("/api/chat/sync-customers-to-phonebook", authenticateUser, async (req, res) => {
+    try {
+      console.log(`📞 [SYNC-PHONEBOOK] Iniciando sincronização de clientes ativos para agenda...`);
+      const result = await storage.syncActiveCustomersToPhonebook();
+      res.json({ 
+        success: true, 
+        message: `Sincronizados ${result.synced} clientes para a agenda`,
+        ...result 
+      });
+    } catch (error: any) {
+      console.error('[SYNC-PHONEBOOK] Erro:', error);
+      res.status(500).json({ error: 'Erro ao sincronizar clientes', details: error.message });
     }
   });
 
