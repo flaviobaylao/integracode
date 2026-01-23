@@ -5089,20 +5089,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Customer ID is required" });
       }
       
-      // Get the customer's existing sales card or create new one
-      const existingCard = await storage.getSalesCardByCustomerId(customerId);
+      // Get the customer's existing sales card directly from db
+      const existingCardResult = await db.execute(sql`
+        SELECT id FROM sales_cards 
+        WHERE customer_id = ${customerId} 
+        ORDER BY created_at DESC 
+        LIMIT 1
+      `);
       
-      if (existingCard) {
+      if (existingCardResult.rows && existingCardResult.rows.length > 0) {
+        const existingCardId = (existingCardResult.rows[0] as any).id;
+        
         // Update existing card with the products from last order
         await db.execute(sql`
           UPDATE sales_cards 
           SET payment_method = ${paymentMethod || null},
               updated_at = NOW()
-          WHERE id = ${existingCard.id}
+          WHERE id = ${existingCardId}
         `);
         
         // Return the updated card
-        const updatedCard = await storage.getSalesCard(existingCard.id);
+        const updatedCard = await storage.getSalesCard(existingCardId);
         return res.json({ 
           card: updatedCard, 
           products: products || [],
@@ -5124,9 +5131,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: "Novo card criado. Produtos do último pedido copiados para referência." 
         });
       }
-    } catch (error) {
-      console.error("Error duplicating from order:", error);
-      res.status(500).json({ message: "Failed to duplicate order" });
+    } catch (error: any) {
+      console.error("Error duplicating from order:", error?.message || error);
+      res.status(500).json({ message: "Failed to duplicate order", error: error?.message });
     }
   });
 

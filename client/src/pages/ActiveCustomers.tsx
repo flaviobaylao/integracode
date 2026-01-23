@@ -1593,7 +1593,7 @@ export default function ActiveCustomers() {
                       <TableBody>
                         {(lastOrderData.products || []).map((item: any, index: number) => (
                           <TableRow key={index}>
-                            <TableCell className="font-medium">{item.name}</TableCell>
+                            <TableCell className="font-medium">{item.name || item.description || 'Produto'}</TableCell>
                             <TableCell className="text-center">{item.quantity}</TableCell>
                             <TableCell className="text-right">
                               R$ {Number(item.unitPrice || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
