@@ -3582,7 +3582,7 @@ export class OmieService {
                 totalPrice: parseFloat(item.prod?.vProd || '0')
               }));
               
-              // Determinar método de pagamento
+              // Determinar método de pagamento - múltiplas fontes de fallback
               let paymentMethod = '';
               if (invoice.pag?.detPag) {
                 const paymentDetail = Array.isArray(invoice.pag.detPag) ? invoice.pag.detPag[0] : invoice.pag.detPag;
@@ -3606,12 +3606,30 @@ export class OmieService {
                     paymentMethod = 'PIX';
                     break;
                   default:
-                    paymentMethod = 'Outros';
+                    paymentMethod = paymentDetail.tPag ? 'Outros' : '';
                 }
               }
               
-              // Data de vencimento (se houver) - validação robusta
+              // Fallback: Buscar método de pagamento dos títulos
+              if (!paymentMethod && invoice.titulos && invoice.titulos.length > 0) {
+                const firstTitle = invoice.titulos[0];
+                // Verificar se tem categoria de pagamento ou descrição
+                if (firstTitle.cCategoria) {
+                  paymentMethod = firstTitle.cCategoria;
+                } else if (firstTitle.cDescricao) {
+                  paymentMethod = firstTitle.cDescricao;
+                }
+              }
+              
+              // Fallback final: Padrão para faturado = Boleto
+              if (!paymentMethod) {
+                paymentMethod = 'A Prazo'; // Padrão para vendas faturadas
+              }
+              
+              // Data de vencimento (se houver) - validação robusta com múltiplas fontes
               let dueDate = null;
+              
+              // Fonte 1: cobr.dup (duplicata)
               if (invoice.cobr?.dup && invoice.cobr.dup.length > 0) {
                 const firstDup = Array.isArray(invoice.cobr.dup) ? invoice.cobr.dup[0] : invoice.cobr.dup;
                 if (firstDup.dVenc) {
@@ -3620,6 +3638,25 @@ export class OmieService {
                     dueDate = dueDateParsed;
                   }
                 }
+              }
+              
+              // Fonte 2: titulos (financeiro) - fallback
+              if (!dueDate && invoice.titulos && invoice.titulos.length > 0) {
+                const firstTitle = invoice.titulos[0];
+                if (firstTitle.dDtVencimento) {
+                  const dueDateParsed = this.parseBrazilianDate(firstTitle.dDtVencimento);
+                  if (dueDateParsed && !isNaN(dueDateParsed.getTime())) {
+                    dueDate = dueDateParsed;
+                    console.log(`✅ Due date extraído de titulos: ${dueDateParsed.toLocaleDateString()}`);
+                  }
+                }
+              }
+              
+              // Fonte 3: Calcular vencimento padrão (30 dias após emissão)
+              if (!dueDate && invoiceDateObj) {
+                dueDate = new Date(invoiceDateObj);
+                dueDate.setDate(dueDate.getDate() + 30);
+                console.log(`📅 Due date calculado (30 dias): ${dueDate.toLocaleDateString()}`);
               }
               
               // Extrair etapa do pedido relacionado e verificar cancelamento
