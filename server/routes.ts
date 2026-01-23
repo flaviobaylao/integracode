@@ -2161,6 +2161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/customers/:id/last-order', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
+      console.log(`[last-order] Buscando último pedido para cliente: ${id}`);
       
       // Primeiro, buscar o último pedido do cliente através do sales_card (pedidos internos)
       const orderHistoryResult = await db.execute(sql`
@@ -2227,8 +2228,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.neighborhood as customer_neighborhood,
           'billing' as source
         FROM billings b
-        LEFT JOIN customers c ON c.omie_code = b.omie_customer_code::text
-        WHERE b.omie_customer_code::text = ${omieCustomerCode}
+        LEFT JOIN customers c ON c.id = CONCAT('omie-client-', b.omie_customer_code)
+        WHERE b.omie_customer_code = ${omieCustomerCode}
         ORDER BY b.invoice_date DESC
         LIMIT 1
       `);
@@ -2255,9 +2256,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customer_fantasy_name: billing.customer_fantasy_name || billing.customer_name,
         products: Array.isArray(products) ? products : []
       });
-    } catch (error) {
-      console.error("Error fetching last order:", error);
-      res.status(500).json({ message: "Falha ao buscar último pedido" });
+    } catch (error: any) {
+      console.error("[last-order] Error fetching last order:", error?.message || error);
+      console.error("[last-order] Stack:", error?.stack);
+      res.status(500).json({ message: "Falha ao buscar último pedido", error: error?.message });
     }
   });
 
