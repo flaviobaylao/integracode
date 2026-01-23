@@ -373,6 +373,17 @@ export default function ActiveCustomers() {
     }
   };
 
+  const handleActionClick = (e: React.MouseEvent, ac: ActiveCustomerWithVisits) => {
+    e.stopPropagation();
+    if (ac.customer?.id) {
+      setVirtualActionCustomer({ 
+        id: ac.customer.id, 
+        name: ac.customer.fantasyName || ac.customer.name 
+      });
+      setShowVirtualActionModal(true);
+    }
+  };
+
   const handleEditSale = (card: SalesCardWithRelations) => {
     setSelectedCard(card);
     setShowCardModal(false);
@@ -1102,13 +1113,12 @@ export default function ActiveCustomers() {
                         <TableHead className="min-w-[80px]">Última Atividade</TableHead>
                         <TableHead className="min-w-[100px]">Último Atend. Virtual</TableHead>
                         <TableHead className="min-w-[140px]">Próximas 3 Visitas</TableHead>
-                        <TableHead className="min-w-[160px] sticky right-0 bg-background z-20">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller || selectedPhone ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -1117,19 +1127,7 @@ export default function ActiveCustomers() {
                           <TableRow 
                             key={ac.id} 
                             data-testid={`row-customer-${ac.id}`}
-                            onClick={() => {
-                              if (ac.customer?.id) {
-                                if (ac.customer?.virtualService) {
-                                  setVirtualActionCustomer({ 
-                                    id: ac.customer.id, 
-                                    name: ac.customer.fantasyName || ac.customer.name 
-                                  });
-                                  setShowVirtualActionModal(true);
-                                } else {
-                                  handleRowClick(ac.customer.id);
-                                }
-                              }
-                            }}
+                            onClick={(e) => handleActionClick(e, ac)}
                             className="cursor-pointer hover:bg-muted/50 transition-colors"
                           >
                             <TableCell>
@@ -1259,82 +1257,6 @@ export default function ActiveCustomers() {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell className="sticky right-0 bg-background z-10">
-                              <div className="flex gap-1">
-                                {ac.customer?.phone && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const phone = ac.customer!.phone!.replace(/\D/g, '');
-                                      const normalizedPhone = phone.startsWith('55') ? phone : `55${phone}`;
-                                      window.location.href = `/telemarketing/atendimento?phone=${normalizedPhone}`;
-                                    }}
-                                    title="Abrir conversa no Chat Center"
-                                    data-testid={`button-chat-center-${ac.id}`}
-                                  >
-                                    <MessageCircle className="h-4 w-4 text-green-600" />
-                                  </Button>
-                                )}
-                                {ac.customer?.id && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => handleOpenServiceLog(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name)}
-                                    title={ac.customer?.virtualService ? "Registrar atendimento virtual" : "Registrar atendimento presencial"}
-                                    data-testid={`button-service-log-${ac.id}`}
-                                  >
-                                    <FileText className={`h-4 w-4 ${ac.customer?.virtualService ? 'text-green-500' : 'text-orange-500'}`} />
-                                  </Button>
-                                )}
-                                {ac.customer?.id && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => handleViewLastOrder(e, ac.customer!.id)}
-                                    title="Ver último pedido"
-                                    data-testid={`button-last-order-${ac.id}`}
-                                  >
-                                    <ShoppingCart className="h-4 w-4 text-purple-500" />
-                                  </Button>
-                                )}
-                                {ac.customer?.id && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => handleEditPhone(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.customer!.phone || '', ac.customer!.contact || '')}
-                                    title="Editar telefone"
-                                    data-testid={`button-edit-phone-${ac.id}`}
-                                  >
-                                    <Phone className="h-4 w-4 text-blue-500" />
-                                  </Button>
-                                )}
-                                {ac.customer?.id && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => handleEditCustomer(e, ac.customer!.id)}
-                                    title="Editar cliente"
-                                    data-testid={`button-edit-customer-${ac.id}`}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {isAdmin && ac.customer?.id && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => handleInactivateCustomer(e, ac.customer!.id, ac.customer!.fantasyName || ac.customer!.name, ac.id)}
-                                    title="Inativar cliente"
-                                    data-testid={`button-inactivate-${ac.id}`}
-                                    className="hover:bg-red-50"
-                                  >
-                                    <UserX className="h-4 w-4 text-red-500" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -1424,6 +1346,140 @@ export default function ActiveCustomers() {
                 {updatePhoneMutation.isPending ? "Salvando..." : "Salvar"}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Ações Virtuais / Presenciais */}
+        <Dialog open={showVirtualActionModal} onOpenChange={setShowVirtualActionModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Ações do Cliente</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-1 gap-4 py-4">
+              <div className="text-center mb-4">
+                <p className="font-semibold text-lg">{virtualActionCustomer?.name}</p>
+                <p className="text-sm text-muted-foreground">Selecione a ação desejada para este cliente</p>
+              </div>
+
+              {/* Botão de WhatsApp / Chat Center */}
+              {(() => {
+                const customer = activeCustomers.find(ac => ac.customer?.id === virtualActionCustomer?.id)?.customer;
+                if (!customer?.phone) return null;
+                return (
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start h-12 text-green-600 hover:text-green-700 hover:bg-green-50"
+                    onClick={() => {
+                      const phone = customer.phone!.replace(/\D/g, '');
+                      const normalizedPhone = phone.startsWith('55') ? phone : `55${phone}`;
+                      window.location.href = `/telemarketing/atendimento?phone=${normalizedPhone}`;
+                    }}
+                  >
+                    <MessageCircle className="h-5 w-5 mr-3" />
+                    Abrir no Chat Center (WhatsApp)
+                  </Button>
+                );
+              })()}
+
+              {/* Botão Registrar Atendimento */}
+              <Button 
+                variant="outline" 
+                className="w-full justify-start h-12 text-honest-blue hover:bg-blue-50"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    handleOpenServiceLog({ stopPropagation: () => {} } as any, virtualActionCustomer.id, virtualActionCustomer.name);
+                    setShowVirtualActionModal(false);
+                  }
+                }}
+              >
+                <FileText className="h-5 w-5 mr-3" />
+                Registrar Atendimento (Virtual/Presencial)
+              </Button>
+
+              {/* Botão Efetuar Pedido / Abrir Card */}
+              <Button 
+                variant="outline" 
+                className="w-full justify-start h-12 text-orange-600 hover:bg-orange-50"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    handleRowClick(virtualActionCustomer.id);
+                    setShowVirtualActionModal(false);
+                  }
+                }}
+              >
+                <ShoppingCart className="h-5 w-5 mr-3" />
+                Efetuar Pedido / Abrir Card de Vendas
+              </Button>
+
+              {/* Botão Ver Último Pedido */}
+              <Button 
+                variant="outline" 
+                className="w-full justify-start h-12 text-purple-600 hover:bg-purple-50"
+                onClick={(e) => {
+                  if (virtualActionCustomer) {
+                    handleViewLastOrder(e as any, virtualActionCustomer.id);
+                    setShowVirtualActionModal(false);
+                  }
+                }}
+              >
+                <ShoppingCart className="h-5 w-5 mr-3" />
+                Ver Histórico do Último Pedido
+              </Button>
+
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                {/* Botão Editar Telefone */}
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="text-blue-500 justify-start"
+                  onClick={(e) => {
+                    const ac = activeCustomers.find(ac => ac.customer?.id === virtualActionCustomer?.id);
+                    if (ac?.customer) {
+                      handleEditPhone(e as any, ac.customer.id, ac.customer.fantasyName || ac.customer.name, ac.customer.phone || '', ac.customer.contact || '');
+                      setShowVirtualActionModal(false);
+                    }
+                  }}
+                >
+                  <Phone className="h-4 w-4 mr-2" />
+                  Editar Telefone
+                </Button>
+
+                {/* Botão Editar Cliente */}
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="justify-start"
+                  onClick={(e) => {
+                    if (virtualActionCustomer) {
+                      handleEditCustomer(e as any, virtualActionCustomer.id);
+                      setShowVirtualActionModal(false);
+                    }
+                  }}
+                >
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Editar Cliente
+                </Button>
+
+                {/* Botão Inativar (apenas Admin) */}
+                {isAdmin && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    className="text-red-500 justify-start col-span-2"
+                    onClick={(e) => {
+                      const ac = activeCustomers.find(ac => ac.customer?.id === virtualActionCustomer?.id);
+                      if (ac?.customer) {
+                        handleInactivateCustomer(e as any, ac.customer.id, ac.customer.fantasyName || ac.customer.name, ac.id);
+                        setShowVirtualActionModal(false);
+                      }
+                    }}
+                  >
+                    <UserX className="h-4 w-4 mr-2" />
+                    Inativar Cliente
+                  </Button>
+                )}
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
 
