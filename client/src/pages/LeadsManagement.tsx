@@ -47,7 +47,7 @@ export default function LeadsManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: leads = [], isLoading } = useQuery<Lead[]>({
+  const { data: leads = [], isLoading, refetch } = useQuery<Lead[]>({
     queryKey: ['/api/leads'],
   });
 
@@ -78,7 +78,7 @@ export default function LeadsManagement() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
-      await queryClient.refetchQueries({ queryKey: ['/api/leads'] });
+      await refetch();
       setIsCreating(false);
       resetForm();
       toast({
