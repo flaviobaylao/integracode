@@ -5638,7 +5638,14 @@ export class DatabaseStorage implements IStorage {
   
   // Lead operations
   async getLeads(): Promise<Lead[]> {
-    return await db.select().from(leads).orderBy(desc(leads.createdAt));
+    try {
+      const result = await db.select().from(leads).orderBy(desc(leads.createdAt));
+      console.log('📋 [STORAGE] getLeads: Query retornou', result.length, 'leads');
+      return result;
+    } catch (error) {
+      console.error('❌ [STORAGE] Erro no getLeads:', error);
+      throw error;
+    }
   }
   
   async getLead(id: string): Promise<Lead | undefined> {

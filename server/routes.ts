@@ -20726,7 +20726,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { status, sellerId } = req.query;
       
+      console.log('📋 GET /api/leads - User:', user?.email, 'Role:', user?.role);
+      
       let leads = await storage.getLeads();
+      console.log('📋 Leads encontrados no storage:', leads.length);
       
       // Filtrar por status
       if (status) {
@@ -20741,10 +20744,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
+      console.log('📋 Retornando', leads.length, 'leads após filtros');
       res.json(leads);
     } catch (error) {
-      console.error('Erro ao buscar leads:', error);
-      res.status(500).json({ message: 'Erro ao buscar leads' });
+      console.error('❌ Erro ao buscar leads:', error);
+      res.status(500).json({ message: 'Erro ao buscar leads', error: error instanceof Error ? error.message : String(error) });
     }
   });
   
