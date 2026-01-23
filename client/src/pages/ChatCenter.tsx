@@ -1203,10 +1203,10 @@ export default function ChatCenter() {
           )}
           
           {/* Lista de Conversas + Agenda Telefônica */}
-          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"} flex flex-col`} style={{ height: 'calc(100vh - 100px)' }}>
-            <Tabs defaultValue="conversas" className="h-full flex flex-col">
-              <Card className="h-full flex flex-col overflow-hidden">
-                <CardHeader className="shrink-0 pb-3">
+          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"}`}>
+            <Tabs defaultValue="conversas" className="h-full">
+              <Card>
+                <CardHeader className="pb-3">
                   <div className="flex items-center justify-between mb-3">
                     <TabsList className="grid w-full grid-cols-5 max-w-[560px]">
                       <TabsTrigger value="conversas" className="gap-1 text-xs" data-testid="tab-conversas">
@@ -1243,8 +1243,8 @@ export default function ChatCenter() {
                   </div>
                 </CardHeader>
 
-                <TabsContent value="conversas" className="flex-1 m-0 flex flex-col overflow-hidden" style={{ minHeight: 0, maxHeight: 'calc(100vh - 200px)' }}>
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
+                <TabsContent value="conversas" className="m-0">
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
                     <div className="flex-1">
                       <CardTitle className="text-lg">Conversas</CardTitle>
                       <CardDescription>{filteredConversations.length} conversas</CardDescription>
@@ -1266,7 +1266,7 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CardContent className="flex-1 p-0 px-4 pb-4 overflow-y-auto" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1322,11 +1322,11 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                  </CardContent>
+                  </div>
                 </TabsContent>
 
-                <TabsContent value="grupo" className="flex-1 m-0 flex flex-col overflow-hidden" style={{ minHeight: 0, maxHeight: 'calc(100vh - 200px)' }}>
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
+                <TabsContent value="grupo" className="m-0">
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
                     <div className="flex-1">
                       <CardTitle className="text-lg flex items-center gap-2">
                         <Users className="w-5 h-5 text-blue-500" />
@@ -1343,7 +1343,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 p-0 px-4 pb-4 overflow-y-auto" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1371,11 +1371,11 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                  </CardContent>
+                  </div>
                 </TabsContent>
 
-                <TabsContent value="spam" className="flex-1 m-0 flex flex-col overflow-hidden" style={{ minHeight: 0, maxHeight: 'calc(100vh - 200px)' }}>
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4 shrink-0">
+                <TabsContent value="spam" className="m-0">
+                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
                     <div className="flex-1">
                       <CardTitle className="text-lg flex items-center gap-2">
                         <Archive className="w-5 h-5 text-orange-500" />
@@ -1392,7 +1392,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <CardContent className="flex-1 p-0 px-4 pb-4 overflow-y-auto" style={{ minHeight: 0 }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1420,10 +1420,10 @@ export default function ChatCenter() {
                           </div>
                         )}
                       </div>
-                  </CardContent>
+                  </div>
                 </TabsContent>
 
-                <TabsContent value="agenda" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                <TabsContent value="agenda" className="m-0 px-4 pb-4">
                   <PhonebookPanel 
                     onStartConversation={(phone, name) => {
                       setNewPhoneNumber(phone);
@@ -1433,7 +1433,7 @@ export default function ChatCenter() {
                   />
                 </TabsContent>
 
-                <TabsContent value="atendimentos" className="flex-1 overflow-hidden m-0 px-4 pb-4">
+                <TabsContent value="atendimentos" className="m-0 px-4 pb-4">
                   <VirtualAttendancePanel />
                 </TabsContent>
               </Card>
