@@ -1500,59 +1500,6 @@ export default function ActiveCustomers() {
           />
         )}
 
-        {/* Modal de Ações para Cliente Virtual */}
-        <Dialog open={showVirtualActionModal} onOpenChange={setShowVirtualActionModal}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-blue-600" />
-                Cliente Virtual
-              </DialogTitle>
-            </DialogHeader>
-            <div className="py-4">
-              <p className="text-sm text-muted-foreground mb-4">
-                Cliente: <span className="font-semibold text-foreground">{virtualActionCustomer?.name}</span>
-              </p>
-              <div className="flex flex-col gap-3">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start h-12 text-left"
-                  onClick={() => {
-                    if (virtualActionCustomer) {
-                      setServiceLogCustomer(virtualActionCustomer);
-                      setShowVirtualActionModal(false);
-                      setShowServiceLogModal(true);
-                    }
-                  }}
-                  data-testid="button-register-attendance"
-                >
-                  <FileText className="h-5 w-5 mr-3 text-blue-600" />
-                  <div>
-                    <div className="font-medium">Registrar Atendimento</div>
-                    <div className="text-xs text-muted-foreground">Registrar notas e histórico de contato</div>
-                  </div>
-                </Button>
-                <Button
-                  className="w-full justify-start h-12 text-left bg-green-600 hover:bg-green-700"
-                  onClick={() => {
-                    if (virtualActionCustomer) {
-                      setShowVirtualActionModal(false);
-                      handleRowClick(virtualActionCustomer.id);
-                    }
-                  }}
-                  data-testid="button-make-sale"
-                >
-                  <Plus className="h-5 w-5 mr-3" />
-                  <div>
-                    <div className="font-medium">Efetuar Venda</div>
-                    <div className="text-xs text-green-100">Abrir card de vendas do cliente</div>
-                  </div>
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
         {/* Modal de Último Pedido */}
         <Dialog open={showLastOrderModal} onOpenChange={setShowLastOrderModal}>
           <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
