@@ -76,8 +76,9 @@ export default function LeadsManagement() {
         createdBy: currentUser?.id || 'system',
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      await queryClient.refetchQueries({ queryKey: ['/api/leads'] });
       setIsCreating(false);
       resetForm();
       toast({
