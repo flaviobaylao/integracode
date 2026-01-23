@@ -2219,6 +2219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.invoice_number,
           b.invoice_status as status,
           b.payment_method,
+          b.billing_type as order_type,
+          b.due_date as payment_due_date,
           b.customer_fantasy_name,
           b.omie_customer_code,
           c.name as customer_name,
@@ -5075,6 +5077,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update sales card" });
+    }
+  });
+
+  // Duplicate order from last order (billing/order_history) to create new sales card
+  app.post('/api/sales-cards/duplicate-from-order', authenticateUser, async (req: any, res) => {
+    try {
+      const { customerId, products, paymentMethod, orderType } = req.body;
+      
+      if (!customerId) {
+        return res.status(400).json({ message: "Customer ID is required" });
+      }
+      
+      // Get the customer's existing sales card or create new one
+      const existingCard = await storage.getSalesCardByCustomerId(customerId);
+      
+      if (existingCard) {
+        // Update existing card with the products from last order
+        await db.execute(sql`
+          UPDATE sales_cards 
+          SET payment_method = ${paymentMethod || null},
+              updated_at = NOW()
+          WHERE id = ${existingCard.id}
+        `);
+        
+        // Return the updated card
+        const updatedCard = await storage.getSalesCard(existingCard.id);
+        return res.json({ 
+          card: updatedCard, 
+          products: products || [],
+          message: "Card existente atualizado. Produtos do último pedido copiados para referência." 
+        });
+      } else {
+        // Create a new sales card for today
+        const newCard = await storage.createSalesCard({
+          customerId,
+          status: 'pending',
+          visitType: 'presencial',
+          paymentMethod: paymentMethod || null
+        });
+        
+        const cardWithRelations = await storage.getSalesCard(newCard.id);
+        return res.json({ 
+          card: cardWithRelations, 
+          products: products || [],
+          message: "Novo card criado. Produtos do último pedido copiados para referência." 
+        });
+      }
+    } catch (error) {
+      console.error("Error duplicating from order:", error);
+      res.status(500).json({ message: "Failed to duplicate order" });
     }
   });
 

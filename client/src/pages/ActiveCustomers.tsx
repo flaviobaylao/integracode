@@ -45,7 +45,8 @@ import {
   UserX,
   ShoppingCart,
   Loader2,
-  MessageCircle
+  MessageCircle,
+  Copy
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -1540,6 +1541,23 @@ export default function ActiveCustomers() {
                     <p className="text-sm text-muted-foreground">Método de Pagamento</p>
                     <p className="font-semibold">{lastOrderData.payment_method || 'Não informado'}</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Tipo de Pedido</p>
+                    <Badge variant={lastOrderData.order_type === 'venda' ? 'default' : lastOrderData.order_type === 'troca' ? 'secondary' : 'outline'}>
+                      {lastOrderData.order_type === 'venda' ? 'Venda' : 
+                       lastOrderData.order_type === 'troca' ? 'Troca' :
+                       lastOrderData.order_type === 'amostra' ? 'Amostra' : 
+                       lastOrderData.order_type || 'Não informado'}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Prazo de Pagamento</p>
+                    <p className="font-semibold">
+                      {lastOrderData.payment_due_date 
+                        ? format(new Date(lastOrderData.payment_due_date), "dd/MM/yyyy", { locale: ptBR })
+                        : 'Não informado'}
+                    </p>
+                  </div>
                   {lastOrderData.payment_condition && (
                     <div>
                       <p className="text-sm text-muted-foreground">Condição de Pagamento</p>
@@ -1604,7 +1622,38 @@ export default function ActiveCustomers() {
               </div>
             )}
 
-            <DialogFooter>
+            <DialogFooter className="flex gap-2">
+              {lastOrderData && (
+                <Button 
+                  className="bg-purple-600 hover:bg-purple-700"
+                  onClick={async () => {
+                    if (!lastOrderCustomerId || !lastOrderData) return;
+                    try {
+                      const response = await fetch('/api/sales-cards/duplicate-from-order', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                          customerId: lastOrderCustomerId,
+                          products: lastOrderData.products || [],
+                          paymentMethod: lastOrderData.payment_method,
+                          orderType: lastOrderData.order_type
+                        })
+                      });
+                      if (!response.ok) throw new Error('Erro ao duplicar pedido');
+                      const newCard = await response.json();
+                      toast({ title: "Sucesso", description: "Pedido duplicado com sucesso! Abrindo card de vendas..." });
+                      setShowLastOrderModal(false);
+                      handleRowClick(lastOrderCustomerId);
+                    } catch (error) {
+                      toast({ variant: "destructive", title: "Erro", description: "Não foi possível duplicar o pedido." });
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Duplicar Pedido
+                </Button>
+              )}
               <Button variant="outline" onClick={() => setShowLastOrderModal(false)}>
                 Fechar
               </Button>
