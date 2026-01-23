@@ -1292,9 +1292,9 @@ export class DatabaseStorage implements IStorage {
     const result = await query;
     // Filtrar cards com customer ou seller inválido para evitar erros
     return result
-      .filter(row => row.customers !== null)
+      .filter(row => row.customers !== null && row.sales_cards !== null && row.sales_cards !== undefined)
       .map(row => ({
-        ...row.sales_cards,
+        ...(row.sales_cards || {}),
         customer: row.customers!,
         seller: row.users || null,
       }));
@@ -1308,10 +1308,10 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(eq(salesCards.id, id));
     
-    if (!result || !result.customers) return undefined;
+    if (!result || !result.customers || !result.sales_cards) return undefined;
     
     return {
-      ...result.sales_cards,
+      ...(result.sales_cards || {}),
       customer: result.customers,
       seller: result.users || null,
     };
@@ -2286,9 +2286,9 @@ export class DatabaseStorage implements IStorage {
     
     // Filtrar cards com customer inválido para evitar erros
     return result
-      .filter(row => row.customers !== null)
+      .filter(row => row.customers !== null && row.sales_cards !== null && row.sales_cards !== undefined)
       .map(row => ({
-        ...row.sales_cards,
+        ...(row.sales_cards || {}),
         customer: row.customers!,
         seller: row.users || null,
       }));
@@ -2323,9 +2323,9 @@ export class DatabaseStorage implements IStorage {
     
     // Filtrar cards com customer inválido para evitar erros
     return result
-      .filter(row => row.customers !== null)
+      .filter(row => row.customers !== null && row.sales_cards !== null && row.sales_cards !== undefined)
       .map(row => ({
-        ...row.sales_cards,
+        ...(row.sales_cards || {}),
         customer: row.customers!,
         seller: row.users || null,
       }));
@@ -2366,9 +2366,9 @@ export class DatabaseStorage implements IStorage {
     
     // Filtrar cards com customer inválido para evitar erros
     return result
-      .filter(row => row.customers !== null)
+      .filter(row => row.customers !== null && row.sales_cards !== null && row.sales_cards !== undefined)
       .map(row => ({
-        ...row.sales_cards,
+        ...(row.sales_cards || {}),
         customer: row.customers!,
         seller: row.users || null,
       }));
@@ -3497,11 +3497,11 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(eq(salesCards.id, id));
 
-    if (result.length === 0) return undefined;
+    if (result.length === 0 || !result[0].sales_cards) return undefined;
 
     const row = result[0];
     return {
-      ...row.sales_cards,
+      ...(row.sales_cards || {}),
       customer: row.customers,
       seller: row.users,
     } as SalesCardWithRelations;
@@ -5236,10 +5236,10 @@ export class DatabaseStorage implements IStorage {
       .orderBy(routeCheckpoints.sequenceNumber);
     
     // Retornar com coordenadas do checkpoint (capturadas durante check-in/check-out)
-    return results.map(row => ({
-      ...row.route_checkpoints,
-      latitude: row.route_checkpoints.checkpointLatitude ? parseFloat(row.route_checkpoints.checkpointLatitude.toString()) : null,
-      longitude: row.route_checkpoints.checkpointLongitude ? parseFloat(row.route_checkpoints.checkpointLongitude.toString()) : null,
+    return results.filter(row => row.route_checkpoints !== null && row.route_checkpoints !== undefined).map(row => ({
+      ...(row.route_checkpoints || {}),
+      latitude: row.route_checkpoints?.checkpointLatitude ? parseFloat(row.route_checkpoints.checkpointLatitude.toString()) : null,
+      longitude: row.route_checkpoints?.checkpointLongitude ? parseFloat(row.route_checkpoints.checkpointLongitude.toString()) : null,
       customerName: row.customers?.fantasyName || row.customers?.name || null,
       photoUrl: row.sales_cards?.checkInPhotoUrl || null,
       customerRegisteredLatitude: row.customers?.latitude || null,
