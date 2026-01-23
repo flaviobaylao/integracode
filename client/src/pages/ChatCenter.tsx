@@ -1165,7 +1165,7 @@ export default function ChatCenter() {
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-12" : "lg:grid-cols-10"} gap-4`}>
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-12" : "lg:grid-cols-10"} gap-4`} style={{ minHeight: 'calc(100vh - 160px)' }}>
           {isAdmin && (
             // Sidebar esquerda com stats de agentes
             <div className="lg:col-span-2">
@@ -1266,7 +1266,7 @@ export default function ChatCenter() {
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
-                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1343,7 +1343,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
@@ -1392,7 +1392,7 @@ export default function ChatCenter() {
                       />
                     </div>
                   </div>
-                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 220px)' }}>
+                  <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
                       <div className="space-y-2 pr-2">
                         {convLoading ? (
                           <div className="text-center py-4 text-gray-500">Carregando...</div>
