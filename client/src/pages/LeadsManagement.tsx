@@ -36,6 +36,7 @@ export default function LeadsManagement() {
     observation: "",
     status: "pending" as const,
     assignedTo: "",
+    temperature: "" as "" | "cold" | "warm" | "hot" | "very_hot",
   });
 
   // Filtros
@@ -74,6 +75,7 @@ export default function LeadsManagement() {
       return await apiRequest('POST', '/api/leads', {
         ...data,
         createdBy: currentUser?.id || 'system',
+        createdByName: currentUser?.firstName ? `${currentUser.firstName} ${currentUser.lastName || ''}`.trim() : currentUser?.email || 'Sistema',
       });
     },
     onSuccess: async () => {
@@ -147,6 +149,7 @@ export default function LeadsManagement() {
       observation: "",
       status: "pending",
       assignedTo: "",
+      temperature: "",
     });
   };
 
@@ -192,6 +195,15 @@ export default function LeadsManagement() {
       return;
     }
 
+    if (!formData.temperature) {
+      toast({
+        title: "Erro",
+        description: "Temperatura do lead é obrigatória",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (editingLead) {
       updateLeadMutation.mutate({
         id: editingLead.id,
@@ -213,6 +225,7 @@ export default function LeadsManagement() {
       observation: lead.observation || "",
       status: lead.status as any,
       assignedTo: lead.assignedTo || "",
+      temperature: (lead.temperature || "") as "" | "cold" | "warm" | "hot" | "very_hot",
     });
   };
 
@@ -239,6 +252,20 @@ export default function LeadsManagement() {
     visited: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
     converted: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
     discarded: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+  };
+
+  const temperatureLabels: Record<string, string> = {
+    cold: "Frio",
+    warm: "Morno",
+    hot: "Quente",
+    very_hot: "Muito Quente"
+  };
+
+  const temperatureColors: Record<string, string> = {
+    cold: "bg-blue-500",
+    warm: "bg-yellow-500",
+    hot: "bg-orange-500",
+    very_hot: "bg-red-500"
   };
 
   // Filtrar leads
@@ -451,6 +478,7 @@ export default function LeadsManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
+                  <th className="text-left py-3 px-4 font-semibold">Temp.</th>
                   <th className="text-left py-3 px-4 font-semibold">Nome</th>
                   <th className="text-left py-3 px-4 font-semibold">Contato</th>
                   <th className="text-left py-3 px-4 font-semibold">Telefone</th>
@@ -464,7 +492,7 @@ export default function LeadsManagement() {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-gray-500">
+                    <td colSpan={isAdmin ? 9 : 8} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -476,6 +504,16 @@ export default function LeadsManagement() {
                       data-testid={`lead-row-${lead.id}`}
                       onClick={() => setSelectedLeadForService(lead)}
                     >
+                      <td className="py-3 px-4">
+                        {lead.temperature ? (
+                          <div 
+                            className={`w-4 h-4 rounded-full ${temperatureColors[lead.temperature]}`}
+                            title={temperatureLabels[lead.temperature]}
+                          />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-gray-300" title="Sem temperatura" />
+                        )}
+                      </td>
                       <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
                       <td className="py-3 px-4">{lead.contact || '—'}</td>
                       <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
@@ -645,23 +683,63 @@ export default function LeadsManagement() {
               />
             </div>
 
-            <div>
-              <Label htmlFor="status">Status</Label>
-              <Select
-                value={formData.status}
-                onValueChange={(value: any) => setFormData({ ...formData, status: value })}
-              >
-                <SelectTrigger data-testid="select-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending">Pendente</SelectItem>
-                  <SelectItem value="scheduled">Agendado</SelectItem>
-                  <SelectItem value="visited">Visitado</SelectItem>
-                  <SelectItem value="converted">Convertido</SelectItem>
-                  <SelectItem value="discarded">Descartado</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="temperature">Temperatura do Lead *</Label>
+                <Select
+                  value={formData.temperature}
+                  onValueChange={(value: any) => setFormData({ ...formData, temperature: value })}
+                >
+                  <SelectTrigger data-testid="select-temperature">
+                    <SelectValue placeholder="Selecione a temperatura" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cold">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-blue-500" />
+                        Frio
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="warm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                        Morno
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="hot">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-orange-500" />
+                        Quente
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="very_hot">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-red-500" />
+                        Muito Quente
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="status">Status</Label>
+                <Select
+                  value={formData.status}
+                  onValueChange={(value: any) => setFormData({ ...formData, status: value })}
+                >
+                  <SelectTrigger data-testid="select-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pendente</SelectItem>
+                    <SelectItem value="scheduled">Agendado</SelectItem>
+                    <SelectItem value="visited">Visitado</SelectItem>
+                    <SelectItem value="converted">Convertido</SelectItem>
+                    <SelectItem value="discarded">Descartado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div>
