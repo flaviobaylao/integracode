@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -22,11 +22,13 @@ import { type Lead } from "@shared/schema";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
+import LeadVisitHistoryModal from "@/components/LeadVisitHistoryModal";
 
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForService, setSelectedLeadForService] = useState<Lead | null>(null);
+  const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
   const [formData, setFormData] = useState({
     fantasyName: "",
     latitude: "",
@@ -549,6 +551,15 @@ export default function LeadsManagement() {
                             <Button
                               size="sm"
                               variant="outline"
+                              onClick={() => setSelectedLeadForVisitHistory(lead)}
+                              title="Histórico de Visitas"
+                              data-testid={`button-history-lead-${lead.id}`}
+                            >
+                              <History className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
                               onClick={() => setSelectedLeadForService(lead)}
                               title="Registrar Atendimento"
                               data-testid={`button-service-lead-${lead.id}`}
@@ -796,6 +807,19 @@ export default function LeadsManagement() {
           entityType="lead"
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
+          }}
+        />
+      )}
+
+      {selectedLeadForVisitHistory && (
+        <LeadVisitHistoryModal
+          open={!!selectedLeadForVisitHistory}
+          onClose={() => setSelectedLeadForVisitHistory(null)}
+          leadId={selectedLeadForVisitHistory.id}
+          leadName={selectedLeadForVisitHistory.fantasyName}
+          currentTemperature={selectedLeadForVisitHistory.temperature as any}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
           }}
         />
       )}
