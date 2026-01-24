@@ -1508,6 +1508,9 @@ export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
 // Lead status enum
 export const leadStatusEnum = pgEnum('lead_status', ['pending', 'scheduled', 'visited', 'converted', 'discarded']);
 
+// Lead temperature enum - classification of lead interest level
+export const leadTemperatureEnum = pgEnum('lead_temperature', ['cold', 'warm', 'hot', 'very_hot']);
+
 // Leads table - prospective customers to be contacted by sellers
 export const leads = pgTable("leads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1519,9 +1522,11 @@ export const leads = pgTable("leads", {
   photo: varchar("photo"), // URL da foto capturada no check-in
   observation: text("observation"),
   status: leadStatusEnum("status").notNull().default('pending'),
+  temperature: leadTemperatureEnum("temperature").notNull(), // Mandatory temperature classification
   
   // Quem criou o lead (admin)
   createdBy: varchar("created_by").notNull(),
+  createdByName: varchar("created_by_name"), // Nome do usuário que criou
   
   // Quem está atendendo o lead (vendedor)
   assignedTo: varchar("assigned_to"),
@@ -1547,10 +1552,35 @@ export const insertLeadSchema = createInsertSchema(leads).omit({
   contact: z.string().optional(),
   phone: z.string().optional(),
   observation: z.string().optional(),
+  temperature: z.enum(['cold', 'warm', 'hot', 'very_hot'], { required_error: "Temperatura do lead é obrigatória" }),
 });
 
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = z.infer<typeof insertLeadSchema>;
+
+// Lead Visits table - history of visits/interactions with leads
+export const leadVisits = pgTable("lead_visits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  leadId: varchar("lead_id").notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").notNull(), // Who registered the visit
+  userName: varchar("user_name").notNull(), // Name of the user who registered
+  observation: text("observation").notNull(), // Notes about what was discussed
+  temperature: leadTemperatureEnum("temperature"), // Optional temperature update
+  visitDate: timestamp("visit_date").defaultNow(), // When the visit was registered
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLeadVisitSchema = createInsertSchema(leadVisits).omit({ 
+  id: true, 
+  createdAt: true,
+  visitDate: true,
+}).extend({
+  observation: z.string().min(1, "Observação é obrigatória"),
+  temperature: z.enum(['cold', 'warm', 'hot', 'very_hot']).optional(),
+});
+
+export type LeadVisit = typeof leadVisits.$inferSelect;
+export type InsertLeadVisit = z.infer<typeof insertLeadVisitSchema>;
 
 // Daily Attendance Performance types - for HR tracking of visit completion rates
 export type DailyAttendanceData = {
