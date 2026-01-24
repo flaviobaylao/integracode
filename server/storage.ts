@@ -23,6 +23,7 @@ import {
   deliveryDrivers,
   syncStatus,
   leads,
+  leadVisits,
   chatAgents,
   chatCustomers,
   chatConversations,
@@ -73,6 +74,8 @@ import {
   type InsertSyncStatus,
   type Lead,
   type InsertLead,
+  type LeadVisit,
+  type InsertLeadVisit,
   type ChatAgent,
   type InsertChatAgent,
   type ChatCustomer,
@@ -365,6 +368,10 @@ export interface IStorage {
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: string, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: string): Promise<void>;
+  
+  // Lead Visit operations
+  getLeadVisits(leadId: string): Promise<LeadVisit[]>;
+  createLeadVisit(visit: InsertLeadVisit): Promise<LeadVisit>;
   
   // Chat Agents operations
   getChatAgents(): Promise<ChatAgent[]>;
@@ -5680,6 +5687,28 @@ export class DatabaseStorage implements IStorage {
   
   async deleteLead(id: string): Promise<void> {
     await db.delete(leads).where(eq(leads.id, id));
+  }
+  
+  // Lead Visit operations
+  async getLeadVisits(leadId: string): Promise<LeadVisit[]> {
+    return await db
+      .select()
+      .from(leadVisits)
+      .where(eq(leadVisits.leadId, leadId))
+      .orderBy(desc(leadVisits.visitDate));
+  }
+  
+  async createLeadVisit(visitData: InsertLeadVisit): Promise<LeadVisit> {
+    const [visit] = await db.insert(leadVisits).values(visitData).returning();
+    
+    // If temperature was provided, update the lead's temperature as well
+    if (visitData.temperature) {
+      await db.update(leads)
+        .set({ temperature: visitData.temperature, updatedAt: new Date() })
+        .where(eq(leads.id, visitData.leadId));
+    }
+    
+    return visit;
   }
   
   // Chat Agents operations
