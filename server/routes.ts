@@ -20927,6 +20927,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Erro ao deletar lead' });
     }
   });
+  
+  // Listar visitas de um lead
+  app.get('/api/leads/:id/visits', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const visits = await storage.getLeadVisits(id);
+      res.json(visits);
+    } catch (error) {
+      console.error('Erro ao listar visitas do lead:', error);
+      res.status(500).json({ message: 'Erro ao listar visitas do lead' });
+    }
+  });
+  
+  // Registrar nova visita em um lead
+  app.post('/api/leads/:id/visits', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const { observation, temperature } = req.body;
+      
+      if (!observation || observation.trim() === '') {
+        return res.status(400).json({ message: 'Observação é obrigatória' });
+      }
+      
+      const visitData = {
+        leadId: id,
+        userId: user.id,
+        userName: user.name || user.email,
+        observation: observation.trim(),
+        temperature: temperature || undefined,
+      };
+      
+      const visit = await storage.createLeadVisit(visitData);
+      console.log(`✅ Visita registrada no lead ${id} por ${user.email}`);
+      res.status(201).json(visit);
+    } catch (error) {
+      console.error('Erro ao registrar visita no lead:', error);
+      res.status(500).json({ message: 'Erro ao registrar visita no lead' });
+    }
+  });
 
   // Check-in em um lead (com foto obrigatória)
   app.post('/api/leads/:id/check-in', upload.single('photo'), async (req: any, res) => {
