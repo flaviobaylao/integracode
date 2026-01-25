@@ -50,9 +50,19 @@ export default function LeadsManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: leads = [], isLoading, refetch } = useQuery<Lead[]>({
+  const { data: leads = [], isLoading, refetch, isError, error } = useQuery<Lead[]>({
     queryKey: ['/api/leads'],
   });
+
+  // Debug: Log query state
+  useEffect(() => {
+    console.log('📋 [LeadsManagement] Query state:', { 
+      isLoading, 
+      isError, 
+      error: error?.message,
+      leadsCount: leads?.length 
+    });
+  }, [isLoading, isError, error, leads]);
 
   const { data: allUsers = [] } = useQuery<any[]>({
     queryKey: ['/api/users'],
@@ -315,6 +325,20 @@ export default function LeadsManagement() {
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-honest-blue"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <div className="text-red-500 text-lg font-semibold">Erro ao carregar leads</div>
+          <div className="text-gray-500 text-sm">{(error as any)?.message || 'Erro desconhecido'}</div>
+          <Button onClick={() => refetch()} variant="outline">
+            Tentar novamente
+          </Button>
         </div>
       </div>
     );
