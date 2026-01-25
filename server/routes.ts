@@ -43,6 +43,7 @@ import {
   insertChatAiSettingsSchema,
   type InsertChatAiSettings,
   type ChatAiSettings,
+  insertLeadSchema,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -20789,63 +20790,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('📋 GET /api/leads - User:', user?.email, 'Role:', user?.role);
       
-      let leads = await storage.getLeads();
-      console.log('📋 Leads encontrados no storage:', leads.length);
+      // Query simplificada diretamente do banco
+      let leadsData;
+      try {
+        leadsData = await db.select().from(leads).orderBy(desc(leads.createdAt));
+        console.log('📋 [DB] Query direta retornou', leadsData.length, 'leads');
+      } catch (dbError) {
+        console.error('❌ [DB] Erro na query de leads:', dbError);
+        return res.status(500).json({ 
+          message: 'Erro no banco de dados ao buscar leads', 
+          error: dbError instanceof Error ? dbError.message : String(dbError) 
+        });
+      }
       
       // Filtrar por status
       if (status) {
-        leads = leads.filter((lead: any) => lead.status === status);
+        leadsData = leadsData.filter((lead: any) => lead.status === status);
       }
       
       // Filtrar leads disponíveis para um vendedor específico
-      // (leads sem atribuição ou atribuídos ao vendedor selecionado)
       if (sellerId) {
-        leads = leads.filter((lead: any) => 
+        leadsData = leadsData.filter((lead: any) => 
           !lead.assignedTo || lead.assignedTo === sellerId
         );
       }
       
-      // Converter todos os campos para garantir serialização JSON correta
-      // Função auxiliar para serializar datas de forma segura
-      const safeDate = (date: any): string | null => {
-        if (!date) return null;
-        try {
-          const d = new Date(date);
-          return isNaN(d.getTime()) ? null : d.toISOString();
-        } catch {
-          return null;
-        }
-      };
+      // Serialização ultra-simples
+      const result = leadsData.map((lead: any) => ({
+        id: lead.id,
+        fantasyName: lead.fantasyName,
+        latitude: lead.latitude,
+        longitude: lead.longitude,
+        contact: lead.contact,
+        phone: lead.phone,
+        photo: lead.photo,
+        observation: lead.observation,
+        status: lead.status || 'pending',
+        temperature: lead.temperature || 'cold',
+        createdBy: lead.createdBy,
+        createdByName: lead.createdByName,
+        assignedTo: lead.assignedTo,
+        lastCheckInAt: lead.lastCheckInAt,
+        lastCheckOutAt: lead.lastCheckOutAt,
+        createdAt: lead.createdAt,
+        updatedAt: lead.updatedAt,
+      }));
       
-      const serializedLeads = leads.map((lead: any) => {
-        try {
-          return {
-            id: String(lead.id || ''),
-            fantasyName: String(lead.fantasyName || ''),
-            latitude: lead.latitude != null ? String(lead.latitude) : null,
-            longitude: lead.longitude != null ? String(lead.longitude) : null,
-            contact: lead.contact ? String(lead.contact) : null,
-            phone: lead.phone ? String(lead.phone) : null,
-            photo: lead.photo ? String(lead.photo) : null,
-            observation: lead.observation ? String(lead.observation) : null,
-            status: String(lead.status || 'pending'),
-            temperature: String(lead.temperature || 'cold'),
-            createdBy: String(lead.createdBy || ''),
-            createdByName: lead.createdByName ? String(lead.createdByName) : null,
-            assignedTo: lead.assignedTo ? String(lead.assignedTo) : null,
-            lastCheckInAt: safeDate(lead.lastCheckInAt),
-            lastCheckOutAt: safeDate(lead.lastCheckOutAt),
-            createdAt: safeDate(lead.createdAt),
-            updatedAt: safeDate(lead.updatedAt),
-          };
-        } catch (mapError) {
-          console.error('❌ Erro ao serializar lead:', lead.id, mapError);
-          return null;
-        }
-      }).filter(Boolean);
-      
-      console.log('📋 Retornando', serializedLeads.length, 'leads após filtros');
-      res.json(serializedLeads);
+      console.log('📋 Retornando', result.length, 'leads após filtros');
+      res.json(result);
     } catch (error) {
       console.error('❌ Erro ao buscar leads:', error);
       console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'N/A');
