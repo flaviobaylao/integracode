@@ -20791,6 +20791,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
   
+  // DIAGNOSTIC: Endpoint para diagnosticar problemas de banco de dados
+  app.get('/api/leads-diagnostic', async (req: any, res) => {
+    const diagnostics: any = {
+      timestamp: new Date().toISOString(),
+      checks: []
+    };
+    
+    try {
+      // Check 1: Test basic database connection
+      const dbTest = await db.execute(sql`SELECT 1 as test`);
+      diagnostics.checks.push({ name: 'database_connection', status: 'ok', result: 'connected' });
+      
+      // Check 2: Check if leads table exists
+      const tableExists = await db.execute(sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' AND table_name = 'leads'
+        ) as exists
+      `);
+      diagnostics.checks.push({ name: 'leads_table_exists', status: 'ok', result: tableExists.rows[0] });
+      
+      // Check 3: Count leads
+      const countResult = await db.execute(sql`SELECT COUNT(*) as count FROM leads`);
+      diagnostics.checks.push({ name: 'leads_count', status: 'ok', result: countResult.rows[0] });
+      
+      // Check 4: Get first lead (raw SQL to avoid ORM issues)
+      const firstLead = await db.execute(sql`SELECT * FROM leads LIMIT 1`);
+      diagnostics.checks.push({ name: 'first_lead', status: 'ok', result: firstLead.rows[0] || 'no leads' });
+      
+      diagnostics.success = true;
+      res.json(diagnostics);
+    } catch (error) {
+      diagnostics.success = false;
+      diagnostics.error = error instanceof Error ? error.message : String(error);
+      diagnostics.errorStack = error instanceof Error ? error.stack : undefined;
+      res.status(500).json(diagnostics);
+    }
+  });
+  
   // DEBUG: Endpoint de teste sem autenticação para verificar se o problema está na autenticação
   app.get('/api/leads-debug', async (req: any, res) => {
     try {
