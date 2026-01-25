@@ -20805,10 +20805,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
-      console.log('📋 Retornando', leads.length, 'leads após filtros');
-      res.json(leads);
+      // Converter campos numéricos para garantir serialização JSON correta
+      const serializedLeads = leads.map((lead: any) => ({
+        ...lead,
+        latitude: lead.latitude ? String(lead.latitude) : null,
+        longitude: lead.longitude ? String(lead.longitude) : null,
+      }));
+      
+      console.log('📋 Retornando', serializedLeads.length, 'leads após filtros');
+      res.json(serializedLeads);
     } catch (error) {
       console.error('❌ Erro ao buscar leads:', error);
+      console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'N/A');
       res.status(500).json({ message: 'Erro ao buscar leads', error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -20823,7 +20831,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Lead não encontrado' });
       }
       
-      res.json(lead);
+      // Converter campos numéricos para garantir serialização JSON correta
+      const serializedLead = {
+        ...lead,
+        latitude: lead.latitude ? String(lead.latitude) : null,
+        longitude: lead.longitude ? String(lead.longitude) : null,
+      };
+      
+      res.json(serializedLead);
     } catch (error) {
       console.error('Erro ao buscar lead:', error);
       res.status(500).json({ message: 'Erro ao buscar lead' });
