@@ -20805,12 +20805,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
-      // Converter campos numéricos para garantir serialização JSON correta
-      const serializedLeads = leads.map((lead: any) => ({
-        ...lead,
-        latitude: lead.latitude ? String(lead.latitude) : null,
-        longitude: lead.longitude ? String(lead.longitude) : null,
-      }));
+      // Converter todos os campos para garantir serialização JSON correta
+      const serializedLeads = leads.map((lead: any) => {
+        try {
+          return {
+            id: lead.id,
+            fantasyName: lead.fantasyName,
+            latitude: lead.latitude ? String(lead.latitude) : null,
+            longitude: lead.longitude ? String(lead.longitude) : null,
+            contact: lead.contact || null,
+            phone: lead.phone || null,
+            photo: lead.photo || null,
+            observation: lead.observation || null,
+            status: lead.status,
+            temperature: lead.temperature || 'cold',
+            createdBy: lead.createdBy,
+            createdByName: lead.createdByName || null,
+            assignedTo: lead.assignedTo || null,
+            lastCheckInAt: lead.lastCheckInAt ? new Date(lead.lastCheckInAt).toISOString() : null,
+            lastCheckOutAt: lead.lastCheckOutAt ? new Date(lead.lastCheckOutAt).toISOString() : null,
+            createdAt: lead.createdAt ? new Date(lead.createdAt).toISOString() : null,
+            updatedAt: lead.updatedAt ? new Date(lead.updatedAt).toISOString() : null,
+          };
+        } catch (mapError) {
+          console.error('❌ Erro ao serializar lead:', lead.id, mapError);
+          return null;
+        }
+      }).filter(Boolean);
       
       console.log('📋 Retornando', serializedLeads.length, 'leads após filtros');
       res.json(serializedLeads);
