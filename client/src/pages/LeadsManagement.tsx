@@ -50,9 +50,11 @@ export default function LeadsManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: leads = [], isLoading, refetch, isError, error } = useQuery<Lead[]>({
-    queryKey: ['/api/leads'],
+  // TEMPORÁRIO: Usando endpoint de debug para diagnosticar problema de autenticação
+  const { data: leadsResponse, isLoading, refetch, isError, error } = useQuery<{ success: boolean; count: number; leads: Lead[] }>({
+    queryKey: ['/api/leads-debug'],
   });
+  const leads = leadsResponse?.leads || [];
 
   // Debug: Log query state
   useEffect(() => {

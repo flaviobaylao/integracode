@@ -20782,6 +20782,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ROUTES
   // ========================================
   
+  // DEBUG: Endpoint de teste sem autenticação para verificar se o problema está na autenticação
+  app.get('/api/leads-debug', async (req: any, res) => {
+    try {
+      console.log('🔍 [LEADS-DEBUG] Iniciando consulta de leads...');
+      const leadsData = await db.select().from(leads).orderBy(desc(leads.createdAt));
+      console.log('🔍 [LEADS-DEBUG] Consulta retornou', leadsData.length, 'leads');
+      console.log('🔍 [LEADS-DEBUG] Primeiro lead:', leadsData[0] ? JSON.stringify(leadsData[0]) : 'nenhum');
+      res.json({ 
+        success: true, 
+        count: leadsData.length, 
+        leads: leadsData 
+      });
+    } catch (error) {
+      console.error('❌ [LEADS-DEBUG] Erro:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+    }
+  });
+  
   // Listar leads com filtros opcionais (admin e vendedores)
   app.get('/api/leads', authenticateUser, async (req: any, res) => {
     try {
