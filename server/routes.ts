@@ -20830,27 +20830,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // DEBUG: Endpoint de teste sem autenticação para verificar se o problema está na autenticação
+  // DEBUG: Endpoint de teste sem autenticação - usando SQL raw para contornar problemas de ORM
   app.get('/api/leads-debug', async (req: any, res) => {
     try {
-      console.log('🔍 [LEADS-DEBUG] Iniciando consulta de leads...');
-      const leadsData = await db.select().from(leads).orderBy(desc(leads.createdAt));
-      console.log('🔍 [LEADS-DEBUG] Consulta retornou', leadsData.length, 'leads');
-      console.log('🔍 [LEADS-DEBUG] Primeiro lead:', leadsData[0] ? JSON.stringify(leadsData[0]) : 'nenhum');
+      console.log('🔍 [LEADS-DEBUG] Iniciando consulta de leads com SQL raw...');
       
-      // Serializar explicitamente para evitar problemas com BigInt ou tipos especiais
-      const serializedLeads = leadsData.map(lead => ({
-        ...lead,
-        createdAt: lead.createdAt?.toISOString?.() || lead.createdAt,
-        updatedAt: lead.updatedAt?.toISOString?.() || lead.updatedAt,
-        lastCheckInAt: lead.lastCheckInAt?.toISOString?.() || lead.lastCheckInAt,
-        lastCheckOutAt: lead.lastCheckOutAt?.toISOString?.() || lead.lastCheckOutAt,
-      }));
+      // Usar SQL raw para evitar problemas de mapeamento do Drizzle ORM
+      const result = await db.execute(sql`
+        SELECT 
+          id,
+          fantasy_name as "fantasyName",
+          latitude,
+          longitude,
+          contact,
+          phone,
+          photo,
+          observation,
+          status,
+          temperature,
+          created_by as "createdBy",
+          created_by_name as "createdByName",
+          assigned_to as "assignedTo",
+          last_check_in_at as "lastCheckInAt",
+          last_check_out_at as "lastCheckOutAt",
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        FROM leads 
+        ORDER BY created_at DESC
+      `);
+      
+      const leadsData = result.rows || [];
+      console.log('🔍 [LEADS-DEBUG] Consulta retornou', leadsData.length, 'leads');
       
       res.json({ 
         success: true, 
-        count: serializedLeads.length, 
-        leads: serializedLeads 
+        count: leadsData.length, 
+        leads: leadsData 
       });
     } catch (error) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
