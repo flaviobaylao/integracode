@@ -1522,7 +1522,7 @@ export const leads = pgTable("leads", {
   photo: varchar("photo"), // URL da foto capturada no check-in
   observation: text("observation"),
   status: leadStatusEnum("status").notNull().default('pending'),
-  temperature: leadTemperatureEnum("temperature").notNull(), // Mandatory temperature classification
+  temperature: leadTemperatureEnum("temperature"), // Temperature classification (enforced in frontend)
   
   // Quem criou o lead (admin)
   createdBy: varchar("created_by").notNull(),
