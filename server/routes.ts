@@ -20806,26 +20806,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Converter todos os campos para garantir serialização JSON correta
+      // Função auxiliar para serializar datas de forma segura
+      const safeDate = (date: any): string | null => {
+        if (!date) return null;
+        try {
+          const d = new Date(date);
+          return isNaN(d.getTime()) ? null : d.toISOString();
+        } catch {
+          return null;
+        }
+      };
+      
       const serializedLeads = leads.map((lead: any) => {
         try {
           return {
-            id: lead.id,
-            fantasyName: lead.fantasyName,
-            latitude: lead.latitude ? String(lead.latitude) : null,
-            longitude: lead.longitude ? String(lead.longitude) : null,
-            contact: lead.contact || null,
-            phone: lead.phone || null,
-            photo: lead.photo || null,
-            observation: lead.observation || null,
-            status: lead.status,
-            temperature: lead.temperature || 'cold',
-            createdBy: lead.createdBy,
-            createdByName: lead.createdByName || null,
-            assignedTo: lead.assignedTo || null,
-            lastCheckInAt: lead.lastCheckInAt ? new Date(lead.lastCheckInAt).toISOString() : null,
-            lastCheckOutAt: lead.lastCheckOutAt ? new Date(lead.lastCheckOutAt).toISOString() : null,
-            createdAt: lead.createdAt ? new Date(lead.createdAt).toISOString() : null,
-            updatedAt: lead.updatedAt ? new Date(lead.updatedAt).toISOString() : null,
+            id: String(lead.id || ''),
+            fantasyName: String(lead.fantasyName || ''),
+            latitude: lead.latitude != null ? String(lead.latitude) : null,
+            longitude: lead.longitude != null ? String(lead.longitude) : null,
+            contact: lead.contact ? String(lead.contact) : null,
+            phone: lead.phone ? String(lead.phone) : null,
+            photo: lead.photo ? String(lead.photo) : null,
+            observation: lead.observation ? String(lead.observation) : null,
+            status: String(lead.status || 'pending'),
+            temperature: String(lead.temperature || 'cold'),
+            createdBy: String(lead.createdBy || ''),
+            createdByName: lead.createdByName ? String(lead.createdByName) : null,
+            assignedTo: lead.assignedTo ? String(lead.assignedTo) : null,
+            lastCheckInAt: safeDate(lead.lastCheckInAt),
+            lastCheckOutAt: safeDate(lead.lastCheckOutAt),
+            createdAt: safeDate(lead.createdAt),
+            updatedAt: safeDate(lead.updatedAt),
           };
         } catch (mapError) {
           console.error('❌ Erro ao serializar lead:', lead.id, mapError);
