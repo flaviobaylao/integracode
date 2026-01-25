@@ -30,6 +30,11 @@ async function throwIfResNotOk(res: Response) {
       
       console.log('🔴 API Error Response:', errorData);
       
+      // Guard contra errorData null/undefined
+      if (!errorData || typeof errorData !== 'object') {
+        throw new Error(`${res.status}: Unexpected error response format`);
+      }
+      
       // Criar um Error que preserva todos os campos do errorData
       const error: any = new Error(errorData.message || JSON.stringify(errorData));
       error.status = res.status;

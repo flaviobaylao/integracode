@@ -20782,6 +20782,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ROUTES
   // ========================================
   
+  // STATIC TEST: Endpoint estático para testar se rotas funcionam
+  app.get('/api/leads-static-test', (req: any, res) => {
+    res.json({ 
+      success: true, 
+      message: 'Static endpoint working',
+      timestamp: new Date().toISOString()
+    });
+  });
+  
   // DEBUG: Endpoint de teste sem autenticação para verificar se o problema está na autenticação
   app.get('/api/leads-debug', async (req: any, res) => {
     try {
@@ -20789,10 +20798,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const leadsData = await db.select().from(leads).orderBy(desc(leads.createdAt));
       console.log('🔍 [LEADS-DEBUG] Consulta retornou', leadsData.length, 'leads');
       console.log('🔍 [LEADS-DEBUG] Primeiro lead:', leadsData[0] ? JSON.stringify(leadsData[0]) : 'nenhum');
+      
+      // Serializar explicitamente para evitar problemas com BigInt ou tipos especiais
+      const serializedLeads = leadsData.map(lead => ({
+        ...lead,
+        createdAt: lead.createdAt?.toISOString?.() || lead.createdAt,
+        updatedAt: lead.updatedAt?.toISOString?.() || lead.updatedAt,
+        lastCheckInAt: lead.lastCheckInAt?.toISOString?.() || lead.lastCheckInAt,
+        lastCheckOutAt: lead.lastCheckOutAt?.toISOString?.() || lead.lastCheckOutAt,
+      }));
+      
       res.json({ 
         success: true, 
-        count: leadsData.length, 
-        leads: leadsData 
+        count: serializedLeads.length, 
+        leads: serializedLeads 
       });
     } catch (error) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
