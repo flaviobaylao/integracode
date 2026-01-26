@@ -20833,9 +20833,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // DEBUG: Endpoint de teste sem autenticação - usando SQL raw simples
   app.get('/api/leads-debug', async (req: any, res) => {
     console.log('🔍 [LEADS-DEBUG] Requisição recebida!');
+    
+    // Set timeout
+    res.setTimeout(25000, () => {
+      console.error('❌ [LEADS-DEBUG] Timeout!');
+      res.status(504).json({ success: false, error: 'Request timeout' });
+    });
+    
     try {
-      // Query simples sem alias, igual ao diagnostic
-      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 100`);
+      console.log('🔍 [LEADS-DEBUG] Executando query...');
+      // Query simples - apenas 5 leads para teste
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 5`);
+      console.log('🔍 [LEADS-DEBUG] Query executada, rows:', result.rows?.length);
       const rows = result.rows || [];
       
       // Mapear snake_case para camelCase no JavaScript
@@ -20859,7 +20868,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: row.updated_at,
       }));
       
+      console.log('🔍 [LEADS-DEBUG] Enviando resposta...');
       res.json({ success: true, count: leadsData.length, leads: leadsData });
+      console.log('🔍 [LEADS-DEBUG] Resposta enviada!');
     } catch (error: any) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
       res.status(500).json({ success: false, error: error?.message || String(error) });
