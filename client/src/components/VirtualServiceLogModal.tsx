@@ -52,7 +52,7 @@ export default function VirtualServiceLogModal({
   onClose, 
   customerId, 
   customerName,
-  defaultServiceType = 'prospecao',
+  defaultServiceType,
   entityType = 'customer',
   onSuccess
 }: VirtualServiceLogModalProps) {
@@ -60,16 +60,18 @@ export default function VirtualServiceLogModal({
   const [isCreating, setIsCreating] = useState(false);
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
-  const [serviceType, setServiceType] = useState<ServiceType>(defaultServiceType);
+  const effectiveDefaultType = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'venda');
+  const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset serviceType when modal opens with a new defaultServiceType
   useEffect(() => {
     if (open) {
-      setServiceType(defaultServiceType);
+      const newDefault = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'venda');
+      setServiceType(newDefault);
     }
-  }, [open, defaultServiceType]);
+  }, [open, defaultServiceType, entityType]);
 
   const { data: logs, isLoading } = useQuery<VirtualServiceLog[]>({
     queryKey: [`/api/service-logs/${entityType}/${customerId}`],
@@ -89,7 +91,7 @@ export default function VirtualServiceLogModal({
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
       setNotes("");
       setImages([]);
-      setServiceType(defaultServiceType);
+      setServiceType(effectiveDefaultType);
       setIsCreating(false);
       toast({
         title: "Atendimento registrado",
@@ -237,7 +239,7 @@ export default function VirtualServiceLogModal({
     setIsCreating(false);
     setNotes("");
     setImages([]);
-    setServiceType(defaultServiceType);
+    setServiceType(effectiveDefaultType);
     onClose();
   };
 
@@ -269,7 +271,9 @@ export default function VirtualServiceLogModal({
                 <div>
                   <Label>Tipo de Atendimento</Label>
                   <div className="mt-2 flex gap-2 flex-wrap">
-                    {(Object.keys(serviceTypeLabels) as ServiceType[]).map((type) => {
+                    {(Object.keys(serviceTypeLabels) as ServiceType[])
+                      .filter((type) => entityType === 'lead' || type !== 'prospecao')
+                      .map((type) => {
                       const config = serviceTypeLabels[type];
                       const Icon = config.icon;
                       const isSelected = serviceType === type;
