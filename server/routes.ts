@@ -20830,52 +20830,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // DEBUG: Endpoint de teste sem autenticação - usando SQL raw para contornar problemas de ORM
+  // DEBUG: Endpoint de teste sem autenticação - usando SQL raw simples
   app.get('/api/leads-debug', async (req: any, res) => {
     console.log('🔍 [LEADS-DEBUG] Requisição recebida!');
     try {
-      console.log('🔍 [LEADS-DEBUG] Iniciando consulta de leads com SQL raw...');
+      // Query simples sem alias, igual ao diagnostic
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 100`);
+      const rows = result.rows || [];
       
-      // Usar SQL raw para evitar problemas de mapeamento do Drizzle ORM
-      const result = await db.execute(sql`
-        SELECT 
-          id,
-          COALESCE(fantasy_name, '') as "fantasyName",
-          COALESCE(latitude::text, '0') as latitude,
-          COALESCE(longitude::text, '0') as longitude,
-          COALESCE(contact, '') as contact,
-          COALESCE(phone, '') as phone,
-          photo,
-          COALESCE(observation, '') as observation,
-          COALESCE(status, 'pending') as status,
-          temperature,
-          COALESCE(created_by, '') as "createdBy",
-          created_by_name as "createdByName",
-          assigned_to as "assignedTo",
-          last_check_in_at as "lastCheckInAt",
-          last_check_out_at as "lastCheckOutAt",
-          created_at as "createdAt",
-          updated_at as "updatedAt"
-        FROM leads 
-        ORDER BY created_at DESC
-        LIMIT 100
-      `);
+      // Mapear snake_case para camelCase no JavaScript
+      const leadsData = rows.map((row: any) => ({
+        id: row.id,
+        fantasyName: row.fantasy_name,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        contact: row.contact,
+        phone: row.phone,
+        photo: row.photo,
+        observation: row.observation,
+        status: row.status,
+        temperature: row.temperature,
+        createdBy: row.created_by,
+        createdByName: row.created_by_name,
+        assignedTo: row.assigned_to,
+        lastCheckInAt: row.last_check_in_at,
+        lastCheckOutAt: row.last_check_out_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
       
-      const leadsData = result.rows || [];
-      console.log('🔍 [LEADS-DEBUG] Consulta retornou', leadsData.length, 'leads');
-      
-      res.json({ 
-        success: true, 
-        count: leadsData.length, 
-        leads: leadsData 
-      });
+      res.json({ success: true, count: leadsData.length, leads: leadsData });
     } catch (error: any) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
-      res.status(500).json({ 
-        success: false, 
-        error: error?.message || String(error),
-        stack: error?.stack
-      });
+      res.status(500).json({ success: false, error: error?.message || String(error) });
     }
   });
   
