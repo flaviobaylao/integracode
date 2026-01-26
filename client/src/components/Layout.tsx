@@ -115,7 +115,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       id: 'leads', 
       label: 'LEADs',
       icon: 'fas fa-crosshairs', 
-      available: true,
+      available: canAccessReports || isVendedor || isTelemarketing,
       badge: null
     },
     { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
@@ -296,7 +296,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {menuItems
                   .filter(item => item.available)
                   .filter(item => !isMotorista || item.id === 'rota-entrega')
-                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders'].includes(item.id))
+                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads'].includes(item.id))
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -500,7 +500,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               {menuItems
                 .filter(item => item.available)
                 .filter(item => !isMotorista || item.id === 'rota-entrega')
-                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders'].includes(item.id))
+                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads'].includes(item.id))
                 .map(item => (
                   <li key={item.id}>
                     <Button
