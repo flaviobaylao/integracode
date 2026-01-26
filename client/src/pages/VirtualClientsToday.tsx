@@ -72,12 +72,9 @@ export default function VirtualClientsToday() {
   const [selectedCardForNoSale, setSelectedCardForNoSale] = useState<any>(null);
   const { toast } = useToast();
 
-  // Para telemarketing, inicializar filtro com seu próprio ID (sua carteira)
-  useEffect(() => {
-    if (isTelemarketing && user?.id && !selectedSeller) {
-      setSelectedSeller(user.id);
-    }
-  }, [isTelemarketing, user?.id, selectedSeller]);
+  // Para telemarketing, NÃO inicializar filtro com seu próprio ID
+  // Telemarketing deve ver TODOS os clientes virtuais por padrão
+  // Remover auto-seleção que estava causando filtro incorreto
 
   const { data: activeCustomers = [], isLoading: isLoadingCustomers } = useQuery({
     queryKey: ['/api/active-customers'],
@@ -168,9 +165,7 @@ export default function VirtualClientsToday() {
 
   const handleClearFilters = () => {
     setSearchTerm("");
-    if (!isTelemarketing) {
-      setSelectedSeller("");
-    }
+    setSelectedSeller("");
     setSelectedDayOfRoute("");
     setSelectedPeriodicity("");
     setSelectedDate(format(new Date(), 'yyyy-MM-dd'));

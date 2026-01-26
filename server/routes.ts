@@ -20885,10 +20885,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('📋 GET /api/leads - User:', user?.email, 'Role:', user?.role);
       
       // Query usando SQL raw (funciona em produção, ao contrário do Drizzle ORM)
-      // LIMIT 200 para evitar timeout em produção
+      // Sem LIMIT para retornar todos os leads
       let leadsData: any[] = [];
       try {
-        const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 200`);
+        const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
         const rows = result.rows || [];
         
         // Mapear snake_case para camelCase
