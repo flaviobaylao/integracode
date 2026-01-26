@@ -20842,8 +20842,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       console.log('🔍 [LEADS-DEBUG] Executando query...');
-      // Query simples - apenas 5 leads para teste
-      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 5`);
+      // Query simples - todos os leads
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
       console.log('🔍 [LEADS-DEBUG] Query executada, rows:', result.rows?.length);
       const rows = result.rows || [];
       
@@ -20885,11 +20885,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('📋 GET /api/leads - User:', user?.email, 'Role:', user?.role);
       
-      // Query simplificada diretamente do banco
-      let leadsData;
+      // Query usando SQL raw (funciona em produção, ao contrário do Drizzle ORM)
+      let leadsData: any[] = [];
       try {
-        leadsData = await db.select().from(leads).orderBy(desc(leads.createdAt));
-        console.log('📋 [DB] Query direta retornou', leadsData.length, 'leads');
+        const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
+        const rows = result.rows || [];
+        
+        // Mapear snake_case para camelCase
+        leadsData = rows.map((row: any) => ({
+          id: row.id,
+          fantasyName: row.fantasy_name,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          contact: row.contact,
+          phone: row.phone,
+          photo: row.photo,
+          observation: row.observation,
+          status: row.status || 'pending',
+          temperature: row.temperature || 'cold',
+          createdBy: row.created_by,
+          createdByName: row.created_by_name,
+          assignedTo: row.assigned_to,
+          lastCheckInAt: row.last_check_in_at,
+          lastCheckOutAt: row.last_check_out_at,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+        
+        console.log('📋 [DB] Query SQL raw retornou', leadsData.length, 'leads');
       } catch (dbError) {
         console.error('❌ [DB] Erro na query de leads:', dbError);
         return res.status(500).json({ 
@@ -20910,29 +20933,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
-      // Serialização ultra-simples
-      const result = leadsData.map((lead: any) => ({
-        id: lead.id,
-        fantasyName: lead.fantasyName,
-        latitude: lead.latitude,
-        longitude: lead.longitude,
-        contact: lead.contact,
-        phone: lead.phone,
-        photo: lead.photo,
-        observation: lead.observation,
-        status: lead.status || 'pending',
-        temperature: lead.temperature || 'cold',
-        createdBy: lead.createdBy,
-        createdByName: lead.createdByName,
-        assignedTo: lead.assignedTo,
-        lastCheckInAt: lead.lastCheckInAt,
-        lastCheckOutAt: lead.lastCheckOutAt,
-        createdAt: lead.createdAt,
-        updatedAt: lead.updatedAt,
-      }));
-      
-      console.log('📋 Retornando', result.length, 'leads após filtros');
-      res.json(result);
+      console.log('📋 Retornando', leadsData.length, 'leads após filtros');
+      res.json(leadsData);
     } catch (error) {
       console.error('❌ Erro ao buscar leads:', error);
       console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'N/A');
