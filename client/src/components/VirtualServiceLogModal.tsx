@@ -272,7 +272,10 @@ export default function VirtualServiceLogModal({
                   <Label>Tipo de Atendimento</Label>
                   <div className="mt-2 flex gap-2 flex-wrap">
                     {(Object.keys(serviceTypeLabels) as ServiceType[])
-                      .filter((type) => entityType === 'lead' || type !== 'prospecao')
+                      .filter((type) => {
+                        if (entityType === 'lead') return type === 'prospecao';
+                        return type !== 'prospecao';
+                      })
                       .map((type) => {
                       const config = serviceTypeLabels[type];
                       const Icon = config.icon;
