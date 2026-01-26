@@ -263,6 +263,26 @@ export const insertVirtualServiceLogSchema = createInsertSchema(virtualServiceLo
 export type InsertVirtualServiceLog = z.infer<typeof insertVirtualServiceLogSchema>;
 export type VirtualServiceLog = typeof virtualServiceLogs.$inferSelect;
 
+// Prospections table - Acumulação de prospecções por lead
+export const prospections = pgTable("prospections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  leadId: varchar("lead_id").notNull(), // ID do lead
+  type: varchar("type").notNull(), // 'lead_created' ou 'service_registered'
+  userId: varchar("user_id").notNull(), // Usuário que criou/atendeu
+  userName: varchar("user_name").notNull(), // Nome do usuário (snapshot)
+  serviceLogId: varchar("service_log_id"), // ID do virtual_service_log (se type='service_registered')
+  notes: text("notes"), // Observações opcionais
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertProspectionSchema = createInsertSchema(prospections).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertProspection = z.infer<typeof insertProspectionSchema>;
+export type Prospection = typeof prospections.$inferSelect;
+
 // Products table
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

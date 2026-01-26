@@ -2135,7 +2135,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         RETURNING *
       `);
 
-      res.json(result.rows[0]);
+      const serviceLog = result.rows[0] as any;
+
+      // Se for lead, registrar prospecção por atendimento
+      if (entityType === 'lead') {
+        try {
+          await db.execute(sql`
+            INSERT INTO prospections (lead_id, type, user_id, user_name, service_log_id, notes)
+            VALUES (${entityId}, 'service_registered', ${user.id}, ${user.name || user.email}, ${serviceLog.id}, ${notes || 'Atendimento registrado'})
+          `);
+          console.log(`📊 Prospecção registrada: service_registered para lead ${entityId}`);
+        } catch (prospectionError) {
+          console.error('Erro ao registrar prospecção:', prospectionError);
+        }
+      }
+
+      res.json(serviceLog);
     } catch (error) {
       console.error("Error creating service log:", error);
       res.status(500).json({ message: "Falha ao criar registro de atendimento" });
@@ -20991,6 +21006,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: user.id
       });
       
+      // Registrar prospecção por criação de lead
+      try {
+        await db.execute(sql`
+          INSERT INTO prospections (lead_id, type, user_id, user_name, notes)
+          VALUES (${lead.id}, 'lead_created', ${user.id}, ${user.name || user.email}, ${'Lead criado'})
+        `);
+        console.log(`📊 Prospecção registrada: lead_created para ${lead.fantasyName}`);
+      } catch (prospectionError) {
+        console.error('Erro ao registrar prospecção:', prospectionError);
+      }
+      
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
     } catch (error) {
@@ -21073,6 +21099,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Erro ao listar visitas do lead:', error);
       res.status(500).json({ message: 'Erro ao listar visitas do lead' });
+    }
+  });
+  
+  // Listar prospecções de um lead
+  app.get('/api/leads/:id/prospections', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const result = await db.execute(sql`
+        SELECT * FROM prospections WHERE lead_id = ${id} ORDER BY created_at DESC
+      `);
+      
+      const prospections = (result.rows || []).map((row: any) => ({
+        id: row.id,
+        leadId: row.lead_id,
+        type: row.type,
+        userId: row.user_id,
+        userName: row.user_name,
+        serviceLogId: row.service_log_id,
+        notes: row.notes,
+        createdAt: row.created_at,
+      }));
+      
+      res.json(prospections);
+    } catch (error) {
+      console.error('Erro ao listar prospecções do lead:', error);
+      res.status(500).json({ message: 'Erro ao listar prospecções do lead' });
+    }
+  });
+  
+  // Contar total de prospecções
+  app.get('/api/prospections/count', authenticateUser, async (req: any, res) => {
+    try {
+      const { startDate, endDate, userId } = req.query;
+      
+      let query = sql`SELECT COUNT(*) as count FROM prospections WHERE 1=1`;
+      
+      if (startDate && endDate) {
+        query = sql`SELECT COUNT(*) as count FROM prospections WHERE created_at >= ${startDate}::timestamp AND created_at <= ${endDate}::timestamp`;
+      }
+      
+      const result = await db.execute(query);
+      res.json({ count: parseInt((result.rows[0] as any)?.count || '0') });
+    } catch (error) {
+      console.error('Erro ao contar prospecções:', error);
+      res.status(500).json({ message: 'Erro ao contar prospecções' });
     }
   });
   
