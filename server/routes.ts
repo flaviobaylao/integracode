@@ -20834,42 +20834,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/leads-debug', async (req: any, res) => {
     console.log('🔍 [LEADS-DEBUG] Requisição recebida!');
     
-    // Set timeout
-    res.setTimeout(25000, () => {
-      console.error('❌ [LEADS-DEBUG] Timeout!');
-      res.status(504).json({ success: false, error: 'Request timeout' });
-    });
-    
     try {
       console.log('🔍 [LEADS-DEBUG] Executando query...');
-      // Query simples - todos os leads
-      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
+      // Query com LIMIT para evitar timeout
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 200`);
       console.log('🔍 [LEADS-DEBUG] Query executada, rows:', result.rows?.length);
       const rows = result.rows || [];
       
       // Mapear snake_case para camelCase no JavaScript
       const leadsData = rows.map((row: any) => ({
         id: row.id,
-        fantasyName: row.fantasy_name,
-        latitude: row.latitude,
-        longitude: row.longitude,
-        contact: row.contact,
-        phone: row.phone,
-        photo: row.photo,
-        observation: row.observation,
-        status: row.status,
-        temperature: row.temperature,
-        createdBy: row.created_by,
-        createdByName: row.created_by_name,
-        assignedTo: row.assigned_to,
-        lastCheckInAt: row.last_check_in_at,
-        lastCheckOutAt: row.last_check_out_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
+        fantasyName: row.fantasy_name || '',
+        latitude: String(row.latitude || '0'),
+        longitude: String(row.longitude || '0'),
+        contact: row.contact || '',
+        phone: row.phone || '',
+        photo: row.photo || null,
+        observation: row.observation || '',
+        status: row.status || 'pending',
+        temperature: row.temperature || null,
+        createdBy: row.created_by || '',
+        createdByName: row.created_by_name || null,
+        assignedTo: row.assigned_to || null,
+        lastCheckInAt: row.last_check_in_at || null,
+        lastCheckOutAt: row.last_check_out_at || null,
+        createdAt: row.created_at ? String(row.created_at) : null,
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
       }));
       
       console.log('🔍 [LEADS-DEBUG] Enviando resposta...');
-      res.json({ success: true, count: leadsData.length, leads: leadsData });
+      const response = { success: true, count: leadsData.length, leads: leadsData };
+      const jsonStr = JSON.stringify(response);
+      console.log('🔍 [LEADS-DEBUG] JSON size:', jsonStr.length);
+      
+      res.setHeader('Content-Type', 'application/json');
+      res.send(jsonStr);
       console.log('🔍 [LEADS-DEBUG] Resposta enviada!');
     } catch (error: any) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
