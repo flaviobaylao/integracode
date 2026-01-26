@@ -20832,6 +20832,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // DEBUG: Endpoint de teste sem autenticação - usando SQL raw para contornar problemas de ORM
   app.get('/api/leads-debug', async (req: any, res) => {
+    console.log('🔍 [LEADS-DEBUG] Requisição recebida!');
     try {
       console.log('🔍 [LEADS-DEBUG] Iniciando consulta de leads com SQL raw...');
       
@@ -20867,12 +20868,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: leadsData.length, 
         leads: leadsData 
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
       res.status(500).json({ 
         success: false, 
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
+        error: error?.message || String(error),
+        stack: error?.stack
       });
     }
   });
