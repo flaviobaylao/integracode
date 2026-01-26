@@ -20840,16 +20840,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await db.execute(sql`
         SELECT 
           id,
-          fantasy_name as "fantasyName",
-          latitude,
-          longitude,
-          contact,
-          phone,
+          COALESCE(fantasy_name, '') as "fantasyName",
+          COALESCE(latitude::text, '0') as latitude,
+          COALESCE(longitude::text, '0') as longitude,
+          COALESCE(contact, '') as contact,
+          COALESCE(phone, '') as phone,
           photo,
-          observation,
-          status,
+          COALESCE(observation, '') as observation,
+          COALESCE(status, 'pending') as status,
           temperature,
-          created_by as "createdBy",
+          COALESCE(created_by, '') as "createdBy",
           created_by_name as "createdByName",
           assigned_to as "assignedTo",
           last_check_in_at as "lastCheckInAt",
@@ -20858,6 +20858,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updated_at as "updatedAt"
         FROM leads 
         ORDER BY created_at DESC
+        LIMIT 100
       `);
       
       const leadsData = result.rows || [];
