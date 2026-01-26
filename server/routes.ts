@@ -20836,8 +20836,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       console.log('🔍 [LEADS-DEBUG] Executando query...');
-      // Testando LIMIT 20
-      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 20`);
+      // Testando LIMIT 60 para pegar todos os 52 leads
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 60`);
       console.log('🔍 [LEADS-DEBUG] Query executada, rows:', result.rows?.length);
       const rows = result.rows || [];
       
