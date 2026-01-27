@@ -2597,10 +2597,6 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
-      // Determinar tipo de pagamento para marcar checkbox correto
-      const isBoleto = paymentMethod === 'boleto';
-      const isPix = paymentMethod === 'pix' || paymentMethod === 'a_vista';
-      
       const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
@@ -2619,11 +2615,8 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          // ✅ Marcar checkbox de boleto para pagamentos a prazo
-          enviar_email: isBoleto ? "S" : "N",
-          // ✅ Marcar checkbox de PIX para pagamentos à vista (tentando nomes alternativos)
-          enviar_pix: isPix ? "S" : "N",
-          enviar_pix_cobranca: isPix ? "S" : "N"
+          // Enviar email habilitado para todos os pedidos
+          enviar_email: "S"
         }
       };
 
@@ -4767,10 +4760,6 @@ export async function createOmieOrder(orderData: {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
-    // Determinar tipo de pagamento para marcar checkbox correto
-    const isBoleto = orderData.paymentMethod === 'boleto';
-    const isPix = orderData.paymentMethod === 'pix' || orderData.paymentMethod === 'a_vista';
-    
     const omieOrderPayload = {
       cabecalho: {
         numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
@@ -4798,11 +4787,8 @@ export async function createOmieOrder(orderData: {
         codigo_categoria: "1.01.03", // Categoria fiscal
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
-        // ✅ Marcar checkbox de boleto para pagamentos a prazo
-        enviar_email: isBoleto ? "S" : "N",
-        // ✅ Marcar checkbox de PIX para pagamentos à vista (tentando nomes alternativos)
-        enviar_pix: isPix ? "S" : "N",
-        enviar_pix_cobranca: isPix ? "S" : "N",
+        // Enviar email habilitado para todos os pedidos
+        enviar_email: "S",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
