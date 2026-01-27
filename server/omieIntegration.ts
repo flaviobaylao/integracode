@@ -2590,7 +2590,7 @@ export class OmieService {
         : 2425423833; // Padrão: Caixinha (À vista)
 
       // Determinar código da parcela baseado no método de pagamento e prazo
-      let parcelaCode = '999'; // Padrão
+      let parcelaCode = 'A03'; // Padrão: Para 3 dias (à vista/PIX)
       if (paymentMethod === 'boleto') {
         const boletoDays = salesCard.boletoDays || 7; // Padrão 7 dias se não especificado
         parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
@@ -4744,7 +4744,7 @@ export async function createOmieOrder(orderData: {
       : 2425423833; // Padrão: Caixinha (À vista)
 
     // Determinar código da parcela baseado no método de pagamento e prazo
-    let parcelaCode = '999'; // Padrão
+    let parcelaCode = 'A03'; // Padrão: Para 3 dias (à vista/PIX)
     if (orderData.paymentMethod === 'boleto') {
       const boletoDays = orderData.boletoDays || 7; // Padrão 7 dias se não especificado
       parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
