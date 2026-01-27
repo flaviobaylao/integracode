@@ -2615,11 +2615,8 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          enviar_email: "N",
-          // ✅ Marcar checkbox de email de cobrança baseado no método de pagamento
-          // Boleto: Enviar e-mail com o boleto de cobrança (juntamente com DANFE e XML)
-          ...(paymentMethod === 'boleto' ? { enviar_boleto: "S" } : {}),
-          ...(paymentMethod === 'pix' || paymentMethod === 'a_vista' ? { enviar_pix: "S" } : {})
+          // ✅ Enviar email com boleto/pix de cobrança juntamente com DANFE e XML
+          enviar_email: "S"
         }
       };
 
@@ -4790,12 +4787,8 @@ export async function createOmieOrder(orderData: {
         codigo_categoria: "1.01.03", // Categoria fiscal
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
-        enviar_email: "N",
-        // ✅ REGRA: Marcar checkbox de email de cobrança baseado no método de pagamento
-        // Boleto: Enviar e-mail com o boleto de cobrança (juntamente com DANFE e XML)
-        // Pix/A vista: Enviar e-mail com o pix de cobrança (juntamente com DANFE e XML)
-        ...(orderData.paymentMethod === 'boleto' ? { enviar_boleto: "S" } : {}),
-        ...(orderData.paymentMethod === 'pix' || orderData.paymentMethod === 'a_vista' ? { enviar_pix: "S" } : {}),
+        // ✅ Enviar email com boleto/pix de cobrança juntamente com DANFE e XML
+        enviar_email: "S",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
