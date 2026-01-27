@@ -1053,15 +1053,15 @@ export default function ActiveCustomers() {
                 {/* Barra de rolagem horizontal no topo */}
                 <div 
                   ref={topScrollRef}
-                  className="overflow-x-auto"
-                  style={{ overflowY: 'hidden', height: '16px' }}
+                  className="overflow-x-scroll"
+                  style={{ overflowY: 'hidden', marginBottom: '4px' }}
                   onScroll={(e) => {
                     if (tableContainerRef.current) {
                       tableContainerRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
                   }}
                 >
-                  <div style={{ width: '1800px', height: '1px' }}></div>
+                  <div style={{ width: '1800px', height: '12px' }}></div>
                 </div>
                 <div 
                   ref={tableContainerRef}
