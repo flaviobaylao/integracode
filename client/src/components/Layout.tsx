@@ -133,6 +133,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       available: canAccessReports,
       badge: null
     },
+    { 
+      id: 'sdr-digital', 
+      label: 'SDR Digital',
+      icon: 'fas fa-search-location', 
+      available: canAccessReports || isVendedor || isTelemarketing,
+      badge: null
+    },
     { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
     { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports, badge: null },
     { 
@@ -235,6 +242,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       'telemarketing-deliveries': '/telemarketing/analysis',
       'telemarketing-analysis': '/telemarketing/conversas',
       'central-atendimento': '/telemarketing/atendimento',
+      'sdr-digital': '/telemarketing/sdr-digital',
     };
     
     if (telemarketingRoutes[itemId]) {
@@ -245,7 +253,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
@@ -296,7 +304,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {menuItems
                   .filter(item => item.available)
                   .filter(item => !isMotorista || item.id === 'rota-entrega')
-                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads'].includes(item.id))
+                  .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads', 'sdr-digital'].includes(item.id))
                   .map(item => (
                     <li key={item.id}>
                       <Button
@@ -500,7 +508,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               {menuItems
                 .filter(item => item.available)
                 .filter(item => !isMotorista || item.id === 'rota-entrega')
-                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads'].includes(item.id))
+                .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads', 'sdr-digital'].includes(item.id))
                 .map(item => (
                   <li key={item.id}>
                     <Button
