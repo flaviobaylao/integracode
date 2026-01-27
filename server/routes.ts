@@ -8742,8 +8742,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             vendorCode = userVendorCodeMap.get(customer.sellerId) || '';
           }
           
+          // Filtrar telefones inválidos/placeholder
+          const validPhone = customer.phone && 
+            customer.phone !== '(00) 00000-0000' && 
+            !customer.phone.includes('00000-0000') 
+              ? customer.phone 
+              : '';
+          
           customerDataMap.set(customer.omieClientCode, {
-            phone: customer.phone || '',
+            phone: validPhone,
             sellerId: vendorCode
           });
         }
