@@ -2597,6 +2597,10 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
+      // Determinar se é boleto ou pix/à vista
+      const isBoleto = paymentMethod === 'boleto';
+      const isPix = paymentMethod === 'pix' || paymentMethod === 'a_vista';
+      
       const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
@@ -2615,8 +2619,14 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          // ✅ Enviar email com boleto/pix de cobrança juntamente com DANFE e XML
-          enviar_email: "S"
+          // Desabilitar enviar_email padrão (usa seção email separada)
+          enviar_email: "N"
+        },
+        // ✅ Seção de email separada para controle de boleto/pix
+        email: {
+          // Marcar checkbox correspondente ao método de pagamento
+          enviar_boleto: isBoleto ? "S" : "N",
+          enviar_pix: isPix ? "S" : "N"
         }
       };
 
@@ -4760,6 +4770,10 @@ export async function createOmieOrder(orderData: {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
+    // Determinar se é boleto ou pix/à vista
+    const isBoleto = orderData.paymentMethod === 'boleto';
+    const isPix = orderData.paymentMethod === 'pix' || orderData.paymentMethod === 'a_vista';
+    
     const omieOrderPayload = {
       cabecalho: {
         numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
@@ -4787,9 +4801,13 @@ export async function createOmieOrder(orderData: {
         codigo_categoria: "1.01.03", // Categoria fiscal
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
-        // ✅ Enviar email com boleto/pix de cobrança juntamente com DANFE e XML
-        enviar_email: "S",
+        enviar_email: "N",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
+      },
+      // ✅ Seção de email separada para controle de boleto/pix
+      email: {
+        enviar_boleto: isBoleto ? "S" : "N",
+        enviar_pix: isPix ? "S" : "N"
       }
     };
 
