@@ -2615,9 +2615,11 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          enviar_email: "N"
-          // NOTA: Opções enviar_boleto e enviar_pix removidas temporariamente 
-          // devido a erro de validação da API Omie
+          enviar_email: "N",
+          // ✅ Marcar checkbox de email de cobrança baseado no método de pagamento
+          // Boleto: Enviar e-mail com o boleto de cobrança (juntamente com DANFE e XML)
+          ...(paymentMethod === 'boleto' ? { enviar_boleto: "S" } : {}),
+          ...(paymentMethod === 'pix' || paymentMethod === 'a_vista' ? { enviar_pix: "S" } : {})
         }
       };
 
