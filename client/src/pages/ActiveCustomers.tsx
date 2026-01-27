@@ -1051,12 +1051,12 @@ export default function ActiveCustomers() {
                   className="overflow-x-scroll" 
                   style={{ 
                     scrollbarWidth: 'auto',
-                    position: 'sticky',
-                    bottom: 0,
                     maxHeight: 'calc(100vh - 280px)',
-                    overflowY: 'auto'
+                    overflowY: 'auto',
+                    transform: 'scaleY(-1)'
                   }}
                 >
+                  <div style={{ transform: 'scaleY(-1)' }}>
                   <Table className="min-w-[1800px]">
                     <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
@@ -1263,6 +1263,7 @@ export default function ActiveCustomers() {
                       )}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
               )}
             </CardContent>
