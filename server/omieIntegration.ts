@@ -2500,18 +2500,10 @@ export class OmieService {
         }
       }
       
-      // Se não encontrou pelo sellerId, tentar pegar das recomendações do cliente
-      if (!omieVendorCode && omieClientCode) {
-        try {
-          // Buscar informações completas do cliente no Omie
-          const clientData = await this.getClientByCnpjCpf(customer.cnpj || customer.cpf);
-          if (clientData && clientData.recomendacoes?.codigo_vendedor) {
-            omieVendorCode = clientData.recomendacoes.codigo_vendedor;
-            console.log('✅ Vendedor extraído das recomendações do cliente:', omieVendorCode);
-          }
-        } catch (error) {
-          console.error('Erro ao buscar vendedor das recomendações:', error);
-        }
+      // NOTA: NÃO usar vendedor das recomendações do cliente
+      // O vendedor do pedido deve ser sempre quem registrou o pedido no Integra
+      if (!omieVendorCode) {
+        console.log('⚠️ Vendedor não encontrado para o pedido - pedido será criado sem vendedor');
       }
 
       let orderItems;
