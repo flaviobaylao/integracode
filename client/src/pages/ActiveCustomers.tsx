@@ -224,6 +224,8 @@ export default function ActiveCustomers() {
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
@@ -1047,16 +1049,34 @@ export default function ActiveCustomers() {
                   ))}
                 </div>
               ) : (
+                <>
+                {/* Barra de rolagem horizontal no topo */}
                 <div 
-                  className="overflow-x-scroll" 
-                  style={{ 
-                    scrollbarWidth: 'auto',
-                    maxHeight: 'calc(100vh - 280px)',
-                    overflowY: 'auto',
-                    transform: 'scaleY(-1)'
+                  ref={topScrollRef}
+                  className="overflow-x-auto"
+                  style={{ overflowY: 'hidden', height: '16px' }}
+                  onScroll={(e) => {
+                    if (tableContainerRef.current) {
+                      tableContainerRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                    }
                   }}
                 >
-                  <div style={{ transform: 'scaleY(-1)' }}>
+                  <div style={{ width: '1800px', height: '1px' }}></div>
+                </div>
+                <div 
+                  ref={tableContainerRef}
+                  className="overflow-x-auto" 
+                  style={{ 
+                    scrollbarWidth: 'auto',
+                    maxHeight: 'calc(100vh - 300px)',
+                    overflowY: 'auto'
+                  }}
+                  onScroll={(e) => {
+                    if (topScrollRef.current) {
+                      topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                    }
+                  }}
+                >
                   <Table className="min-w-[1800px]">
                     <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
@@ -1263,8 +1283,8 @@ export default function ActiveCustomers() {
                       )}
                     </TableBody>
                   </Table>
-                  </div>
                 </div>
+                </>
               )}
             </CardContent>
           </Card>
