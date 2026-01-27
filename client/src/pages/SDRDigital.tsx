@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,10 +38,16 @@ const CATEGORIAS = [
 
 export default function SDRDigital() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [regiao, setRegiao] = useState("");
   const [categoria, setCategoria] = useState("");
   const [palavraChave, setPalavraChave] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
+
+  const handleOpenChatCenter = (phone: string) => {
+    const normalizedPhone = phone.replace(/\D/g, '');
+    window.location.href = `/telemarketing/atendimento?phone=${normalizedPhone}`;
+  };
 
   const searchMutation = useMutation({
     mutationFn: async () => {
@@ -357,8 +364,7 @@ export default function SDRDigital() {
                         <Button
                           size="sm"
                           className="bg-green-600 hover:bg-green-700"
-                          onClick={() => sendWhatsAppMutation.mutate(lead)}
-                          disabled={sendWhatsAppMutation.isPending}
+                          onClick={() => handleOpenChatCenter(lead.phone!)}
                           data-testid={`button-whatsapp-${lead.placeId}`}
                         >
                           <MessageCircle className="w-4 h-4 mr-1" />
