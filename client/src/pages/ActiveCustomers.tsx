@@ -226,6 +226,7 @@ export default function ActiveCustomers() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+  const isScrollingSyncRef = useRef(false);
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
@@ -1056,25 +1057,31 @@ export default function ActiveCustomers() {
                   className="overflow-x-scroll"
                   style={{ overflowY: 'hidden', marginBottom: '4px' }}
                   onScroll={(e) => {
+                    if (isScrollingSyncRef.current) return;
+                    isScrollingSyncRef.current = true;
                     if (tableContainerRef.current) {
                       tableContainerRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
+                    setTimeout(() => { isScrollingSyncRef.current = false; }, 10);
                   }}
                 >
                   <div style={{ width: '1800px', height: '12px' }}></div>
                 </div>
                 <div 
                   ref={tableContainerRef}
-                  className="overflow-x-auto" 
+                  className="overflow-x-scroll" 
                   style={{ 
                     scrollbarWidth: 'auto',
                     maxHeight: 'calc(100vh - 300px)',
                     overflowY: 'auto'
                   }}
                   onScroll={(e) => {
+                    if (isScrollingSyncRef.current) return;
+                    isScrollingSyncRef.current = true;
                     if (topScrollRef.current) {
                       topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
+                    setTimeout(() => { isScrollingSyncRef.current = false; }, 10);
                   }}
                 >
                   <Table className="min-w-[1800px]">
