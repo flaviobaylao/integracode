@@ -2621,8 +2621,9 @@ export class OmieService {
           consumidor_final: "S",
           // ✅ Marcar checkbox de boleto para pagamentos a prazo
           enviar_email: isBoleto ? "S" : "N",
-          // ✅ Marcar checkbox de PIX para pagamentos à vista
-          enviar_pix: isPix ? "S" : "N"
+          // ✅ Marcar checkbox de PIX para pagamentos à vista (tentando nomes alternativos)
+          enviar_pix: isPix ? "S" : "N",
+          enviar_pix_cobranca: isPix ? "S" : "N"
         }
       };
 
@@ -4799,8 +4800,9 @@ export async function createOmieOrder(orderData: {
         consumidor_final: "S",
         // ✅ Marcar checkbox de boleto para pagamentos a prazo
         enviar_email: isBoleto ? "S" : "N",
-        // ✅ Marcar checkbox de PIX para pagamentos à vista
+        // ✅ Marcar checkbox de PIX para pagamentos à vista (tentando nomes alternativos)
         enviar_pix: isPix ? "S" : "N",
+        enviar_pix_cobranca: isPix ? "S" : "N",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
