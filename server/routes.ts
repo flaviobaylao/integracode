@@ -12270,6 +12270,234 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // ✅ NOVO ENDPOINT SIMPLIFICADO: Entrega direta com foto (combina check-in + check-out)
+  app.post("/api/delivery-routes/stops/:stopId/complete-delivery", authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { latitude, longitude } = req.body;
+      const userEmail = (req as any).currentUser?.email;
+      
+      console.log(`📦 [COMPLETE-DELIVERY] Motorista ${userEmail} registrando entrega da parada ${stopId}`);
+      
+      // Verificar se foto foi enviada
+      if (!req.file) {
+        return res.status(400).json({ message: "Foto obrigatória para registrar entrega" });
+      }
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      // Verificar se o motorista pertence à rota
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+      
+      // Processar foto
+      let photoUrl: string | null = null;
+      try {
+        photoUrl = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'delivery-photos');
+      } catch (uploadErr) {
+        console.error('❌ [COMPLETE-DELIVERY] Erro no upload, usando fallback');
+      }
+      
+      if (!photoUrl) {
+        photoUrl = `photo-${nanoid(8)}-delivery`;
+      }
+      
+      const now = new Date();
+      const currentPhotos = (stop[0].photos as string[]) || [];
+      
+      // Marcar como entregue (check-in e check-out simultâneos)
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ 
+          checkInTime: now,
+          checkInLatitude: latitude?.toString(),
+          checkInLongitude: longitude?.toString(),
+          checkOutTime: now,
+          checkOutLatitude: latitude?.toString(),
+          checkOutLongitude: longitude?.toString(),
+          photos: [...currentPhotos, photoUrl],
+          status: 'efetuada',
+          completedAt: now,
+          updatedAt: now
+        })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+      
+      // Alterar etapa no Omie para "Entregue" (70) - em background
+      if (stop[0].billingId) {
+        (async () => {
+          try {
+            const billing = await db.select().from(billings)
+              .where(eq(billings.id, stop[0].billingId!))
+              .limit(1);
+            
+            if (billing.length > 0 && billing[0].omieOrderId) {
+              const orderId = parseInt(billing[0].omieOrderId);
+              if (!isNaN(orderId)) {
+                console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${orderId} para "Entregue" no Omie...`);
+                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
+                if (result.success) {
+                  console.log(`✅ [COMPLETE-DELIVERY] Etapa alterada para "Entregue" no Omie`);
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa no Omie:`, error);
+          }
+        })();
+      }
+      
+      // Verificar se rota foi totalmente concluída
+      const allStops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, stop[0].routeId));
+      
+      const allCompleted = allStops.every(s => s.status === 'efetuada' || s.status === 'devolvida');
+      
+      if (allCompleted) {
+        await db.update(deliveryRoutes)
+          .set({ status: 'concluida', endTime: now, updatedAt: now })
+          .where(eq(deliveryRoutes.id, stop[0].routeId));
+        
+        console.log(`🎉 [COMPLETE-DELIVERY] Rota ${stop[0].routeId} totalmente concluída!`);
+      }
+      
+      console.log(`✅ [COMPLETE-DELIVERY] Entrega registrada para parada ${stopId}`);
+      res.json({ 
+        message: "Entrega registrada com sucesso", 
+        stop: updatedStop[0],
+        completedAt: now,
+        photoUrl,
+        routeCompleted: allCompleted
+      });
+    } catch (error: any) {
+      console.error("Error completing delivery:", error);
+      res.status(500).json({ message: "Falha ao registrar entrega", error: error.message });
+    }
+  });
+  
+  // ✅ NOVO ENDPOINT: Devolução com motivo obrigatório e foto opcional
+  app.post("/api/delivery-routes/stops/:stopId/return", authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const { latitude, longitude, reason } = req.body;
+      const userEmail = (req as any).currentUser?.email;
+      
+      console.log(`🔄 [RETURN-DELIVERY] Motorista ${userEmail} registrando devolução da parada ${stopId}`);
+      
+      // Verificar motivo obrigatório
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ message: "Motivo da devolução é obrigatório" });
+      }
+      
+      // Buscar a parada
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+      
+      // Verificar permissão
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+      
+      // Processar foto se enviada
+      let photoUrl: string | null = null;
+      if (req.file) {
+        try {
+          photoUrl = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'delivery-photos');
+        } catch (uploadErr) {
+          console.error('❌ [RETURN-DELIVERY] Erro no upload de foto');
+        }
+      }
+      
+      const now = new Date();
+      const currentPhotos = (stop[0].photos as string[]) || [];
+      const currentNotes = stop[0].notes || '';
+      
+      // Marcar como devolvida com o motivo
+      const returnNotes = `[DEVOLUÇÃO ${now.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}] ${reason.trim()}`;
+      
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ 
+          checkInTime: now,
+          checkInLatitude: latitude?.toString(),
+          checkInLongitude: longitude?.toString(),
+          photos: photoUrl ? [...currentPhotos, photoUrl] : currentPhotos,
+          status: 'devolvida',
+          notes: currentNotes ? `${currentNotes}\n\n${returnNotes}` : returnNotes,
+          updatedAt: now
+        })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+      
+      // Alterar etapa no Omie para "Aguardando Rota" (80) - em background
+      if (stop[0].billingId) {
+        (async () => {
+          try {
+            const billing = await db.select().from(billings)
+              .where(eq(billings.id, stop[0].billingId!))
+              .limit(1);
+            
+            if (billing.length > 0 && billing[0].omieOrderId) {
+              const orderId = parseInt(billing[0].omieOrderId);
+              if (!isNaN(orderId)) {
+                console.log(`🔄 [RETURN-DELIVERY] Alterando pedido ${orderId} para "Aguardando Rota" no Omie...`);
+                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_AGUARDANDO_ROTA);
+                if (result.success) {
+                  console.log(`✅ [RETURN-DELIVERY] Etapa alterada para "Aguardando Rota" no Omie`);
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`❌ [RETURN-DELIVERY] Erro ao alterar etapa no Omie:`, error);
+          }
+        })();
+      }
+      
+      console.log(`🔄 [RETURN-DELIVERY] Devolução registrada para parada ${stopId}: ${reason}`);
+      res.json({ 
+        message: "Devolução registrada com sucesso", 
+        stop: updatedStop[0],
+        reason: reason.trim()
+      });
+    } catch (error: any) {
+      console.error("Error returning delivery:", error);
+      res.status(500).json({ message: "Falha ao registrar devolução", error: error.message });
+    }
+  });
+  
   // Atualizar status de uma parada (pausar, devolvida, etc)
   // Quando devolução, altera etapa da NF no Omie para "Aguardando Rota" (80)
   app.patch("/api/delivery-routes/stops/:stopId/status", authenticateUser, async (req: any, res) => {

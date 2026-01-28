@@ -3,10 +3,12 @@ import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera } from "lucide-react";
+import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera, RotateCcw } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { format } from "date-fns";
@@ -48,7 +50,7 @@ const statusLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  pendente: 'bg-gray-100 text-gray-800',
+  pendente: 'bg-blue-100 text-blue-800',
   efetuada: 'bg-green-100 text-green-800',
   em_pausa: 'bg-yellow-100 text-yellow-800',
   devolvida: 'bg-red-100 text-red-800'
@@ -64,27 +66,44 @@ export default function RotaEntrega() {
   const { user } = useAuth();
   const { toast } = useToast();
   
-  // Get today's date in Brazil timezone (São Paulo)
   const getTodayDateStr = () => {
     const now = toZonedTime(new Date(), 'America/Sao_Paulo');
     return format(now, 'yyyy-MM-dd');
   };
   
   const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
-  const [pendingAction, setPendingAction] = useState<{ type: 'checkin' | 'checkout', stopId: string, latitude: number, longitude: number } | null>(null);
+  
+  // Modal de foto para entrega
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [pendingDeliveryStop, setPendingDeliveryStop] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [isSubmittingPhoto, setIsSubmittingPhoto] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Modal de devolução
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [pendingReturnStop, setPendingReturnStop] = useState<string | null>(null);
+  const [returnReason, setReturnReason] = useState('');
+  const [returnPhoto, setReturnPhoto] = useState<File | null>(null);
+  const [returnPhotoPreview, setReturnPhotoPreview] = useState<string | null>(null);
+  const returnFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Função para fechar o modal e limpar estados
-  const closePhotoModal = () => {
-    if (isSubmittingPhoto) return; // Não fechar enquanto envia
-    setShowPhotoModal(false);
-    setPendingAction(null);
+  const closeDeliveryModal = () => {
+    if (isSubmitting) return;
+    setShowDeliveryModal(false);
+    setPendingDeliveryStop(null);
     setCapturedPhoto(null);
     setPhotoPreview(null);
+  };
+  
+  const closeReturnModal = () => {
+    if (isSubmitting) return;
+    setShowReturnModal(false);
+    setPendingReturnStop(null);
+    setReturnReason('');
+    setReturnPhoto(null);
+    setReturnPhotoPreview(null);
   };
 
   const { data: routes = [], isLoading, refetch, error: routesError } = useQuery<DeliveryRoute[]>({
@@ -108,7 +127,6 @@ export default function RotaEntrega() {
     refetchInterval: 30000,
   });
 
-  // Agrupar todas as entregas de todas as rotas em uma lista única
   const allDeliveries = routes.flatMap(route => 
     (route.stops || []).map(stop => ({
       ...stop,
@@ -135,100 +153,6 @@ export default function RotaEntrega() {
     },
   });
 
-  const checkInMutation = useMutation({
-    mutationFn: async ({ stopId, latitude, longitude }: { stopId: string; latitude: number; longitude: number }) => {
-      return await apiRequest('POST', `/api/delivery-routes/stops/${stopId}/checkin`, {
-        latitude,
-        longitude,
-      });
-    },
-    onSuccess: () => {
-      toast({ title: "Check-in realizado com sucesso!" });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao fazer check-in",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const checkOutMutation = useMutation({
-    mutationFn: async ({ stopId, latitude, longitude }: { stopId: string; latitude: number; longitude: number }) => {
-      return await apiRequest('POST', `/api/delivery-routes/stops/${stopId}/checkout`, {
-        latitude,
-        longitude,
-      });
-    },
-    onSuccess: (data) => {
-      toast({ 
-        title: data.routeCompleted ? "🎉 Rota concluída!" : "Check-out realizado com sucesso!",
-        description: data.routeCompleted ? "Todas as entregas foram concluídas!" : undefined,
-      });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao fazer check-out",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const pauseMutation = useMutation({
-    mutationFn: async (stopId: string) => {
-      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'em_pausa' });
-    },
-    onSuccess: () => {
-      toast({ title: "Entrega pausada" });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao pausar entrega",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const markDeliveredMutation = useMutation({
-    mutationFn: async (stopId: string) => {
-      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'efetuada' });
-    },
-    onSuccess: () => {
-      toast({ title: "Entrega marcada como efetuada" });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao marcar entrega",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const markReturnedMutation = useMutation({
-    mutationFn: async (stopId: string) => {
-      return await apiRequest('PATCH', `/api/delivery-routes/stops/${stopId}/status`, { status: 'devolvida' });
-    },
-    onSuccess: () => {
-      toast({ title: "Entrega marcada como devolvida", variant: "destructive" });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao marcar como devolvida",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   const handlePhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -240,23 +164,106 @@ export default function RotaEntrega() {
       reader.readAsDataURL(file);
     }
   };
+  
+  const handleReturnPhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setReturnPhoto(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setReturnPhotoPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
-  const handleConfirmPhoto = async () => {
-    if (!capturedPhoto || !pendingAction || isSubmittingPhoto) return;
+  // Entrega efetuada com foto
+  const handleDeliveryClick = (stopId: string) => {
+    setPendingDeliveryStop(stopId);
+    setShowDeliveryModal(true);
+  };
+  
+  const handleConfirmDelivery = async () => {
+    if (!capturedPhoto || !pendingDeliveryStop || isSubmitting) return;
 
-    setIsSubmittingPhoto(true);
+    setIsSubmitting(true);
     
-    const formData = new FormData();
-    formData.append('photo', capturedPhoto);
-    formData.append('latitude', pendingAction.latitude.toString());
-    formData.append('longitude', pendingAction.longitude.toString());
-
     try {
-      const endpoint = pendingAction.type === 'checkin' 
-        ? `/api/delivery-routes/stops/${pendingAction.stopId}/checkin`
-        : `/api/delivery-routes/stops/${pendingAction.stopId}/checkout`;
+      // Primeiro obter localização
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if ('geolocation' in navigator) {
+          navigator.geolocation.getCurrentPosition(resolve, reject);
+        } else {
+          reject(new Error('Geolocalização não suportada'));
+        }
+      });
 
-      const response = await fetch(endpoint, {
+      const formData = new FormData();
+      formData.append('photo', capturedPhoto);
+      formData.append('latitude', position.coords.latitude.toString());
+      formData.append('longitude', position.coords.longitude.toString());
+
+      // Fazer check-in e check-out automaticamente (entrega direta)
+      const checkoutResponse = await fetch(`/api/delivery-routes/stops/${pendingDeliveryStop}/complete-delivery`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      if (!checkoutResponse.ok) {
+        const errorData = await checkoutResponse.json();
+        throw new Error(errorData.message || 'Erro ao processar entrega');
+      }
+
+      const data = await checkoutResponse.json();
+      
+      toast({ 
+        title: data.routeCompleted ? "🎉 Rota concluída!" : "Entrega registrada com sucesso!",
+        description: data.routeCompleted ? "Todas as entregas foram concluídas!" : undefined,
+      });
+
+      refetch();
+      closeDeliveryModal();
+    } catch (error: any) {
+      toast({
+        title: "Erro ao registrar entrega",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Devolução com motivo
+  const handleReturnClick = (stopId: string) => {
+    setPendingReturnStop(stopId);
+    setShowReturnModal(true);
+  };
+  
+  const handleConfirmReturn = async () => {
+    if (!pendingReturnStop || !returnReason.trim() || isSubmitting) return;
+
+    setIsSubmitting(true);
+    
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if ('geolocation' in navigator) {
+          navigator.geolocation.getCurrentPosition(resolve, reject);
+        } else {
+          reject(new Error('Geolocalização não suportada'));
+        }
+      });
+
+      const formData = new FormData();
+      formData.append('reason', returnReason.trim());
+      formData.append('latitude', position.coords.latitude.toString());
+      formData.append('longitude', position.coords.longitude.toString());
+      if (returnPhoto) {
+        formData.append('photo', returnPhoto);
+      }
+
+      const response = await fetch(`/api/delivery-routes/stops/${pendingReturnStop}/return`, {
         method: 'POST',
         body: formData,
         credentials: 'include',
@@ -264,345 +271,287 @@ export default function RotaEntrega() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Erro ao processar');
+        throw new Error(errorData.message || 'Erro ao processar devolução');
       }
-
-      const data = await response.json();
       
       toast({ 
-        title: pendingAction.type === 'checkin' ? "Check-in realizado com sucesso!" : (data.routeCompleted ? "🎉 Rota concluída!" : "Check-out realizado com sucesso!"),
-        description: data.routeCompleted ? "Todas as entregas foram concluídas!" : undefined,
+        title: "Devolução registrada",
+        description: "A devolução foi registrada com o motivo informado.",
+        variant: "destructive",
       });
 
       refetch();
-      closePhotoModal();
+      closeReturnModal();
     } catch (error: any) {
       toast({
-        title: `Erro ao fazer ${pendingAction.type === 'checkin' ? 'check-in' : 'check-out'}`,
+        title: "Erro ao registrar devolução",
         description: error.message,
         variant: "destructive",
       });
     } finally {
-      setIsSubmittingPhoto(false);
-    }
-  };
-
-  const handleCheckIn = async (stopId: string) => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setPendingAction({
-            type: 'checkin',
-            stopId,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-          setShowPhotoModal(true);
-        },
-        (error) => {
-          toast({
-            title: "Erro ao obter localização",
-            description: "Permita o acesso à localização para fazer check-in",
-            variant: "destructive",
-          });
-        }
-      );
-    } else {
-      toast({
-        title: "Geolocalização não suportada",
-        description: "Seu dispositivo não suporta geolocalização",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleCheckOut = async (stopId: string) => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setPendingAction({
-            type: 'checkout',
-            stopId,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-          setShowPhotoModal(true);
-        },
-        (error) => {
-          toast({
-            title: "Erro ao obter localização",
-            description: "Permita o acesso à localização para fazer check-out",
-            variant: "destructive",
-          });
-        }
-      );
-    } else {
-      toast({
-        title: "Geolocalização não suportada",
-        description: "Seu dispositivo não suporta geolocalização",
-        variant: "destructive",
-      });
+      setIsSubmitting(false);
     }
   };
 
   const totalDeliveries = allDeliveries.length;
   const completedDeliveries = allDeliveries.filter(d => d.status === 'efetuada').length;
+  const returnedDeliveries = allDeliveries.filter(d => d.status === 'devolvida').length;
   const pendingDeliveries = allDeliveries.filter(d => d.status === 'pendente').length;
-  const pendingRoute = routes.find(r => r.status === 'planejada');
+  const hasStartedRoute = routes.some(r => r.status === 'em_andamento' || r.status === 'rota_enviada');
+  const firstRoute = routes[0];
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
-      <div className="max-w-4xl mx-auto space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Truck className="h-6 w-6" />
-            <h1 className="text-2xl font-bold">Minhas Entregas</h1>
-          </div>
-          <BackToDashboardButton />
-        </div>
-        
+  if (!user) {
+    return (
+      <div className="container mx-auto p-4 max-w-lg">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Truck className="h-6 w-6" />
-              Minhas Entregas
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Date Filter */}
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-gray-600" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="flex-1 p-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-                data-testid="input-delivery-date"
-              />
-            </div>
-
-            {/* Summary Stats */}
-            {!isLoading && totalDeliveries > 0 && (
-              <div className="grid grid-cols-3 gap-3 pt-2">
-                <div className="text-center p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">{totalDeliveries}</div>
-                  <div className="text-xs text-gray-600">Total</div>
-                </div>
-                <div className="text-center p-3 bg-yellow-50 dark:bg-yellow-950 rounded-lg">
-                  <div className="text-2xl font-bold text-yellow-600">{pendingDeliveries}</div>
-                  <div className="text-xs text-gray-600">Pendentes</div>
-                </div>
-                <div className="text-center p-3 bg-green-50 dark:bg-green-950 rounded-lg">
-                  <div className="text-2xl font-bold text-green-600">{completedDeliveries}</div>
-                  <div className="text-xs text-gray-600">Concluídas</div>
-                </div>
-              </div>
-            )}
+          <CardContent className="p-8 text-center">
+            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+            <p className="text-lg font-medium">Acesso restrito</p>
+            <p className="text-gray-500 mt-2">Faça login para acessar sua rota de entregas</p>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
 
-        {/* Error State */}
-        {routesError && (
-          <Card className="border-red-300 bg-red-50 dark:bg-red-950">
-            <CardContent className="py-4">
-              <div className="flex items-center gap-2 text-red-600">
-                <AlertCircle className="h-5 w-5" />
-                <p>Erro ao carregar rotas: {routesError.message}</p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Loading State */}
-        {isLoading && (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600 dark:text-gray-400">Carregando entregas...</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Empty State */}
-        {!isLoading && allDeliveries.length === 0 && !routesError && (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <Package className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Nenhuma entrega encontrada</h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Não há entregas programadas para esta data
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Start Route Button (if route is planned) */}
-        {!isLoading && pendingRoute && (
-          <Button
-            onClick={() => startRouteMutation.mutate(pendingRoute.id)}
-            disabled={startRouteMutation.isPending}
-            className="w-full"
-            size="lg"
-            data-testid="button-start-route"
-          >
-            <PlayCircle className="mr-2 h-5 w-5" />
-            {startRouteMutation.isPending ? 'Iniciando Rota...' : 'Iniciar Rota de Entregas'}
-          </Button>
-        )}
-
-        {/* Deliveries List */}
-        {!isLoading && allDeliveries.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="font-semibold text-lg px-1">Lista de Entregas</h3>
-            {allDeliveries.map((delivery) => {
-              const isCompleted = delivery.status === 'efetuada';
-              const isPending = delivery.status === 'pendente';
-
-              return (
-                <Card
-                  key={delivery.id}
-                  className={`${
-                    isCompleted 
-                      ? 'border-green-300 bg-green-50 dark:bg-green-950' 
-                      : delivery.isPriority
-                      ? 'border-red-300 bg-red-50 dark:bg-red-950'
-                      : ''
-                  }`}
-                  data-testid={`delivery-${delivery.id}`}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 flex-1">
-                        <div className={`flex-shrink-0 w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
-                          isCompleted ? 'bg-green-600' : delivery.isPriority ? 'bg-red-600' : 'bg-gray-400'
-                        }`}>
-                          {delivery.stopOrder}
-                        </div>
-                        
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="font-semibold">{delivery.customerName}</p>
-                            {delivery.isPriority && (
-                              <Badge variant="destructive" className="text-xs">
-                                Urgente
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-2">
-                            <MapPin className="h-4 w-4" />
-                            {delivery.customerAddress}
-                          </p>
-                          {delivery.estimatedArrival && (
-                            <p className="text-xs text-blue-600 flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              Previsto: {delivery.estimatedArrival}
-                            </p>
-                          )}
-                          {delivery.completedAt && (
-                            <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
-                              <CheckCircle className="h-3 w-3" />
-                              Concluído: {formatInTimeZone(new Date(delivery.completedAt), 'America/Sao_Paulo', 'HH:mm')}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Action Buttons */}
-                      <div className="flex flex-col gap-2">
-                        {/* Waze Button */}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-blue-600"
-                          onClick={() => {
-                            window.open(
-                              `https://waze.com/ul?ll=${delivery.customerLatitude},${delivery.customerLongitude}&navigate=yes`,
-                              '_blank'
-                            );
-                          }}
-                          data-testid={`button-waze-${delivery.id}`}
-                        >
-                          <Navigation className="h-4 w-4" />
-                        </Button>
-
-                        {/* Check-in/Check-out Buttons */}
-                        {(delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && (
-                          <>
-                            {isPending && (
-                              <Button
-                                size="sm"
-                                variant="default"
-                                onClick={() => handleCheckIn(delivery.id)}
-                                data-testid={`button-checkin-${delivery.id}`}
-                              >
-                                Check-in
-                              </Button>
-                            )}
-                            {!isPending && !isCompleted && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  className="bg-green-600 hover:bg-green-700"
-                                  onClick={() => handleCheckOut(delivery.id)}
-                                  data-testid={`button-checkout-${delivery.id}`}
-                                >
-                                  Check-out
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="text-yellow-600 border-yellow-600"
-                                  onClick={() => pauseMutation.mutate(delivery.id)}
-                                  disabled={pauseMutation.isPending}
-                                  data-testid={`button-pause-${delivery.id}`}
-                                >
-                                  ⏸️ Pausar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => markReturnedMutation.mutate(delivery.id)}
-                                  disabled={markReturnedMutation.isPending}
-                                  data-testid={`button-returned-${delivery.id}`}
-                                >
-                                  ❌ DEVOLVIDO
-                                </Button>
-                              </>
-                            )}
-                            {isCompleted && (
-                              <Badge className="bg-green-500">✅ Efetuada</Badge>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+  return (
+    <div className="container mx-auto p-4 max-w-lg pb-24">
+      <BackToDashboardButton />
+      
+      <div className="text-center mb-4">
+        <h1 className="text-2xl font-bold flex items-center justify-center gap-2">
+          <Truck className="h-6 w-6" />
+          Minhas Entregas
+        </h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Olá, {user?.firstName || user?.email}
+        </p>
       </div>
 
-      {/* Photo Capture Modal */}
-      <Dialog open={showPhotoModal} onOpenChange={(open) => !open && closePhotoModal()}>
+      {/* Date Selector */}
+      <div className="mb-4">
+        <Label className="text-sm font-medium">Data</Label>
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="w-full p-2 border rounded-md mt-1"
+        />
+      </div>
+
+      {/* Loading State */}
+      {isLoading && (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-500">Carregando suas entregas...</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Error State */}
+      {routesError && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="p-6 text-center">
+            <AlertCircle className="h-10 w-10 text-red-500 mx-auto mb-3" />
+            <p className="text-red-700 font-medium">Erro ao carregar entregas</p>
+            <p className="text-red-600 text-sm mt-1">{(routesError as any).message}</p>
+            <Button onClick={() => refetch()} className="mt-4" variant="outline">
+              Tentar novamente
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* No Routes */}
+      {!isLoading && !routesError && allDeliveries.length === 0 && (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-lg font-medium text-gray-700">Nenhuma entrega para hoje</p>
+            <p className="text-gray-500 text-sm mt-1">Você não tem entregas programadas para esta data</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Summary */}
+      {!isLoading && allDeliveries.length > 0 && (
+        <Card className="mb-4 bg-gradient-to-r from-blue-50 to-green-50">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div>
+                <p className="text-2xl font-bold text-blue-600">{totalDeliveries}</p>
+                <p className="text-xs text-gray-600">Total</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-600">{pendingDeliveries}</p>
+                <p className="text-xs text-gray-600">Pendentes</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600">{completedDeliveries}</p>
+                <p className="text-xs text-gray-600">Efetuadas</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-red-600">{returnedDeliveries}</p>
+                <p className="text-xs text-gray-600">Devolvidas</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Start Route Button */}
+      {firstRoute && !hasStartedRoute && (
+        <Button
+          className="w-full mb-4 bg-green-600 hover:bg-green-700 h-14 text-lg"
+          onClick={() => startRouteMutation.mutate(firstRoute.id)}
+          disabled={startRouteMutation.isPending}
+        >
+          <PlayCircle className="mr-2 h-6 w-6" />
+          {startRouteMutation.isPending ? 'Iniciando...' : 'Iniciar Rota'}
+        </Button>
+      )}
+
+      {/* Deliveries List */}
+      {!isLoading && allDeliveries.length > 0 && (
+        <div className="space-y-3">
+          {allDeliveries.map((delivery) => {
+            const isCompleted = delivery.status === 'efetuada';
+            const isReturned = delivery.status === 'devolvida';
+            const isPending = delivery.status === 'pendente';
+            const canAct = (delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && isPending;
+
+            return (
+              <Card
+                key={delivery.id}
+                className={`${
+                  isCompleted 
+                    ? 'border-green-300 bg-green-50' 
+                    : isReturned
+                    ? 'border-red-300 bg-red-50'
+                    : delivery.isPriority
+                    ? 'border-orange-300 bg-orange-50'
+                    : 'border-gray-200'
+                }`}
+              >
+                <CardContent className="p-4">
+                  {/* Customer Info */}
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className={`flex-shrink-0 w-10 h-10 rounded-full text-white flex items-center justify-center text-lg font-bold ${
+                      isCompleted ? 'bg-green-600' : isReturned ? 'bg-red-600' : delivery.isPriority ? 'bg-orange-600' : 'bg-blue-600'
+                    }`}>
+                      {delivery.stopOrder}
+                    </div>
+                    
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-bold text-lg">{delivery.customerName}</p>
+                        {delivery.isPriority && (
+                          <Badge variant="destructive" className="text-xs">Urgente</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 flex items-start gap-1">
+                        <MapPin className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        <span>{delivery.customerAddress}</span>
+                      </p>
+                      
+                      {/* Status Badge */}
+                      <Badge className={`mt-2 ${statusColors[delivery.status]}`}>
+                        {statusLabels[delivery.status]}
+                      </Badge>
+                      
+                      {delivery.completedAt && (
+                        <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
+                          <CheckCircle className="h-3 w-3" />
+                          Concluído: {formatInTimeZone(new Date(delivery.completedAt), 'America/Sao_Paulo', 'HH:mm')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Buttons - Simplified */}
+                  <div className="flex gap-2">
+                    {/* Waze Button - Always visible */}
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="flex-1 text-blue-600 border-blue-600 h-12"
+                      onClick={() => {
+                        window.open(
+                          `https://waze.com/ul?ll=${delivery.customerLatitude},${delivery.customerLongitude}&navigate=yes`,
+                          '_blank'
+                        );
+                      }}
+                    >
+                      <Navigation className="h-5 w-5 mr-2" />
+                      Waze
+                    </Button>
+
+                    {/* Delivery Button - Only when pending and route started */}
+                    {canAct && (
+                      <>
+                        <Button
+                          size="lg"
+                          className="flex-1 bg-green-600 hover:bg-green-700 h-12"
+                          onClick={() => handleDeliveryClick(delivery.id)}
+                        >
+                          <Camera className="h-5 w-5 mr-2" />
+                          Entregar
+                        </Button>
+
+                        <Button
+                          size="lg"
+                          variant="destructive"
+                          className="flex-1 h-12"
+                          onClick={() => handleReturnClick(delivery.id)}
+                        >
+                          <RotateCcw className="h-5 w-5 mr-2" />
+                          Devolver
+                        </Button>
+                      </>
+                    )}
+
+                    {/* Completed State */}
+                    {isCompleted && (
+                      <div className="flex-1 flex items-center justify-center bg-green-100 rounded-md h-12">
+                        <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                        <span className="font-medium text-green-700">Entregue</span>
+                      </div>
+                    )}
+
+                    {/* Returned State */}
+                    {isReturned && (
+                      <div className="flex-1 flex items-center justify-center bg-red-100 rounded-md h-12">
+                        <RotateCcw className="h-5 w-5 text-red-600 mr-2" />
+                        <span className="font-medium text-red-700">Devolvida</span>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Delivery Photo Modal */}
+      <Dialog open={showDeliveryModal} onOpenChange={(open) => !open && closeDeliveryModal()}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {pendingAction?.type === 'checkin' ? 'Check-in' : 'Check-out'} - Capturar Foto
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5 text-green-600" />
+              Registrar Entrega
             </DialogTitle>
             <DialogDescription>
-              Tire uma foto para registrar a entrega
+              Tire uma foto do local ou comprovante de entrega
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            {isSubmittingPhoto ? (
+            {isSubmitting ? (
               <div className="flex flex-col items-center justify-center py-8 space-y-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
-                <p className="text-lg font-medium text-gray-700">Enviando foto...</p>
+                <p className="text-lg font-medium text-gray-700">Registrando entrega...</p>
                 <p className="text-sm text-gray-500">Aguarde, isso pode levar alguns segundos</p>
               </div>
             ) : !photoPreview ? (
@@ -614,65 +563,148 @@ export default function RotaEntrega() {
                   capture="environment"
                   onChange={handlePhotoCapture}
                   className="hidden"
-                  data-testid="photo-input"
                 />
                 <Button
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full"
-                  data-testid="button-capture-photo"
+                  className="w-full h-14 text-lg bg-green-600 hover:bg-green-700"
                 >
-                  <Camera className="mr-2 h-4 w-4" />
+                  <Camera className="mr-2 h-6 w-6" />
                   Tirar Foto
                 </Button>
                 <Button
-                  onClick={closePhotoModal}
+                  onClick={closeDeliveryModal}
                   variant="outline"
                   className="w-full"
-                  data-testid="button-cancel-photo"
                 >
-                  ← Voltar às Entregas
+                  Cancelar
                 </Button>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="relative">
-                  <img
-                    src={photoPreview}
-                    alt="Preview"
-                    className="w-full rounded-lg"
-                  />
-                </div>
+                <img
+                  src={photoPreview}
+                  alt="Preview"
+                  className="w-full rounded-lg max-h-64 object-cover"
+                />
                 <div className="flex gap-2">
                   <Button
                     onClick={() => {
                       setCapturedPhoto(null);
                       setPhotoPreview(null);
-                      fileInputRef.current?.click();
                     }}
                     variant="outline"
                     className="flex-1"
-                    data-testid="button-retake-photo"
                   >
-                    Tirar Novamente
+                    Tirar outra
                   </Button>
                   <Button
-                    onClick={handleConfirmPhoto}
+                    onClick={handleConfirmDelivery}
                     className="flex-1 bg-green-600 hover:bg-green-700"
-                    data-testid="button-confirm-photo"
                   >
                     <CheckCircle className="mr-2 h-4 w-4" />
                     Confirmar
                   </Button>
                 </div>
-                <Button
-                  onClick={closePhotoModal}
-                  variant="ghost"
-                  className="w-full text-gray-500"
-                  data-testid="button-back-to-deliveries"
-                >
-                  ← Voltar às Entregas
-                </Button>
               </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Return Modal */}
+      <Dialog open={showReturnModal} onOpenChange={(open) => !open && closeReturnModal()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <RotateCcw className="h-5 w-5" />
+              Registrar Devolução
+            </DialogTitle>
+            <DialogDescription>
+              Informe o motivo da devolução
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {isSubmitting ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600"></div>
+                <p className="text-lg font-medium text-gray-700">Registrando devolução...</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <Label htmlFor="reason" className="font-medium">
+                    Motivo da Devolução *
+                  </Label>
+                  <Textarea
+                    id="reason"
+                    placeholder="Ex: Cliente ausente, endereço não encontrado, recusou receber..."
+                    value={returnReason}
+                    onChange={(e) => setReturnReason(e.target.value)}
+                    className="mt-2 min-h-[100px]"
+                  />
+                </div>
+                
+                <div>
+                  <Label className="font-medium">Foto (opcional)</Label>
+                  <input
+                    ref={returnFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleReturnPhotoCapture}
+                    className="hidden"
+                  />
+                  {!returnPhotoPreview ? (
+                    <Button
+                      onClick={() => returnFileInputRef.current?.click()}
+                      variant="outline"
+                      className="w-full mt-2"
+                    >
+                      <Camera className="mr-2 h-4 w-4" />
+                      Adicionar Foto
+                    </Button>
+                  ) : (
+                    <div className="mt-2 space-y-2">
+                      <img
+                        src={returnPhotoPreview}
+                        alt="Preview"
+                        className="w-full rounded-lg max-h-32 object-cover"
+                      />
+                      <Button
+                        onClick={() => {
+                          setReturnPhoto(null);
+                          setReturnPhotoPreview(null);
+                        }}
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                      >
+                        Remover foto
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="flex gap-2">
+                  <Button
+                    onClick={closeReturnModal}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleConfirmReturn}
+                    variant="destructive"
+                    className="flex-1"
+                    disabled={!returnReason.trim()}
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Confirmar Devolução
+                  </Button>
+                </DialogFooter>
+              </>
             )}
           </div>
         </DialogContent>
