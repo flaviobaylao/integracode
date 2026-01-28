@@ -28,6 +28,7 @@ interface DeliveryStop {
   estimatedDuration: number;
   isPriority: boolean;
   completedAt: string | null;
+  photos: string[] | null;
 }
 
 interface DeliveryRoute {
@@ -88,6 +89,10 @@ export default function RotaEntrega() {
   const [returnPhoto, setReturnPhoto] = useState<File | null>(null);
   const [returnPhotoPreview, setReturnPhotoPreview] = useState<string | null>(null);
   const returnFileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Modal para visualização de foto em tamanho completo
+  const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
+  const [selectedPhotoCustomer, setSelectedPhotoCustomer] = useState<string>('');
 
   const closeDeliveryModal = () => {
     if (isSubmitting) return;
@@ -466,6 +471,29 @@ export default function RotaEntrega() {
                           Concluído: {formatInTimeZone(new Date(delivery.completedAt), 'America/Sao_Paulo', 'HH:mm')}
                         </p>
                       )}
+                      
+                      {/* Miniatura da foto da entrega */}
+                      {delivery.photos && delivery.photos.length > 0 && (
+                        <div className="mt-2">
+                          <div 
+                            className="inline-block cursor-pointer rounded-lg overflow-hidden border-2 border-green-400 hover:border-green-600 transition-colors"
+                            onClick={() => {
+                              setSelectedPhotoUrl(delivery.photos![0]);
+                              setSelectedPhotoCustomer(delivery.customerName);
+                            }}
+                          >
+                            <img 
+                              src={delivery.photos[0]} 
+                              alt={`Foto da entrega - ${delivery.customerName}`}
+                              className="w-16 h-16 object-cover"
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <Camera className="h-3 w-3" />
+                            Toque para ampliar
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -706,6 +734,37 @@ export default function RotaEntrega() {
                 </DialogFooter>
               </>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal para visualização de foto em tamanho completo */}
+      <Dialog open={!!selectedPhotoUrl} onOpenChange={() => setSelectedPhotoUrl(null)}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden">
+          <div className="relative">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="absolute top-2 right-2 z-10 bg-white/90 hover:bg-white rounded-full h-10 w-10"
+              onClick={() => setSelectedPhotoUrl(null)}
+            >
+              ✕
+            </Button>
+            
+            {selectedPhotoUrl && (
+              <img 
+                src={selectedPhotoUrl} 
+                alt={`Foto da entrega - ${selectedPhotoCustomer}`}
+                className="w-full max-h-[85vh] object-contain bg-black"
+              />
+            )}
+            
+            <div className="p-4 bg-white dark:bg-gray-800">
+              <p className="text-center text-lg font-semibold flex items-center justify-center gap-2">
+                <Camera className="h-5 w-5 text-green-600" />
+                {selectedPhotoCustomer}
+              </p>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
