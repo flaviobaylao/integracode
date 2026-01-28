@@ -15423,7 +15423,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
-      const visits: any[] = await Promise.all(
+      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
+      const allVisits: any[] = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
           // optimizedOrder agora contém IDs de clientes, não de sales_cards
           const [customer] = await db.select({
@@ -15436,7 +15437,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             scheduledDate: sql<Date>`${route.routeDate}::timestamp`, // Data da rota
             isVirtual: customers.virtualService,
             weekdays: customers.weekdays, // Dias da semana de cadastro do cliente
-            visitPeriodicity: customers.visitPeriodicity // Periodicidade (semanal, quinzenal, mensal)
+            visitPeriodicity: customers.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
+            omieStatus: customers.omieStatus // Status do cliente para filtragem
           })
             .from(customers)
             .where(eq(customers.id, customerId))
@@ -15445,6 +15447,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return customer;
         })
       );
+      
+      // Filtrar apenas clientes ativos
+      const visits: any[] = allVisits.filter(v => v && v.omieStatus === 'ativo');
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para hoje
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
@@ -15885,13 +15890,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { inArray } = await import('drizzle-orm');
       const { db } = await import('./db');
       
-      // Buscar customers
+      // Buscar customers (apenas ativos)
+      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
       let customersData: any[] = [];
       if (customerIds.length > 0) {
         customersData = await db
           .select()
           .from(customers)
-          .where(inArray(customers.id, customerIds));
+          .where(and(
+            inArray(customers.id, customerIds),
+            eq(customers.omieStatus, 'ativo')
+          ));
+        
+        const inactiveCount = customerIds.length - customersData.length;
+        if (inactiveCount > 0) {
+          console.log(`⚠️ [FILTER] ${inactiveCount} cliente(s) inativo(s) removido(s) da rota`);
+        }
       }
       
       // Buscar leads
@@ -17098,6 +17112,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!customer) {
         return res.status(404).json({ message: 'Cliente não encontrado' });
+      }
+      
+      // ✅ VALIDAÇÃO: Verificar se cliente está ativo
+      if (customer.omieStatus !== 'ativo') {
+        return res.status(400).json({ 
+          message: `Cliente "${customer.fantasyName || customer.name}" está inativo e não pode ser adicionado à rota.`
+        });
       }
       
       // Criar sales_card para esta visita
