@@ -29,6 +29,7 @@ interface DeliveryStop {
   isPriority: boolean;
   completedAt: string | null;
   photos: string[] | null;
+  notes: string | null;
 }
 
 interface DeliveryRoute {
@@ -464,6 +465,21 @@ export default function RotaEntrega() {
                       <Badge className={`mt-2 ${statusColors[delivery.status]}`}>
                         {statusLabels[delivery.status]}
                       </Badge>
+                      
+                      {/* Motivo de devolução */}
+                      {delivery.status === 'devolvida' && delivery.notes && (
+                        <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-lg">
+                          <p className="text-xs font-semibold text-red-700 flex items-center gap-1 mb-1">
+                            <AlertCircle className="h-3 w-3" />
+                            Motivo da Devolução:
+                          </p>
+                          <p className="text-sm text-red-800">
+                            {delivery.notes.includes('[DEVOLUÇÃO') 
+                              ? delivery.notes.split('] ').pop() 
+                              : delivery.notes}
+                          </p>
+                        </div>
+                      )}
                       
                       {delivery.completedAt && (
                         <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
