@@ -2477,22 +2477,35 @@ export class OmieService {
         try {
           const extractedCode = sellerId.replace('omie-vendor-', '');
           omieVendorCode = parseInt(extractedCode, 10);
-          console.log(`✅ Código de vendedor Omie extraído: ${sellerId} -> ${omieVendorCode}`);
+          console.log(`✅ Código de vendedor Omie extraído do ID: ${sellerId} -> ${omieVendorCode}`);
         } catch (error) {
           console.error('❌ Erro ao extrair código do vendedor:', error);
         }
       } 
-      // Caso 2: Se sellerId não começa com 'omie-vendor-', buscar pelo email no Omie
+      // Caso 2: Se sellerId não começa com 'omie-vendor-', buscar o usuário e usar omieVendorCode
       else if (sellerId && this.storage) {
         try {
           const seller = await this.storage.getUser(sellerId);
-          if (seller && seller.email) {
-            const omieVendor = await this.getVendorByEmail(seller.email);
-            if (omieVendor) {
-              omieVendorCode = omieVendor.codigo;
-              console.log('✅ Vendedor encontrado no Omie pelo CRM:', seller.email, 'Código:', omieVendorCode);
-            } else {
-              console.log('⚠️ Vendedor não encontrado no Omie pelo email:', seller.email);
+          console.log(`🔍 Buscando vendedor: ${sellerId}`, { 
+            sellerName: seller?.name || seller?.email,
+            omieVendorCode: seller?.omieVendorCode 
+          });
+          
+          if (seller) {
+            // Prioridade 1: Usar omieVendorCode armazenado no usuário
+            if (seller.omieVendorCode) {
+              omieVendorCode = seller.omieVendorCode;
+              console.log(`✅ Código de vendedor Omie do usuário: ${seller.email} -> ${omieVendorCode}`);
+            }
+            // Prioridade 2: Buscar pelo email no Omie
+            else if (seller.email) {
+              const omieVendor = await this.getVendorByEmail(seller.email);
+              if (omieVendor) {
+                omieVendorCode = omieVendor.codigo;
+                console.log('✅ Vendedor encontrado no Omie pelo email:', seller.email, 'Código:', omieVendorCode);
+              } else {
+                console.log('⚠️ Vendedor não encontrado no Omie pelo email:', seller.email);
+              }
             }
           }
         } catch (error) {
