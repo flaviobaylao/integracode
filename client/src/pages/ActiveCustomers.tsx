@@ -224,9 +224,6 @@ export default function ActiveCustomers() {
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const tableContainerRef = useRef<HTMLDivElement>(null);
-  const topScrollRef = useRef<HTMLDivElement>(null);
-  const isScrollingSyncRef = useRef(false);
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
@@ -1051,39 +1048,17 @@ export default function ActiveCustomers() {
                 </div>
               ) : (
                 <>
-                {/* Barra de rolagem horizontal no topo */}
+                {/* Container com barra de rolagem horizontal no topo usando rotação */}
                 <div 
-                  ref={topScrollRef}
-                  className="overflow-x-scroll"
-                  style={{ overflowY: 'hidden', marginBottom: '4px' }}
-                  onScroll={(e) => {
-                    if (isScrollingSyncRef.current) return;
-                    isScrollingSyncRef.current = true;
-                    if (tableContainerRef.current) {
-                      tableContainerRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                    }
-                    setTimeout(() => { isScrollingSyncRef.current = false; }, 10);
-                  }}
-                >
-                  <div style={{ width: '1800px', height: '12px' }}></div>
-                </div>
-                <div 
-                  ref={tableContainerRef}
-                  className="overflow-x-scroll" 
+                  className="overflow-x-auto" 
                   style={{ 
-                    scrollbarWidth: 'auto',
-                    maxHeight: 'calc(100vh - 300px)',
-                    overflowY: 'auto'
-                  }}
-                  onScroll={(e) => {
-                    if (isScrollingSyncRef.current) return;
-                    isScrollingSyncRef.current = true;
-                    if (topScrollRef.current) {
-                      topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                    }
-                    setTimeout(() => { isScrollingSyncRef.current = false; }, 10);
+                    maxHeight: 'calc(100vh - 280px)',
+                    overflowY: 'auto',
+                    direction: 'rtl',
+                    transform: 'rotateX(180deg)'
                   }}
                 >
+                <div style={{ direction: 'ltr', transform: 'rotateX(180deg)' }}>
                   <Table className="min-w-[1800px]">
                     <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
@@ -1290,6 +1265,7 @@ export default function ActiveCustomers() {
                       )}
                     </TableBody>
                   </Table>
+                </div>
                 </div>
                 </>
               )}
