@@ -652,6 +652,21 @@ export default function DriverManagement() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="edit-email">Email (obrigatório para login)</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={driverForm.email}
+                onChange={(e) => setDriverForm({...driverForm, email: e.target.value})}
+                placeholder="motorista@empresa.com.br"
+                data-testid="edit-input-email"
+              />
+              <p className="text-xs text-muted-foreground">
+                O email é usado para login do motorista no sistema de entregas
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="edit-vehicle-type">Tipo de Veículo</Label>
               <select
                 id="edit-vehicle-type"

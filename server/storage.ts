@@ -4571,6 +4571,7 @@ export class DatabaseStorage implements IStorage {
     
     if (data.name !== undefined) updateData.name = data.name;
     if (data.phone !== undefined) updateData.phone = data.phone;
+    if (data.email !== undefined) updateData.email = data.email;
     if (data.vehicleType !== undefined) updateData.vehicleType = data.vehicleType;
     if (data.licensePlate !== undefined) updateData.licensePlate = data.licensePlate;
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
