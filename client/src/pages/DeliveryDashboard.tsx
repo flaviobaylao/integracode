@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { useLocation } from "wouter";
 import { 
   Truck, 
   Package, 
@@ -14,7 +15,8 @@ import {
   BarChart3,
   Users,
   TrendingUp,
-  AlertTriangle
+  AlertTriangle,
+  ClipboardList
 } from "lucide-react";
 
 interface DeliveryStats {
@@ -42,6 +44,7 @@ const deliveryStatusConfig = {
 };
 
 export default function DeliveryDashboard() {
+  const [, navigate] = useLocation();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
 
   // Query para estatísticas de entregas
@@ -85,7 +88,7 @@ export default function DeliveryDashboard() {
         <BackToDashboardButton />
       </div>
       
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-2 flex-wrap gap-2">
         <select
           value={selectedPeriod}
           onChange={(e) => setSelectedPeriod(e.target.value)}
@@ -96,6 +99,16 @@ export default function DeliveryDashboard() {
           <option value="week">Esta Semana</option>
           <option value="month">Este Mês</option>
         </select>
+        <Button 
+          variant="default" 
+          size="sm" 
+          className="bg-blue-600 hover:bg-blue-700"
+          onClick={() => navigate('/entregas-do-dia')}
+          data-testid="button-entregas-dia"
+        >
+          <ClipboardList className="h-4 w-4 mr-2" />
+          Entregas do Dia
+        </Button>
         <Button variant="outline" size="sm" data-testid="button-refresh">
           <BarChart3 className="h-4 w-4 mr-2" />
           Relatórios
