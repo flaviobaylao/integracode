@@ -619,6 +619,7 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   checkOutLatitude: decimal("check_out_latitude", { precision: 10, scale: 8 }), // Coordenadas do check-out
   checkOutLongitude: decimal("check_out_longitude", { precision: 11, scale: 8 }),
   photos: jsonb("photos").$type<string[]>().default([]), // Array de URLs de fotos
+  notes: text("notes"), // Observações do motorista (motivo de devolução, etc)
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

@@ -77,6 +77,7 @@ interface RouteStop {
   checkOutTime?: string;
   photos?: string[];
   completedAt?: string;
+  notes?: string;
 }
 
 interface DeliveryRoute {
@@ -1110,6 +1111,25 @@ export default function RoutesSummary() {
                               )}
                             </div>
 
+                            {/* Observações/Notas do motorista */}
+                            {stop.notes && (
+                              <div className="border-t pt-2">
+                                <div className="text-sm text-muted-foreground mb-1 flex items-center">
+                                  <FileText className="h-4 w-4 mr-1" />
+                                  Observações do Motorista
+                                </div>
+                                <div className={`text-sm p-2 rounded ${
+                                  stop.status === 'devolvida' 
+                                    ? 'bg-red-50 text-red-800 border border-red-200' 
+                                    : 'bg-gray-50 text-gray-800 border border-gray-200'
+                                }`}>
+                                  {stop.notes.includes('[DEVOLUÇÃO') 
+                                    ? stop.notes.split('] ').pop() 
+                                    : stop.notes}
+                                </div>
+                              </div>
+                            )}
+
                             {/* Fotos */}
                             {stop.photos && stop.photos.length > 0 && (
                               <div className="border-t pt-2">
@@ -1123,7 +1143,8 @@ export default function RoutesSummary() {
                                       key={idx}
                                       src={photo}
                                       alt={`Foto ${idx + 1}`}
-                                      className="w-full h-24 object-cover rounded border"
+                                      className="w-full h-24 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
+                                      onClick={() => window.open(photo, '_blank')}
                                     />
                                   ))}
                                 </div>
