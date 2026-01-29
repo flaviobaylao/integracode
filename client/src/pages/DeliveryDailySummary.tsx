@@ -288,7 +288,6 @@ export default function DeliveryDailySummary() {
                     <TableHead className="w-[50px]">#</TableHead>
                     <TableHead>Motorista</TableHead>
                     <TableHead>Cliente</TableHead>
-                    <TableHead>Endereço</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-center">Horários</TableHead>
                     <TableHead className="text-center">Fotos</TableHead>
@@ -310,19 +309,13 @@ export default function DeliveryDailySummary() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Truck className="h-4 w-4 text-gray-500" />
-                          <span className="font-medium">{delivery.driverName}</span>
-                        </div>
+                        <span className="font-medium">{delivery.driverName}</span>
                       </TableCell>
                       <TableCell>
                         <span className="font-medium">{delivery.customerName}</span>
                         {delivery.isPriority && (
                           <Badge variant="destructive" className="ml-2 text-xs">Urgente</Badge>
                         )}
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate" title={delivery.customerAddress}>
-                        {delivery.customerAddress}
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center gap-1">
