@@ -56,6 +56,22 @@ function sortTimeSlots(slots: string[]): string[] {
   });
 }
 
+// Endereços de partida disponíveis
+const START_LOCATIONS = [
+  { 
+    id: 'honest-goiania', 
+    name: 'HONEST GOIANIA', 
+    latitude: -16.719458733340122, 
+    longitude: -49.29937095026935 
+  },
+  { 
+    id: 'baruc-bsb', 
+    name: 'BARUC BSB', 
+    latitude: -16.049611084920134, 
+    longitude: -47.997992569313645 
+  }
+];
+
 interface DeliveryOrder {
   id: string;
   invoiceNumber: string;
@@ -1245,12 +1261,33 @@ export default function DeliveryManagement() {
 
                         <div className="col-span-2 space-y-2">
                           <Label>Endereço de Partida</Label>
-                          <Input
+                          <Select
                             value={vehicle.startAddress}
-                            onChange={(e) => updateVehicle(idx, 'startAddress', e.target.value)}
-                            placeholder="Ex: São Paulo - Depósito Principal"
-                            data-testid={`input-start-address-${idx}`}
-                          />
+                            onValueChange={(value) => {
+                              const location = START_LOCATIONS.find(loc => loc.name === value);
+                              if (location) {
+                                const updated = [...vehicles];
+                                updated[idx] = { 
+                                  ...updated[idx], 
+                                  startAddress: location.name,
+                                  startLatitude: location.latitude,
+                                  startLongitude: location.longitude
+                                };
+                                setVehicles(updated);
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid={`select-start-address-${idx}`}>
+                              <SelectValue placeholder="Selecione o endereço de partida" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {START_LOCATIONS.map((location) => (
+                                <SelectItem key={location.id} value={location.name}>
+                                  {location.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
 
                         <div className="space-y-2">
@@ -1261,6 +1298,8 @@ export default function DeliveryManagement() {
                             value={vehicle.startLatitude}
                             onChange={(e) => updateVehicle(idx, 'startLatitude', parseFloat(e.target.value))}
                             data-testid={`input-lat-${idx}`}
+                            readOnly
+                            className="bg-gray-50"
                           />
                         </div>
 
@@ -1272,6 +1311,8 @@ export default function DeliveryManagement() {
                             value={vehicle.startLongitude}
                             onChange={(e) => updateVehicle(idx, 'startLongitude', parseFloat(e.target.value))}
                             data-testid={`input-lon-${idx}`}
+                            readOnly
+                            className="bg-gray-50"
                           />
                         </div>
                       </div>
