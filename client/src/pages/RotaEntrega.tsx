@@ -46,6 +46,7 @@ interface DeliveryRoute {
 
 const statusLabels: Record<string, string> = {
   pendente: 'Pendente',
+  pending: 'Pendente',
   efetuada: 'Efetuada',
   em_pausa: 'Em Pausa',
   devolvida: 'Devolvida'
@@ -53,6 +54,7 @@ const statusLabels: Record<string, string> = {
 
 const statusColors: Record<string, string> = {
   pendente: 'bg-blue-100 text-blue-800',
+  pending: 'bg-blue-100 text-blue-800',
   efetuada: 'bg-green-100 text-green-800',
   em_pausa: 'bg-yellow-100 text-yellow-800',
   devolvida: 'bg-red-100 text-red-800'
@@ -424,7 +426,7 @@ export default function RotaEntrega() {
           {allDeliveries.map((delivery) => {
             const isCompleted = delivery.status === 'efetuada';
             const isReturned = delivery.status === 'devolvida';
-            const isPending = delivery.status === 'pendente';
+            const isPending = delivery.status === 'pendente' || delivery.status === 'pending';
             const canAct = (delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && isPending;
 
             return (
