@@ -197,6 +197,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     { id: 'delivery-dashboard', label: 'Dashboard de Entregas', icon: 'fas fa-tachometer-alt' },
     { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast' },
     { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route' },
+    { id: 'entregas-do-dia', label: 'Entregas do Dia', icon: 'fas fa-clipboard-list' },
     { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt' },
     { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie' },
     { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line' },
@@ -253,7 +254,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
+    const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
