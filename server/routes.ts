@@ -8803,9 +8803,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota para sincronizar débitos do Omie (operação demorada)
+  // Rota para sincronizar débitos do Omie (operação demorada) - Apenas usuários administrativos
   app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
     try {
+      // Verificar se usuário tem permissão para sincronizar (admin, coordinator, administrative)
+      const userRole = req.user?.role;
+      if (!userRole || !['admin', 'coordinator', 'administrative'].includes(userRole)) {
+        return res.status(403).json({ 
+          message: "Apenas usuários administrativos podem sincronizar débitos" 
+        });
+      }
+
       // Evitar cache
       res.set({
         'Cache-Control': 'no-cache, no-store, must-revalidate',

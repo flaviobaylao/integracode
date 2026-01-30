@@ -13,6 +13,7 @@ import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle } from "
 import WhatsAppButton from "@/components/WhatsAppButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from 'xlsx';
+import type { User } from "@shared/schema";
 
 interface OverdueDebt {
   cliente: {
@@ -57,6 +58,15 @@ export default function OverdueDebtsManagement() {
   const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Query para buscar usuário logado
+  const { data: user } = useQuery<User>({
+    queryKey: ['/api/auth/user'],
+    staleTime: 1000 * 60 * 5, // 5 minutos
+  });
+
+  // Verificar se usuário pode sincronizar (apenas admin, coordinator, administrative)
+  const canSync = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   // Função para copiar QR Code com fallback
   const copyToClipboard = async (text: string): Promise<boolean> => {
@@ -482,15 +492,17 @@ export default function OverdueDebtsManagement() {
               </div>
             )}
           </div>
-          <Button 
-            onClick={() => syncOverdueDebts.mutate()}
-            disabled={syncOverdueDebts.isPending}
-            className="bg-honest-orange hover:bg-honest-orange-dark"
-            data-testid="button-sync-overdue-debts"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${syncOverdueDebts.isPending ? 'animate-spin' : ''}`} />
-            {syncOverdueDebts.isPending ? 'Sincronizando...' : 'Sincronizar Débitos'}
-          </Button>
+          {canSync && (
+            <Button 
+              onClick={() => syncOverdueDebts.mutate()}
+              disabled={syncOverdueDebts.isPending}
+              className="bg-honest-orange hover:bg-honest-orange-dark"
+              data-testid="button-sync-overdue-debts"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${syncOverdueDebts.isPending ? 'animate-spin' : ''}`} />
+              {syncOverdueDebts.isPending ? 'Sincronizando...' : 'Sincronizar Débitos'}
+            </Button>
+          )}
         </div>
       </div>
 
