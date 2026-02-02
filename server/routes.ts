@@ -8786,10 +8786,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const totalAmount = debts.reduce((sum, d) => sum + d.valorTotal, 0);
 
+      // Obter data da última sincronização (usar a mais recente dos débitos)
+      const lastSyncAt = savedDebts.length > 0 && savedDebts[0].lastSyncAt 
+        ? savedDebts[0].lastSyncAt 
+        : null;
+
       res.json({
         debts,
         totalAmount,
-        totalClients: debts.length
+        totalClients: debts.length,
+        lastSyncAt
       });
     } catch (error) {
       console.error("Error fetching cached overdue debts:", error);

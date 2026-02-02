@@ -41,6 +41,7 @@ interface OverdueDebtsData {
   debts: OverdueDebt[];
   totalAmount: number;
   totalClients: number;
+  lastSyncAt?: string;
 }
 
 interface BoletoData {
@@ -457,6 +458,17 @@ export default function OverdueDebtsManagement() {
           <p className="text-gray-600 mt-1">
             Gerencie os débitos vencidos dos clientes no Omie ERP
           </p>
+          {overdueDebts?.lastSyncAt && (
+            <p className="text-sm text-blue-600 mt-1 font-medium">
+              Última sincronização: {new Date(overdueDebts.lastSyncAt).toLocaleDateString('pt-BR', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </p>
+          )}
         </div>
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <div className="flex gap-3 flex-wrap">
