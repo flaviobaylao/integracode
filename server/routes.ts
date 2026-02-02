@@ -8710,7 +8710,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para buscar débitos salvos no banco (carregamento rápido)
   app.get('/api/omie/overdue-debts/cached', authenticateUser, async (req: any, res) => {
     try {
+      console.log(`[OVERDUE-DEBTS-CACHED] Request from user: ${req.currentUser?.email}, ID: ${req.currentUser?.id}`);
       const savedDebts = await storage.getOverdueDebts();
+      console.log(`[OVERDUE-DEBTS-CACHED] Found ${savedDebts?.length || 0} debts in database`);
       
       if (!savedDebts || savedDebts.length === 0) {
         return res.json({
