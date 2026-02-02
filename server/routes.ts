@@ -8814,7 +8814,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Verificar se usuário tem permissão para sincronizar (admin, coordinator, administrative)
       const userRole = req.user?.role;
+      console.log(`[OVERDUE-DEBTS] Sync request - User: ${req.user?.email}, Role: ${userRole}, ID: ${req.user?.id}`);
       if (!userRole || !['admin', 'coordinator', 'administrative'].includes(userRole)) {
+        console.log(`[OVERDUE-DEBTS] Access denied for role: ${userRole}`);
         return res.status(403).json({ 
           message: "Apenas usuários administrativos podem sincronizar débitos" 
         });
