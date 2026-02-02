@@ -10369,7 +10369,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Buscar pedidos aguardando alocação de rota (para Gestão de Entregas)
-  app.get("/api/deliveries", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Todos os usuários podem visualizar os dados de entregas do dia
+  app.get("/api/deliveries", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']), async (req: any, res) => {
     try {
       // Sem cache - força refetch sempre
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -11185,7 +11186,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Buscar rotas de entrega com motorista e paradas
-  app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Todos os usuários podem visualizar as rotas de entrega
+  app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']), async (req: any, res) => {
     try {
       const { status, routeDate, driverId, savedOnly } = req.query;
       
@@ -11206,7 +11208,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Buscar paradas de uma rota
-  app.get("/api/delivery-routes/:routeId/stops", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Todos os usuários podem visualizar as paradas
+  app.get("/api/delivery-routes/:routeId/stops", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']), async (req: any, res) => {
     try {
       const { routeId } = req.params;
       const stops = await storage.getDeliveryRouteStops(routeId);
