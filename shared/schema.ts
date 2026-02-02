@@ -1556,6 +1556,9 @@ export const leads = pgTable("leads", {
   lastCheckInAt: timestamp("last_check_in_at"),
   lastCheckOutAt: timestamp("last_check_out_at"),
   
+  // Data do próximo contato (definida no registro de atendimento, padrão: 7 dias após último atendimento)
+  nextContactDate: timestamp("next_contact_date"),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1565,7 +1568,8 @@ export const insertLeadSchema = createInsertSchema(leads).omit({
   createdAt: true, 
   updatedAt: true,
   lastCheckInAt: true,
-  lastCheckOutAt: true 
+  lastCheckOutAt: true,
+  nextContactDate: true
 }).extend({
   latitude: z.string().or(z.number()),
   longitude: z.string().or(z.number()),

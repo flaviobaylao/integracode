@@ -513,6 +513,7 @@ export default function LeadsManagement() {
                   <th className="text-left py-3 px-4 font-semibold">Coordenadas</th>
                   <th className="text-left py-3 px-4 font-semibold">Status</th>
                   <th className="text-left py-3 px-4 font-semibold">Último Atendimento</th>
+                  <th className="text-left py-3 px-4 font-semibold">Próximo Contato</th>
                   <th className="text-left py-3 px-4 font-semibold">Criado em</th>
                   {isAdmin && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
                 </tr>
@@ -520,7 +521,7 @@ export default function LeadsManagement() {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 9 : 8} className="text-center py-8 text-gray-500">
+                    <td colSpan={isAdmin ? 10 : 9} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -566,6 +567,13 @@ export default function LeadsManagement() {
                               {lastServiceLogs[lead.id].attendant}
                             </span>
                           </div>
+                        ) : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {(lead as any).nextContactDate ? (
+                          <span className={`font-medium ${new Date((lead as any).nextContactDate) < new Date() ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
+                          </span>
                         ) : '—'}
                       </td>
                       <td className="py-3 px-4 text-xs">

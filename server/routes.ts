@@ -2137,7 +2137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const serviceLog = result.rows[0] as any;
 
-      // Se for lead, registrar prospecção por atendimento
+      // Se for lead, registrar prospecção por atendimento e definir próximo contato
       if (entityType === 'lead') {
         try {
           await db.execute(sql`
@@ -2145,6 +2145,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             VALUES (${entityId}, 'service_registered', ${user.id}, ${user.name || user.email}, ${serviceLog.id}, ${notes || 'Atendimento registrado'})
           `);
           console.log(`📊 Prospecção registrada: service_registered para lead ${entityId}`);
+          
+          // Definir data do próximo contato (padrão: 7 dias após este atendimento)
+          const nextContactDate = new Date();
+          nextContactDate.setDate(nextContactDate.getDate() + 7);
+          
+          await db.execute(sql`
+            UPDATE leads 
+            SET next_contact_date = ${nextContactDate}, updated_at = NOW()
+            WHERE id = ${entityId}
+          `);
+          console.log(`📅 Data próximo contato definida para lead ${entityId}: ${nextContactDate.toISOString()}`);
         } catch (prospectionError) {
           console.error('Erro ao registrar prospecção:', prospectionError);
         }
