@@ -62,6 +62,11 @@ export function getSession() {
     ttl: sessionTtl,
     tableName: "sessions",
   });
+  // Verificar se está rodando via HTTPS (produção ou ambiente Replit)
+  const isHttps = process.env.NODE_ENV === 'production' || 
+                  !!process.env.REPLIT_DOMAINS || 
+                  !!process.env.REPL_SLUG;
+  
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
@@ -69,8 +74,8 @@ export function getSession() {
     saveUninitialized: true,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isHttps,
+      sameSite: isHttps ? 'none' : 'lax', // 'none' é necessário para cross-site requests em HTTPS
       maxAge: sessionTtl,
     },
     proxy: true,
