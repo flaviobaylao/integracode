@@ -2115,7 +2115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { entityType, entityId } = req.params;
       const user = req.currentUser;
-      const { notes, images, serviceType } = req.body;
+      const { notes, images, serviceType, nextContactDate: userNextContactDate } = req.body;
 
       const validEntityTypes = ['customer', 'lead'];
       if (!validEntityTypes.includes(entityType)) {
@@ -2146,9 +2146,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `);
           console.log(`📊 Prospecção registrada: service_registered para lead ${entityId}`);
           
-          // Definir data do próximo contato (padrão: 7 dias após este atendimento)
-          const nextContactDate = new Date();
-          nextContactDate.setDate(nextContactDate.getDate() + 7);
+          // Definir data do próximo contato - usa data informada pelo usuário ou padrão de 7 dias
+          let nextContactDate: Date;
+          if (userNextContactDate) {
+            nextContactDate = new Date(userNextContactDate);
+          } else {
+            nextContactDate = new Date();
+            nextContactDate.setDate(nextContactDate.getDate() + 7);
+          }
           
           await db.execute(sql`
             UPDATE leads 

@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search } from "lucide-react";
+import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 type ServiceType = 'debito_vencido' | 'venda' | 'prospecao';
 
@@ -63,6 +64,7 @@ export default function VirtualServiceLogModal({
   const effectiveDefaultType = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'venda');
   const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [nextContactDate, setNextContactDate] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset serviceType when modal opens with a new defaultServiceType
@@ -79,7 +81,7 @@ export default function VirtualServiceLogModal({
   });
 
   const createLogMutation = useMutation({
-    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType }) => {
+    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string }) => {
       return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
@@ -92,11 +94,13 @@ export default function VirtualServiceLogModal({
       setNotes("");
       setImages([]);
       setServiceType(effectiveDefaultType);
+      setNextContactDate("");
       setIsCreating(false);
       toast({
         title: "Atendimento registrado",
         description: "O registro foi salvo com sucesso.",
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
       onSuccess?.();
     },
     onError: (error: any) => {
@@ -232,7 +236,12 @@ export default function VirtualServiceLogModal({
       });
       return;
     }
-    createLogMutation.mutate({ notes, images, serviceType });
+    createLogMutation.mutate({ 
+      notes, 
+      images, 
+      serviceType,
+      nextContactDate: nextContactDate || undefined
+    });
   };
 
   const handleClose = () => {
@@ -240,6 +249,7 @@ export default function VirtualServiceLogModal({
     setNotes("");
     setImages([]);
     setServiceType(effectiveDefaultType);
+    setNextContactDate("");
     onClose();
   };
 
@@ -357,6 +367,25 @@ export default function VirtualServiceLogModal({
                     />
                   </div>
                 </div>
+
+                {entityType === 'lead' && (
+                  <div>
+                    <Label htmlFor="nextContactDate" className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4" />
+                      Próximo Contato
+                    </Label>
+                    <Input
+                      id="nextContactDate"
+                      type="date"
+                      value={nextContactDate}
+                      onChange={(e) => setNextContactDate(e.target.value)}
+                      className="mt-1 w-48"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Se não informado, será definido automaticamente para 7 dias após o atendimento
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex gap-2 justify-end">
                   <Button variant="outline" onClick={() => setIsCreating(false)}>
