@@ -503,6 +503,10 @@ export const orderHistory = pgTable("order_history", {
   omieOrderId: varchar("omie_order_id"),
   invoiceNumber: varchar("invoice_number"),
   
+  // Vendedor que registrou o pedido (pode ser diferente do seller_id do sales_card/carteira)
+  sellerId: varchar("seller_id"), // ID do vendedor que registrou o pedido
+  sellerName: varchar("seller_name"), // Nome do vendedor que registrou
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -4957,7 +4957,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // PERMANENT CARD: criar order_history e recalcular nextVisitDate
           console.log(`🔄 Permanent card - Criando order_history e recalculando próxima visita`);
           
-          // 1. Criar registro em order_history
+          // 1. Criar registro em order_history com o vendedor que está registrando
+          const user = req.currentUser;
           const orderData = {
             salesCardId: id,
             orderDate: new Date(),
@@ -4971,7 +4972,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             checkOutTime: data.checkOutTime,
             checkOutLatitude: data.checkOutLatitude,
             checkOutLongitude: data.checkOutLongitude,
-            completedAt: data.status === 'completed' ? new Date() : null
+            completedAt: data.status === 'completed' ? new Date() : null,
+            sellerId: user?.id || null,
+            sellerName: user?.name || user?.email || null
           };
           
           await storage.createOrderHistory(orderData);
