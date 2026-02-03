@@ -2625,16 +2625,12 @@ export class OmieService {
         }
       };
 
-      // ✅ CORREÇÃO: Adicionar vendedor em AMBOS os lugares para garantir
+      // ✅ CORREÇÃO: Adicionar vendedor em outras_inf (NÃO aceito no cabecalho)
       if (omieVendorCode) {
-        // Tentar no cabecalho (algumas versões da API aceitam)
-        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
-        // E também em outras_inf (campo alternativo)
         orderPayload.outras_inf = {
           codVend: omieVendorCode
         };
-        console.log('🔧 [OMIE] Vendedor configurado:', omieVendorCode);
-        console.log('🔧 [OMIE] Payload cabecalho:', JSON.stringify(orderPayload.cabecalho));
+        console.log('🔧 [OMIE] Vendedor configurado em outras_inf:', omieVendorCode);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
@@ -4778,9 +4774,7 @@ export async function createOmieOrder(orderData: {
         data_previsao: new Date().toLocaleDateString('pt-BR'),
         etapa: '50', // Pedido de venda
         codigo_parcela: parcelaCode,
-        origem_pedido: 'CRM-HonestSucos',
-        // Tentar codigo_vendedor no cabecalho
-        ...(vendorCode && { codigo_vendedor: vendorCode })
+        origem_pedido: 'CRM-HonestSucos'
       },
       det: orderData.products.map((product, index) => ({
         ide: {
@@ -4802,13 +4796,13 @@ export async function createOmieOrder(orderData: {
         enviar_email: "S",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       },
-      // Tentar também em outras_inf
+      // Vendedor em outras_inf (NÃO aceito no cabecalho)
       ...(vendorCode && { 
         outras_inf: { codVend: vendorCode }
       })
     };
     
-    console.log('🔧 [OMIE] Vendedor para pedido:', vendorCode);
+    console.log('🔧 [OMIE] Vendedor para pedido (outras_inf):', vendorCode);
 
     console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
 
