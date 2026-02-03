@@ -2625,10 +2625,11 @@ export class OmieService {
         }
       };
 
-      // Adicionar vendedor ao pedido se encontrado (codVend em informacoes_adicionais)
+      // ✅ CORREÇÃO: Adicionar vendedor ao pedido no CABECALHO (campo correto do Omie)
       if (omieVendorCode) {
-        orderPayload.informacoes_adicionais.codVend = omieVendorCode;
-        console.log('✅ Vendedor adicionado ao pedido (codVend):', omieVendorCode);
+        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
+        orderPayload.informacoes_adicionais.codigo_vendedor = omieVendorCode;
+        console.log('✅ Vendedor adicionado ao pedido (codigo_vendedor):', omieVendorCode);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
