@@ -2627,6 +2627,7 @@ export class OmieService {
 
       // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
       // Como o Omie herda o vendedor do cadastro do cliente, precisamos atualizá-lo
+      console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
       if (omieVendorCode && omieClientCode) {
         console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${omieVendorCode} antes de criar pedido...`);
         const vendorUpdated = await this.updateCustomerVendor(omieClientCode, omieVendorCode);
