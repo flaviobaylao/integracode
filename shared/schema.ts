@@ -132,6 +132,34 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// ============================================================================
+// OMIE INSTANCES - Multi-tenant Omie ERP support
+// ============================================================================
+
+// Omie instances table - stores API credentials for multiple Omie accounts
+export const omieInstances = pgTable("omie_instances", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull().unique(), // Nome da instância (ex: "GYN", "BSB", "RJ")
+  displayName: varchar("display_name").notNull(), // Nome completo (ex: "OMIE GYN - Goiânia")
+  appKey: varchar("app_key").notNull(), // Chave APP do Omie
+  appSecret: varchar("app_secret").notNull(), // Chave Secret do Omie
+  tagColor: varchar("tag_color").notNull().default('#3B82F6'), // Cor da tag em hex (azul padrão)
+  isActive: boolean("is_active").notNull().default(true),
+  isDefault: boolean("is_default").notNull().default(false), // Instância padrão para novos registros
+  lastSyncAt: timestamp("last_sync_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOmieInstanceSchema = createInsertSchema(omieInstances).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertOmieInstance = z.infer<typeof insertOmieInstanceSchema>;
+export type OmieInstance = typeof omieInstances.$inferSelect;
+
 // User roles enum
 export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']);
 
@@ -234,6 +262,9 @@ export const customers = pgTable("customers", {
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
   omieClientCode: varchar("omie_client_code"), // Código numérico do cliente no Omie (codigo_cliente_omie)
   
+  // Multi-tenant Omie: identificação da instância de origem
+  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem (ex: "GYN")
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -305,6 +336,10 @@ export const products = pgTable("products", {
   imageUrl: varchar("image_url"), // Imagem principal (mantido para compatibilidade)
   images: text("images").array(), // Array de URLs de imagens (galeria)
   isActive: boolean("is_active").notNull().default(true),
+  
+  // Multi-tenant Omie: identificação da instância de origem
+  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -670,6 +705,10 @@ export const overdueDebts = pgTable("overdue_debts", {
     dias_atraso: number;
     observacao?: string;
   }>>(),
+  
+  // Multi-tenant Omie: identificação da instância de origem
+  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
+  
   lastSyncAt: timestamp("last_sync_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -721,6 +760,9 @@ export const billings = pgTable("billings", {
     unitPrice: number;
     totalPrice: number;
   }>>(),
+  
+  // Multi-tenant Omie: identificação da instância de origem
+  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
