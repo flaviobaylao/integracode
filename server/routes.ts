@@ -3972,6 +3972,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         boletoDays
       });
       
+      // ✅ Usar o código Omie do usuário que está registrando, não o vendedor da carteira
+      let sellerIdForOmie = order.sellerId; // Fallback para vendedor da carteira
+      if (user.omieVendorCode) {
+        sellerIdForOmie = `omie-vendor-${user.omieVendorCode}`;
+        console.log(`📝 [SEND-TO-OMIE] Usando vendedor do usuário logado: ${user.email} -> ${sellerIdForOmie}`);
+      } else {
+        console.log(`⚠️ [SEND-TO-OMIE] Usuário ${user.email} sem código Omie, usando vendedor da carteira: ${order.sellerId}`);
+      }
+      
       const omieResult = await createOmieOrder({
         customer: {
           document: document.replace(/\D/g, ''), // Apenas números
@@ -3983,7 +3992,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         products: validatedProducts, // ✅ Usar produtos já validados (sem reconversão)
         totalValue: totalValue, // ✅ Usar valor já validado como numérico
         orderNumber: `WEB-${order.id.substring(0, 8)}`,
-        sellerId: order.sellerId,
+        sellerId: sellerIdForOmie, // ✅ Usar vendedor do usuário que está registrando
         paymentMethod: order.paymentMethod, // ✅ Usar valor exato armazenado (já validado acima)
         operationType: order.operationType, // ✅ Usar valor exato armazenado (já validado acima)
         boletoDays: boletoDays // ✅ Usar apenas para boleto
@@ -14654,6 +14663,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Integração real com Omie API
           const { createOmieOrder } = await import('./omieIntegration');
           
+          // ✅ Usar o código Omie do usuário que está registrando, não o vendedor da carteira
+          const currentUser = req.user || req.currentUser;
+          let sellerIdForOmie = fullCard.sellerId; // Fallback para vendedor da carteira
+          if (currentUser?.omieVendorCode) {
+            sellerIdForOmie = `omie-vendor-${currentUser.omieVendorCode}`;
+            console.log(`📝 [FINALIZE-SALE] Usando vendedor do usuário logado: ${currentUser.email} -> ${sellerIdForOmie}`);
+          } else {
+            console.log(`⚠️ [FINALIZE-SALE] Usuário sem código Omie, usando vendedor da carteira: ${fullCard.sellerId}`);
+          }
+          
           try {
             const omieResult = await createOmieOrder({
               customer: {
@@ -14671,7 +14690,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               })),
               totalValue,
               orderNumber,
-              sellerId: fullCard.sellerId,
+              sellerId: sellerIdForOmie, // ✅ Usar vendedor do usuário que está registrando
               paymentMethod: paymentMethod || 'a_vista',
               operationType: operationType || 'venda'
             });
