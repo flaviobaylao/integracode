@@ -185,6 +185,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
+    { id: 'omie-instances', label: 'Instâncias Omie', icon: 'fas fa-building', available: canAccessUsers, badge: null },
     { 
       id: 'rh', 
       label: isVendedor ? 'Minhas Métricas' : 'RH', 
@@ -262,6 +263,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     
     // Rotas que têm páginas próprias devem navegar diretamente
     const routePages = ['sales-schedule', 'billings', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
+    
+    // Rotas admin especiais
+    if (itemId === 'omie-instances') {
+      console.log('🔗 Navegando para admin/omie-instances');
+      navigate('/admin/omie-instances');
+      setMobileMenuOpen(false);
+      return;
+    }
     
     if (routePages.includes(itemId)) {
       // Navega para a rota correspondente
