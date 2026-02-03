@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { apiRequest } from "@/lib/queryClient";
 
 const DAYS_OF_WEEK = [
@@ -675,6 +676,7 @@ export default function SalesSchedule() {
                             <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
                               {card.customer.fantasyName || card.customer.name}
                             </h3>
+                            <OmieInstanceBadge instanceId={(card.customer as any).omieInstanceId} />
                             {user && ['admin', 'coordinator', 'administrative'].includes(user.role) && (
                               <Button
                                 size="sm"

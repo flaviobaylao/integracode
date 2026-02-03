@@ -15,6 +15,7 @@ import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
@@ -397,9 +398,12 @@ export default function ClientsMap() {
                   >
                     <Popup>
                       <div className="space-y-3 min-w-[220px]">
-                        <h3 className="font-bold text-base">
-                          {customer.fantasyName || customer.name}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-base">
+                            {customer.fantasyName || customer.name}
+                          </h3>
+                          <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
+                        </div>
                         <div className="space-y-1 text-sm">
                           <p className="flex items-center gap-1">
                             <MapPin className="h-3 w-3" />

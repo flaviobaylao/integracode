@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 
 interface VirtualClient {
   id: string;
@@ -396,8 +397,11 @@ export default function VirtualClientsToday() {
                         onClick={(e) => handleRowClick(e, client)}
                       >
                         <TableCell>
-                          <div className="font-medium">
-                            {client.customer?.fantasyName || client.customer?.name || client.fantasyNameImported || "-"}
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium">
+                              {client.customer?.fantasyName || client.customer?.name || client.fantasyNameImported || "-"}
+                            </div>
+                            <OmieInstanceBadge instanceId={(client.customer as any)?.omieInstanceId} />
                           </div>
                           {client.customer?.address && (
                             <div className="text-xs text-muted-foreground truncate max-w-[200px]">

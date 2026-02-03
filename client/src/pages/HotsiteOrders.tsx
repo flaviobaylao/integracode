@@ -14,6 +14,7 @@ import { ptBR } from 'date-fns/locale';
 import { useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import OmieInstanceBadge from '@/components/OmieInstanceBadge';
 
 interface HotsiteOrder {
   id: string;
@@ -438,7 +439,10 @@ export default function HotsiteOrders() {
                             <div className="flex items-center gap-2">
                               <User className="h-4 w-4 text-gray-400" />
                               <div>
-                                <div className="font-medium">{customerName}</div>
+                                <div className="flex items-center gap-2">
+                                  <div className="font-medium">{customerName}</div>
+                                  <OmieInstanceBadge instanceId={(customer as any)?.omieInstanceId} />
+                                </div>
                                 {customer?.phone && (
                                   <div className="text-xs text-gray-500">{customer.phone}</div>
                                 )}

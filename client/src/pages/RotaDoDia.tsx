@@ -17,6 +17,7 @@ import { useLocation } from "wouter";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
@@ -1191,6 +1192,7 @@ export default function RotaDoDia() {
                                 {isLead && <Target className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
                                 {visit.customerName}
                               </p>
+                              <OmieInstanceBadge instanceId={(visit as any).omieInstanceId} />
                               {isLead && (
                                 <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 dark:text-purple-400">
                                   Lead

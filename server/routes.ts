@@ -16679,7 +16679,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
-              visitDuration: visitAgendaInfo?.visitDuration ?? null
+              visitDuration: visitAgendaInfo?.visitDuration ?? null,
+              omieInstanceId: customer.omieInstanceId // Tag multi-tenant
             };
           } else {
             // Lead

@@ -17,6 +17,7 @@ import OmieSyncManager from "./OmieSyncManager";
 import CustomerExcelImport from "./CustomerExcelImport";
 import WhatsAppButton from "./WhatsAppButton";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
+import OmieInstanceBadge from "./OmieInstanceBadge";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
@@ -485,6 +486,7 @@ export default function CustomerManagement() {
                           >
                             {(customer as any).fantasyName || customer.name}
                           </button>
+                          <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
                         </div>
                       </td>
                       <td className="px-6 py-4">

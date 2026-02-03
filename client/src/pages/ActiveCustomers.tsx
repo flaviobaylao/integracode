@@ -19,6 +19,7 @@ import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { 
   Upload, 
   Download, 
@@ -1148,8 +1149,11 @@ export default function ActiveCustomers() {
                               {formatDocument(ac.document, ac.documentType)}
                             </TableCell>
                             <TableCell>
-                              <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
-                                {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
+                              <div className="flex items-center gap-2">
+                                <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
+                                  {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
+                                </div>
+                                <OmieInstanceBadge instanceId={(ac.customer as any)?.omieInstanceId} />
                               </div>
                               {ac.customer?.address && (
                                 <div className="text-xs text-muted-foreground truncate max-w-[200px]">
