@@ -2604,7 +2604,7 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
-      // ✅ SOLUÇÃO: codigo_vendedor vai em informacoes_adicionais (não no cabecalho)
+      // ✅ SOLUÇÃO: codigo_vendedor vai no cabecalho do pedido
       const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
@@ -2627,11 +2627,11 @@ export class OmieService {
         }
       };
 
-      // ✅ ADICIONAR VENDEDOR DIRETAMENTE NO PEDIDO (em informacoes_adicionais)
+      // ✅ ADICIONAR VENDEDOR NO CABEÇALHO DO PEDIDO
       console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
       if (omieVendorCode) {
-        orderPayload.informacoes_adicionais.codigo_vendedor = omieVendorCode;
-        console.log(`✅ [OMIE] Vendedor ${omieVendorCode} adicionado ao pedido em informacoes_adicionais`);
+        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
+        console.log(`✅ [OMIE] Vendedor ${omieVendorCode} adicionado ao cabecalho do pedido`);
       } else {
         console.log(`⚠️ [OMIE] Sem código de vendedor - pedido será criado sem vendedor`);
       }
