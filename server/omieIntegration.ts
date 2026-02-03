@@ -2625,12 +2625,10 @@ export class OmieService {
         }
       };
 
-      // ✅ CORREÇÃO: Adicionar vendedor em outras_inf (NÃO aceito no cabecalho)
+      // NOTA: Omie NÃO aceita campo de vendedor no pedido - herda do cliente
+      // O vendedor é definido pelo cadastro do cliente no Omie
       if (omieVendorCode) {
-        orderPayload.outras_inf = {
-          codVend: omieVendorCode
-        };
-        console.log('🔧 [OMIE] Vendedor configurado em outras_inf:', omieVendorCode);
+        console.log('⚠️ [OMIE] Vendedor não pode ser forçado via API - herdado do cliente:', omieVendorCode);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
@@ -4796,13 +4794,12 @@ export async function createOmieOrder(orderData: {
         enviar_email: "S",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       },
-      // Vendedor em outras_inf (NÃO aceito no cabecalho)
-      ...(vendorCode && { 
-        outras_inf: { codVend: vendorCode }
-      })
+      // NOTA: Omie NÃO aceita campo de vendedor no pedido - herda do cliente
     };
     
-    console.log('🔧 [OMIE] Vendedor para pedido (outras_inf):', vendorCode);
+    if (vendorCode) {
+      console.log('⚠️ [OMIE] Vendedor não pode ser forçado via API - herdado do cliente:', vendorCode);
+    }
 
     console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
 
