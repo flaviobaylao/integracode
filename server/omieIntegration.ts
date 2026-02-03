@@ -4794,6 +4794,8 @@ export async function createOmieOrder(orderData: {
         consumidor_final: "S",
         // Enviar email habilitado para todos os pedidos
         enviar_email: "S",
+        // ✅ CORREÇÃO: Código do vendedor também em informacoes_adicionais (Omie pode usar este)
+        ...(vendorCode && { codigo_vendedor: vendorCode }),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       }
     };
