@@ -15015,6 +15015,328 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
+  // OMIE INSTANCES MANAGEMENT (Multi-tenant)
+  // ========================================
+
+  // Helper para mascarar secrets nas respostas
+  const maskOmieInstanceSecrets = (instance: any) => {
+    if (!instance) return instance;
+    return {
+      ...instance,
+      appKey: instance.appKey ? `${instance.appKey.substring(0, 4)}****` : null,
+      appSecret: instance.appSecret ? '********' : null,
+    };
+  };
+
+  // Schema de validação para instância Omie
+  const omieInstanceCreateSchema = z.object({
+    name: z.string().min(1).max(10).transform(s => s.toUpperCase()),
+    displayName: z.string().min(1).max(100),
+    appKey: z.string().min(10),
+    appSecret: z.string().min(10),
+    tagColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().default('#3B82F6'),
+    isActive: z.boolean().optional().default(true),
+    isDefault: z.boolean().optional().default(false),
+  });
+
+  const omieInstanceUpdateSchema = z.object({
+    name: z.string().min(1).max(10).transform(s => s.toUpperCase()).optional(),
+    displayName: z.string().min(1).max(100).optional(),
+    appKey: z.string().min(10).optional(),
+    appSecret: z.string().min(10).optional(),
+    tagColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    isActive: z.boolean().optional(),
+    isDefault: z.boolean().optional(),
+  });
+
+  // Lista todas as instâncias Omie (Admin apenas) - secrets mascarados
+  app.get('/api/omie/instances', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instances = await storage.getOmieInstances();
+      res.json(instances.map(maskOmieInstanceSecrets));
+    } catch (error: any) {
+      console.error('Erro ao listar instâncias Omie:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Busca instância por ID (Admin apenas) - secrets mascarados
+  app.get('/api/omie/instances/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) {
+        return res.status(404).json({ message: 'Instância não encontrada' });
+      }
+      res.json(maskOmieInstanceSecrets(instance));
+    } catch (error: any) {
+      console.error('Erro ao buscar instância Omie:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Cria nova instância Omie (Admin apenas) com validação Zod
+  app.post('/api/omie/instances', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const validationResult = omieInstanceCreateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: 'Dados inválidos', 
+          errors: validationResult.error.format() 
+        });
+      }
+      
+      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault } = validationResult.data;
+
+      // Verifica se já existe uma instância com este nome
+      const existing = await storage.getOmieInstanceByName(name);
+      if (existing) {
+        return res.status(400).json({ message: 'Já existe uma instância com este nome' });
+      }
+
+      const instance = await storage.createOmieInstance({
+        name,
+        displayName,
+        appKey,
+        appSecret,
+        tagColor: tagColor || '#3B82F6',
+        isActive: isActive ?? true,
+        isDefault: isDefault ?? false,
+      });
+
+      // Se é a primeira instância ou foi marcada como default, defina-a como padrão
+      if (isDefault) {
+        await storage.setDefaultOmieInstance(instance.id);
+      }
+
+      res.status(201).json(maskOmieInstanceSecrets(instance));
+    } catch (error: any) {
+      console.error('Erro ao criar instância Omie:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Atualiza instância Omie (Admin apenas) com validação Zod
+  app.put('/api/omie/instances/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const validationResult = omieInstanceUpdateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: 'Dados inválidos', 
+          errors: validationResult.error.format() 
+        });
+      }
+      
+      const existingInstance = await storage.getOmieInstance(req.params.id);
+      if (!existingInstance) {
+        return res.status(404).json({ message: 'Instância não encontrada' });
+      }
+
+      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault } = validationResult.data;
+
+      // Se está alterando o nome, verifica se já existe outra com este nome
+      if (name && name !== existingInstance.name) {
+        const duplicateName = await storage.getOmieInstanceByName(name);
+        if (duplicateName) {
+          return res.status(400).json({ message: 'Já existe uma instância com este nome' });
+        }
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (displayName !== undefined) updateData.displayName = displayName;
+      if (appKey !== undefined) updateData.appKey = appKey;
+      if (appSecret !== undefined) updateData.appSecret = appSecret;
+      if (tagColor !== undefined) updateData.tagColor = tagColor;
+      if (isActive !== undefined) updateData.isActive = isActive;
+
+      const instance = await storage.updateOmieInstance(req.params.id, updateData);
+      
+      // Se foi marcada como default, atualiza o flag
+      if (isDefault) {
+        await storage.setDefaultOmieInstance(instance.id);
+      }
+
+      res.json(maskOmieInstanceSecrets(instance));
+    } catch (error: any) {
+      console.error('Erro ao atualizar instância Omie:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Deleta instância Omie (Admin apenas)
+  app.delete('/api/omie/instances/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) {
+        return res.status(404).json({ message: 'Instância não encontrada' });
+      }
+
+      // Impede exclusão da instância padrão
+      if (instance.isDefault) {
+        return res.status(400).json({ message: 'Não é possível excluir a instância padrão. Defina outra como padrão antes.' });
+      }
+
+      await storage.deleteOmieInstance(req.params.id);
+      res.json({ success: true, message: 'Instância excluída com sucesso' });
+    } catch (error: any) {
+      console.error('Erro ao excluir instância Omie:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Define instância como padrão (Admin apenas)
+  app.post('/api/omie/instances/:id/set-default', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) {
+        return res.status(404).json({ message: 'Instância não encontrada' });
+      }
+
+      const updatedInstance = await storage.setDefaultOmieInstance(req.params.id);
+      res.json(maskOmieInstanceSecrets(updatedInstance));
+    } catch (error: any) {
+      console.error('Erro ao definir instância padrão:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Inicializa instância padrão usando variáveis de ambiente (Admin apenas)
+  app.post('/api/omie/instances/init-default', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      // Verifica se já existe alguma instância
+      const existingInstances = await storage.getOmieInstances();
+      if (existingInstances.length > 0) {
+        return res.status(400).json({ 
+          message: 'Já existem instâncias configuradas. Use a interface de administração para gerenciá-las.',
+          existingCount: existingInstances.length
+        });
+      }
+
+      // Verifica se as variáveis de ambiente estão configuradas
+      const appKey = process.env.OMIE_APP_KEY;
+      const appSecret = process.env.OMIE_APP_SECRET;
+      
+      if (!appKey || !appSecret) {
+        return res.status(400).json({ 
+          message: 'Variáveis de ambiente OMIE_APP_KEY e OMIE_APP_SECRET não estão configuradas'
+        });
+      }
+
+      // Cria a instância padrão "OMIE GYN"
+      const instance = await storage.createOmieInstance({
+        name: 'GYN',
+        displayName: 'OMIE GYN - Goiânia',
+        appKey,
+        appSecret,
+        tagColor: '#10B981', // Verde
+        isActive: true,
+        isDefault: true,
+      });
+
+      // Também migra todos os dados existentes sem omieInstanceId para esta nova instância
+      const migrateResult = await db.transaction(async (tx) => {
+        const customersUpdated = await tx
+          .update(customers)
+          .set({ omieInstanceId: instance.id })
+          .where(sql`omie_instance_id IS NULL`);
+        
+        const productsUpdated = await tx.execute(
+          sql`UPDATE products SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+        );
+        
+        const overdueDebtsUpdated = await tx.execute(
+          sql`UPDATE overdue_debts SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+        );
+        
+        const billingsUpdated = await tx.execute(
+          sql`UPDATE billings SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+        );
+        
+        return {
+          customers: customersUpdated.rowCount || 0,
+          products: productsUpdated.rowCount || 0,
+          overdueDebts: overdueDebtsUpdated.rowCount || 0,
+          billings: billingsUpdated.rowCount || 0,
+        };
+      });
+
+      console.log('✅ Instância padrão OMIE GYN criada com sucesso:', instance.id);
+      console.log('✅ Dados migrados:', migrateResult);
+      
+      res.status(201).json({ 
+        success: true,
+        message: 'Instância padrão criada com sucesso',
+        instance: maskOmieInstanceSecrets(instance),
+        migratedRecords: migrateResult
+      });
+    } catch (error: any) {
+      console.error('Erro ao inicializar instância padrão:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Migra dados existentes para uma instância Omie específica (Admin apenas)
+  app.post('/api/omie/instances/:id/migrate-data', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) {
+        return res.status(404).json({ message: 'Instância não encontrada' });
+      }
+
+      const { onlyNullInstanceId } = req.body;
+
+      const result = await db.transaction(async (tx) => {
+        let customersUpdated, productsUpdated, overdueDebtsUpdated, billingsUpdated;
+        
+        if (onlyNullInstanceId) {
+          customersUpdated = await tx.execute(
+            sql`UPDATE customers SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+          );
+          productsUpdated = await tx.execute(
+            sql`UPDATE products SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+          );
+          overdueDebtsUpdated = await tx.execute(
+            sql`UPDATE overdue_debts SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+          );
+          billingsUpdated = await tx.execute(
+            sql`UPDATE billings SET omie_instance_id = ${instance.id} WHERE omie_instance_id IS NULL`
+          );
+        } else {
+          customersUpdated = await tx.execute(
+            sql`UPDATE customers SET omie_instance_id = ${instance.id}`
+          );
+          productsUpdated = await tx.execute(
+            sql`UPDATE products SET omie_instance_id = ${instance.id}`
+          );
+          overdueDebtsUpdated = await tx.execute(
+            sql`UPDATE overdue_debts SET omie_instance_id = ${instance.id}`
+          );
+          billingsUpdated = await tx.execute(
+            sql`UPDATE billings SET omie_instance_id = ${instance.id}`
+          );
+        }
+        
+        return {
+          customers: customersUpdated.rowCount || 0,
+          products: productsUpdated.rowCount || 0,
+          overdueDebts: overdueDebtsUpdated.rowCount || 0,
+          billings: billingsUpdated.rowCount || 0,
+        };
+      });
+
+      console.log(`✅ Dados migrados para instância ${instance.name}:`, result);
+      res.json({ 
+        success: true,
+        message: `Dados migrados para instância ${instance.displayName}`,
+        migratedRecords: result
+      });
+    } catch (error: any) {
+      console.error('Erro ao migrar dados:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ========================================
   // FERRAMENTAS DE DIAGNÓSTICO DE COORDENADAS
   // ========================================
   

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing } from '@shared/schema';
+import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared/schema';
 import { db } from './db';
 import { customers } from '@shared/schema';
 import { eq, sql } from 'drizzle-orm';
@@ -81,13 +81,17 @@ export class OmieService {
   private storage: any;
   private appKey: string;
   private appSecret: string;
+  public omieInstanceId: string | null; // ID da instância Omie (para multi-tenant)
+  public omieInstanceName: string | null; // Nome da instância para logging
 
-  constructor(config: OmieConfig, storage?: any) {
+  constructor(config: OmieConfig, storage?: any, omieInstanceId?: string, omieInstanceName?: string) {
     this.config = config;
     this.baseUrl = config.baseUrl || 'https://app.omie.com.br/api/v1';
     this.storage = storage;
     this.appKey = config.appKey;
     this.appSecret = config.appSecret;
+    this.omieInstanceId = omieInstanceId || null;
+    this.omieInstanceName = omieInstanceName || null;
   }
 
   static createFromEnv(storage?: any): OmieService {
@@ -102,6 +106,19 @@ export class OmieService {
       appKey,
       appSecret
     }, storage);
+  }
+
+  // Factory method para criar OmieService a partir de uma instância do banco de dados
+  static createFromInstance(instance: OmieInstance, storage?: any): OmieService {
+    return new OmieService(
+      {
+        appKey: instance.appKey,
+        appSecret: instance.appSecret,
+      },
+      storage,
+      instance.id,
+      instance.name
+    );
   }
 
   private async makeRequest(endpoint: string, call: string, params: any = {}) {

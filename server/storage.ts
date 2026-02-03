@@ -117,9 +117,12 @@ import {
   phonebookContacts,
   AGENT_COLORS,
   virtualAttendanceStats,
+  omieInstances,
   type PhonebookContact,
   type InsertPhonebookContact,
   type VirtualAttendanceStat,
+  type OmieInstance,
+  type InsertOmieInstance,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -480,6 +483,16 @@ export interface IStorage {
     serviceDate: string;
     conversationCount: number;
   }>>;
+  
+  // Omie Instances operations (multi-tenant)
+  getOmieInstances(): Promise<OmieInstance[]>;
+  getOmieInstance(id: string): Promise<OmieInstance | undefined>;
+  getOmieInstanceByName(name: string): Promise<OmieInstance | undefined>;
+  getDefaultOmieInstance(): Promise<OmieInstance | undefined>;
+  createOmieInstance(data: InsertOmieInstance): Promise<OmieInstance>;
+  updateOmieInstance(id: string, data: Partial<InsertOmieInstance>): Promise<OmieInstance>;
+  deleteOmieInstance(id: string): Promise<void>;
+  setDefaultOmieInstance(id: string): Promise<OmieInstance>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7513,6 +7526,56 @@ export class DatabaseStorage implements IStorage {
       serviceDate: r.serviceDate,
       conversationCount: r.conversationCount,
     }));
+  }
+
+  // Omie Instances operations (multi-tenant)
+  async getOmieInstances(): Promise<OmieInstance[]> {
+    return await db.select().from(omieInstances).orderBy(omieInstances.name);
+  }
+
+  async getOmieInstance(id: string): Promise<OmieInstance | undefined> {
+    const [instance] = await db.select().from(omieInstances).where(eq(omieInstances.id, id));
+    return instance;
+  }
+
+  async getOmieInstanceByName(name: string): Promise<OmieInstance | undefined> {
+    const [instance] = await db.select().from(omieInstances).where(eq(omieInstances.name, name));
+    return instance;
+  }
+
+  async getDefaultOmieInstance(): Promise<OmieInstance | undefined> {
+    const [instance] = await db.select().from(omieInstances).where(eq(omieInstances.isDefault, true));
+    return instance;
+  }
+
+  async createOmieInstance(data: InsertOmieInstance): Promise<OmieInstance> {
+    const [instance] = await db.insert(omieInstances).values(data).returning();
+    return instance;
+  }
+
+  async updateOmieInstance(id: string, data: Partial<InsertOmieInstance>): Promise<OmieInstance> {
+    const [instance] = await db
+      .update(omieInstances)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(omieInstances.id, id))
+      .returning();
+    return instance;
+  }
+
+  async deleteOmieInstance(id: string): Promise<void> {
+    await db.delete(omieInstances).where(eq(omieInstances.id, id));
+  }
+
+  async setDefaultOmieInstance(id: string): Promise<OmieInstance> {
+    // Remove default flag from all instances
+    await db.update(omieInstances).set({ isDefault: false });
+    // Set the new default
+    const [instance] = await db
+      .update(omieInstances)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(omieInstances.id, id))
+      .returning();
+    return instance;
   }
 }
 
