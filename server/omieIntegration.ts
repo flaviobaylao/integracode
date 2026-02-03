@@ -2604,16 +2604,25 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
+      // CORREÇÃO CRÍTICA: Incluir codigo_vendedor DIRETAMENTE no cabecalho do pedido
+      const cabecalho: any = {
+        codigo_pedido_integracao: integrationCode,
+        codigo_cliente: omieClientCode,
+        data_previsao: new Date().toLocaleDateString('pt-BR'),
+        etapa: "50", // Pedido de venda
+        numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
+        codigo_parcela: parcelaCode,
+        quantidade_itens: products.length
+      };
+      
+      // Adicionar codigo_vendedor ao cabecalho se disponível
+      if (omieVendorCode) {
+        cabecalho.codigo_vendedor = omieVendorCode;
+        console.log(`✅ [OMIE-ORDER] codigo_vendedor ${omieVendorCode} incluído no cabecalho do pedido`);
+      }
+      
       const orderPayload: any = {
-        cabecalho: {
-          codigo_pedido_integracao: integrationCode,
-          codigo_cliente: omieClientCode,
-          data_previsao: new Date().toLocaleDateString('pt-BR'),
-          etapa: "50", // Pedido de venda
-          numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
-          codigo_parcela: parcelaCode,
-          quantidade_itens: products.length
-        },
+        cabecalho,
         det: orderItems,
         frete: {
           modalidade: "9" // Sem ocorrência de transporte
@@ -4800,15 +4809,24 @@ export async function createOmieOrder(orderData: {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
+    // CORREÇÃO CRÍTICA: Incluir codigo_vendedor DIRETAMENTE no cabecalho do pedido
+    const cabecalhoHotsite: any = {
+      numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
+      codigo_cliente: omieCustomerId,
+      data_previsao: new Date().toLocaleDateString('pt-BR'),
+      etapa: '50', // Pedido de venda
+      codigo_parcela: parcelaCode,
+      origem_pedido: 'CRM-HonestSucos'
+    };
+    
+    // Adicionar codigo_vendedor ao cabecalho se disponível
+    if (vendorCode) {
+      cabecalhoHotsite.codigo_vendedor = vendorCode;
+      console.log(`✅ [OMIE-ORDER] codigo_vendedor ${vendorCode} incluído no cabecalho do pedido (Hotsite)`);
+    }
+    
     const omieOrderPayload: any = {
-      cabecalho: {
-        numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
-        codigo_cliente: omieCustomerId,
-        data_previsao: new Date().toLocaleDateString('pt-BR'),
-        etapa: '50', // Pedido de venda
-        codigo_parcela: parcelaCode,
-        origem_pedido: 'CRM-HonestSucos'
-      },
+      cabecalho: cabecalhoHotsite,
       det: orderData.products.map((product, index) => ({
         ide: {
           codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`
