@@ -14663,9 +14663,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Integração real com Omie API
           const { createOmieOrder } = await import('./omieIntegration');
           
-          // ✅ Usar o código Omie do usuário que está registrando, não o vendedor da carteira
-          const currentUser = req.user || req.currentUser;
+          // ✅ CORREÇÃO: Usar req.currentUser PRIMEIRO (tem dados completos do banco, incluindo omieVendorCode)
+          // req.user vem do Passport e não tem o código Omie
+          const currentUser = (req as any).currentUser || req.user;
           let sellerIdForOmie = fullCard.sellerId; // Fallback para vendedor da carteira
+          
+          console.log(`🔍 [FINALIZE-SALE] DEBUG: currentUser.id=${currentUser?.id}, email=${currentUser?.email}, omieVendorCode=${currentUser?.omieVendorCode}`);
+          
           if (currentUser?.omieVendorCode) {
             sellerIdForOmie = `omie-vendor-${currentUser.omieVendorCode}`;
             console.log(`📝 [FINALIZE-SALE] Usando vendedor do usuário logado: ${currentUser.email} -> ${sellerIdForOmie}`);
