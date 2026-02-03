@@ -3984,12 +3984,13 @@ export class OmieService {
     try {
       console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${vendorCode}...`);
       
+      // CORREÇÃO: codigo_vendedor deve estar no nível raiz, NÃO dentro de recomendacoes
       const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', {
         codigo_cliente_omie: omieClientCode,
-        recomendacoes: {
-          codigo_vendedor: vendorCode
-        }
+        codigo_vendedor: vendorCode
       });
+
+      console.log(`🔄 [OMIE] Resposta da atualização de vendedor:`, JSON.stringify(response, null, 2));
 
       if (response && (response.codigo_cliente_omie || response.codigo_status === '0')) {
         console.log(`✅ [OMIE] Vendedor do cliente ${omieClientCode} atualizado com sucesso para ${vendorCode}`);
