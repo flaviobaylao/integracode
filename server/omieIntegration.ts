@@ -2604,8 +2604,7 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
-      // NOTA: codigo_vendedor NÃO pode ser incluído no cabecalho do pedido
-      // O vendedor é herdado do cadastro do cliente (atualizado acima)
+      // ✅ SOLUÇÃO: codigo_vendedor vai em informacoes_adicionais (não no cabecalho)
       const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
@@ -2624,24 +2623,17 @@ export class OmieService {
           codigo_categoria: "1.01.03", // Categoria fiscal
           codigo_conta_corrente: omieAccountCode,
           consumidor_final: "S",
-          // Enviar email habilitado para todos os pedidos
           enviar_email: "S"
         }
       };
 
-      // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
-      // Como o Omie herda o vendedor do cadastro do cliente, precisamos atualizá-lo
+      // ✅ ADICIONAR VENDEDOR DIRETAMENTE NO PEDIDO (em informacoes_adicionais)
       console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
-      if (omieVendorCode && omieClientCode) {
-        console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${omieVendorCode} antes de criar pedido...`);
-        const vendorUpdated = await this.updateCustomerVendor(omieClientCode, omieVendorCode);
-        if (vendorUpdated) {
-          console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso! Aguardando 500ms para propagação...`);
-          // Aguardar um pouco para a API do Omie processar a atualização
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } else {
-          console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
-        }
+      if (omieVendorCode) {
+        orderPayload.informacoes_adicionais.codigo_vendedor = omieVendorCode;
+        console.log(`✅ [OMIE] Vendedor ${omieVendorCode} adicionado ao pedido em informacoes_adicionais`);
+      } else {
+        console.log(`⚠️ [OMIE] Sem código de vendedor - pedido será criado sem vendedor`);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
