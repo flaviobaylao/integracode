@@ -2472,6 +2472,8 @@ export class OmieService {
       // Buscar código do vendedor no Omie
       let omieVendorCode = null;
       
+      console.log(`🔍 [OMIE-ORDER] sellerId recebido: "${sellerId}" (tipo: ${typeof sellerId})`);
+      
       // ✅ CORREÇÃO: Se sellerId começa com 'omie-vendor-', extrair o código do Omie
       if (sellerId && sellerId.startsWith('omie-vendor-')) {
         try {
