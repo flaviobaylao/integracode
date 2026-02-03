@@ -2625,10 +2625,16 @@ export class OmieService {
         }
       };
 
-      // NOTA: Omie NÃO aceita campo de vendedor no pedido - herda do cliente
-      // O vendedor é definido pelo cadastro do cliente no Omie
-      if (omieVendorCode) {
-        console.log('⚠️ [OMIE] Vendedor não pode ser forçado via API - herdado do cliente:', omieVendorCode);
+      // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
+      // Como o Omie herda o vendedor do cadastro do cliente, precisamos atualizá-lo
+      if (omieVendorCode && omieClientCode) {
+        console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${omieVendorCode} antes de criar pedido...`);
+        const vendorUpdated = await this.updateCustomerVendor(omieClientCode, omieVendorCode);
+        if (vendorUpdated) {
+          console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso!`);
+        } else {
+          console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
+        }
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
@@ -3970,6 +3976,31 @@ export class OmieService {
     }
   }
 
+  // Atualizar o vendedor de um cliente no Omie
+  async updateCustomerVendor(omieClientCode: number, vendorCode: number): Promise<boolean> {
+    try {
+      console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${vendorCode}...`);
+      
+      const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', {
+        codigo_cliente_omie: omieClientCode,
+        recomendacoes: {
+          codigo_vendedor: vendorCode
+        }
+      });
+
+      if (response && (response.codigo_cliente_omie || response.codigo_status === '0')) {
+        console.log(`✅ [OMIE] Vendedor do cliente ${omieClientCode} atualizado com sucesso para ${vendorCode}`);
+        return true;
+      } else {
+        console.error(`❌ [OMIE] Falha ao atualizar vendedor - resposta:`, response);
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ [OMIE] Erro ao atualizar vendedor do cliente ${omieClientCode}:`, error);
+      return false;
+    }
+  }
+
   // Listar todos os vendedores ativos do Omie - buscar TODAS as páginas
   async getAllVendors(page = 1, pageSize = 50): Promise<{
     vendors: OmieVendor[];
@@ -4794,11 +4825,17 @@ export async function createOmieOrder(orderData: {
         enviar_email: "S",
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       },
-      // NOTA: Omie NÃO aceita campo de vendedor no pedido - herda do cliente
     };
-    
-    if (vendorCode) {
-      console.log('⚠️ [OMIE] Vendedor não pode ser forçado via API - herdado do cliente:', vendorCode);
+
+    // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
+    if (vendorCode && omieCustomerId) {
+      console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieCustomerId} para ${vendorCode} antes de criar pedido...`);
+      const vendorUpdated = await this.updateCustomerVendor(omieCustomerId, vendorCode);
+      if (vendorUpdated) {
+        console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso!`);
+      } else {
+        console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
+      }
     }
 
     console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
