@@ -1800,7 +1800,8 @@ export class OmieService {
         invoiceStatus: this.mapSefazStatus('emitida'), // Pedidos faturados sempre têm status "emitida"
         invoiceStage,
         products,
-        deliveryWeekdays // ✅ Copiar delivery_weekdays do customer
+        deliveryWeekdays, // ✅ Copiar delivery_weekdays do customer
+        omieInstanceId: this.omieInstanceId // Tag multi-tenant
       };
       
       console.log(`🔧 DEBUG BILLING STATUS: invoiceStatus="${billingData.invoiceStatus}", mapeado de "emitida"`);
@@ -2104,7 +2105,8 @@ export class OmieService {
           unitPrice: parseFloat(item.prod?.vUnCom || '0'),
           totalPrice: parseFloat(item.prod?.vProd || '0')
         })) || [],
-        deliveryWeekdays // ✅ Copiar delivery_weekdays do customer
+        deliveryWeekdays, // ✅ Copiar delivery_weekdays do customer
+        omieInstanceId: this.omieInstanceId // Tag multi-tenant
       };
       
       return billingData;
@@ -3772,7 +3774,8 @@ export class OmieService {
                   return this.mapSefazStatus(validStatus); // Fallback para 100 (Autorizado)
                 })(),
                 invoiceStage: invoiceStage || '',
-                products
+                products,
+                omieInstanceId: this.omieInstanceId // Tag multi-tenant
               };
               
               // Usar validação centralizada para salvar

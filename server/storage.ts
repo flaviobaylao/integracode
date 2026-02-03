@@ -340,7 +340,7 @@ export interface IStorage {
   // Overdue debts operations
   getOverdueDebts(): Promise<any[]>;
   getOverdueDebtByDocument(document: string): Promise<any | undefined>;
-  syncOverdueDebts(debts: any[], forceEmpty?: boolean): Promise<void>;
+  syncOverdueDebts(debts: any[], forceEmpty?: boolean, omieInstanceId?: string | null): Promise<void>;
   clearOverdueDebts(): Promise<void>;
 
   // Exported reports operations
@@ -5054,8 +5054,8 @@ export class DatabaseStorage implements IStorage {
     return debt;
   }
 
-  async syncOverdueDebts(debts: any[], forceEmpty: boolean = false): Promise<void> {
-    console.log(`💾 [SYNC-DEBTS] Recebidos ${debts.length} débitos para sincronizar`);
+  async syncOverdueDebts(debts: any[], forceEmpty: boolean = false, omieInstanceId?: string | null): Promise<void> {
+    console.log(`💾 [SYNC-DEBTS] Recebidos ${debts.length} débitos para sincronizar${omieInstanceId ? ` (instância: ${omieInstanceId})` : ''}`);
     
     // PROTEÇÃO: Não limpar dados existentes se receber array vazio (exceto se forceEmpty=true)
     if (debts.length === 0 && !forceEmpty) {
@@ -5074,7 +5074,8 @@ export class DatabaseStorage implements IStorage {
         totalAmount: debt.valorTotal.toString(),
         maxDaysOverdue: debt.diasMaximoAtraso,
         vendedores: debt.vendedores || [],
-        debts: debt.debitos || []
+        debts: debt.debitos || [],
+        omieInstanceId: omieInstanceId || null // Tag multi-tenant
       };
       
       if (index === 0) {
@@ -5082,16 +5083,23 @@ export class DatabaseStorage implements IStorage {
           cliente: mapped.clientName,
           documento: mapped.clientDocument,
           valor: mapped.totalAmount,
-          diasAtraso: mapped.maxDaysOverdue
+          diasAtraso: mapped.maxDaysOverdue,
+          omieInstanceId: mapped.omieInstanceId
         });
       }
       
       return mapped;
     });
     
-    // Agora sim, limpar e inserir novos dados
-    await db.delete(overdueDebts);
-    console.log(`🗑️ [SYNC-DEBTS] Tabela overdue_debts limpa`);
+    // Se temos uma instância específica, limpar apenas débitos dessa instância
+    if (omieInstanceId) {
+      await db.delete(overdueDebts).where(eq(overdueDebts.omieInstanceId, omieInstanceId));
+      console.log(`🗑️ [SYNC-DEBTS] Débitos da instância ${omieInstanceId} removidos`);
+    } else {
+      // Limpar todos os débitos (comportamento legado)
+      await db.delete(overdueDebts);
+      console.log(`🗑️ [SYNC-DEBTS] Tabela overdue_debts limpa`);
+    }
     
     console.log(`💾 [SYNC-DEBTS] Inserindo ${debtsToInsert.length} débitos no banco...`);
     await db.insert(overdueDebts).values(debtsToInsert);

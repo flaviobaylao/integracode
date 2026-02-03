@@ -4080,7 +4080,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!customer) {
         console.log(`🔄 Cliente ${processedData.customerId} não encontrado localmente, tentando sincronizar do Omie...`);
         try {
-          const omieService = getOmieService(storage);
+          // Multi-tenant: tentar usar instância Omie default para sincronização
+          let omieService = getOmieService(storage);
           if (omieService && processedData.customerId.startsWith('omie-client-')) {
             const omieClientCode = processedData.customerId.replace('omie-client-', '');
             const omieClient = await omieService.getClientByCode(parseInt(omieClientCode));
@@ -7899,7 +7900,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // PROTEÇÃO: Só salvar se a sincronização foi bem-sucedida
         if (overdueData.success) {
-          await storage.syncOverdueDebts(overdueData.debts);
+          // Passar omieInstanceId para tagear os débitos por instância
+          await storage.syncOverdueDebts(overdueData.debts, false, omieService.omieInstanceId);
           
           results.overdueDebts = {
             totalClients: overdueData.totalClients || 0,
@@ -8810,7 +8812,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           debitos: debt.debts || [],
           valorTotal: parseFloat(debt.totalAmount),
           diasMaximoAtraso: debt.maxDaysOverdue,
-          vendedores: vendedoresFinais
+          vendedores: vendedoresFinais,
+          omieInstanceId: debt.omieInstanceId || null // Tag multi-tenant
         };
       });
 
@@ -9310,8 +9313,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let released = 0;
       const errors = [];
       
-      const omieService = getOmieService(storage);
-      if (!omieService) {
+      // Verificar se há ao menos um serviço Omie configurado (default)
+      const defaultOmieService = getOmieService(storage);
+      if (!defaultOmieService) {
         console.log(`❌ Omie service não configurado`);
         return res.status(503).json({ message: 'Integração Omie não configurada' });
       }
@@ -9322,6 +9326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const orderId of orderIds) {
         let order: any = null;
         let salesCard: any = null;
+        let omieService: OmieService | null = null;
         
         try {
           console.log(`\n📦 Processando pedido ${orderId}...`);
@@ -9361,6 +9366,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`❌ Sales card ${order.salesCardId} sem dados de cliente`);
             errors.push(`Sales card ${order.salesCardId} sem dados de cliente`);
             continue;
+          }
+          
+          // Multi-tenant: usar instância Omie do cliente ou default
+          if (salesCard.customer?.omieInstanceId) {
+            const omieInstance = await storage.getOmieInstance(salesCard.customer.omieInstanceId);
+            if (!omieInstance) {
+              console.warn(`[RELEASE-BLOCKED] Instance ${salesCard.customer.omieInstanceId} not found for customer ${salesCard.customer.name}, using default`);
+            } else if (!omieInstance.isActive) {
+              console.warn(`[RELEASE-BLOCKED] Instance ${omieInstance.displayName} is inactive for customer ${salesCard.customer.name}, using default`);
+            } else {
+              omieService = OmieService.createFromInstance(omieInstance, storage);
+              console.log(`[RELEASE-BLOCKED] Using Omie instance: ${omieInstance.displayName} (${omieInstance.name}) for customer ${salesCard.customer.name}`);
+            }
+          }
+          
+          if (!omieService) {
+            omieService = defaultOmieService;
+            console.log(`[RELEASE-BLOCKED] Using default Omie instance for customer ${salesCard.customer.name}`);
           }
           
           // Buscar dados completos dos produtos
@@ -13426,17 +13449,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cardId = req.params.id;
       console.log('Card ID:', cardId);
       
-      // Inicializar serviço Omie
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ message: 'Integração Omie não configurada' });
-      }
-      
       // Buscar o card com dados relacionados
       const card = await storage.getSalesCard(cardId);
       
       if (!card) {
         return res.status(404).json({ message: 'Card não encontrado' });
+      }
+      
+      // Multi-tenant: usar instância Omie do cliente ou default
+      let omieService: OmieService | null = null;
+      
+      if (card.customer?.omieInstanceId) {
+        const omieInstance = await storage.getOmieInstance(card.customer.omieInstanceId);
+        if (!omieInstance) {
+          console.warn(`[SEND-TO-OMIE] Instance ${card.customer.omieInstanceId} not found for customer ${card.customer.name}, using default`);
+        } else if (!omieInstance.isActive) {
+          console.warn(`[SEND-TO-OMIE] Instance ${omieInstance.displayName} is inactive for customer ${card.customer.name}, using default`);
+        } else {
+          omieService = OmieService.createFromInstance(omieInstance, storage);
+          console.log(`[SEND-TO-OMIE] Using Omie instance: ${omieInstance.displayName} (${omieInstance.name}) for customer ${card.customer.name}`);
+        }
+      }
+      
+      if (!omieService) {
+        omieService = getOmieService(storage);
+        if (omieService) {
+          console.log(`[SEND-TO-OMIE] Using default Omie instance`);
+        }
+      }
+      
+      if (!omieService) {
+        return res.status(503).json({ message: 'Integração Omie não configurada' });
       }
       
       console.log('📋 Card encontrado:', {
@@ -13852,17 +13895,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const omieService = getOmieService(storage);
+      // Buscar dados do cliente para determinar instância Omie
+      const customer = await storage.getCustomer(salesCard.customerId);
+      if (!customer) {
+        return res.status(404).json({ message: 'Customer not found' });
+      }
+
+      // Multi-tenant: usar instância Omie do cliente ou default
+      let omieService: OmieService | null = null;
+      
+      if (customer.omieInstanceId) {
+        // Buscar instância específica do cliente
+        const omieInstance = await storage.getOmieInstance(customer.omieInstanceId);
+        if (!omieInstance) {
+          console.warn(`[INVOICE] Instance ${customer.omieInstanceId} not found for customer ${customer.name}, using default`);
+        } else if (!omieInstance.isActive) {
+          console.warn(`[INVOICE] Instance ${omieInstance.displayName} is inactive for customer ${customer.name}, using default`);
+        } else {
+          omieService = OmieService.createFromInstance(omieInstance, storage);
+          console.log(`[INVOICE] Using Omie instance: ${omieInstance.displayName} (${omieInstance.name}) for customer ${customer.name}`);
+        }
+      }
+      
+      // Fallback para instância default se cliente não tem instância específica
+      if (!omieService) {
+        omieService = getOmieService(storage);
+        if (omieService) {
+          console.log(`[INVOICE] Using default Omie instance for customer ${customer.name}`);
+        }
+      }
+      
       if (!omieService) {
         return res.status(503).json({ 
           message: 'Omie integration not configured' 
         });
-      }
-
-      // Buscar dados do cliente
-      const customer = await storage.getCustomer(salesCard.customerId);
-      if (!customer) {
-        return res.status(404).json({ message: 'Customer not found' });
       }
 
       // Usar produtos do card ou produtos fornecidos no request

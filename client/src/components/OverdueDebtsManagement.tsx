@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle } from "lucide-react";
 import WhatsAppButton from "@/components/WhatsAppButton";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from 'xlsx';
 import type { User } from "@shared/schema";
@@ -35,6 +36,7 @@ interface OverdueDebt {
   valorTotal: number;
   diasMaximoAtraso: number;
   vendedores?: number[]; // Array de códigos de vendedores do cliente
+  omieInstanceId?: string | null; // Tag multi-tenant
 }
 
 interface OverdueDebtsData {
@@ -678,7 +680,10 @@ export default function OverdueDebtsManagement() {
                           data-testid={`row-debt-${debtIndex}-${docIndex}`}
                         >
                           <td className="p-3">
-                            <div className="font-medium text-gray-900">{debt.cliente.nome_fantasia}</div>
+                            <div className="font-medium text-gray-900 flex items-center gap-2">
+                              <span>{debt.cliente.nome_fantasia}</span>
+                              <OmieInstanceBadge instanceId={debt.omieInstanceId} />
+                            </div>
                           </td>
                           <td className="p-3 text-sm text-gray-600">{debt.cliente.cnpj_cpf}</td>
                           <td className="p-3 text-sm text-gray-600">

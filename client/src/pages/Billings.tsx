@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/hooks/use-toast';
 import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2 } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import OmieInstanceBadge from '@/components/OmieInstanceBadge';
 import {
   Select,
   SelectContent,
@@ -38,6 +39,7 @@ interface Billing {
   billingType: string;
   invoiceStatus: string;
   invoiceStage?: string;
+  omieInstanceId?: string | null;
   products: Array<{
     code: string;
     description: string;
@@ -849,7 +851,10 @@ export default function Billings() {
                           {billing.invoiceNumber || '-'}
                         </TableCell>
                         <TableCell data-testid={`cell-customer-${billing.id}`}>
-                          {billing.customerFantasyName || '-'}
+                          <div className="flex items-center gap-2">
+                            <span>{billing.customerFantasyName || '-'}</span>
+                            <OmieInstanceBadge instanceId={billing.omieInstanceId} />
+                          </div>
                         </TableCell>
                         <TableCell data-testid={`cell-cfop-${billing.id}`}>
                           <Badge variant="outline">{getCfopDisplayName(billing.cfop)}</Badge>
