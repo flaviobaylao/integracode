@@ -2625,10 +2625,16 @@ export class OmieService {
         }
       };
 
-      // ✅ CORREÇÃO: Adicionar vendedor usando campo correto "codVend" em informacoes_adicionais
+      // ✅ CORREÇÃO: Adicionar vendedor em AMBOS os lugares para garantir
       if (omieVendorCode) {
-        orderPayload.informacoes_adicionais.codVend = omieVendorCode;
-        console.log('✅ Vendedor adicionado ao pedido (codVend em informacoes_adicionais):', omieVendorCode);
+        // Tentar no cabecalho (algumas versões da API aceitam)
+        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
+        // E também em outras_inf (campo alternativo)
+        orderPayload.outras_inf = {
+          codVend: omieVendorCode
+        };
+        console.log('🔧 [OMIE] Vendedor configurado:', omieVendorCode);
+        console.log('🔧 [OMIE] Payload cabecalho:', JSON.stringify(orderPayload.cabecalho));
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
@@ -4765,15 +4771,16 @@ export async function createOmieOrder(orderData: {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
-    const omieOrderPayload = {
+    const omieOrderPayload: any = {
       cabecalho: {
         numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
         codigo_cliente: omieCustomerId,
         data_previsao: new Date().toLocaleDateString('pt-BR'),
         etapa: '50', // Pedido de venda
         codigo_parcela: parcelaCode,
-        origem_pedido: 'CRM-HonestSucos'
-        // Nota: codigo_vendedor não é aceito no cabecalho do Omie
+        origem_pedido: 'CRM-HonestSucos',
+        // Tentar codigo_vendedor no cabecalho
+        ...(vendorCode && { codigo_vendedor: vendorCode })
       },
       det: orderData.products.map((product, index) => ({
         ide: {
@@ -4792,13 +4799,16 @@ export async function createOmieOrder(orderData: {
         codigo_categoria: "1.01.03", // Categoria fiscal
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
-        // Enviar email habilitado para todos os pedidos
         enviar_email: "S",
-        // ✅ CORREÇÃO: Campo correto do Omie é "codVend" (não "codigo_vendedor")
-        ...(vendorCode && { codVend: vendorCode }),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
-      }
+      },
+      // Tentar também em outras_inf
+      ...(vendorCode && { 
+        outras_inf: { codVend: vendorCode }
+      })
     };
+    
+    console.log('🔧 [OMIE] Vendedor para pedido:', vendorCode);
 
     console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
 
