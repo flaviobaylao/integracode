@@ -2538,7 +2538,7 @@ export class OmieService {
       if (!omieVendorCode && omieClientCode) {
         console.log('🔍 Buscando vendedor das recomendações do cliente no Omie...');
         try {
-          const omieClient = await this.getClientByOmieCode(omieClientCode.toString());
+          const omieClient = await this.getClientByCode(Number(omieClientCode));
           if (omieClient?.recomendacoes?.codigo_vendedor) {
             omieVendorCode = omieClient.recomendacoes.codigo_vendedor;
             console.log(`✅ Vendedor encontrado nas recomendações do cliente: ${omieVendorCode}`);
