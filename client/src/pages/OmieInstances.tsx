@@ -143,6 +143,32 @@ export default function OmieInstances() {
     },
   });
 
+  const [syncingInstanceId, setSyncingInstanceId] = useState<string | null>(null);
+  
+  const syncClientsMutation = useMutation({
+    mutationFn: async (instanceId: string) => {
+      setSyncingInstanceId(instanceId);
+      return apiRequest("POST", "/api/omie/sync-active-clients", { omieInstanceId: instanceId });
+    },
+    onSuccess: (data: any) => {
+      setSyncingInstanceId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({
+        title: "Sincronização concluída",
+        description: `${data.imported || 0} clientes importados, ${data.updated || 0} atualizados`,
+      });
+    },
+    onError: (error: any) => {
+      setSyncingInstanceId(null);
+      toast({
+        title: "Erro na sincronização",
+        description: error.message || "Erro ao sincronizar clientes",
+        variant: "destructive",
+      });
+    },
+  });
+
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -329,6 +355,20 @@ export default function OmieInstances() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => syncClientsMutation.mutate(instance.id)}
+                          disabled={syncingInstanceId === instance.id || !instance.isActive}
+                          title={instance.isActive ? "Sincronizar clientes" : "Instância inativa"}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          {syncingInstanceId === instance.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                        </Button>
                         {!instance.isDefault && (
                           <Button
                             variant="ghost"

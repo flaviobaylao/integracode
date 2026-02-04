@@ -4583,6 +4583,30 @@ export function getOmieService(storage?: any): OmieService | null {
   }, storage);
 }
 
+export async function getOmieServiceForInstance(storage: any, instanceId: string): Promise<OmieService | null> {
+  try {
+    const instance = await storage.getOmieInstance(instanceId);
+    if (!instance || !instance.appKey || !instance.appSecret) {
+      console.log(`❌ Instância Omie não encontrada ou sem credenciais: ${instanceId}`);
+      return null;
+    }
+    
+    if (!instance.isActive) {
+      console.log(`⚠️ Instância Omie desativada: ${instance.name}`);
+      return null;
+    }
+    
+    console.log(`✅ Criando OmieService para instância: ${instance.name} (${instanceId})`);
+    return new OmieService({
+      appKey: instance.appKey,
+      appSecret: instance.appSecret,
+    }, storage, instanceId, instance.name);
+  } catch (error: any) {
+    console.error(`❌ Erro ao buscar instância Omie ${instanceId}:`, error.message);
+    return null;
+  }
+}
+
 export function isOmieConfigured(): boolean {
   return !!(process.env.OMIE_APP_KEY && process.env.OMIE_APP_SECRET);
 }

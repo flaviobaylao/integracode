@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
-import { getOmieService, isOmieConfigured, createOmieOrder, OmieService } from "./omieIntegration";
+import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -6464,12 +6464,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota NOVA e SIMPLES para sincronizar APENAS CLIENTES ATIVOS do Omie
   app.post('/api/omie/sync-active-clients', authenticateUser, async (req: any, res) => {
     try {
-      const { defaultSellerId } = req.body;
+      const { defaultSellerId, omieInstanceId } = req.body;
       
-      const omieService = getOmieService(storage);
+      let omieService: OmieService | null;
+      
+      if (omieInstanceId) {
+        console.log(`🔄 Sincronizando clientes da instância específica: ${omieInstanceId}`);
+        omieService = await getOmieServiceForInstance(storage, omieInstanceId);
+      } else {
+        omieService = getOmieService(storage);
+      }
+      
       if (!omieService) {
         return res.status(503).json({ 
-          message: "Integração Omie não configurada" 
+          message: omieInstanceId 
+            ? `Instância Omie não encontrada ou sem credenciais: ${omieInstanceId}` 
+            : "Integração Omie não configurada" 
         });
       }
 
@@ -6481,7 +6491,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expectedTotal: 0 // Será calculado dinamicamente durante a sincronização
       };
 
-      console.log('🚀 NOVA SINCRONIZAÇÃO - APENAS CLIENTES ATIVOS (CRITÉRIO: campo situacao)');
+      const instanceInfo = omieService.omieInstanceName ? ` [${omieService.omieInstanceName}]` : '';
+      console.log(`🚀 NOVA SINCRONIZAÇÃO${instanceInfo} - APENAS CLIENTES ATIVOS (CRITÉRIO: campo situacao)`);
       console.log('📊 Calculando total de clientes ativos dinamicamente...');
 
       let currentPage = 1;
@@ -6552,7 +6563,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 sellerId: finalSellerId,
                 weekdays: JSON.stringify(normalizedWeekdays),
                 deliveryWeekdays: autoDeliveryDays,
-                isLead: false
+                isLead: false,
+                omieInstanceId: omieService.omieInstanceId || undefined
               };
               
               if (existingCustomer) {
@@ -6594,7 +6606,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   sellerId: resolvedSellerId || existingCustomer.sellerId, // Usa ID real do vendedor
                   isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
-                  situacao: systemClient.situacao
+                  situacao: systemClient.situacao,
+                  // ✅ MULTI-TENANT: Atualizar omieInstanceId se não definido
+                  omieInstanceId: existingCustomer.omieInstanceId || systemClient.omieInstanceId
                   // Campos preservados (NÃO atualizados do Omie):
                   // - latitude
                   // - longitude  
