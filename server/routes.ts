@@ -8899,8 +8899,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Salvar débitos no banco de dados (apenas se sucesso)
+      // Multi-tenant: tagear débitos com a instância Omie
       try {
-        await storage.syncOverdueDebts(overdueData.debts);
+        await storage.syncOverdueDebts(overdueData.debts, false, omieService.omieInstanceId);
         console.log('✅ Débitos salvos no banco de dados');
       } catch (saveError) {
         console.error('❌ Erro ao salvar débitos no banco:', saveError);
