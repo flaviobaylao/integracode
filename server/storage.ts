@@ -453,6 +453,7 @@ export interface IStorage {
   getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]>;
   getActiveCustomer(id: string): Promise<ActiveCustomer | undefined>;
   getActiveCustomerByDocument(document: string): Promise<ActiveCustomer | undefined>;
+  getActiveCustomerByDocumentAndInstance(document: string, omieInstanceId: string | null): Promise<ActiveCustomer | undefined>;
   createActiveCustomer(customer: InsertActiveCustomer): Promise<ActiveCustomer>;
   updateActiveCustomer(id: string, customer: Partial<InsertActiveCustomer>): Promise<ActiveCustomer>;
   deleteActiveCustomer(id: string): Promise<void>;
@@ -6723,6 +6724,29 @@ export class DatabaseStorage implements IStorage {
     const normalizedDoc = document.replace(/\D/g, '');
     const [ac] = await db.select().from(activeCustomers).where(eq(activeCustomers.document, normalizedDoc));
     return ac;
+  }
+  
+  async getActiveCustomerByDocumentAndInstance(document: string, omieInstanceId: string | null): Promise<ActiveCustomer | undefined> {
+    const normalizedDoc = document.replace(/\D/g, '');
+    // Multi-tenant: buscar por documento E instância Omie
+    if (omieInstanceId) {
+      const [ac] = await db.select().from(activeCustomers).where(
+        and(
+          eq(activeCustomers.document, normalizedDoc),
+          eq(activeCustomers.omieInstanceId, omieInstanceId)
+        )
+      );
+      return ac;
+    } else {
+      // Se não tem instância, buscar por documento com instância null
+      const [ac] = await db.select().from(activeCustomers).where(
+        and(
+          eq(activeCustomers.document, normalizedDoc),
+          isNull(activeCustomers.omieInstanceId)
+        )
+      );
+      return ac;
+    }
   }
   
   async createActiveCustomer(customerData: InsertActiveCustomer): Promise<ActiveCustomer> {

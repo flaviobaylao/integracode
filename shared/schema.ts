@@ -2175,6 +2175,7 @@ export const activeCustomers = pgTable("active_customers", {
   documentType: varchar("document_type").notNull(), // 'cpf' ou 'cnpj'
   fantasyNameImported: varchar("fantasy_name_imported"), // Nome fantasia da planilha
   customerId: varchar("customer_id"), // Referência ao customer encontrado (pode ser null se não encontrou)
+  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem (multi-tenant)
   uploadId: varchar("upload_id").notNull(), // Referência ao upload que trouxe este registro
   matchStatus: varchar("match_status").notNull().default('pending'), // pending, matched, unmatched
   latitude: decimal("latitude", { precision: 10, scale: 8 }), // Coordenada do cliente
@@ -2188,7 +2189,7 @@ export const activeCustomers = pgTable("active_customers", {
   index("idx_active_customers_document").on(table.document),
   index("idx_active_customers_customer_id").on(table.customerId),
   index("idx_active_customers_active").on(table.isActive),
-  unique("unique_active_customer_document").on(table.document),
+  index("idx_active_customers_omie_instance").on(table.omieInstanceId),
 ]);
 
 // Schemas e types para Active Customers

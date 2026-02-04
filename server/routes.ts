@@ -22561,8 +22561,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Cliente não possui CPF ou CNPJ cadastrado' });
       }
 
-      // Verificar se já existe na lista ativa
-      const existing = await storage.getActiveCustomerByDocument(document);
+      // Multi-tenant: obter instância Omie do cliente
+      const omieInstanceId = customer.omieInstanceId || null;
+
+      // Verificar se já existe na lista ativa para esta instância Omie específica
+      const existing = await storage.getActiveCustomerByDocumentAndInstance(document, omieInstanceId);
       
       if (existing) {
         // Se existe mas está inativo, ativar
@@ -22578,6 +22581,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         documentType: customer.cpf ? 'cpf' : 'cnpj',
         fantasyNameImported: customer.fantasyName || customer.name,
         customerId,
+        omieInstanceId, // Multi-tenant: vincular à instância Omie
         uploadId: 'manual-add', // Marcador especial para adições manuais
         matchStatus: 'matched',
         latitude: customer.latitude ? parseFloat(customer.latitude.toString()) : undefined,
