@@ -2569,9 +2569,12 @@ export class OmieService {
         }
       }
       
-      // Se ainda não tem vendedor, o pedido não pode ser enviado
+      // ✅ ÚLTIMO FALLBACK: usar código do admin (Flavio) como vendedor padrão
       if (!omieVendorCode) {
-        throw new Error('Nenhum vendedor encontrado para o pedido. Configure o código de vendedor Omie no usuário ou nas recomendações do cliente.');
+        // Código do vendedor admin fixo (flavio@bebahonest.com.br)
+        const DEFAULT_VENDOR_CODE = 2425693369;
+        omieVendorCode = DEFAULT_VENDOR_CODE;
+        console.log(`⚠️ Usando vendedor padrão fixo (admin): ${omieVendorCode}`);
       }
 
       let orderItems;
