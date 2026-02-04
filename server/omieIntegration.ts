@@ -4047,10 +4047,20 @@ export class OmieService {
     try {
       console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${vendorCode}...`);
       
-      // CORREÇÃO VALIDADA: codigo_vendedor DEVE estar dentro de recomendacoes
-      // Usar UpsertCliente (não AlterarCliente) com estrutura correta
-      const response = await this.makeRequest('/geral/clientes/', 'UpsertCliente', {
+      // Primeiro buscar dados completos do cliente para usar no AlterarCliente
+      const clientData = await this.getClientByCode(omieClientCode);
+      if (!clientData) {
+        console.error(`❌ [OMIE] Cliente ${omieClientCode} não encontrado para atualização de vendedor`);
+        return false;
+      }
+
+      console.log(`🔍 [OMIE] Cliente encontrado: ${clientData.razao_social}, CNPJ/CPF: ${clientData.cnpj_cpf}`);
+      
+      // Usar AlterarCliente com dados mínimos obrigatórios + vendedor
+      const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', {
         codigo_cliente_omie: omieClientCode,
+        cnpj_cpf: clientData.cnpj_cpf,
+        razao_social: clientData.razao_social,
         recomendacoes: {
           codigo_vendedor: vendorCode
         }
