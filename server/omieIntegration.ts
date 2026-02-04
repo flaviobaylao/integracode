@@ -2555,7 +2555,7 @@ export class OmieService {
         console.log('⚠️ Vendedor não encontrado - buscando vendedor padrão do sistema...');
         try {
           if (this.storage) {
-            const allUsers = await this.storage.getAllUsers();
+            const allUsers = await this.storage.getUsers();
             const firstSeller = allUsers.find(u => 
               (u.role === 'vendedor' || u.role === 'admin') && u.omieVendorCode
             );
