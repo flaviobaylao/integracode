@@ -65,7 +65,7 @@ export default function OmieInstances() {
 
   const createMutation = useMutation({
     mutationFn: (data: OmieInstanceFormData) =>
-      apiRequest("/api/omie/instances", "POST", data),
+      apiRequest("POST", "/api/omie/instances", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       setIsDialogOpen(false);
@@ -86,7 +86,7 @@ export default function OmieInstances() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<OmieInstanceFormData> }) =>
-      apiRequest(`/api/omie/instances/${id}`, "PUT", data),
+      apiRequest("PUT", `/api/omie/instances/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       setIsDialogOpen(false);
@@ -107,7 +107,7 @@ export default function OmieInstances() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest(`/api/omie/instances/${id}`, "DELETE"),
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/omie/instances/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       toast({
@@ -126,7 +126,7 @@ export default function OmieInstances() {
 
   const setDefaultMutation = useMutation({
     mutationFn: (id: string) =>
-      apiRequest(`/api/omie/instances/${id}/set-default`, "POST"),
+      apiRequest("POST", `/api/omie/instances/${id}/set-default`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       toast({
@@ -259,7 +259,7 @@ export default function OmieInstances() {
                 variant="outline"
                 onClick={async () => {
                   try {
-                    const response = await apiRequest("/api/omie/instances/init-default", "POST");
+                    const response = await apiRequest("POST", "/api/omie/instances/init-default");
                     toast({
                       title: "Sucesso",
                       description: "Instância padrão OMIE GYN criada com sucesso",
