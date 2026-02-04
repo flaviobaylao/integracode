@@ -2683,13 +2683,23 @@ export class OmieService {
         }
       };
 
-      // ✅ ADICIONAR VENDEDOR NO CABEÇALHO DO PEDIDO
+      // ✅ CORREÇÃO: codigo_vendedor NÃO pode ir no cabecalho!
+      // O vendedor deve ser atualizado no CADASTRO DO CLIENTE antes de criar o pedido
       console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
-      if (omieVendorCode) {
-        orderPayload.cabecalho.codigo_vendedor = omieVendorCode;
-        console.log(`✅ [OMIE] Vendedor ${omieVendorCode} adicionado ao cabecalho do pedido`);
+      if (omieVendorCode && omieClientCode) {
+        console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${omieVendorCode} antes de criar pedido...`);
+        try {
+          const vendorUpdated = await this.updateCustomerVendor(Number(omieClientCode), omieVendorCode);
+          if (vendorUpdated) {
+            console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso!`);
+          } else {
+            console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
+          }
+        } catch (error) {
+          console.error(`❌ [OMIE] Erro ao atualizar vendedor do cliente:`, error);
+        }
       } else {
-        console.log(`⚠️ [OMIE] Sem código de vendedor - pedido será criado sem vendedor`);
+        console.log(`⚠️ [OMIE] Sem código de vendedor ou cliente - pedido será criado com vendedor atual do cliente`);
       }
 
       console.log('Enviando pedido para Omie:', orderNumber);
