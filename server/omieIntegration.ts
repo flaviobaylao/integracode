@@ -2660,7 +2660,7 @@ export class OmieService {
       }
 
       // Payload para API Omie (estrutura correta)
-      // ✅ SOLUÇÃO: codigo_vendedor vai no cabecalho do pedido
+      // ⚠️ NOTA: codigo_vendedor NÃO vai no cabecalho - é herdado do cliente!
       const orderPayload: any = {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
