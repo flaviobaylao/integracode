@@ -2534,10 +2534,44 @@ export class OmieService {
         }
       }
       
-      // NOTA: NÃO usar vendedor das recomendações do cliente
-      // O vendedor do pedido deve ser sempre quem registrou o pedido no Integra
+      // Se não encontrou vendedor pelo usuário, buscar das recomendações do cliente no Omie
+      if (!omieVendorCode && omieClientCode) {
+        console.log('🔍 Buscando vendedor das recomendações do cliente no Omie...');
+        try {
+          const omieClient = await this.getClientByOmieCode(omieClientCode.toString());
+          if (omieClient?.recomendacoes?.codigo_vendedor) {
+            omieVendorCode = omieClient.recomendacoes.codigo_vendedor;
+            console.log(`✅ Vendedor encontrado nas recomendações do cliente: ${omieVendorCode}`);
+          }
+        } catch (error) {
+          console.error('Erro ao buscar vendedor das recomendações:', error);
+        }
+      }
+      
+      // ✅ FALLBACK OBRIGATÓRIO: Omie requer codigo_vendedor
+      // Se ainda não encontrou vendedor, usar vendedor padrão do sistema
       if (!omieVendorCode) {
-        console.log('⚠️ Vendedor não encontrado para o pedido - pedido será criado sem vendedor');
+        // Buscar primeiro vendedor ativo no sistema como fallback
+        console.log('⚠️ Vendedor não encontrado - buscando vendedor padrão do sistema...');
+        try {
+          if (this.storage) {
+            const allUsers = await this.storage.getAllUsers();
+            const firstSeller = allUsers.find(u => 
+              (u.role === 'vendedor' || u.role === 'admin') && u.omieVendorCode
+            );
+            if (firstSeller?.omieVendorCode) {
+              omieVendorCode = firstSeller.omieVendorCode;
+              console.log(`✅ Usando vendedor padrão do sistema: ${firstSeller.email} -> ${omieVendorCode}`);
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao buscar vendedor padrão:', error);
+        }
+      }
+      
+      // Se ainda não tem vendedor, o pedido não pode ser enviado
+      if (!omieVendorCode) {
+        throw new Error('Nenhum vendedor encontrado para o pedido. Configure o código de vendedor Omie no usuário ou nas recomendações do cliente.');
       }
 
       let orderItems;
