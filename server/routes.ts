@@ -8772,7 +8772,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customerDataMap = new Map<string, { phone?: string; sellerId?: string }>();
       
       // Buscar todos os usuários para mapear sellerId -> omieVendorCode
-      const allUsers = await storage.getAllUsers();
+      const allUsers = await storage.getUsers();
       const userVendorCodeMap = new Map<string, string>();
       allUsers.forEach((user: any) => {
         if (user.id && user.omieVendorCode) {
