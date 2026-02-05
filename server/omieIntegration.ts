@@ -2661,19 +2661,33 @@ export class OmieService {
 
       console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
       
-      // Payload para API Omie (estrutura correta)
-      // ⚠️ IMPORTANTE: codigo_vendedor NÃO pode ir no cabecalho do pedido!
-      // O vendedor deve ser definido apenas no cadastro do cliente (AlterarCliente)
+      // Garantir que omieVendorCode seja um número inteiro válido
+      const vendorCodeInt = typeof omieVendorCode === 'string' ? parseInt(omieVendorCode, 10) : omieVendorCode;
+      const validVendorCode = vendorCodeInt && !isNaN(vendorCodeInt) && vendorCodeInt > 0 ? vendorCodeInt : null;
+      console.log(`🔍 [OMIE-VENDOR] omieVendorCode=${omieVendorCode}, vendorCodeInt=${vendorCodeInt}, validVendorCode=${validVendorCode}`);
+      
+      // Payload para API Omie (estrutura conforme documentação oficial)
+      // ✅ codigo_vendedor VAI no cabecalho conforme https://app.omie.com.br/api/v1/produtos/pedido/
+      const cabecalho: any = {
+        codigo_pedido_integracao: integrationCode,
+        codigo_cliente: Number(omieClientCode),
+        data_previsao: new Date().toLocaleDateString('pt-BR'),
+        etapa: "50", // Pedido de venda
+        numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
+        codigo_parcela: parcelaCode,
+        quantidade_itens: products.length
+      };
+      
+      // ✅ Adicionar codigo_vendedor ao cabecalho se válido (como número inteiro)
+      if (validVendorCode) {
+        cabecalho.codigo_vendedor = validVendorCode;
+        console.log(`✅ [OMIE] codigo_vendedor ${validVendorCode} adicionado ao cabeçalho do pedido`);
+      } else {
+        console.log(`⚠️ [OMIE] Nenhum codigo_vendedor válido para adicionar ao pedido`);
+      }
+      
       const orderPayload: any = {
-        cabecalho: {
-          codigo_pedido_integracao: integrationCode,
-          codigo_cliente: omieClientCode,
-          data_previsao: new Date().toLocaleDateString('pt-BR'),
-          etapa: "50", // Pedido de venda
-          numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
-          codigo_parcela: parcelaCode,
-          quantidade_itens: products.length
-        },
+        cabecalho,
         det: orderItems,
         frete: {
           modalidade: "9" // Sem ocorrência de transporte
@@ -4892,26 +4906,38 @@ export async function createOmieOrder(orderData: {
     }
 
     // Extrair código do vendedor do formato "omie-vendor-XXXXX"
-    let vendorCode: number | undefined;
+    let vendorCode: number | null = null;
     if (orderData.sellerId && orderData.sellerId.startsWith('omie-vendor-')) {
       const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
-      vendorCode = parseInt(extractedCode, 10);
-      console.log(`📝 Vendedor extraído: ${orderData.sellerId} -> código Omie: ${vendorCode}`);
+      const parsedCode = parseInt(extractedCode, 10);
+      if (!isNaN(parsedCode) && parsedCode > 0) {
+        vendorCode = parsedCode;
+        console.log(`📝 Vendedor extraído: ${orderData.sellerId} -> código Omie: ${vendorCode}`);
+      } else {
+        console.warn(`⚠️ Código de vendedor inválido após parse: ${extractedCode}`);
+      }
     } else {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
-    // ⚠️ IMPORTANTE: codigo_vendedor NÃO pode ir no cabecalho do pedido!
-    // O vendedor deve ser definido apenas no cadastro do cliente (AlterarCliente)
+    // ✅ codigo_vendedor VAI no cabecalho conforme documentação oficial Omie
+    const hotsiteCabecalho: any = {
+      numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
+      codigo_cliente: Number(omieCustomerId),
+      data_previsao: new Date().toLocaleDateString('pt-BR'),
+      etapa: '50', // Pedido de venda
+      codigo_parcela: parcelaCode,
+      origem_pedido: 'CRM-HonestSucos'
+    };
+    
+    // ✅ Adicionar codigo_vendedor ao cabecalho se válido
+    if (vendorCode) {
+      hotsiteCabecalho.codigo_vendedor = vendorCode;
+      console.log(`✅ [OMIE-HOTSITE] codigo_vendedor ${vendorCode} adicionado ao cabeçalho`);
+    }
+    
     const omieOrderPayload: any = {
-      cabecalho: {
-        numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
-        codigo_cliente: omieCustomerId,
-        data_previsao: new Date().toLocaleDateString('pt-BR'),
-        etapa: '50', // Pedido de venda
-        codigo_parcela: parcelaCode,
-        origem_pedido: 'CRM-HonestSucos'
-      },
+      cabecalho: hotsiteCabecalho,
       det: orderData.products.map((product, index) => ({
         ide: {
           codigo_item_integracao: `ITEM-${index + 1}-${orderData.orderNumber}`
