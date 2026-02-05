@@ -2550,15 +2550,18 @@ export class OmieService {
       
       // ✅ FALLBACK OBRIGATÓRIO: Omie requer codigo_vendedor
       // Se ainda não encontrou vendedor, usar vendedor padrão do sistema
+      console.log(`🔍 [VENDOR-FALLBACK] omieVendorCode atual: ${omieVendorCode}`);
       if (!omieVendorCode) {
         // Buscar primeiro vendedor ativo no sistema como fallback
         console.log('⚠️ Vendedor não encontrado - buscando vendedor padrão do sistema...');
         try {
           if (this.storage) {
             const allUsers = await this.storage.getUsers();
+            console.log(`🔍 [VENDOR-FALLBACK] Total de usuários: ${allUsers.length}`);
             const firstSeller = allUsers.find(u => 
               (u.role === 'vendedor' || u.role === 'admin') && u.omieVendorCode
             );
+            console.log(`🔍 [VENDOR-FALLBACK] Primeiro vendedor com omieVendorCode: ${firstSeller?.email} -> ${firstSeller?.omieVendorCode}`);
             if (firstSeller?.omieVendorCode) {
               omieVendorCode = firstSeller.omieVendorCode;
               console.log(`✅ Usando vendedor padrão do sistema: ${firstSeller.email} -> ${omieVendorCode}`);
@@ -2570,12 +2573,15 @@ export class OmieService {
       }
       
       // ✅ ÚLTIMO FALLBACK: usar código do admin (Flavio) como vendedor padrão
+      console.log(`🔍 [VENDOR-FALLBACK-FINAL] omieVendorCode atual: ${omieVendorCode}`);
       if (!omieVendorCode) {
         // Código do vendedor admin fixo (flavio@bebahonest.com.br)
         const DEFAULT_VENDOR_CODE = 2425693369;
         omieVendorCode = DEFAULT_VENDOR_CODE;
         console.log(`⚠️ Usando vendedor padrão fixo (admin): ${omieVendorCode}`);
       }
+      
+      console.log(`📍 [VENDOR-FINAL] Código do vendedor que será usado no pedido: ${omieVendorCode}`);
 
       let orderItems;
       let totalValue = 0;
