@@ -2727,6 +2727,11 @@ export class OmieService {
       console.log('Cliente Omie ID:', omieClientCode);
       console.log('Total de itens:', products.length);
       console.log('Valor total:', totalValue);
+      
+      // DEBUG: Log completo do payload sendo enviado
+      console.log('🔍 [OMIE-DEBUG] Payload cabecalho COMPLETO:', JSON.stringify(cabecalho, null, 2));
+      console.log('🔍 [OMIE-DEBUG] codigo_vendedor no cabecalho:', cabecalho.codigo_vendedor);
+      console.log('🔍 [OMIE-DEBUG] Tipo do codigo_vendedor:', typeof cabecalho.codigo_vendedor);
 
       const response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
 
