@@ -2733,10 +2733,48 @@ export class OmieService {
       console.log('🔍 [OMIE-DEBUG] codigo_vendedor no cabecalho:', cabecalho.codigo_vendedor);
       console.log('🔍 [OMIE-DEBUG] Tipo do codigo_vendedor:', typeof cabecalho.codigo_vendedor);
 
+      console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido:', JSON.stringify(orderPayload, null, 2));
+      
       const response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
 
       if (response && response.codigo_pedido) {
-        console.log('Pedido criado com sucesso no Omie:', response.codigo_pedido);
+        console.log('✅ Pedido criado com sucesso no Omie:', response.codigo_pedido);
+        console.log('🔍 [OMIE-DEBUG] Resposta completa do IncluirPedido:', JSON.stringify(response, null, 2));
+        
+        if (validVendorCode) {
+          console.log(`🔄 [OMIE-VENDOR-FIX] Aplicando AlterarPedidoVenda para garantir vendedor ${validVendorCode} no pedido ${response.codigo_pedido}...`);
+          try {
+            const alterPayload: any = {
+              cabecalho: {
+                codigo_pedido: response.codigo_pedido,
+                codigo_pedido_integracao: integrationCode,
+                codigo_cliente: Number(omieClientCode),
+                data_previsao: new Date().toLocaleDateString('pt-BR'),
+                etapa: "50",
+                codigo_parcela: parcelaCode,
+                quantidade_itens: products.length,
+                codigo_vendedor: validVendorCode
+              },
+              det: orderItems,
+              frete: {
+                modalidade: "9"
+              },
+              informacoes_adicionais: {
+                codigo_categoria: "1.01.03",
+                codigo_conta_corrente: omieAccountCode,
+                consumidor_final: "S",
+                enviar_email: "S"
+              }
+            };
+            
+            console.log('🔍 [OMIE-VENDOR-FIX] Payload AlterarPedidoVenda:', JSON.stringify(alterPayload, null, 2));
+            const alterResponse = await this.makeRequest('/produtos/pedido/', 'AlterarPedidoVenda', alterPayload);
+            console.log(`✅ [OMIE-VENDOR-FIX] AlterarPedidoVenda concluído:`, JSON.stringify(alterResponse, null, 2));
+          } catch (alterError) {
+            console.error(`⚠️ [OMIE-VENDOR-FIX] Erro no AlterarPedidoVenda (pedido já criado):`, alterError instanceof Error ? alterError.message : alterError);
+          }
+        }
+        
         return {
           codigo_pedido: response.codigo_pedido,
           numero_pedido: response.numero_pedido || orderNumber,
@@ -4974,15 +5012,19 @@ export async function createOmieOrder(orderData: {
     // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
     if (vendorCode && omieCustomerId) {
       console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieCustomerId} para ${vendorCode} antes de criar pedido...`);
-      const vendorUpdated = await this.updateCustomerVendor(omieCustomerId, vendorCode);
-      if (vendorUpdated) {
-        console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso!`);
-      } else {
-        console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
+      try {
+        const vendorUpdated = await omieService.updateCustomerVendor(omieCustomerId, vendorCode);
+        if (vendorUpdated) {
+          console.log(`✅ [OMIE] Vendedor do cliente atualizado com sucesso!`);
+        } else {
+          console.log(`⚠️ [OMIE] Não foi possível atualizar vendedor do cliente, pedido será criado com vendedor atual`);
+        }
+      } catch (vendorError) {
+        console.error(`⚠️ [OMIE] Erro ao atualizar vendedor do cliente:`, vendorError);
       }
     }
 
-    console.log('Enviando pedido para Omie:', JSON.stringify(omieOrderPayload, null, 2));
+    console.log('🔍 [OMIE-HOTSITE-DEBUG] Payload completo para IncluirPedido:', JSON.stringify(omieOrderPayload, null, 2));
 
     // Fazer chamada direta para API Omie
     const payload = {
@@ -5010,7 +5052,44 @@ export async function createOmieOrder(orderData: {
       throw new Error(`Omie API fault: ${omieOrder.faultstring}`);
     }
 
-    console.log('Pedido criado no Omie com sucesso:', omieOrder);
+    console.log('✅ Pedido criado no Omie com sucesso:', omieOrder);
+
+    // ✅ GARANTIR VENDEDOR: Usar AlterarPedidoVenda após criar o pedido
+    if (vendorCode && omieOrder.codigo_pedido) {
+      console.log(`🔄 [OMIE-HOTSITE-VENDOR-FIX] Aplicando AlterarPedidoVenda para garantir vendedor ${vendorCode} no pedido ${omieOrder.codigo_pedido}...`);
+      try {
+        const alterPayload = {
+          call: 'AlterarPedidoVenda',
+          app_key: process.env.OMIE_APP_KEY,
+          app_secret: process.env.OMIE_APP_SECRET,
+          param: [{
+            cabecalho: {
+              codigo_pedido: omieOrder.codigo_pedido,
+              codigo_cliente: Number(omieCustomerId),
+              data_previsao: new Date().toLocaleDateString('pt-BR'),
+              etapa: '50',
+              codigo_parcela: parcelaCode,
+              quantidade_itens: orderData.products.length,
+              codigo_vendedor: vendorCode
+            },
+            det: omieOrderPayload.det,
+            frete: { modalidade: "9" },
+            informacoes_adicionais: omieOrderPayload.informacoes_adicionais
+          }]
+        };
+
+        console.log('🔍 [OMIE-HOTSITE-VENDOR-FIX] Payload AlterarPedidoVenda:', JSON.stringify(alterPayload.param, null, 2));
+        const alterResponse = await fetch('https://app.omie.com.br/api/v1/produtos/pedido/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(alterPayload),
+        });
+        const alterResult = await alterResponse.json();
+        console.log(`✅ [OMIE-HOTSITE-VENDOR-FIX] AlterarPedidoVenda concluído:`, JSON.stringify(alterResult, null, 2));
+      } catch (alterError) {
+        console.error(`⚠️ [OMIE-HOTSITE-VENDOR-FIX] Erro no AlterarPedidoVenda:`, alterError instanceof Error ? alterError.message : alterError);
+      }
+    }
 
     return {
       numero_pedido: omieOrder.numero_pedido || orderData.orderNumber,
