@@ -2673,23 +2673,20 @@ export class OmieService {
       console.log(`🔍 [OMIE-VENDOR] omieVendorCode=${omieVendorCode}, vendorCodeInt=${vendorCodeInt}, validVendorCode=${validVendorCode}`);
       
       // Payload para API Omie (estrutura conforme documentação oficial)
-      // ✅ codigo_vendedor VAI no cabecalho conforme https://app.omie.com.br/api/v1/produtos/pedido/
+      // ⚠️ NÃO incluir codigo_vendedor no IncluirPedido - Omie rejeita esse campo no cabecalho
+      // O vendedor será atribuído depois via AlterarPedidoVenda
       const cabecalho: any = {
         codigo_pedido_integracao: integrationCode,
         codigo_cliente: Number(omieClientCode),
         data_previsao: new Date().toLocaleDateString('pt-BR'),
-        etapa: "50", // Pedido de venda
-        numero_pedido: orderNumber.slice(0, 15), // Máximo 15 caracteres
+        etapa: "50",
+        numero_pedido: orderNumber.slice(0, 15),
         codigo_parcela: parcelaCode,
         quantidade_itens: products.length
       };
       
-      // ✅ Adicionar codigo_vendedor ao cabecalho se válido (como número inteiro)
       if (validVendorCode) {
-        cabecalho.codigo_vendedor = validVendorCode;
-        console.log(`✅ [OMIE] codigo_vendedor ${validVendorCode} adicionado ao cabeçalho do pedido`);
-      } else {
-        console.log(`⚠️ [OMIE] Nenhum codigo_vendedor válido para adicionar ao pedido`);
+        console.log(`📝 [OMIE] codigo_vendedor ${validVendorCode} será aplicado via AlterarPedidoVenda após criação do pedido`);
       }
       
       const orderPayload: any = {
@@ -2728,12 +2725,7 @@ export class OmieService {
       console.log('Total de itens:', products.length);
       console.log('Valor total:', totalValue);
       
-      // DEBUG: Log completo do payload sendo enviado
-      console.log('🔍 [OMIE-DEBUG] Payload cabecalho COMPLETO:', JSON.stringify(cabecalho, null, 2));
-      console.log('🔍 [OMIE-DEBUG] codigo_vendedor no cabecalho:', cabecalho.codigo_vendedor);
-      console.log('🔍 [OMIE-DEBUG] Tipo do codigo_vendedor:', typeof cabecalho.codigo_vendedor);
-
-      console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido:', JSON.stringify(orderPayload, null, 2));
+      console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido (sem codigo_vendedor):', JSON.stringify(orderPayload, null, 2));
       
       const response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
 
@@ -4969,20 +4961,19 @@ export async function createOmieOrder(orderData: {
       console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
-    // ✅ codigo_vendedor VAI no cabecalho conforme documentação oficial Omie
+    // ⚠️ NÃO incluir codigo_vendedor no IncluirPedido - Omie rejeita esse campo no cabecalho
+    // O vendedor será atribuído depois via AlterarPedidoVenda
     const hotsiteCabecalho: any = {
-      numero_pedido: orderData.orderNumber.slice(0, 15), // Máximo 15 caracteres
+      numero_pedido: orderData.orderNumber.slice(0, 15),
       codigo_cliente: Number(omieCustomerId),
       data_previsao: new Date().toLocaleDateString('pt-BR'),
-      etapa: '50', // Pedido de venda
+      etapa: '50',
       codigo_parcela: parcelaCode,
       origem_pedido: 'CRM-HonestSucos'
     };
     
-    // ✅ Adicionar codigo_vendedor ao cabecalho se válido
     if (vendorCode) {
-      hotsiteCabecalho.codigo_vendedor = vendorCode;
-      console.log(`✅ [OMIE-HOTSITE] codigo_vendedor ${vendorCode} adicionado ao cabeçalho`);
+      console.log(`📝 [OMIE-HOTSITE] codigo_vendedor ${vendorCode} será aplicado via AlterarPedidoVenda após criação do pedido`);
     }
     
     const omieOrderPayload: any = {
