@@ -4192,22 +4192,20 @@ export class OmieService {
     try {
       console.log(`🔄 [OMIE-ETAPA] Alterando etapa do pedido ${codigoPedido} para ${novaEtapa}`);
       
-      // API Omie TrocarEtapaPedido usa nCodPed e cEtapa (nomes canônicos)
       const response = await this.makeRequest('/produtos/pedido/', 'TrocarEtapaPedido', {
-        nCodPed: codigoPedido,
-        cEtapa: novaEtapa
+        codigo_pedido: codigoPedido,
+        etapa: novaEtapa
       });
       
       console.log(`✅ [OMIE-ETAPA] Etapa do pedido ${codigoPedido} alterada para ${novaEtapa}:`, JSON.stringify(response));
       
-      // Verificar se a resposta indica sucesso
-      const status = response.cCodStatus || response.cCod || '';
-      const descStatus = response.cDescStatus || response.cDescricaoStatus || '';
+      const status = response.codigo_status || response.cCodStatus || response.cCod || '';
+      const descStatus = response.descricao_status || response.cDescStatus || response.cDescricaoStatus || '';
       
       if (status === '0' || descStatus.toLowerCase().includes('sucesso')) {
         return {
           success: true,
-          message: `Etapa alterada com sucesso para ${novaEtapa}`,
+          message: descStatus || `Etapa alterada com sucesso para ${novaEtapa}`,
           data: response
         };
       }
