@@ -2472,3 +2472,41 @@ export const insertVirtualAttendanceStatsSchema = createInsertSchema(virtualAtte
 export type VirtualAttendanceStat = typeof virtualAttendanceStats.$inferSelect;
 export type InsertVirtualAttendanceStat = z.infer<typeof insertVirtualAttendanceStatsSchema>;
 
+// ============================================================================
+// OMIE STAGE LOGS - Logs de transição de etapas de pedidos no Omie
+// ============================================================================
+
+export const omieStageLogs = pgTable("omie_stage_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  omieOrderId: integer("omie_order_id").notNull(),
+  orderNumber: varchar("order_number"),
+  customerName: varchar("customer_name"),
+  previousStage: varchar("previous_stage"),
+  newStage: varchar("new_stage").notNull(),
+  stageDescription: varchar("stage_description"),
+  trigger: varchar("trigger").notNull(),
+  triggerDetail: varchar("trigger_detail"),
+  routeId: varchar("route_id"),
+  stopId: varchar("stop_id"),
+  billingId: varchar("billing_id"),
+  driverEmail: varchar("driver_email"),
+  triggeredBy: varchar("triggered_by"),
+  success: boolean("success").notNull().default(true),
+  errorMessage: text("error_message"),
+  omieResponse: jsonb("omie_response"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_stage_logs_order").on(table.omieOrderId),
+  index("idx_stage_logs_created").on(table.createdAt),
+  index("idx_stage_logs_trigger").on(table.trigger),
+  index("idx_stage_logs_success").on(table.success),
+]);
+
+export const insertOmieStageLogSchema = createInsertSchema(omieStageLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type OmieStageLog = typeof omieStageLogs.$inferSelect;
+export type InsertOmieStageLog = z.infer<typeof insertOmieStageLogSchema>;
+
