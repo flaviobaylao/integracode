@@ -186,6 +186,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
     { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
     { id: 'omie-instances', label: 'Instâncias Omie', icon: 'fas fa-building', available: canAccessUsers, badge: null },
+    { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
     { 
       id: 'rh', 
       label: isVendedor ? 'Minhas Métricas' : 'RH', 
@@ -268,6 +269,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     if (itemId === 'omie-instances') {
       console.log('🔗 Navegando para admin/omie-instances');
       navigate('/admin/omie-instances');
+      setMobileMenuOpen(false);
+      return;
+    }
+    
+    if (itemId === 'omie-stage-logs') {
+      navigate('/admin/omie-stage-logs');
       setMobileMenuOpen(false);
       return;
     }

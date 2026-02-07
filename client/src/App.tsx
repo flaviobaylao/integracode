@@ -61,6 +61,7 @@ import PedidoRapido from "@/pages/PedidoRapido";
 import VendasDigitais from "@/pages/VendasDigitais";
 import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
 import OmieInstances from "@/pages/OmieInstances";
+import OmieStageLogs from "@/pages/OmieStageLogs";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error } = useAuth();
@@ -206,6 +207,7 @@ function Router() {
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/admin/omie-instances" component={OmieInstances} />
+          <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
