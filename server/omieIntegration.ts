@@ -2672,9 +2672,6 @@ export class OmieService {
       const validVendorCode = vendorCodeInt && !isNaN(vendorCodeInt) && vendorCodeInt > 0 ? vendorCodeInt : null;
       console.log(`🔍 [OMIE-VENDOR] omieVendorCode=${omieVendorCode}, vendorCodeInt=${vendorCodeInt}, validVendorCode=${validVendorCode}`);
       
-      // Payload para API Omie (estrutura conforme documentação oficial)
-      // ⚠️ NÃO incluir codigo_vendedor no IncluirPedido - Omie rejeita esse campo no cabecalho
-      // O vendedor será atribuído depois via AlterarPedidoVenda
       const cabecalho: any = {
         codigo_pedido_integracao: integrationCode,
         codigo_cliente: Number(omieClientCode),
@@ -2685,22 +2682,26 @@ export class OmieService {
         quantidade_itens: products.length
       };
       
+      // ✅ codigo_vendedor vai em informacoes_adicionais (NÃO no cabecalho)
+      const infoAdicionais: any = {
+        codigo_categoria: "1.01.03",
+        codigo_conta_corrente: omieAccountCode,
+        consumidor_final: "S",
+        enviar_email: "S"
+      };
+      
       if (validVendorCode) {
-        console.log(`📝 [OMIE] codigo_vendedor ${validVendorCode} será aplicado via AlterarPedidoVenda após criação do pedido`);
+        infoAdicionais.codigo_vendedor = validVendorCode;
+        console.log(`✅ [OMIE] codigo_vendedor ${validVendorCode} incluído em informacoes_adicionais do IncluirPedido`);
       }
       
       const orderPayload: any = {
         cabecalho,
         det: orderItems,
         frete: {
-          modalidade: "9" // Sem ocorrência de transporte
+          modalidade: "9"
         },
-        informacoes_adicionais: {
-          codigo_categoria: "1.01.03", // Categoria fiscal
-          codigo_conta_corrente: omieAccountCode,
-          consumidor_final: "S",
-          enviar_email: "S"
-        }
+        informacoes_adicionais: infoAdicionais
       };
 
       // Também atualizar o cadastro do cliente para consistência futura
@@ -2733,6 +2734,7 @@ export class OmieService {
         console.log('✅ Pedido criado com sucesso no Omie:', response.codigo_pedido);
         console.log('🔍 [OMIE-DEBUG] Resposta completa do IncluirPedido:', JSON.stringify(response, null, 2));
         
+        // AlterarPedidoVenda como backup para garantir vendedor (codigo_vendedor em informacoes_adicionais)
         if (validVendorCode) {
           console.log(`🔄 [OMIE-VENDOR-FIX] Aplicando AlterarPedidoVenda para garantir vendedor ${validVendorCode} no pedido ${response.codigo_pedido}...`);
           try {
@@ -2744,8 +2746,7 @@ export class OmieService {
                 data_previsao: new Date().toLocaleDateString('pt-BR'),
                 etapa: "50",
                 codigo_parcela: parcelaCode,
-                quantidade_itens: products.length,
-                codigo_vendedor: validVendorCode
+                quantidade_itens: products.length
               },
               det: orderItems,
               frete: {
@@ -2755,7 +2756,8 @@ export class OmieService {
                 codigo_categoria: "1.01.03",
                 codigo_conta_corrente: omieAccountCode,
                 consumidor_final: "S",
-                enviar_email: "S"
+                enviar_email: "S",
+                codigo_vendedor: validVendorCode
               }
             };
             
@@ -4992,10 +4994,11 @@ export async function createOmieOrder(orderData: {
         modalidade: "9" // Sem ocorrência de transporte
       },
       informacoes_adicionais: {
-        codigo_categoria: "1.01.03", // Categoria fiscal
+        codigo_categoria: "1.01.03",
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
         enviar_email: "S",
+        ...(vendorCode ? { codigo_vendedor: vendorCode } : {}),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       },
     };
@@ -5060,12 +5063,14 @@ export async function createOmieOrder(orderData: {
               data_previsao: new Date().toLocaleDateString('pt-BR'),
               etapa: '50',
               codigo_parcela: parcelaCode,
-              quantidade_itens: orderData.products.length,
-              codigo_vendedor: vendorCode
+              quantidade_itens: orderData.products.length
             },
             det: omieOrderPayload.det,
             frete: { modalidade: "9" },
-            informacoes_adicionais: omieOrderPayload.informacoes_adicionais
+            informacoes_adicionais: {
+              ...omieOrderPayload.informacoes_adicionais,
+              codigo_vendedor: vendorCode
+            }
           }]
         };
 
