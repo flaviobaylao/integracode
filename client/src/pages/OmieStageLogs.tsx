@@ -77,8 +77,7 @@ export default function OmieStageLogs() {
 
   const testStageMutation = useMutation({
     mutationFn: async (data: { omieOrderId: string; stageCode: string }) => {
-      const res = await apiRequest("POST", "/api/omie/test-stage-change", data);
-      return res.json();
+      return await apiRequest("POST", "/api/omie/test-stage-change", data);
     },
     onSuccess: (data) => {
       setTestResult(data);
@@ -186,9 +185,9 @@ export default function OmieStageLogs() {
           <CardContent>
             <div className="flex flex-wrap items-end gap-3">
               <div>
-                <label className="text-xs font-medium">Omie Order ID</label>
+                <label className="text-xs font-medium">Pedido Omie (nº ou código)</label>
                 <Input
-                  placeholder="Ex: 4322402756"
+                  placeholder="Ex: 33188 ou 4322402756"
                   value={testOrderId}
                   onChange={(e) => setTestOrderId(e.target.value)}
                   className="w-48"

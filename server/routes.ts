@@ -6779,29 +6779,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { omieOrderId, stageCode } = req.body;
       if (!omieOrderId || !stageCode) {
-        return res.status(400).json({ message: "omieOrderId e stageCode são obrigatórios" });
+        return res.status(400).json({ success: false, message: "omieOrderId e stageCode são obrigatórios" });
       }
       
-      console.log(`🧪 [TEST-STAGE] Admin ${req.currentUser?.email} testando troca de etapa: pedido=${omieOrderId}, etapa=${stageCode}`);
+      let resolvedOrderId = parseInt(omieOrderId);
+      let orderNumber = omieOrderId;
+      let customerName = 'TEST';
+      
+      if (resolvedOrderId < 1000000) {
+        console.log(`🔍 [TEST-STAGE] Input ${omieOrderId} parece ser número do pedido, buscando codigo_pedido...`);
+        
+        const billing = await db.select().from(billingsTable).where(
+          sql`${billingsTable.orderNumber} = ${omieOrderId}`
+        ).limit(1);
+        
+        if (billing.length > 0 && billing[0].omieOrderId) {
+          resolvedOrderId = parseInt(billing[0].omieOrderId);
+          orderNumber = billing[0].orderNumber || omieOrderId;
+          customerName = billing[0].customerFantasyName || billing[0].customerName || 'TEST';
+          console.log(`✅ [TEST-STAGE] Resolvido via banco: número ${omieOrderId} -> codigo_pedido ${resolvedOrderId}`);
+        } else {
+          console.log(`🔍 [TEST-STAGE] Não encontrado no banco por orderNumber, consultando Omie API por numero_pedido...`);
+          try {
+            const omieServiceLookup = getOmieService(storage);
+            if (omieServiceLookup) {
+              const pedido = await (omieServiceLookup as any).makeRequest('/produtos/pedido/', 'ConsultarPedido', {
+                numero_pedido: omieOrderId
+              });
+              if (pedido?.pedido_venda_produto?.cabecalho?.codigo_pedido) {
+                resolvedOrderId = pedido.pedido_venda_produto.cabecalho.codigo_pedido;
+                orderNumber = pedido.pedido_venda_produto.cabecalho.numero_pedido || omieOrderId;
+                console.log(`✅ [TEST-STAGE] Resolvido via Omie API: numero ${omieOrderId} -> codigo_pedido ${resolvedOrderId}`);
+              }
+            }
+          } catch (lookupErr: any) {
+            console.log(`⚠️ [TEST-STAGE] Não encontrado via API Omie: ${lookupErr.message}`);
+          }
+        }
+      }
+      
+      console.log(`🧪 [TEST-STAGE] Admin ${req.currentUser?.email} testando troca de etapa: pedido=${resolvedOrderId}, etapa=${stageCode}`);
       
       const omieService = getOmieService(storage);
       if (!omieService) {
         console.error('❌ [TEST-STAGE] OmieService não configurado');
         return res.status(503).json({ 
+          success: false,
           message: "OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes",
           hasKey: !!process.env.OMIE_APP_KEY,
           hasSecret: !!process.env.OMIE_APP_SECRET
         });
       }
       
-      console.log(`✅ [TEST-STAGE] OmieService inicializado, chamando trocarEtapaPedido...`);
-      const result = await omieService.trocarEtapaPedido(parseInt(omieOrderId), stageCode);
+      console.log(`✅ [TEST-STAGE] OmieService inicializado, chamando trocarEtapaPedido(${resolvedOrderId}, ${stageCode})...`);
+      const result = await omieService.trocarEtapaPedido(resolvedOrderId, stageCode);
       console.log(`📋 [TEST-STAGE] Resultado:`, JSON.stringify(result));
       
       await logOmieStageChange({
-        omieOrderId: parseInt(omieOrderId),
-        orderNumber: '',
-        customerName: 'TEST',
+        omieOrderId: resolvedOrderId,
+        orderNumber: orderNumber,
+        customerName: customerName,
         newStage: stageCode,
         trigger: 'send_to_driver',
         triggerDetail: `Teste manual via admin`,
@@ -6814,7 +6851,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       console.error('❌ [TEST-STAGE] Erro:', error?.message || error);
-      res.status(500).json({ message: error?.message || 'Erro desconhecido', stack: error?.stack });
+      res.status(500).json({ success: false, message: error?.message || 'Erro desconhecido', stack: error?.stack });
     }
   });
 
