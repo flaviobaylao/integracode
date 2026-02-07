@@ -11371,43 +11371,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           console.log(`🔄 [OMIE-SYNC] Iniciando sincronização de etapas para ${allBillingIds.length} billings...`);
           
-          // Buscar billings com omieOrderId
           const billingsData = await db.select({
             id: billings.id,
             omieOrderId: billings.omieOrderId,
-            orderNumber: billings.orderNumber
+            orderNumber: billings.orderNumber,
+            invoiceNumber: billings.invoiceNumber,
+            customerFantasyName: billings.customerFantasyName,
           }).from(billings).where(inArray(billings.id, allBillingIds));
           
-          // Filtrar apenas os que têm omieOrderId válido
+          console.log(`📋 [OMIE-SYNC] Billings encontrados: ${billingsData.length}, com omieOrderId: ${billingsData.filter(b => b.omieOrderId).length}`);
+          billingsData.forEach(b => {
+            console.log(`  - billing ${b.id}: omieOrderId=${b.omieOrderId || 'NENHUM'}, invoice=${b.invoiceNumber || 'NENHUM'}, customer=${b.customerFantasyName || 'NENHUM'}`);
+          });
+          
           const ordersToUpdate = billingsData
             .filter(b => b.omieOrderId && !isNaN(parseInt(b.omieOrderId)))
             .map(b => ({
               codigoPedido: parseInt(b.omieOrderId!),
-              novaEtapa: OmieService.STAGE_EM_ROTA // '20'
+              novaEtapa: OmieService.STAGE_EM_ROTA,
+              billingId: b.id,
+              invoiceNumber: b.invoiceNumber || '',
+              customerName: b.customerFantasyName || '',
             }));
           
           if (ordersToUpdate.length > 0) {
             console.log(`📤 [OMIE-SYNC] Atualizando ${ordersToUpdate.length} pedidos para etapa "Em Rota" (20)...`);
+            console.log(`📤 [OMIE-SYNC] Pedidos: ${JSON.stringify(ordersToUpdate.map(o => o.codigoPedido))}`);
             
-            // Chamar API Omie em lote (sem bloquear resposta)
             const omie = getOmieService(storage);
             if (omie) {
-              omie.trocarEtapasPedidosEmLote(ordersToUpdate)
-                .then(result => {
-                  console.log(`✅ [OMIE-SYNC] Etapas atualizadas: ${result.successCount} sucesso, ${result.errorCount} erros`);
-                })
-                .catch(error => {
-                  console.error(`❌ [OMIE-SYNC] Erro ao atualizar etapas:`, error);
+              const resultado = await omie.trocarEtapasPedidosEmLote(
+                ordersToUpdate.map(o => ({ codigoPedido: o.codigoPedido, novaEtapa: o.novaEtapa }))
+              );
+              console.log(`✅ [OMIE-SYNC] Etapas atualizadas: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+              
+              const triggeredBy = (req as any).currentUser?.email || 'system';
+              for (const orderInfo of ordersToUpdate) {
+                const resultItem = resultado.results.find(r => r.codigoPedido === orderInfo.codigoPedido);
+                await logOmieStageChange({
+                  omieOrderId: orderInfo.codigoPedido,
+                  orderNumber: orderInfo.invoiceNumber,
+                  customerName: orderInfo.customerName,
+                  newStage: OmieService.STAGE_EM_ROTA,
+                  trigger: 'send_to_driver',
+                  triggerDetail: `Rota salva e enviada automaticamente`,
+                  billingId: orderInfo.billingId,
+                  triggeredBy,
+                  success: resultItem?.success ?? false,
+                  errorMessage: resultItem?.success === false ? resultItem.message : undefined,
+                  omieResponse: resultItem || null,
                 });
+              }
             } else {
-              console.log(`⚠️ [OMIE-SYNC] Omie não configurado, não foi possível atualizar etapas`);
+              console.error(`❌ [OMIE-SYNC] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes`);
             }
           } else {
             console.log(`⚠️ [OMIE-SYNC] Nenhum billing com omieOrderId válido encontrado`);
           }
-        } catch (omieError) {
-          // Não bloquear salvamento por erro de Omie
-          console.error(`⚠️ [OMIE-SYNC] Erro ao sincronizar com Omie (não crítico):`, omieError);
+        } catch (omieError: any) {
+          console.error(`⚠️ [OMIE-SYNC] Erro ao sincronizar com Omie:`, omieError?.message || omieError);
         }
       }
 
