@@ -2696,6 +2696,11 @@ export class OmieService {
         }
       };
 
+      if (omieVendorCode) {
+        orderPayload.informacoes_adicionais.codVend = omieVendorCode;
+        console.log('✅ Vendedor adicionado ao pedido (codVend):', omieVendorCode);
+      }
+
       // Também atualizar o cadastro do cliente para consistência futura
       if (omieVendorCode && omieClientCode) {
         console.log(`🔄 [OMIE] Atualizando vendedor do cliente ${omieClientCode} para ${omieVendorCode} antes de criar pedido...`);
@@ -4949,9 +4954,14 @@ export async function createOmieOrder(orderData: {
         codigo_conta_corrente: omieAccountCode,
         consumidor_final: "S",
         enviar_email: "S",
+        ...(vendorCode ? { codVend: vendorCode } : {}),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
       },
     };
+
+    if (vendorCode) {
+      console.log('✅ [OMIE-HOTSITE] Vendedor adicionado ao pedido (codVend):', vendorCode);
+    }
 
     // ✅ ATUALIZAR VENDEDOR DO CLIENTE ANTES DE CRIAR O PEDIDO
     if (vendorCode && omieCustomerId) {
