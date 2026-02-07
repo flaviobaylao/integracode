@@ -6775,6 +6775,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/omie/test-stage-change', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { omieOrderId, stageCode } = req.body;
+      if (!omieOrderId || !stageCode) {
+        return res.status(400).json({ message: "omieOrderId e stageCode são obrigatórios" });
+      }
+      
+      console.log(`🧪 [TEST-STAGE] Admin ${req.currentUser?.email} testando troca de etapa: pedido=${omieOrderId}, etapa=${stageCode}`);
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        console.error('❌ [TEST-STAGE] OmieService não configurado');
+        return res.status(503).json({ 
+          message: "OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes",
+          hasKey: !!process.env.OMIE_APP_KEY,
+          hasSecret: !!process.env.OMIE_APP_SECRET
+        });
+      }
+      
+      console.log(`✅ [TEST-STAGE] OmieService inicializado, chamando trocarEtapaPedido...`);
+      const result = await omieService.trocarEtapaPedido(parseInt(omieOrderId), stageCode);
+      console.log(`📋 [TEST-STAGE] Resultado:`, JSON.stringify(result));
+      
+      await logOmieStageChange({
+        omieOrderId: parseInt(omieOrderId),
+        orderNumber: '',
+        customerName: 'TEST',
+        newStage: stageCode,
+        trigger: 'send_to_driver',
+        triggerDetail: `Teste manual via admin`,
+        triggeredBy: req.currentUser?.email || 'admin',
+        success: result.success,
+        errorMessage: result.success ? undefined : result.message,
+        omieResponse: result.data || null,
+      });
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error('❌ [TEST-STAGE] Erro:', error?.message || error);
+      res.status(500).json({ message: error?.message || 'Erro desconhecido', stack: error?.stack });
+    }
+  });
+
   app.get('/api/omie/stages', authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, RefreshCw, CheckCircle2, XCircle, ArrowLeft, Truck, Package, RotateCcw, Send } from "lucide-react";
-import { queryClient } from "@/lib/queryClient";
+import { Loader2, RefreshCw, CheckCircle2, XCircle, ArrowLeft, Truck, Package, RotateCcw, Send, FlaskConical } from "lucide-react";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface StageLog {
@@ -71,6 +71,24 @@ export default function OmieStageLogs() {
   const [successFilter, setSuccessFilter] = useState<string>("all");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+  const [testOrderId, setTestOrderId] = useState<string>("");
+  const [testStage, setTestStage] = useState<string>("20");
+  const [testResult, setTestResult] = useState<any>(null);
+
+  const testStageMutation = useMutation({
+    mutationFn: async (data: { omieOrderId: string; stageCode: string }) => {
+      const res = await apiRequest("POST", "/api/omie/test-stage-change", data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setTestResult(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/omie/stage-logs"] });
+      refetch();
+    },
+    onError: (error: any) => {
+      setTestResult({ success: false, message: error?.message || "Erro na requisição" });
+    },
+  });
 
   const queryParams = new URLSearchParams();
   if (triggerFilter && triggerFilter !== "all") queryParams.set("trigger", triggerFilter);
@@ -156,6 +174,57 @@ export default function OmieStageLogs() {
           </CardContent>
         </Card>
       </div>
+
+      {user?.role === 'admin' && (
+        <Card className="border-yellow-300 bg-yellow-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FlaskConical className="h-4 w-4" />
+              Teste de Troca de Etapa
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="text-xs font-medium">Omie Order ID</label>
+                <Input
+                  placeholder="Ex: 4322402756"
+                  value={testOrderId}
+                  onChange={(e) => setTestOrderId(e.target.value)}
+                  className="w-48"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium">Nova Etapa</label>
+                <Select value={testStage} onValueChange={setTestStage}>
+                  <SelectTrigger className="w-48">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="20">20 - Em Rota</SelectItem>
+                    <SelectItem value="70">70 - Entregue</SelectItem>
+                    <SelectItem value="80">80 - Aguardando Rota</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                size="sm"
+                disabled={!testOrderId || testStageMutation.isPending}
+                onClick={() => testStageMutation.mutate({ omieOrderId: testOrderId, stageCode: testStage })}
+              >
+                {testStageMutation.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FlaskConical className="h-4 w-4 mr-1" />}
+                Testar
+              </Button>
+              {testResult && (
+                <div className={`text-sm p-2 rounded ${testResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                  {testResult.success ? '✅' : '❌'} {testResult.message}
+                  {testResult.data && <pre className="text-xs mt-1 max-w-md overflow-auto">{JSON.stringify(testResult.data, null, 2)}</pre>}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
