@@ -12065,7 +12065,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               orderInfos.push({
                 orderId,
                 billingId: stop.billingId,
-                customerName: billing[0].customerName || stop.customerName || '',
+                customerName: billing[0].customerFantasyName || stop.customerName || '',
                 orderNumber: billing[0].invoiceNumber || '',
                 stopId: stop.id,
               });
@@ -12082,6 +12082,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         (async () => {
           try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [SEND-ROUTE] OmieService não configurado');
+              return;
+            }
             const pedidosParaAlterar = orderInfos.map(info => ({
               codigoPedido: info.orderId,
               novaEtapa: OmieService.STAGE_EM_ROTA
@@ -12191,7 +12196,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 allOrderInfos.push({
                   orderId,
                   billingId: stop.billingId,
-                  customerName: billing[0].customerName || stop.customerName || '',
+                  customerName: billing[0].customerFantasyName || stop.customerName || '',
                   orderNumber: billing[0].invoiceNumber || '',
                   routeId: route.id,
                   driverEmail: route.driverEmail || '',
@@ -12220,6 +12225,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         (async () => {
           try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [SEND-ALL-ROUTES] OmieService não configurado');
+              return;
+            }
             const pedidosParaAlterar = allOrderInfos.map(info => ({
               codigoPedido: info.orderId,
               novaEtapa: OmieService.STAGE_EM_ROTA
@@ -12488,6 +12498,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (stop[0].billingId) {
         (async () => {
           try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado');
+              return;
+            }
             const billing = await db.select().from(billings)
               .where(eq(billings.id, stop[0].billingId!))
               .limit(1);
@@ -12500,7 +12515,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await logOmieStageChange({
                   omieOrderId: orderId,
                   orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerName || stop[0].customerName || undefined,
+                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
                   previousStage: OmieService.STAGE_EM_ROTA,
                   newStage: OmieService.STAGE_ENTREGUE,
                   trigger: 'driver_checkout',
@@ -12631,6 +12646,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (stop[0].billingId) {
         (async () => {
           try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado');
+              return;
+            }
             const billing = await db.select().from(billings)
               .where(eq(billings.id, stop[0].billingId!))
               .limit(1);
@@ -12643,7 +12663,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await logOmieStageChange({
                   omieOrderId: orderId,
                   orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerName || stop[0].customerName || undefined,
+                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
                   previousStage: OmieService.STAGE_EM_ROTA,
                   newStage: OmieService.STAGE_ENTREGUE,
                   trigger: 'complete_delivery',
@@ -12769,6 +12789,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (stop[0].billingId) {
         (async () => {
           try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
+              return;
+            }
             const billing = await db.select().from(billings)
               .where(eq(billings.id, stop[0].billingId!))
               .limit(1);
@@ -12781,7 +12806,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await logOmieStageChange({
                   omieOrderId: orderId,
                   orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerName || stop[0].customerName || undefined,
+                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
                   previousStage: OmieService.STAGE_EM_ROTA,
                   newStage: OmieService.STAGE_AGUARDANDO_ROTA,
                   trigger: 'return_delivery',
