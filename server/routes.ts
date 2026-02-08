@@ -19345,9 +19345,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Reset sync state if stuck for more than 10 minutes
+  app.post('/api/omie/sync-billings/reset', async (req: any, res) => {
+    billingSyncState = {
+      status: 'idle', currentPage: 0, totalPages: 0, invoicesFound: 0,
+      invoicesProcessed: 0, inserted: 0, updated: 0, currentInvoice: '',
+      message: '', startedAt: null, completedAt: null
+    };
+    res.json({ message: 'Estado de sincronização resetado' });
+  });
+
   // Sincronizar faturamentos do Omie - OTIMIZADO: usa syncAllOrders com caches pré-carregados
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
+      // Auto-reset if stuck for more than 10 minutes
+      if (billingSyncState.status === 'running' && billingSyncState.startedAt) {
+        const elapsed = Date.now() - billingSyncState.startedAt.getTime();
+        if (elapsed > 10 * 60 * 1000) {
+          console.log('⚠️ [SYNC] Auto-reset: sincronização presa há mais de 10 minutos');
+          billingSyncState.status = 'idle';
+        }
+      }
       if (billingSyncState.status === 'running') {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
       }

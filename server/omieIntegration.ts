@@ -141,13 +141,27 @@ export class OmieService {
 
     console.log(`📡 [OMIE] ${call} → ${endpoint}`);
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (fetchErr: any) {
+      clearTimeout(timeout);
+      if (fetchErr.name === 'AbortError') {
+        throw new Error(`Timeout: ${call} demorou mais de 60s`);
+      }
+      throw fetchErr;
+    }
+    clearTimeout(timeout);
 
     if (!response.ok) console.log(`⚠️ [OMIE] Status: ${response.status}`);
 
