@@ -4416,12 +4416,7 @@ export class DatabaseStorage implements IStorage {
     action?: 'created' | 'updated' | 'skipped';
   }> {
     try {
-      console.log(`🔍 Validando billing para omieInvoiceId: ${billing.omieInvoiceId}`);
-      console.log(`🔧 DEBUG VALIDATION INPUT: invoiceStatus=${JSON.stringify(billing.invoiceStatus)}, type=${typeof billing.invoiceStatus}`);
-      
-      // Validação 1: Status da nota fiscal - aceitar autorizadas (100/150) E canceladas para dar etapa CANCELADO
       const invoiceStatus = billing.invoiceStatus?.toString().trim();
-      console.log(`🔧 DEBUG VALIDATION PROCESSED: invoiceStatus="${invoiceStatus}"`);
       
       // Status códigos SEFAZ: 100=autorizada, 150=autorizada fora prazo, 101=cancelada, 135=evento cancelamento, 155=cancelada extemporânea
       const validStatuses = ['100', '150', '101', '135', '155']; // Apenas códigos essenciais: autorizadas e canceladas
@@ -4429,10 +4424,8 @@ export class DatabaseStorage implements IStorage {
       const isCanceled = invoiceStatus && ['101', '135', '155'].includes(invoiceStatus); // Status de cancelamento
       
       if (!invoiceStatus || !isValidStatus) {
-        // Só rejeitar se for realmente status inválido - não cancelado
         if (!invoiceStatus || (!invoiceStatus.match(/^\d+$/) || invoiceStatus.length > 3)) {
-          const reason = `Status inválido: ${invoiceStatus || 'NULL'} (deve ser código SEFAZ numérico)`;
-          console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
+          const reason = `Status inválido: ${invoiceStatus || 'NULL'}`;
           return {
             success: false,
             reason,
@@ -4446,14 +4439,12 @@ export class DatabaseStorage implements IStorage {
       
       // NOVA LÓGICA: Dar etapa "CANCELADO" APENAS para notas realmente canceladas
       if (isCanceled) {
-        console.log(`📋 Aplicando etapa CANCELADO para NF ${billing.invoiceNumber} (status cancelado: ${invoiceStatus})`);
         billing.invoiceStage = 'CANCELADO';
       }
       
       // Validação 2: Data da nota fiscal deve ser válida
       if (!billing.invoiceDate) {
         const reason = 'Data da nota fiscal não informada';
-        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
           reason,
@@ -4466,7 +4457,6 @@ export class DatabaseStorage implements IStorage {
       // Validação básica de data válida (sem restrição de período)
       if (isNaN(invoiceDate.getTime())) {
         const reason = `Data inválida: ${billing.invoiceDate}`;
-        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
           reason,
@@ -4474,11 +4464,8 @@ export class DatabaseStorage implements IStorage {
         };
       }
       
-      // Validação: Rejeitar datas epoch (01/01/1970) que indicam dados inválidos
-      const epochDate = new Date(1970, 0, 1);
       if (invoiceDate.getFullYear() < 2000) {
         const reason = `Data inválida (muito antiga): ${invoiceDate.toLocaleDateString()}`;
-        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
           reason,
@@ -4493,7 +4480,6 @@ export class DatabaseStorage implements IStorage {
       
       if ((isNaN(totalValue) || totalValue <= 0) && !isCanceled) {
         const reason = `Valor total inválido: ${billing.totalValue}`;
-        console.log(`⚠️ REJEITADO - ${billing.invoiceNumber || billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
           reason,
@@ -4504,7 +4490,6 @@ export class DatabaseStorage implements IStorage {
       // Validação 3: Verificar se tem número de nota fiscal
       if (!billing.invoiceNumber || billing.invoiceNumber.trim() === '') {
         const reason = 'Número da nota fiscal não informado';
-        console.log(`⚠️ REJEITADO - ${billing.omieInvoiceId}: ${reason}`);
         return {
           success: false,
           reason,
@@ -4512,14 +4497,8 @@ export class DatabaseStorage implements IStorage {
         };
       }
       
-      // Se passou em todas as validações, salvar no banco
-      console.log(`✅ VÁLIDO - ${billing.invoiceNumber}: Status ${invoiceStatus}, Data ${invoiceDate.toISOString().split('T')[0]}`);
-      
-      // Verificar se já existe para determinar se é criação ou atualização
-      // PRIORIDADE: Buscar primeiro por invoice_number (mais confiável e tem índice único)
       let existing = await this.getBillingByInvoiceNumber(billing.invoiceNumber!);
       
-      // Fallback: Se não encontrou por invoice_number, buscar por omieInvoiceId
       if (!existing && billing.omieInvoiceId) {
         existing = await this.getBillingByOmieId(billing.omieInvoiceId);
       }
@@ -4530,11 +4509,9 @@ export class DatabaseStorage implements IStorage {
       if (existing) {
         savedBilling = await this.updateBilling(existing.id, billing);
         action = 'updated';
-        console.log(`📝 ATUALIZADO - ${billing.invoiceNumber}: Billing ID ${existing.id}`);
       } else {
         savedBilling = await this.createBilling(billing as InsertBilling);
         action = 'created';
-        console.log(`📝 CRIADO - ${billing.invoiceNumber}: Novo billing ID ${savedBilling.id}`);
       }
       
       return {

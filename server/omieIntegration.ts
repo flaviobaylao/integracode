@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared/schema';
 import { db } from './db';
-import { customers } from '@shared/schema';
-import { eq, sql } from 'drizzle-orm';
+import { customers, users } from '@shared/schema';
+import { eq, sql, isNotNull } from 'drizzle-orm';
 import { nowBrazil } from './brazilTimezone';
 
 // Schemas para validação das respostas da API Omie
@@ -139,10 +139,7 @@ export class OmieService {
       paramsSize: JSON.stringify(params).length
     };
 
-    console.log(`Making request to ${endpoint} with call ${call}`);
-    console.log('Request URL:', `${this.baseUrl}${endpoint}`);
-    console.log('Safe request payload:', JSON.stringify(safePayload, null, 2));
-    console.log('Credentials configured:', !!this.config.appKey && !!this.config.appSecret);
+    console.log(`📡 [OMIE] ${call} → ${endpoint}`);
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'POST',
@@ -152,8 +149,7 @@ export class OmieService {
       body: JSON.stringify(payload),
     });
 
-    console.log('Response status:', response.status);
-    console.log('Response headers:', response.headers);
+    if (!response.ok) console.log(`⚠️ [OMIE] Status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -200,9 +196,7 @@ export class OmieService {
 
     const data = await response.json();
     
-    // Log apenas parte da resposta para evitar logs muito grandes
-    const responsePreview = JSON.stringify(data).slice(0, 500);
-    console.log('Response data (preview):', responsePreview + (JSON.stringify(data).length > 500 ? '...' : ''));
+    // Log mínimo da resposta
     
     // Verificar faultstring em respostas que retornam 200 mas contêm erro
     if (data.faultstring) {
@@ -492,6 +486,185 @@ export class OmieService {
     this.stageNamesCache.clear();
     this.paymentMethodsCache.clear();
     console.log('🧹 Cache limpo!');
+  }
+
+  private async preloadAllSellersCache(): Promise<void> {
+    if (this.sellersCache.size > 0) return;
+    try {
+      console.log('📦 [PRELOAD] Carregando todos os vendedores do Omie...');
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
+          pagina: page,
+          registros_por_pagina: 200
+        });
+        const vendors = response.cadastro ?? response.cadastros ?? [];
+        if (vendors.length === 0) { hasMore = false; break; }
+        for (const v of vendors) {
+          const code = v.codigo?.toString();
+          if (code) {
+            this.sellersCache.set(code, { name: v.nome || '', id: code });
+          }
+        }
+        if (page >= (response.total_de_paginas || 1)) hasMore = false;
+        page++;
+      }
+      console.log(`✅ [PRELOAD] ${this.sellersCache.size} vendedores carregados no cache`);
+    } catch (error) {
+      console.log('⚠️ [PRELOAD] Erro ao pré-carregar vendedores:', error);
+    }
+  }
+
+  private async preloadPaymentMethodsCache(): Promise<void> {
+    if (this.paymentMethodsCache.size > 0) return;
+    try {
+      console.log('📦 [PRELOAD] Carregando formas de pagamento do Omie...');
+      const response = await this.makeRequest('/produtos/formaspagvendas/', 'ListarFormasPagVendas', {
+        pagina: 1,
+        registros_por_pagina: 200
+      });
+      const methods = response.cadastros || [];
+      for (const m of methods) {
+        if (m.cCodigo) {
+          this.paymentMethodsCache.set(`payment_${m.cCodigo}`, m.cDescricao || m.cCodigo);
+        }
+      }
+      console.log(`✅ [PRELOAD] ${this.paymentMethodsCache.size} formas de pagamento carregadas`);
+    } catch (error) {
+      console.log('⚠️ [PRELOAD] Erro ao pré-carregar formas de pagamento:', error);
+    }
+  }
+
+  private transformOrderToBillingFast(order: any, customersCache: Map<string, any>, sellersDbCache: Map<string, any>): any {
+    try {
+      const orderNumber = order.cabecalho?.numero_pedido?.toString() || '';
+      const omieOrderId = order.cabecalho?.codigo_pedido?.toString() || '';
+      const clientCode = order.cabecalho?.codigo_cliente?.toString() || '';
+      const etapa = order.cabecalho?.etapa || '';
+
+      if (!orderNumber && !omieOrderId) return null;
+
+      let omieInvoiceId = '';
+      let invoiceNumber = '';
+      let invoiceDate = null;
+
+      if (order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf) {
+        omieInvoiceId = order.faturamento?.cNumNFE || order.informacoes_adicionais?.codigo_nf?.toString() || '';
+        invoiceNumber = order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf || '';
+        if (order.faturamento?.dDtFat) {
+          invoiceDate = this.parseOmieDate(order.faturamento.dDtFat);
+        } else if (order.informacoes_adicionais?.data_faturamento) {
+          invoiceDate = this.parseOmieDate(order.informacoes_adicionais.data_faturamento);
+        }
+      }
+
+      let customerFantasyName = '';
+      const dbCustomer = clientCode ? customersCache.get(clientCode) : null;
+      if (dbCustomer) {
+        customerFantasyName = dbCustomer.fantasyName || dbCustomer.name || dbCustomer.companyName || '';
+      }
+      if (!customerFantasyName) {
+        const cachedClient = this.clientsCache.get(clientCode);
+        if (cachedClient) {
+          customerFantasyName = cachedClient.fantasyName || cachedClient.companyName || '';
+        }
+      }
+      if (!customerFantasyName) {
+        customerFantasyName = order.cliente?.nome_fantasia || order.cliente?.razao_social || order.cabecalho?.cliente || 'Cliente não encontrado';
+      }
+      const customerDocument = order.cliente?.cnpj_cpf || '';
+
+      const cfop = order.det?.[0]?.produto?.cfop || '';
+      const orderDate = order.cabecalho?.data_previsao ? this.parseOmieDate(order.cabecalho.data_previsao) : nowBrazil();
+      const totalValue = order.total_pedido?.valor_total_pedido || order.total_pedido?.valor_mercadorias || order.cabecalho?.valor_total || 0;
+      const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
+
+      let sellerCode = order.cabecalho?.codigo_vendedor?.toString() || order.informacoes_adicionais?.codigo_vendedor?.toString();
+      if (!sellerCode && dbCustomer?.rawData?.recomendacoes?.codigo_vendedor) {
+        sellerCode = dbCustomer.rawData.recomendacoes.codigo_vendedor.toString();
+      }
+
+      let sellerName = '';
+      let sellerId = null;
+      if (sellerCode) {
+        const cachedSeller = this.sellersCache.get(sellerCode);
+        if (cachedSeller) {
+          sellerName = cachedSeller.name;
+          sellerId = cachedSeller.id;
+        }
+        if (!sellerName) {
+          const dbSeller = sellersDbCache.get(sellerCode);
+          if (dbSeller) {
+            sellerName = `${dbSeller.firstName || ''} ${dbSeller.lastName || ''}`.trim() || dbSeller.email || '';
+            sellerId = dbSeller.id;
+          }
+        }
+      }
+
+      let paymentMethod = '';
+      const parcelaCode = order.cabecalho?.codigo_parcela || '';
+      if (parcelaCode) {
+        paymentMethod = this.paymentMethodsCache.get(`payment_${parcelaCode}`) || parcelaCode;
+      }
+
+      const invoiceStage = this.stageNamesCache.get(etapa) || etapa || '';
+
+      if (invoiceDate && invoiceNumber) {
+        const dataLimite = new Date(2025, 0, 1);
+        if (invoiceDate < dataLimite) return null;
+      }
+
+      let billingType = 'venda';
+      if (order.informacoes_adicionais?.tipo_operacao) {
+        const tipoOp = order.informacoes_adicionais.tipo_operacao.toLowerCase();
+        if (tipoOp.includes('troca')) billingType = 'troca';
+        else if (tipoOp.includes('amostra')) billingType = 'amostra';
+      }
+
+      const products = (order.det || []).map((item: any) => ({
+        code: item.produto?.codigo_produto || '',
+        description: item.produto?.descricao || '',
+        quantity: item.produto?.quantidade || 0,
+        unitPrice: item.produto?.valor_unitario || 0,
+        totalPrice: item.produto?.valor_total || 0,
+      }));
+
+      let deliveryWeekdays: string[] = [];
+      if (dbCustomer?.deliveryWeekdays) {
+        if (Array.isArray(dbCustomer.deliveryWeekdays)) {
+          deliveryWeekdays = dbCustomer.deliveryWeekdays;
+        } else if (typeof dbCustomer.deliveryWeekdays === 'string') {
+          try { deliveryWeekdays = JSON.parse(dbCustomer.deliveryWeekdays); } catch { deliveryWeekdays = []; }
+        }
+      }
+
+      return {
+        omieOrderId,
+        orderNumber,
+        omieInvoiceId: omieInvoiceId || null,
+        invoiceNumber: invoiceNumber || null,
+        customerFantasyName,
+        customerDocument,
+        cfop,
+        invoiceDate,
+        orderDate,
+        totalValue: parseFloat(totalValue.toString()) || 0,
+        dueDate,
+        paymentMethod,
+        sellerName,
+        omieCustomerCode: clientCode,
+        sellerId,
+        billingType,
+        invoiceStatus: this.mapSefazStatus('emitida'),
+        invoiceStage,
+        products,
+        deliveryWeekdays,
+        omieInstanceId: this.omieInstanceId
+      };
+    } catch (error) {
+      return null;
+    }
   }
 
   // Método para buscar dados de um vendedor específico
@@ -1018,11 +1191,7 @@ export class OmieService {
         }]
       };
 
-      console.log(`📤 ✅ COM FILTRO DE DATA - De ${effectiveDateFrom} até ${dateTo || 'HOJE'}`);
-      console.log(`📤 Enviando payload ListarPedidos:`, JSON.stringify({ call: payload.call, dateFrom: effectiveDateFrom, dateTo, paramCount: payload.param.length }, null, 2));
-      
       const response = await this.makeRequest('/produtos/pedido/', payload.call, payload.param[0]);
-      console.log(`✅ Resposta ListarPedidos recebida: ${response.pedido_venda_produto?.length || 0} pedidos encontrados`);
       
       return response;
     } catch (error) {
@@ -1060,6 +1229,7 @@ export class OmieService {
   }
 
   // Método NOVO para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
+  // OTIMIZADO: pré-carrega caches em bulk, usa transformação rápida sem API calls por pedido
   async syncAllOrders(): Promise<{
     totalProcessed: number;
     imported: number;
@@ -1069,11 +1239,25 @@ export class OmieService {
     rejectedInvoices?: any[];
   }> {
     try {
-      console.log(`🔄 Sincronizando TODOS os pedidos do Omie (faturados e não faturados)...`);
-      console.log(`🔐 Chaves configuradas: app_key=${this.appKey ? 'SIM' : 'NÃO'}, app_secret=${this.appSecret ? 'SIM' : 'NÃO'}`);
+      const syncStart = Date.now();
+      console.log(`🔄 [SYNC-FAST] Sincronizando pedidos do Omie (modo otimizado)...`);
       
-      // Carregar cache de customers para evitar N+1 queries
-      const customersCache = await this.loadCustomersCache();
+      // FASE 1: Pré-carregar todos os caches em paralelo (elimina N+1 API calls)
+      console.log(`📦 [SYNC-FAST] FASE 1: Pré-carregando caches...`);
+      const cacheStart = Date.now();
+      
+      const [customersCache, sellersDbCache] = await Promise.all([
+        this.loadCustomersCache(),
+        this.loadSellersDbCache(),
+        this.preloadAllSellersCache(),
+        this.preloadPaymentMethodsCache(),
+        this.fetchStageNames(),
+      ]);
+      
+      console.log(`✅ [SYNC-FAST] Caches carregados em ${Date.now() - cacheStart}ms (customers=${customersCache.size}, sellersDB=${sellersDbCache.size}, sellersOmie=${this.sellersCache.size}, pagamentos=${this.paymentMethodsCache.size}, etapas=${this.stageNamesCache.size})`);
+      
+      // FASE 2: Buscar e processar pedidos com páginas grandes
+      console.log(`📦 [SYNC-FAST] FASE 2: Buscando pedidos...`);
       
       let totalProcessed = 0;
       let imported = 0;
@@ -1084,120 +1268,124 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
+      const PAGE_SIZE = 500;
       
       while (hasMorePages) {
         try {
-          console.log(`📄 Processando página ${page}...`);
-          
-          const response = await this.listOrders(page, 50);
-          
-          const orders = response.pedido_venda_produto || [];
-          console.log(`📊 Página ${page}: Encontrados ${orders.length} pedidos`);
-          
-          // Debug: mostrar estrutura da resposta na primeira página
-          if (page === 1) {
-            console.log(`🔍 DEBUG: Estrutura da resposta da API:`, JSON.stringify({
-              hasPedidos: !!response.pedido_venda_produto,
-              totalRegistros: response.total_de_registros,
-              pagina: response.pagina,
-              keys: Object.keys(response)
-            }, null, 2));
-            
-            if (orders.length > 0) {
-              console.log(`🔍 DEBUG: Primeiro pedido:`, JSON.stringify(orders[0], null, 2));
-            }
+          if (this.syncCancelled) {
+            console.log('🛑 [SYNC-FAST] Sincronização cancelada pelo usuário');
+            break;
           }
           
+          const pageStart = Date.now();
+          const response = await this.listOrders(page, PAGE_SIZE);
+          const orders = response.pedido_venda_produto || [];
+          
           if (orders.length === 0) {
-            console.log(`⚠️ Página ${page}: Nenhum pedido encontrado. Parando sincronização.`);
             hasMorePages = false;
             break;
           }
           
+          console.log(`📄 [SYNC-FAST] Página ${page}: ${orders.length} pedidos (API: ${Date.now() - pageStart}ms)`);
+          
+          // Transformar pedidos em lote (sem API calls - tudo via cache)
+          const transformStart = Date.now();
+          const billingBatch: any[] = [];
+          
           for (const order of orders) {
-            try {
-              const billingData = await this.transformOrderToBilling(order, customersCache);
-              if (billingData) {
-                // Usar validação centralizada para salvar no storage
-                const result = await this.storage.saveBillingIfValid(billingData);
-                
-                if (result.success) {
-                  if (result.action === 'created') {
-                    imported++;
-                  } else if (result.action === 'updated') {
-                    updated++;
-                  }
-                  totalProcessed++;
-                } else {
-                  // Registro rejeitado pela validação
-                  const nfNumber = billingData.invoiceNumber || 'N/A';
-                  console.log(`⚠️ PEDIDO REJEITADO: NF ${nfNumber}, Pedido ${order.numero_pedido}, Etapa "${billingData.invoiceStage}", Motivo: ${result.reason}`);
-                  
-                  const rejectionInfo = { 
-                    orderNumber: order.numero_pedido,
-                    invoiceNumber: nfNumber,
-                    stage: billingData.invoiceStage,
-                    reason: result.reason,
-                    error: `Validation failed: ${result.reason}`,
-                    type: 'validation_rejected'
-                  };
-                  
-                  errors.push(rejectionInfo);
-                  rejectedInvoices.push(rejectionInfo);
-                  skipped++;
-                }
-              }
-            } catch (error: any) {
-              console.error(`❌ Erro ao processar pedido ${order.numero_pedido}:`, error);
-              errors.push({ 
-                orderNumber: order.numero_pedido, 
-                error: error.message,
-                type: 'processing_error'
-              });
+            const billingData = this.transformOrderToBillingFast(order, customersCache, sellersDbCache);
+            if (billingData) {
+              billingBatch.push({ billingData, orderNumber: order.cabecalho?.numero_pedido || '' });
             }
           }
           
-          page++;
+          console.log(`🔄 [SYNC-FAST] Transformados ${billingBatch.length}/${orders.length} pedidos (${Date.now() - transformStart}ms)`);
           
-          // Limite para evitar loop infinito
-          if (page > 1000) {
-            console.log('⚠️ Limite de 1000 páginas atingido, parando sincronização');
+          // Salvar no banco em lote
+          const saveStart = Date.now();
+          const BATCH_SIZE = 20;
+          
+          for (let i = 0; i < billingBatch.length; i += BATCH_SIZE) {
+            const batch = billingBatch.slice(i, i + BATCH_SIZE);
+            const results = await Promise.all(
+              batch.map(async ({ billingData, orderNumber }) => {
+                try {
+                  const result = await this.storage.saveBillingIfValid(billingData);
+                  return { result, billingData, orderNumber };
+                } catch (error: any) {
+                  return { result: null, billingData, orderNumber, error: error.message };
+                }
+              })
+            );
+            
+            for (const { result, billingData, orderNumber, error } of results as any[]) {
+              if (error) {
+                errors.push({ orderNumber, error, type: 'processing_error' });
+                continue;
+              }
+              if (result?.success) {
+                if (result.action === 'created') imported++;
+                else if (result.action === 'updated') updated++;
+                totalProcessed++;
+              } else if (result) {
+                skipped++;
+                const rejectionInfo = {
+                  orderNumber,
+                  invoiceNumber: billingData.invoiceNumber || 'N/A',
+                  stage: billingData.invoiceStage,
+                  reason: result.reason,
+                  type: 'validation_rejected'
+                };
+                errors.push(rejectionInfo);
+                rejectedInvoices.push(rejectionInfo);
+              }
+            }
+          }
+          
+          console.log(`💾 [SYNC-FAST] Página ${page} salva (${Date.now() - saveStart}ms) - Parcial: ${totalProcessed} proc, ${imported} imp, ${updated} upd, ${skipped} rej`);
+          
+          page++;
+          if (page > 200) {
+            console.log('⚠️ [SYNC-FAST] Limite de 200 páginas atingido');
             hasMorePages = false;
           }
           
         } catch (error: any) {
-          console.error(`❌ Erro na página ${page}:`, error);
-          console.error(`❌ Stack trace:`, error.stack);
-          errors.push({ 
-            page, 
-            error: error.message,
-            details: error.response?.data || error.toString()
-          });
+          console.error(`❌ [SYNC-FAST] Erro na página ${page}:`, error.message);
+          errors.push({ page, error: error.message });
           hasMorePages = false;
         }
       }
       
-      console.log(`✅ Sincronização de pedidos concluída: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
+      const totalTime = ((Date.now() - syncStart) / 1000).toFixed(1);
+      console.log(`✅ [SYNC-FAST] Concluído em ${totalTime}s: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
       
       if (rejectedInvoices.length > 0) {
-        console.log(`📋 NOTAS FISCAIS REJEITADAS (${rejectedInvoices.length}):`);
-        rejectedInvoices.forEach(r => {
-          console.log(`   - NF ${r.invoiceNumber}, Pedido ${r.orderNumber}, Etapa "${r.stage}", Motivo: ${r.reason}`);
-        });
+        console.log(`📋 [SYNC-FAST] ${rejectedInvoices.length} notas rejeitadas (use logs para detalhes)`);
       }
       
-      return {
-        totalProcessed,
-        imported,
-        updated,
-        skipped,
-        errors,
-        rejectedInvoices
-      };
+      return { totalProcessed, imported, updated, skipped, errors, rejectedInvoices };
       
     } catch (error) {
-      console.error('❌ Erro ao sincronizar pedidos:', error);
+      console.error('❌ [SYNC-FAST] Erro ao sincronizar pedidos:', error);
       throw error;
+    }
+  }
+
+  private async loadSellersDbCache(): Promise<Map<string, any>> {
+    try {
+      const allUsers = await db.select().from(users).where(isNotNull(users.omieVendorCode));
+      const cache = new Map<string, any>();
+      for (const u of allUsers) {
+        if (u.omieVendorCode) {
+          cache.set(u.omieVendorCode, u);
+        }
+      }
+      console.log(`✅ [PRELOAD] ${cache.size} vendedores do banco carregados`);
+      return cache;
+    } catch (error) {
+      console.log('⚠️ [PRELOAD] Erro ao carregar vendedores do banco:', error);
+      return new Map();
     }
   }
 
