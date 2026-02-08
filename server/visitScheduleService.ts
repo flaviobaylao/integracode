@@ -1,33 +1,7 @@
 import { db } from './db';
 import { customers, visitAgenda } from '../shared/schema';
 import { eq, and, gte, lte, isNotNull } from 'drizzle-orm';
-
-// Timezone constants for Brazil (São Paulo)
-const BRAZIL_TIMEZONE = 'America/Sao_Paulo';
-
-// Helper function to get current date normalized to Brazil timezone
-function getBrazilToday(): Date {
-  // CORREÇÃO: Usar offset UTC-3 diretamente para evitar conversão problemática
-  const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brazilTime = new Date(utc + (3600000 * -3)); // UTC-3
-  return brazilTime;
-}
-
-// Helper function to normalize any date to Brazil timezone
-// NOTA: Esta função foi corrigida para evitar desvio de datas
-function normalizeToBrazilDate(date: Date): Date {
-  // Simplesmente retornar uma cópia da data sem conversão problemática
-  // As datas já vêm do banco no formato correto (ISO UTC)
-  return new Date(date);
-}
-
-// Helper function to get start of day in Brazil timezone
-function getStartOfDayBrazil(date: Date): Date {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-}
+import { nowBrazil, toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
 
 // Função para calcular a próxima data de visita baseada na periodicidade
 function getNextVisitDate(lastDate: Date, periodicity: string): Date {
@@ -328,7 +302,7 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
   console.log(`🔄 [SYNC-CARDS] Sincronizando cards futuros para ${monthsAhead} meses...`);
   
   const startTime = Date.now();
-  const today = new Date();
+  const today = nowBrazil();
   today.setHours(0, 0, 0, 0);
   
   const targetDate = new Date(today);
@@ -487,8 +461,8 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
             routeDay: getRouteDay(date),
             recurrenceType: customer.visitPeriodicity || 'semanal',
             isRecurring: true,
-            createdAt: new Date(),
-            updatedAt: new Date()
+            createdAt: nowBrazil(),
+            updatedAt: nowBrazil()
           }));
           
           await db.insert(salesCards).values(cardsToInsert).onConflictDoNothing();
@@ -532,7 +506,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
   console.log(`📅 [FUTURE-AGENDA] Verificando cobertura de ${monthsAhead} meses futuros...`);
   
   const startTime = Date.now();
-  const today = new Date();
+  const today = nowBrazil();
   today.setHours(0, 0, 0, 0);
   
   // Data limite: hoje + monthsAhead meses
@@ -719,7 +693,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         .limit(1);
       
       const newEntry = {
-        timestamp: new Date().toISOString(),
+        timestamp: nowBrazil().toISOString(),
         monthsAhead,
         processed: stats.processed,
         generated: stats.generated,
@@ -739,7 +713,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         await db.update(systemSettings)
           .set({ 
             value: JSON.stringify(trimmedHistory),
-            updatedAt: new Date()
+            updatedAt: nowBrazil()
           })
           .where(eq(systemSettings.key, historyKey));
         
@@ -821,7 +795,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
     
     // Preparar dados de atualização
     const updateData: any = {
-      updatedAt: new Date()
+      updatedAt: nowBrazil()
     };
     
     // Atualizar vendedor se mudou
@@ -886,7 +860,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
         weekdays: customerWeekdays,
         periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
         lastCompletedDate: lastCompletedDate,
-        referenceDate: new Date()
+        referenceDate: nowBrazil()
       });
       
       const oldNextVisit = card.nextVisitDate ? new Date(card.nextVisitDate).toLocaleDateString('pt-BR') : 'N/A';
@@ -1001,7 +975,7 @@ export async function propagateRecurrenceChange(params: {
     
     // 3. Gerar cronograma alvo de datas futuras (60 dias / ~2 meses)
     const HORIZON_DAYS = 60;
-    const today = new Date();
+    const today = nowBrazil();
     today.setHours(0, 0, 0, 0);
     
     // Usar a data do card como base (ou hoje se o card for no passado)
@@ -1113,7 +1087,7 @@ export async function propagateRecurrenceChange(params: {
           vehicleTypes: currentCard.vehicleTypes,
           customerLatitude: currentCard.customerLatitude,
           customerLongitude: currentCard.customerLongitude,
-          notes: `Card criado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${new Date().toLocaleString('pt-BR')}`
+          notes: `Card criado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${nowBrazil().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
         });
         
         cardsCreated++;
@@ -1129,8 +1103,8 @@ export async function propagateRecurrenceChange(params: {
         await db.update(salesCards)
           .set({
             status: 'cancelled' as any,
-            notes: (card.notes || '') + `\n\nCard cancelado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${new Date().toLocaleString('pt-BR')}`,
-            updatedAt: new Date()
+            notes: (card.notes || '') + `\n\nCard cancelado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${nowBrazil().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+            updatedAt: nowBrazil()
           })
           .where(eq(salesCards.id, card.id));
         

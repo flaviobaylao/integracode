@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,7 +17,7 @@ export default function HRManagement() {
   console.log('✅ HRManagement component rendered!');
   
   const { user } = useAuth();
-  const currentDate = new Date();
+  const currentDate = nowBrazil();
   const [selectedMonth, setSelectedMonth] = useState((currentDate.getMonth() + 1).toString());
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear().toString());
 

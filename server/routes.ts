@@ -11,6 +11,7 @@ import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
+import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -176,7 +177,7 @@ async function saveSyncStatus(
   try {
     await storage.upsertSyncStatus({
       syncType,
-      lastSyncAt: new Date(),
+      lastSyncAt: nowBrazil(),
       status,
       message,
       recordsProcessed
@@ -187,17 +188,6 @@ async function saveSyncStatus(
   }
 }
 
-// Helper function to get today's date at midnight in Brazil timezone (UTC-3)
-// This is critical for matching routes correctly, especially for late-night check-outs
-function getTodayBrazil(): Date {
-  const BRAZIL_TZ = 'America/Sao_Paulo';
-  // Get current time in Brazil timezone
-  const nowInBrazil = toZonedTime(new Date(), BRAZIL_TZ);
-  // Set to midnight in Brazil
-  nowInBrazil.setHours(0, 0, 0, 0);
-  // Convert back to UTC for database comparison
-  return fromZonedTime(nowInBrazil, BRAZIL_TZ);
-}
 
 // Helper function to determine if a visit is a LEAD (requires mandatory photo)
 async function isLeadVisit(customerId: string, dailyRoute: any): Promise<boolean> {
@@ -2202,7 +2192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (userNextContactDate) {
             nextContactDate = new Date(userNextContactDate);
           } else {
-            nextContactDate = new Date();
+            nextContactDate = nowBrazil();
             nextContactDate.setDate(nextContactDate.getDate() + 7);
           }
           
@@ -3125,8 +3115,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
-      const targetMonth = month ? parseInt(month as string) : new Date().getMonth() + 1;
-      const targetYear = year ? parseInt(year as string) : new Date().getFullYear();
+      const targetMonth = month ? parseInt(month as string) : getBrazilMonth();
+      const targetYear = year ? parseInt(year as string) : getBrazilYear();
       
       console.log(`📊 [DAILY-METRICS] Gerando métricas diárias para ${targetMonth}/${targetYear}`);
       
@@ -4053,7 +4043,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateSalesCard(orderId, {
         omieOrderId: omieResult.codigo_pedido?.toString(),
         omieSyncStatus: 'synced',
-        omieSentAt: new Date()
+        omieSentAt: nowBrazil()
       });
       
       console.log('✅ [SEND-TO-OMIE] Pedido enviado:', omieResult.numero_pedido);
@@ -4472,7 +4462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
           
           const targetDayNumber = routeDayToNumber[routeDay];
-          let scheduledDate = new Date();
+          let scheduledDate = nowBrazil();
           
           // Validar que o routeDay foi mapeado corretamente
           if (targetDayNumber === undefined) {
@@ -4906,7 +4896,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`🔄 [AUTO-CHECKOUT] Status mudando para "${data.status}" - verificando visita relacionada ao card ${id}...`);
             
             // Buscar visita relacionada a este sales card (mais recente da data de hoje no Brasil)
-            const todayBrazil = getTodayBrazil();
+            const todayBrazil = todayBrazilMidnight();
             const tomorrow = new Date(todayBrazil);
             tomorrow.setDate(tomorrow.getDate() + 1);
             
@@ -4937,7 +4927,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 } else {
                   console.log(`✅ [AUTO-CHECKOUT] Visita tem check-in sem check-out - executando check-out automático...`);
                   
-                  const checkOutTime = new Date();
+                  const checkOutTime = nowBrazil();
                   const checkInTime = new Date(visit.actualCheckIn);
                   const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
                   
@@ -5022,7 +5012,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const user = req.currentUser;
           const orderData = {
             salesCardId: id,
-            orderDate: new Date(),
+            orderDate: nowBrazil(),
             products: data.products || currentCard.products || [],
             totalValue: data.saleValue || currentCard.saleValue || '0',
             status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
@@ -5033,7 +5023,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             checkOutTime: data.checkOutTime,
             checkOutLatitude: data.checkOutLatitude,
             checkOutLongitude: data.checkOutLongitude,
-            completedAt: data.status === 'completed' ? new Date() : null,
+            completedAt: data.status === 'completed' ? nowBrazil() : null,
             sellerId: user?.id || null,
             sellerName: user?.name || user?.email || null
           };
@@ -5047,7 +5037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (customer && customer.weekdays && customer.visitPeriodicity) {
             // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
-            const lastVisitDate = new Date();
+            const lastVisitDate = nowBrazil();
             
             const parsedWeekdays = typeof customer.weekdays === 'string' 
               ? JSON.parse(customer.weekdays) 
@@ -5089,7 +5079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               weekdays: parsedWeekdays,
               periodicity: customer.visitPeriodicity,
               lastCompletedDate: lastCompletedSaleDate,
-              referenceDate: new Date()
+              referenceDate: nowBrazil()
             });
             
             // Atualizar permanent card
@@ -5825,11 +5815,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId = undefined; // Retorna todos os clientes
       }
       
-      // Obter data atual no timezone do Brasil (UTC-3)
-      const now = new Date();
-      const brazilOffset = -3 * 60; // UTC-3 em minutos
-      const localOffset = now.getTimezoneOffset(); // Diferença do servidor para UTC em minutos
-      const brazilTime = new Date(now.getTime() + (localOffset + brazilOffset) * 60 * 1000);
+      // Obter data atual no timezone do Brasil
+      const brazilTime = nowBrazil();
       
       const todayClients = await storage.getSalesCardsByDate(brazilTime, sellerId);
       res.json(todayClients);
@@ -5915,7 +5902,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (startDate) {
         start = new Date(`${startDate}T00:00:00.000Z`);
       } else {
-        start = new Date();
+        start = nowBrazil();
         start.setHours(0, 0, 0, 0);
       }
       
@@ -5975,7 +5962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (startDate) {
         start = new Date(`${startDate}T00:00:00.000Z`);
       } else {
-        start = new Date();
+        start = nowBrazil();
         start.setHours(0, 0, 0, 0);
       }
       
@@ -6177,7 +6164,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId: userId,
         templateId,
         message,
-        sentAt: new Date(),
+        sentAt: nowBrazil(),
       });
       
       // Mock WhatsApp integration - in production, integrate with WhatsApp Business API
@@ -7631,7 +7618,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Atualizar visita com dados de check-in
-      const checkInDate = new Date();
+      const checkInDate = nowBrazil();
       await db.update(visitAgenda)
         .set({
           actualCheckIn: checkInDate,
@@ -7661,7 +7648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         // Usar timezone do Brasil para garantir que encontramos a rota correta
-        const todayBrazil = getTodayBrazil();
+        const todayBrazil = todayBrazilMidnight();
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
@@ -7690,7 +7677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         message: 'Check-in realizado com sucesso',
-        checkInTime: new Date(),
+        checkInTime: nowBrazil(),
         distance: distanceToCustomer ? Math.round(distanceToCustomer) : null,
         routeProgress: routeProgress ? {
           distanceFromPrevious: routeProgress.distanceFromPrevious,
@@ -7782,7 +7769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calcular tempo de visita
       const checkInTime = new Date(currentVisit.actualCheckIn);
-      const checkOutTime = new Date();
+      const checkOutTime = nowBrazil();
       const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
 
       // Atualizar visita com dados de check-out
@@ -7821,7 +7808,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         // Usar timezone do Brasil para garantir que encontramos a rota correta
-        const todayBrazil = getTodayBrazil();
+        const todayBrazil = todayBrazilMidnight();
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
@@ -7878,8 +7865,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Definir período padrão (últimos 30 dias)
-      const endDate = new Date();
-      const startDate = new Date();
+      const endDate = nowBrazil();
+      const startDate = nowBrazil();
       startDate.setDate(startDate.getDate() - 30);
 
       // Filtros baseados na role do usuário
@@ -8012,7 +7999,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Registrar início da sincronização
       await storage.upsertSyncStatus({
         syncType: 'omie_complete',
-        lastSyncAt: new Date(),
+        lastSyncAt: nowBrazil(),
         status: 'in_progress',
         message: 'Sincronização em andamento...',
         recordsProcessed: 0
@@ -8033,7 +8020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           billings: null,
           overdueDebts: null,
           errors: [],
-          startTime: new Date(),
+          startTime: nowBrazil(),
           endTime: null
         };
 
@@ -8111,7 +8098,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results.errors.push(`Débitos: ${error.message}`);
       }
 
-      results.endTime = new Date();
+      results.endTime = nowBrazil();
       const duration = ((results.endTime.getTime() - results.startTime.getTime()) / 1000).toFixed(2);
 
       console.log(`🏁 Sincronização completa finalizada em ${duration}s`);
@@ -8132,7 +8119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         await storage.upsertSyncStatus({
           syncType: 'omie_complete',
-          lastSyncAt: new Date(),
+          lastSyncAt: nowBrazil(),
           status: results.errors.length > 0 ? 'error' : 'success',
           message: results.errors.length > 0 ? results.errors.join('; ') : 'Sincronização completa realizada com sucesso',
           recordsProcessed: totalRecords
@@ -8146,7 +8133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('❌ Erro geral na sincronização completa em background:', error);
         await storage.upsertSyncStatus({
           syncType: 'omie_complete',
-          lastSyncAt: new Date(),
+          lastSyncAt: nowBrazil(),
           status: 'error',
           message: `Erro na sincronização: ${error.message}`,
           recordsProcessed: 0
@@ -8157,7 +8144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('❌ Erro ao iniciar sincronização completa:', error);
       await storage.upsertSyncStatus({
         syncType: 'omie_complete',
-        lastSyncAt: new Date(),
+        lastSyncAt: nowBrazil(),
         status: 'error',
         message: `Erro ao iniciar sincronização: ${error.message}`,
         recordsProcessed: 0
@@ -8207,7 +8194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateSyncStatus('omie_billings', { 
             status: 'success', 
             message: 'Sincronização total concluída com sucesso',
-            lastFinishedAt: new Date(),
+            lastFinishedAt: nowBrazil(),
             currentProgress: 100
           });
         } catch (error: any) {
@@ -8283,7 +8270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Concluído: ${result.imported || 0} importados, ${result.updated || 0} atualizados`,
             recordsProcessed: result.totalProcessed || 0,
             currentProgress: 100,
-            lastFinishedAt: new Date()
+            lastFinishedAt: nowBrazil()
           });
         } catch (error: any) {
           console.error('❌ Erro na sincronização TOTAL (background):', error);
@@ -8368,7 +8355,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await db.update(billingsTable)
               .set({ 
                 sellerName,
-                updatedAt: new Date()
+                updatedAt: nowBrazil()
               })
               .where(eq(billingsTable.id, billing.id));
             
@@ -8545,7 +8532,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           recordsProcessed: 0,
           totalRecords: 0,
           currentProgress: 0,
-          lastSyncAt: new Date()
+          lastSyncAt: nowBrazil()
         });
         console.log('✅ [CANCEL-SYNC] Status do banco atualizado para error (cancelado)');
       } catch (dbError) {
@@ -8816,8 +8803,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Status NF': b.invoiceStatus || '',
         'Etapa': b.invoiceStage || '',
         'Produtos': b.products ? JSON.stringify(b.products) : '',
-        'Criado Em': b.createdAt ? new Date(b.createdAt).toLocaleString('pt-BR') : '',
-        'Atualizado Em': b.updatedAt ? new Date(b.updatedAt).toLocaleString('pt-BR') : ''
+        'Criado Em': b.createdAt ? new Date(b.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '',
+        'Atualizado Em': b.updatedAt ? new Date(b.updatedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : ''
       }));
       
       // Criar workbook e worksheet
@@ -8856,7 +8843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       
       // Enviar arquivo
-      const timestamp = new Date().toISOString().split('T')[0];
+      const timestamp = getBrazilDateString();
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename=dados-omie-${timestamp}.xlsx`);
       res.send(excelBuffer);
@@ -9087,7 +9074,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Gerar e salvar planilha Excel automaticamente após a sincronização
       try {
-        const fileName = `debitos-vencidos-${new Date().toISOString().split('T')[0]}.xlsx`;
+        const fileName = `debitos-vencidos-${getBrazilDateString()}.xlsx`;
         
         // Preparar dados detalhados (todos os documentos)
         const detalhesData: any[] = [];
@@ -9121,7 +9108,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           {
             totalClients: overdueData.totalClients,
             totalAmount: overdueData.totalAmount,
-            syncDate: new Date().toISOString()
+            syncDate: nowBrazil().toISOString()
           },
           req.user?.id
         );
@@ -9669,14 +9656,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Atualizar sales card com ID do Omie
           await storage.updateSalesCard(order.salesCardId, {
             omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}`,
-            notes: (salesCard.notes || '') + `\n\nLiberado e enviado para Omie: ${new Date().toLocaleString('pt-BR')}`
+            notes: (salesCard.notes || '') + `\n\nLiberado e enviado para Omie: ${formatBrazilDateTime(new Date())}`
           });
           
           // Atualizar status do pedido bloqueado
           await db.update(blockedOrders)
             .set({
               status: 'sent_to_omie',
-              releasedAt: new Date(),
+              releasedAt: nowBrazil(),
               releasedBy: userId,
               omieOrderId: omieResponse.codigo_pedido?.toString()
             })
@@ -10400,7 +10387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await db.update(billingsTable)
                   .set({ 
                     invoiceStage: stageData.stageName,
-                    updatedAt: new Date()
+                    updatedAt: nowBrazil()
                   })
                   .where(eq(billingsTable.id, billing.id));
                 
@@ -10853,7 +10840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar sales card com novo status de entrega
       const updatedCard = await storage.updateSalesCardDeliveryStatus(salesCardId, {
         deliveryStatus: status,
-        deliveryCompletedDate: status === 'delivered' ? new Date() : deliveryCompletedDate,
+        deliveryCompletedDate: status === 'delivered' ? nowBrazil() : deliveryCompletedDate,
         deliveryFailureReason: status === 'failed' ? deliveryFailureReason : null,
         deliveryNotes,
         deliveryDriverId: driverId
@@ -11092,7 +11079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         storage,
         deliveryOrders,
         vehicles,
-        routeDate ? new Date(routeDate) : new Date()
+        routeDate ? new Date(routeDate) : nowBrazil()
       );
 
       res.json(plan);
@@ -11269,8 +11256,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
               status: 'rota_enviada', // Enviada automaticamente para o motorista
-              sentToDriverAt: new Date(),
-              updatedAt: new Date()
+              sentToDriverAt: nowBrazil(),
+              updatedAt: nowBrazil()
             })
             .where(eq(deliveryRoutes.id, routeToUpdate.id))
             .returning();
@@ -11323,7 +11310,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             timeWindowStart: route.timeWindowStart || '08:00',
             timeWindowEnd: route.timeWindowEnd || '18:00',
             status: 'rota_enviada', // Enviada automaticamente para o motorista
-            sentToDriverAt: new Date()
+            sentToDriverAt: nowBrazil()
           };
 
           // Buscar orderNumber dos billings para cada parada
@@ -11522,7 +11509,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Pelo menos driverId ou vehicleType deve ser fornecido" });
       }
       
-      const updateData: any = { updatedAt: new Date() };
+      const updateData: any = { updatedAt: nowBrazil() };
       if (driverId) updateData.driverId = driverId;
       if (driverName) updateData.driverName = driverName;
       if (vehicleType) updateData.vehicleType = vehicleType;
@@ -11566,7 +11553,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar status da rota para 'cancelled'
       const updatedRoute = await storage.updateDeliveryRoute(routeId, {
         status: 'cancelled',
-        updatedAt: new Date()
+        updatedAt: nowBrazil()
       });
       
       if (!updatedRoute) {
@@ -11608,7 +11595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (date) {
         targetDateStr = date;
       } else {
-        const today = new Date();
+        const today = nowBrazil();
         const year = today.getFullYear();
         const month = String(today.getMonth() + 1).padStart(2, '0');
         const day = String(today.getDate()).padStart(2, '0');
@@ -11854,7 +11841,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (driverEmail) {
           // Atualizar a rota com o email encontrado
           await db.update(deliveryRoutes)
-            .set({ driverEmail, updatedAt: new Date() })
+            .set({ driverEmail, updatedAt: nowBrazil() })
             .where(eq(deliveryRoutes.id, route.id));
           
           fixed.push({
@@ -12265,8 +12252,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedRoute = await db.update(deliveryRoutes)
         .set({ 
           status: 'rota_enviada', 
-          sentToDriverAt: new Date(),
-          updatedAt: new Date() 
+          sentToDriverAt: nowBrazil(),
+          updatedAt: nowBrazil() 
         })
         .where(eq(deliveryRoutes.id, routeId))
         .returning();
@@ -12404,7 +12391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/delivery-routes/send-all-to-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { date } = req.body;
-      const targetDate = date || new Date().toISOString().split('T')[0];
+      const targetDate = date || getBrazilDateString();
       
       console.log(`📤 [SEND-ALL-ROUTES] Enviando todas as rotas de ${targetDate} para os motoristas`);
       
@@ -12456,8 +12443,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.update(deliveryRoutes)
         .set({ 
           status: 'rota_enviada', 
-          sentToDriverAt: new Date(),
-          updatedAt: new Date() 
+          sentToDriverAt: nowBrazil(),
+          updatedAt: nowBrazil() 
         })
         .where(inArray(deliveryRoutes.id, routeIds));
       
@@ -12560,7 +12547,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Atualizar status da rota para 'em_andamento'
       const updatedRoute = await db.update(deliveryRoutes)
-        .set({ status: 'em_andamento', startTime: new Date(), updatedAt: new Date() })
+        .set({ status: 'em_andamento', startTime: nowBrazil(), updatedAt: nowBrazil() })
         .where(eq(deliveryRoutes.id, routeId))
         .returning();
       
@@ -12630,7 +12617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⚠️ [DRIVER-CHECKIN] Usando referência simples para foto');
       }
       
-      const now = new Date();
+      const now = nowBrazil();
       
       // Atualizar a parada com check-in, coordenadas e foto
       const currentPhotos = (stop[0].photos as string[]) || [];
@@ -12718,7 +12705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⚠️ [DRIVER-CHECKOUT] Usando referência simples para foto');
       }
       
-      const now = new Date();
+      const now = nowBrazil();
       
       // Marcar parada como concluída com coordenadas e foto
       const currentPhotos = (stop[0].photos as string[]) || [];
@@ -12877,7 +12864,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         photoUrl = `photo-${nanoid(8)}-delivery`;
       }
       
-      const now = new Date();
+      const now = nowBrazil();
       const currentPhotos = (stop[0].photos as string[]) || [];
       
       // Marcar como entregue (check-in e check-out simultâneos)
@@ -13016,7 +13003,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      const now = new Date();
+      const now = nowBrazil();
       const currentPhotos = (stop[0].photos as string[]) || [];
       const currentNotes = stop[0].notes || '';
       
@@ -13132,7 +13119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
-      const now = new Date();
+      const now = nowBrazil();
       
       // Atualizar status
       const updatedStop = await db.update(deliveryRouteStops)
@@ -13783,7 +13770,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const baseTime = new Date();
+      const baseTime = nowBrazil();
       baseTime.setHours(hours, minutes, 0, 0);
       
       // Tempo de chegada = horário base + tempo de viagem (estimado em 15 min entre pontos)
@@ -13896,7 +13883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         checkInTime: data.checkInTime,
         checkOutTime: data.checkOutTime,
         deliveryDuration,
-        timestamp: data.timestamp || new Date(),
+        timestamp: data.timestamp || nowBrazil(),
         location: data.location,
         notes: data.notes
       });
@@ -14201,7 +14188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar card com ID do Omie
       const updateData: any = {
         omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}`,
-        notes: (card.notes || '') + `\n\nEnviado para Omie: ${new Date().toLocaleString('pt-BR')}`
+        notes: (card.notes || '') + `\n\nEnviado para Omie: ${formatBrazilDateTime(new Date())}`
       };
       
       await storage.updateSalesCard(cardId, updateData);
@@ -14382,7 +14369,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (outcome === 'sale' && saleValue) {
         const salesCard = result.completedCard;
         await storage.updateCustomer(salesCard.customerId, {
-          lastSaleDate: new Date(),
+          lastSaleDate: nowBrazil(),
           lastSaleValue: saleValue.toString()
         });
       }
@@ -14576,12 +14563,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updateData: any = {
         telemarketingNotes: notes,
-        updatedAt: new Date()
+        updatedAt: nowBrazil()
       };
 
       if (outcome === 'completed') {
         updateData.status = 'completed';
-        updateData.completedDate = new Date();
+        updateData.completedDate = nowBrazil();
       } else if (outcome === 'reschedule' && rescheduleDate) {
         updateData.status = 'pending';
         updateData.scheduledDate = new Date(rescheduleDate);
@@ -14665,7 +14652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto é obrigatória
       if (currentCard.customerId) {
-        const todayBrazil = getTodayBrazil();
+        const todayBrazil = todayBrazilMidnight();
         const dailyRoute = currentCard.sellerId 
           ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
@@ -14706,7 +14693,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updateData = {
-        checkInTime: new Date(),
+        checkInTime: nowBrazil(),
         checkInLatitude: latitude.toString(),
         checkInLongitude: longitude.toString(),
         distanceToCustomer: checkInDistance?.toString() || null,
@@ -14720,7 +14707,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         if (currentCard.sellerId) {
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = getTodayBrazil();
+          const todayBrazil = todayBrazilMidnight();
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -14946,7 +14933,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto de check-in existe
       if (currentCard.customerId) {
-        const todayBrazil = getTodayBrazil();
+        const todayBrazil = todayBrazilMidnight();
         const dailyRoute = currentCard.sellerId 
           ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
@@ -14981,7 +14968,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updateData = {
-        checkOutTime: new Date(),
+        checkOutTime: nowBrazil(),
         checkOutLatitude: latitude.toString(),
         checkOutLongitude: longitude.toString(),
         ...(checkOutDistance !== null && { checkOutDistanceToCustomer: checkOutDistance.toString() })
@@ -14994,7 +14981,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         if (currentCard && currentCard.sellerId) {
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = getTodayBrazil();
+          const todayBrazil = todayBrazilMidnight();
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -15174,7 +15161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update sales card with products, value, payment method and operation type
       const updateData = {
         status: 'completed',
-        completedDate: new Date(),
+        completedDate: nowBrazil(),
         saleValue: totalValue,
         products: products,
         paymentMethod: paymentMethod || 'a_vista',
@@ -15249,7 +15236,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalPrice: p.totalPrice
             })),
             totalValue,
-            orderDate: new Date().toISOString(),
+            orderDate: nowBrazil().toISOString(),
           };
 
           // Integração real com Omie API
@@ -16160,8 +16147,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { startDate, endDate } = req.query;
       
-      let start = new Date();
-      let end = new Date();
+      let start = nowBrazil();
+      let end = nowBrazil();
       
       if (startDate) start = new Date(startDate as string);
       if (endDate) end = new Date(endDate as string);
@@ -16616,7 +16603,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Usar timezone do Brasil para garantir que encontramos a rota correta
-      const todayBrazil = getTodayBrazil();
+      const todayBrazil = todayBrazilMidnight();
       
       const route = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
       
@@ -16880,11 +16867,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             endTime = lastCheckOut;
           } else {
             // Check-in mais recente: vendedor voltou, rota em andamento
-            endTime = new Date();
+            endTime = nowBrazil();
           }
         } else {
           // Sem check-outs: rota em andamento
-          endTime = new Date();
+          endTime = nowBrazil();
         }
         
         // Calcular diferença em milissegundos e converter para minutos
@@ -17465,11 +17452,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             endTime = lastCheckOut;
           } else {
             // Check-in mais recente: vendedor voltou, rota em andamento
-            endTime = new Date();
+            endTime = nowBrazil();
           }
         } else {
           // Sem check-outs: rota em andamento
-          endTime = new Date();
+          endTime = nowBrazil();
         }
         
         // Calcular diferença em milissegundos e converter para minutos
@@ -18067,7 +18054,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Marcar horário de almoço com timestamp atual
-      const now = new Date();
+      const now = nowBrazil();
       await storage.updateDailyRoute(routeId, {
         lunchBreakActivatedAt: now
       });
@@ -18336,7 +18323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         scheduledDate: routeDate,
         status: 'pending',
         source: 'manual_route_addition',
-        notes: `Visita adicionada manualmente à rota por ${user.name} em ${new Date().toLocaleString('pt-BR')}`
+        notes: `Visita adicionada manualmente à rota por ${user.name} em ${formatBrazilDateTime(new Date())}`
       });
       
       // Adicionar customerId ao optimizedOrder (GET endpoint espera customerIds)
@@ -19231,7 +19218,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Gerar arquivo
       const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      const filename = `notas-fiscais-omie-${new Date().toISOString().split('T')[0]}.xlsx`;
+      const filename = `notas-fiscais-omie-${getBrazilDateString()}.xlsx`;
 
       // Enviar arquivo
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -19381,7 +19368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updated: 0,
         currentInvoice: '',
         message: 'Iniciando sincronização...',
-        startedAt: new Date(),
+        startedAt: nowBrazil(),
         completedAt: null
       };
 
@@ -19389,7 +19376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
 
-      const sixtyDaysAgo = new Date();
+      const sixtyDaysAgo = nowBrazil();
       sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
       const allBillings: any[] = [];
@@ -19632,7 +19619,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await db.update(billingsTable)
               .set({
                 ...billing,
-                updatedAt: new Date()
+                updatedAt: nowBrazil()
               })
               .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
             updatedCount++;
@@ -19650,7 +19637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.status = 'completed';
       const errorNote = pagesWithErrors > 0 ? ` (${pagesWithErrors} página(s) com erro no Omie)` : '';
       billingSyncState.message = `Sincronização concluída! ${insertedCount} inseridos, ${updatedCount} atualizados.${errorNote}`;
-      billingSyncState.completedAt = new Date();
+      billingSyncState.completedAt = nowBrazil();
 
       console.log(`\n✅ Sincronização concluída!`);
       console.log(`📥 Inseridos: ${insertedCount}`);
@@ -19931,7 +19918,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('🔄 Recalculando métricas das rotas...');
       
-      const today = new Date();
+      const today = nowBrazil();
       const startOfDay = new Date(today);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(today);
@@ -20027,7 +20014,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 Iniciando migração retroativa de checkpoints (últimos ${daysBack} dias)...`);
       
       // Buscar todos os sales_cards com check-in ou check-out no range especificado
-      const today = new Date();
+      const today = nowBrazil();
       today.setHours(23, 59, 59, 999);
       
       const startDate = new Date(today);
@@ -21068,7 +21055,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const getNextDayOfWeek = (targetDay: string): Date => {
-        const today = new Date();
+        const today = nowBrazil();
         const targetDayNum = weekdayMap[targetDay] ?? 0; // Default Domingo se inválido
         const currentDayNum = today.getDay();
         
@@ -21558,7 +21545,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select()
         .from(salesCards)
         .leftJoin(customers, eq(salesCards.customerId, customers.id))
-        .where(gte(salesCards.scheduledDate, new Date()))
+        .where(gte(salesCards.scheduledDate, todayBrazilMidnight()))
         .orderBy(salesCards.scheduledDate);
 
       const inconsistencies: any[] = [];
@@ -21684,7 +21671,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         query = query.where(
           and(
             inArray(salesCards.status, ['pending', 'in_progress']),
-            gte(salesCards.scheduledDate, new Date())
+            gte(salesCards.scheduledDate, todayBrazilMidnight())
           )
         ) as any;
       }
@@ -22515,7 +22502,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
       
       // Atualizar lead com check-in usando db.update direto (bypassa insertLeadSchema validation)
-      const now = new Date();
+      const now = nowBrazil();
       try {
         console.log(`🔄 Atualizando lead ${id} no banco de dados...`);
         await db
@@ -22536,7 +22523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const sellerId = lead.assignedTo || user.id;
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = getTodayBrazil();
+          const todayBrazil = todayBrazilMidnight();
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -22634,7 +22621,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Atualizar lead com check-out usando db.update direto (bypassa insertLeadSchema validation)
-      const now = new Date();
+      const now = nowBrazil();
       try {
         await db
           .update(leads)
@@ -22652,7 +22639,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const sellerId = lead.assignedTo || user.id;
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = getTodayBrazil();
+          const todayBrazil = todayBrazilMidnight();
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -22917,7 +22904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             latitude: latitude && !isNaN(latitude) ? latitude : null,
             longitude: longitude && !isNaN(longitude) ? longitude : null,
             isActive: true,
-            activatedAt: new Date()
+            activatedAt: nowBrazil()
           });
           
           if (customer) {
@@ -23144,7 +23131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const customer = customerByDoc.get(ac.document);
         if (customer) {
           await db.update(activeCustomers)
-            .set({ customerId: customer.id, matchStatus: 'matched', updatedAt: new Date() })
+            .set({ customerId: customer.id, matchStatus: 'matched', updatedAt: nowBrazil() })
             .where(eq(activeCustomers.id, ac.id));
           reconciled++;
         }
@@ -23309,7 +23296,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const settings = await storage.updateChatAiSettings({
         ...validated,
-        updatedAt: new Date(),
+        updatedAt: nowBrazil(),
         updatedBy: userId
       });
       
@@ -23357,7 +23344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const settings = await storage.updateChatAiSettings({
         isEnabled: newState,
-        updatedAt: new Date(),
+        updatedAt: nowBrazil(),
         updatedBy: req.user?.id
       });
       

@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import CheckInModal from "./CheckInModal";
+import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface SalesCardDetailsModalProps {
   isOpen: boolean;
@@ -195,7 +196,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   const duplicateCardMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      const today = new Date();
+      const today = nowBrazil();
       return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
         newDate: today.toISOString().split('T')[0]
       });
@@ -555,7 +556,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <div>
                   <p className="text-sm text-gray-600">Data</p>
                   <p className="font-medium">
-                    {new Date(card.scheduledDate).toLocaleDateString('pt-BR')}
+                    {new Date(card.scheduledDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                   </p>
                 </div>
                 <div>
@@ -563,7 +564,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   <p className="font-medium">
                     {new Date(card.scheduledDate).toLocaleTimeString('pt-BR', {
                       hour: '2-digit',
-                      minute: '2-digit'
+                      minute: '2-digit',
+                      timeZone: 'America/Sao_Paulo'
                     })}
                   </p>
                 </div>
@@ -626,10 +628,11 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <div>
                   <p className="text-sm text-gray-600">Data de Finalização</p>
                   <p className="font-medium">
-                    {new Date(card.completedDate).toLocaleDateString('pt-BR')} às{' '}
+                    {new Date(card.completedDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} às{' '}
                     {new Date(card.completedDate).toLocaleTimeString('pt-BR', {
                       hour: '2-digit',
-                      minute: '2-digit'
+                      minute: '2-digit',
+                      timeZone: 'America/Sao_Paulo'
                     })}
                   </p>
                 </div>
@@ -852,7 +855,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   <div className="border-l-4 border-blue-500 pl-3 mb-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-blue-600 font-medium">✓ Check-in Realizado</span>
-                      <span className="text-sm text-gray-600">{new Date(card.checkInTime).toLocaleString('pt-BR')}</span>
+                      <span className="text-sm text-gray-600">{new Date(card.checkInTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
                     </div>
                     {(card.checkInLatitude && card.checkInLongitude) && (
                       <div className="text-xs text-gray-500">
@@ -883,7 +886,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   <div className="border-l-4 border-purple-500 pl-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-purple-600 font-medium">✓ Check-out Realizado</span>
-                      <span className="text-sm text-gray-600">{new Date(card.checkOutTime).toLocaleString('pt-BR')}</span>
+                      <span className="text-sm text-gray-600">{new Date(card.checkOutTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
                     </div>
                     {(card.checkOutLatitude && card.checkOutLongitude) && (
                       <div className="text-xs text-gray-500">
@@ -919,7 +922,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                       >
                         <div className="flex items-center justify-between mb-2">
                           <span className="font-semibold text-gray-800">
-                            {new Date(order.orderDate).toLocaleDateString('pt-BR')}
+                            {new Date(order.orderDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                           </span>
                           <Badge className={
                             order.status === 'completed' ? 'bg-green-500' :

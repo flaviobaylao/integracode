@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { EditIcon, CheckIcon, XIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface AgentPanelProps {
   conversation: ChatConversationWithCustomer;
@@ -83,13 +84,13 @@ export function AgentPanel({ conversation, agents }: AgentPanelProps) {
 
   const formatLastContact = (date: Date | null) => {
     if (!date) return "Nunca";
-    const now = new Date();
+    const now = nowBrazil();
     const lastContact = new Date(date);
     const diffInHours = Math.floor((now.getTime() - lastContact.getTime()) / (1000 * 60 * 60));
     
     if (diffInHours < 1) return "Agora";
     if (diffInHours < 24) return `${diffInHours}h atrás`;
-    return lastContact.toLocaleDateString("pt-BR");
+    return lastContact.toLocaleDateString("pt-BR", { timeZone: 'America/Sao_Paulo' });
   };
 
   return (

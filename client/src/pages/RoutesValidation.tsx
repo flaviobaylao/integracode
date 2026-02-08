@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,8 +29,8 @@ interface ValidationResult {
 export default function RoutesValidation() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(getBrazilDateISO());
+  const [endDate, setEndDate] = useState(getBrazilDateISO());
   const [isValidating, setIsValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
 

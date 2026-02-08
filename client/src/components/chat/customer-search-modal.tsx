@@ -284,7 +284,7 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
                         </div>
                         {customer.lastContact && (
                           <div className="text-xs text-gray-400" data-testid={`text-customer-last-contact-${customer.id}`}>
-                            Último contato: {new Date(customer.lastContact).toLocaleDateString()}
+                            Último contato: {new Date(customer.lastContact).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                           </div>
                         )}
                       </div>

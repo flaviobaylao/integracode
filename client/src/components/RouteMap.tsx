@@ -240,10 +240,10 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       // Popup com informações
       const popupContent = hasPhoto 
         ? `<strong>📸 ${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}<br>
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}<br>
            <em style="color: #9333ea;">Clique no ícone para ver a foto</em>`
         : `<strong>${checkpoint.checkpointType === 'check_in' ? 'Check-in' : 'Check-out'}</strong><br>
-           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR')}`;
+           ${new Date(checkpoint.checkpointTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
 
       marker.bindPopup(popupContent);
     });

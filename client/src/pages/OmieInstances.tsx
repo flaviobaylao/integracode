@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -350,7 +351,7 @@ export default function OmieInstances() {
                     </TableCell>
                     <TableCell>
                       {instance.lastSyncAt
-                        ? new Date(instance.lastSyncAt).toLocaleString("pt-BR")
+                        ? new Date(instance.lastSyncAt).toLocaleString("pt-BR", { timeZone: BRAZIL_TZ })
                         : "Nunca"}
                     </TableCell>
                     <TableCell className="text-right">

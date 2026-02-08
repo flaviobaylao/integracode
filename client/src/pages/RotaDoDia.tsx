@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,7 +89,7 @@ export default function RotaDoDia() {
       </div>
     );
   }
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
   const [selectedCard, setSelectedCard] = useState<any>(null);
   const [showCardModal, setShowCardModal] = useState(false);
@@ -1970,7 +1971,7 @@ export default function RotaDoDia() {
                     setLoadingCardId(virtualActionCustomer.id);
                     setShowVirtualActionModal(false);
                     try {
-                      const dateToUse = selectedDate || new Date().toISOString().split('T')[0];
+                      const dateToUse = selectedDate || getBrazilDateISO();
                       const response = await fetch(`/api/customers/${virtualActionCustomer.id}/sales-card/${dateToUse}`, {
                         credentials: 'include'
                       });

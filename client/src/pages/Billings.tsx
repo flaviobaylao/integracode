@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -307,7 +308,7 @@ export default function Billings() {
         }, 0) / billingsData.total 
       : 0,
     period: filters.startDate && filters.endDate 
-      ? `${new Date(filters.startDate).toLocaleDateString('pt-BR')} - ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`
+      ? `${new Date(filters.startDate).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ })} - ${new Date(filters.endDate).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ })}`
       : 'Todos os períodos'
   } : null;
 
@@ -402,7 +403,7 @@ export default function Billings() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ });
   };
 
   const handleExport = async () => {
@@ -419,7 +420,7 @@ export default function Billings() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `dados-omie-${new Date().toISOString().split('T')[0]}.xlsx`;
+      a.download = `dados-omie-${getBrazilDateISO()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

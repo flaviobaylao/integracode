@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
@@ -64,7 +65,7 @@ export default function VirtualClientsToday() {
   const [selectedSeller, setSelectedSeller] = useState("");
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState("");
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
   const [selectedSalesCard, setSelectedSalesCard] = useState<any>(null);
   const [showSalesCardModal, setShowSalesCardModal] = useState(false);
   const [showSaleEditModal, setShowSaleEditModal] = useState(false);
@@ -169,7 +170,7 @@ export default function VirtualClientsToday() {
     setSelectedSeller("");
     setSelectedDayOfRoute("");
     setSelectedPeriodicity("");
-    setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
+    setSelectedDate(getBrazilDateISO());
   };
 
   const handleRowClick = (e: React.MouseEvent, client: VirtualClient) => {

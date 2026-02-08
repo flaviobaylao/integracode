@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -212,7 +213,7 @@ export default function DeliveryManagement() {
   // Estados para configuração de veículos
   const [showVehicleConfig, setShowVehicleConfig] = useState(false);
   const [vehicles, setVehicles] = useState<VehicleConfig[]>([]);
-  const [routeDate, setRouteDate] = useState(new Date().toISOString().split('T')[0]);
+  const [routeDate, setRouteDate] = useState(getBrazilDateISO());
   
   // Estados para resultados da roteirização
   const [showResults, setShowResults] = useState(false);
@@ -783,7 +784,7 @@ export default function DeliveryManagement() {
               <Input
                 id="route-date"
                 type="date"
-                min={new Date().toISOString().split('T')[0]}
+                min={getBrazilDateISO()}
                 value={routeDate}
                 onChange={(e) => setRouteDate(e.target.value)}
                 data-testid="input-route-date"
@@ -952,7 +953,7 @@ export default function DeliveryManagement() {
                             <div className="flex items-center gap-1">
                               <Calendar className="h-4 w-4 text-green-600" />
                               <span className="text-base font-bold text-gray-900">
-                                Data: {new Date(order.scheduledDate).toLocaleDateString('pt-BR')}
+                                Data: {new Date(order.scheduledDate).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ })}
                               </span>
                             </div>
                           )}
@@ -1664,7 +1665,7 @@ export default function DeliveryManagement() {
                     console.log('🔍 [SAVE-ROUTES-FRONTEND] pendingRouteConfig:', pendingRouteConfig);
                     
                     // Garantir que a data é sempre YYYY-MM-DD
-                    let finalRouteDate = pendingRouteConfig?.routeDate || new Date().toISOString().split('T')[0];
+                    let finalRouteDate = pendingRouteConfig?.routeDate || getBrazilDateISO();
                     if (finalRouteDate instanceof Date) {
                       finalRouteDate = finalRouteDate.toISOString().split('T')[0];
                     }

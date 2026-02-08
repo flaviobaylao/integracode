@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -271,7 +272,7 @@ export default function HotsiteOrders() {
                 </div>
                 <div>
                   <p className="font-semibold">Timestamp:</p>
-                  <p className="text-xs">{new Date(debugInfo.timestamp).toLocaleString('pt-BR')}</p>
+                  <p className="text-xs">{new Date(debugInfo.timestamp).toLocaleString('pt-BR', { timeZone: BRAZIL_TZ })}</p>
                 </div>
               </div>
               {debugInfo.sourceExamples && debugInfo.sourceExamples.length > 0 && (

@@ -115,7 +115,7 @@ export default function Billings() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   };
 
   const getBillingTypeBadge = (type: string) => {

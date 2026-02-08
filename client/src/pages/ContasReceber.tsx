@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,7 +63,7 @@ export default function ContasReceber() {
   // Calcular estatísticas no frontend
   const stats = contasData?.titulos.reduce((acc, titulo) => {
     const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = new Date();
+    const hoje = nowBrazil();
     hoje.setHours(0, 0, 0, 0);
     
     const valorReceber = titulo.valor_a_receber || 0;
@@ -82,7 +83,7 @@ export default function ContasReceber() {
   const titulos = contasData?.titulos || [];
   const vencidos = titulos.filter(titulo => {
     const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = new Date();
+    const hoje = nowBrazil();
     hoje.setHours(0, 0, 0, 0);
     const valorReceber = titulo.valor_a_receber || 0;
     return dataPrevisao && dataPrevisao < hoje && valorReceber > 0;
@@ -90,7 +91,7 @@ export default function ContasReceber() {
 
   const emAtraso = titulos.filter(titulo => {
     const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = new Date();
+    const hoje = nowBrazil();
     hoje.setHours(0, 0, 0, 0);
     const valorReceber = titulo.valor_a_receber || 0;
     return dataPrevisao && dataPrevisao < hoje && valorReceber > 0;
@@ -146,7 +147,7 @@ export default function ContasReceber() {
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Contas a Receber");
-    XLSX.writeFile(wb, `contas_receber_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `contas_receber_${getBrazilDateISO()}.xlsx`);
 
     toast({
       title: "Exportação concluída",

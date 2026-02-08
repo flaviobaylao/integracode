@@ -15,10 +15,11 @@ import {
   Users
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { getBrazilMonth, getBrazilYear } from '@/lib/brazilTimezone';
 
 export default function AdminRouteMetrics() {
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(getBrazilMonth());
+  const [currentYear, setCurrentYear] = useState(getBrazilYear());
 
   // Buscar métricas do dashboard admin
   const { data: dashboardMetrics, isLoading } = useQuery({

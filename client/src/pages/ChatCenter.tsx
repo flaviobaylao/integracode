@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
+import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +87,7 @@ interface VirtualAttendanceStat {
 // Componente para painel de estatísticas de atendimentos virtuais
 function VirtualAttendancePanel() {
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
-    const now = new Date();
+    const now = nowBrazil();
     const start = new Date(now);
     start.setDate(start.getDate() - 30);
     return {

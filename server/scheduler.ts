@@ -7,6 +7,7 @@ import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
 import { generateAndSaveAllReports } from './ai-reports-service';
 import { redistributeTimedOutConversations } from './chat-distribution-service';
+import { nowBrazil } from './brazilTimezone';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -175,7 +176,7 @@ async function syncComplete(horario: string) {
         message: `${results.billings.imported} importados, ${results.billings.updated} atualizados`,
         recordsProcessed: results.billings.totalProcessed,
         currentProgress: 100,
-        lastFinishedAt: new Date()
+        lastFinishedAt: nowBrazil()
       });
       
       console.log(`✅ [${horario}] Notas fiscais: ${results.billings.totalProcessed} processadas`);
@@ -257,7 +258,7 @@ async function syncOverdueDebts(horario: string) {
 // Sincronização completa automática de hora em hora a partir das 6h
 // Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
 cron.schedule('0 6-23 * * *', () => {
-  const now = new Date();
+  const now = nowBrazil();
   const hour = now.getHours();
   const horario = `${hour.toString().padStart(2, '0')}:00h`;
   syncComplete(horario);
@@ -343,7 +344,7 @@ cron.schedule('0 5 * * *', async () => {
       .from(users)
       .where(eq(users.role, 'vendedor'));
     
-    const hoje = new Date();
+    const hoje = nowBrazil();
     hoje.setHours(0, 0, 0, 0);
     
     let routesGenerated = 0;

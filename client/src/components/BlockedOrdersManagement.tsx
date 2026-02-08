@@ -356,7 +356,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
                           <p><span className="font-medium">Vendedor:</span> {order.seller.firstName} {order.seller.lastName}</p>
                           <p><span className="font-medium">Telefone:</span> {order.customer.phone}</p>
                           <p><span className="font-medium">Motivo:</span> {getBlockReasonLabel(order.blockReason, order.operationType, order.boletoDays)}</p>
-                          <p><span className="font-medium">Bloqueado em:</span> {new Date(order.blockedAt).toLocaleDateString('pt-BR')}</p>
+                          <p><span className="font-medium">Bloqueado em:</span> {new Date(order.blockedAt).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
                         </div>
                         {order.blockDetails && (
                           <p className="text-sm text-gray-500 mt-2">

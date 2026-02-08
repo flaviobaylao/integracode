@@ -2,6 +2,7 @@ import { db } from "./db";
 import { chatAgents, chatConversations, chatDistributionState, chatAiSettings, chatMessages, chatAssignmentHistory, AGENT_COLORS } from "@shared/schema";
 import { eq, and, desc, isNull, lt, ne, sql } from "drizzle-orm";
 import { evolutionAPIService } from "./evolution-api-service";
+import { nowBrazil } from './brazilTimezone';
 
 const REDISTRIBUTION_TIMEOUT_MINUTES = 5;
 
@@ -57,16 +58,16 @@ export async function getNextAgentRoundRobin(): Promise<{ agentId: string; agent
     await db.insert(chatDistributionState).values({
       id: "singleton",
       lastAssignedAgentId: nextAgent.id,
-      lastAssignedAt: new Date(),
-      updatedAt: new Date()
+      lastAssignedAt: nowBrazil(),
+      updatedAt: nowBrazil()
     });
   } else {
     await db
       .update(chatDistributionState)
       .set({
         lastAssignedAgentId: nextAgent.id,
-        lastAssignedAt: new Date(),
-        updatedAt: new Date()
+        lastAssignedAt: nowBrazil(),
+        updatedAt: nowBrazil()
       })
       .where(eq(chatDistributionState.id, "singleton"));
   }
@@ -90,9 +91,9 @@ export async function assignConversationToAgent(
     .set({
       assignedAgentId: agentId,
       assignedAgentColor: agentColor,
-      lastAttendedAt: agentId ? new Date() : null,
+      lastAttendedAt: agentId ? nowBrazil() : null,
       status: agentId ? "assigned" : "new",
-      updatedAt: new Date()
+      updatedAt: nowBrazil()
     })
     .where(eq(chatConversations.id, conversationId));
   
@@ -159,7 +160,7 @@ export async function distributeNewConversation(
     await db.update(chatConversations).set({
       initiatedBy: 'user',
       initiatedByUserId: options.initiatedByUserId,
-      updatedAt: new Date()
+      updatedAt: nowBrazil()
     }).where(eq(chatConversations.id, conversationId));
     
     // Buscar cor do agente
@@ -179,7 +180,7 @@ export async function distributeNewConversation(
   // Atualizar a conversa com info do iniciador
   await db.update(chatConversations).set({
     initiatedBy: 'customer',
-    updatedAt: new Date()
+    updatedAt: nowBrazil()
   }).where(eq(chatConversations.id, conversationId));
   
   // Buscar configurações de IA
@@ -261,7 +262,7 @@ export async function getAssignmentHistory(conversationId: string) {
 }
 
 export async function redistributeTimedOutConversations(): Promise<number> {
-  const timeoutDate = new Date();
+  const timeoutDate = nowBrazil();
   timeoutDate.setMinutes(timeoutDate.getMinutes() - REDISTRIBUTION_TIMEOUT_MINUTES);
   
   const timedOutConversations = await db
@@ -386,8 +387,8 @@ export async function updateLastAttendedTime(conversationId: string): Promise<vo
   await db
     .update(chatConversations)
     .set({
-      lastAttendedAt: new Date(),
-      updatedAt: new Date()
+      lastAttendedAt: nowBrazil(),
+      updatedAt: nowBrazil()
     })
     .where(eq(chatConversations.id, conversationId));
 }
@@ -414,7 +415,7 @@ export async function activateChatGPTStandby(): Promise<void> {
     .update(chatAiSettings)
     .set({
       isStandby: true,
-      updatedAt: new Date()
+      updatedAt: nowBrazil()
     })
     .where(eq(chatAiSettings.id, aiSettings[0].id));
   
@@ -432,7 +433,7 @@ export async function deactivateChatGPTStandby(): Promise<void> {
     .update(chatAiSettings)
     .set({
       isStandby: false,
-      updatedAt: new Date()
+      updatedAt: nowBrazil()
     })
     .where(eq(chatAiSettings.id, aiSettings[0].id));
   
@@ -453,7 +454,7 @@ export async function transferFromChatGptToHuman(conversationId: string): Promis
         .update(chatConversations)
         .set({
           status: 'assigned',
-          updatedAt: new Date()
+          updatedAt: nowBrazil()
         })
         .where(eq(chatConversations.id, conversationId));
       
@@ -467,7 +468,7 @@ export async function transferFromChatGptToHuman(conversationId: string): Promis
           assignedAgentId: null,
           assignedAgentColor: null,
           status: 'new',
-          updatedAt: new Date()
+          updatedAt: nowBrazil()
         })
         .where(eq(chatConversations.id, conversationId));
       

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -571,7 +572,7 @@ export default function LeadsManagement() {
                       </td>
                       <td className="py-3 px-4 text-xs">
                         {(lead as any).nextContactDate ? (
-                          <span className={`font-medium ${new Date((lead as any).nextContactDate) < new Date() ? 'text-red-600' : 'text-green-600'}`}>
+                          <span className={`font-medium ${new Date((lead as any).nextContactDate) < nowBrazil() ? 'text-red-600' : 'text-green-600'}`}>
                             {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
                           </span>
                         ) : '—'}

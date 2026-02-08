@@ -1,5 +1,6 @@
 import { DatabaseStorage } from './storage';
 import { calculateRealDistance } from './routingService';
+import { nowBrazil } from './brazilTimezone';
 
 /**
  * Calcula a distância REAL percorrida baseada nos checkpoints (check-ins) realizados
@@ -162,7 +163,7 @@ export async function validateOffRouteVisit(
   await storage.updateRouteCheckpoint(checkpointId, {
     validationStatus: 'validated',
     validatedBy: adminId,
-    validatedAt: new Date()
+    validatedAt: nowBrazil()
   });
 
   // Recalcular distância total da rota
@@ -190,7 +191,7 @@ export async function cancelOffRouteVisit(
   await storage.updateRouteCheckpoint(checkpointId, {
     validationStatus: 'cancelled',
     validatedBy: adminId,
-    validatedAt: new Date()
+    validatedAt: nowBrazil()
   });
 
   // Recalcular distância total da rota

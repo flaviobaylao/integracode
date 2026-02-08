@@ -255,7 +255,7 @@ export default function CustomerManagement() {
 
   const formatDate = (date: string | null) => {
     if (!date) return 'Nunca';
-    return new Date(date).toLocaleDateString('pt-BR');
+    return new Date(date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   };
 
   const renderLastActivityIcon = (status: string | undefined) => {

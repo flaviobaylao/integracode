@@ -243,7 +243,7 @@ export default function OrderSteps({ step }: OrderStepsProps) {
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
                       <p className="text-gray-600">Data do Pedido</p>
-                      <p className="font-medium">{new Date(order.data_pedido).toLocaleDateString('pt-BR')}</p>
+                      <p className="font-medium">{new Date(order.data_pedido).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
                     </div>
                     <div>
                       <p className="text-gray-600">Vendedor</p>

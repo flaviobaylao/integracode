@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,11 +53,7 @@ export default function VisitRoutes() {
   
   // Obter data de hoje no formato YYYY-MM-DD (timezone do Brasil)
   const getTodayBrazil = () => {
-    const now = new Date();
-    const brazilOffset = -3 * 60; // UTC-3 em minutos
-    const localOffset = now.getTimezoneOffset();
-    const brazilTime = new Date(now.getTime() + (localOffset + brazilOffset) * 60 * 1000);
-    return brazilTime.toISOString().split('T')[0];
+    return getBrazilDateISO();
   };
   
   const [filters, setFilters] = useState({

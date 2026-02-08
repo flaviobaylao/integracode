@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { nowBrazil, getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -101,13 +102,13 @@ export default function SalesSchedule() {
   const [selectedDay, setSelectedDay] = useState('Seg');
   const [selectedSeller, setSelectedSeller] = useState<string>('all');
   const [startDate, setStartDate] = useState(() => {
-    const today = new Date();
-    today.setDate(today.getDate() - 7); // Última semana
+    const today = nowBrazil();
+    today.setDate(today.getDate() - 7);
     return today.toISOString().split('T')[0];
   });
   const [endDate, setEndDate] = useState(() => {
-    const future = new Date();
-    future.setDate(future.getDate() + 30); // Próximos 30 dias
+    const future = nowBrazil();
+    future.setDate(future.getDate() + 30);
     return future.toISOString().split('T')[0];
   });
   const [currentPage, setCurrentPage] = useState(1);
@@ -306,7 +307,7 @@ export default function SalesSchedule() {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
-      timeZone: 'UTC'
+      timeZone: BRAZIL_TZ
     });
   };
 
@@ -445,7 +446,7 @@ export default function SalesSchedule() {
 
       // Gerar nome do arquivo
       const dayLabel = DAYS_OF_WEEK.find(d => d.value === selectedDay)?.label || 'Todos';
-      const fileName = `agenda_vendas_${dayLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      const fileName = `agenda_vendas_${dayLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${getBrazilDateISO()}.xlsx`;
 
       // Fazer download
       XLSX.writeFile(wb, fileName);

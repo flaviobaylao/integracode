@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -228,7 +229,7 @@ export default function DeliveryDashboard() {
                     <div className="text-right">
                       <Badge variant="secondary">{delivery.deliveryStatus}</Badge>
                       <div className="text-xs text-muted-foreground mt-1">
-                        {delivery.scheduledDate && new Date(delivery.scheduledDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                        {delivery.scheduledDate && new Date(delivery.scheduledDate).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ })}
                       </div>
                     </div>
                   </div>

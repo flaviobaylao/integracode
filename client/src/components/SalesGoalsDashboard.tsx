@@ -11,6 +11,7 @@ import { RefreshCw, TrendingUp, TrendingDown, Users, Target, Calendar, MapPin } 
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { SalesGoal, User } from "@shared/schema";
+import { getBrazilMonth, getBrazilYear, getBrazilDay } from '@/lib/brazilTimezone';
 
 interface DailyMetric {
   sellerId: string;
@@ -78,8 +79,8 @@ interface SalesMetrics {
 }
 
 export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) {
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(getBrazilMonth());
+  const [selectedYear, setSelectedYear] = useState(getBrazilYear());
   const [selectedSeller, setSelectedSeller] = useState<string>(user.role === 'vendedor' ? user.id : 'all');
 
   // Buscar vendedores (apenas para admins/coordinators/administrative)
@@ -198,7 +199,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
   const [dailyViewSeller, setDailyViewSeller] = useState<string>('all');
 
   // Estado para paginação por dia e filtro por agente na seção de atendimentos
-  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
+  const [selectedDay, setSelectedDay] = useState<number>(getBrazilDay());
   const [selectedAgent, setSelectedAgent] = useState<string>('all');
 
   // Agrupar dados de atendimentos por dia
@@ -257,7 +258,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     { value: 12, label: 'Dezembro' }
   ];
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i);
+  const years = Array.from({ length: 5 }, (_, i) => getBrazilYear() - 2 + i);
 
   // Função para calcular cor do progresso baseado na performance
   const getProgressColor = (current: number, target: number) => {

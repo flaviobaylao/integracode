@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -108,7 +109,7 @@ interface StopForTransfer {
 }
 
 export default function RoutesSummary() {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
@@ -563,7 +564,7 @@ export default function RoutesSummary() {
       // Data de geração
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 28);
+      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR', { timeZone: BRAZIL_TZ })}`, 14, 28);
       
       // Seção 1: Informações Gerais
       doc.setFontSize(12);
@@ -826,7 +827,7 @@ export default function RoutesSummary() {
                   {route.startTime && (
                     <div className="flex items-center text-muted-foreground">
                       <Clock className="h-4 w-4 mr-2" />
-                      Iniciada: {new Date(route.startTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      Iniciada: {new Date(route.startTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ })}
                     </div>
                   )}
                 </div>
@@ -1133,14 +1134,14 @@ export default function RoutesSummary() {
                               <div>
                                 <div className="text-muted-foreground">ETA</div>
                                 <div className="font-medium">
-                                  {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ })}
                                 </div>
                               </div>
                               {stop.checkInTime && (
                                 <div>
                                   <div className="text-muted-foreground">Check-in</div>
                                   <div className="font-medium text-blue-600">
-                                    {new Date(stop.checkInTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                    {new Date(stop.checkInTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ })}
                                   </div>
                                 </div>
                               )}
@@ -1148,7 +1149,7 @@ export default function RoutesSummary() {
                                 <div>
                                   <div className="text-muted-foreground">Check-out</div>
                                   <div className="font-medium text-green-600">
-                                    {new Date(stop.checkOutTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                    {new Date(stop.checkOutTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ })}
                                   </div>
                                 </div>
                               )}

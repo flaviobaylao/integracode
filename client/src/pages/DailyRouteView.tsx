@@ -1,6 +1,7 @@
 console.log('🚀 DailyRouteView CARREGADO - Versão: 2025-11-12 12:34');
 
 import { useState, useEffect } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,7 +76,7 @@ export default function DailyRouteView() {
   // Estado para vendedor selecionado (admin pode escolher)
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedDate, setSelectedDate] = useState<string>(getBrazilDateISO());
   
   // Estado para modal de detalhes do card
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);

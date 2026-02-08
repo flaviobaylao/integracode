@@ -359,7 +359,7 @@ export default function OverdueDebtsManagement() {
         { 'Métrica': 'Valor Total em Atraso', 'Valor': overdueDebts.totalAmount },
         { 'Métrica': 'Valor Médio por Cliente', 'Valor': overdueDebts.totalClients > 0 ? (overdueDebts.totalAmount / overdueDebts.totalClients) : 0 },
         { 'Métrica': 'Total de Documentos Vencidos', 'Valor': detalhesData.length },
-        { 'Métrica': 'Data da Exportação', 'Valor': new Date().toLocaleDateString('pt-BR') },
+        { 'Métrica': 'Data da Exportação', 'Valor': new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) },
       ];
       const estatisticasSheet = XLSX.utils.json_to_sheet(estatisticasData);
       XLSX.utils.book_append_sheet(workbook, estatisticasSheet, 'Estatísticas');
@@ -467,7 +467,8 @@ export default function OverdueDebtsManagement() {
                 month: '2-digit', 
                 year: 'numeric',
                 hour: '2-digit',
-                minute: '2-digit'
+                minute: '2-digit',
+                timeZone: 'America/Sao_Paulo'
               })}
             </p>
           )}
@@ -500,7 +501,8 @@ export default function OverdueDebtsManagement() {
                     month: '2-digit', 
                     year: 'numeric',
                     hour: '2-digit',
-                    minute: '2-digit'
+                    minute: '2-digit',
+                    timeZone: 'America/Sao_Paulo'
                   })}
                 </span>
               </div>

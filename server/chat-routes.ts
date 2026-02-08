@@ -31,6 +31,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
+import { nowBrazil } from './brazilTimezone';
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -326,13 +327,13 @@ export async function processGroupMessage(data: any): Promise<boolean> {
         status: 'active',
         agentId: null,
         channel: 'whatsapp',
-        lastMessageAt: new Date(),
+        lastMessageAt: nowBrazil(),
         unreadCount: isFromMe ? 0 : 1
       });
       console.log(`👥 [GROUP] Nova conversa de grupo criada: ${conversation.id}`);
     } else {
       await storage.updateChatConversation(conversation.id, {
-        lastMessageAt: new Date(),
+        lastMessageAt: nowBrazil(),
         unreadCount: isFromMe ? 0 : (conversation.unreadCount || 0) + 1
       });
     }
@@ -615,7 +616,7 @@ export function registerChatRoutes(app: Express): void {
           customerPhone: normalizedPhone,
           status: 'new',
           agentId: agent?.id || null,
-          lastMessageTime: new Date(),
+          lastMessageTime: nowBrazil(),
           unreadCount: 0
         });
         console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id} - Nome: ${conversationName}`);
@@ -875,7 +876,7 @@ export function registerChatRoutes(app: Express): void {
           status: 'in-progress',
           assignedAgentId: userAgent.id,
           assignedAgentColor: agentColor,
-          lastAttendedAt: new Date()
+          lastAttendedAt: nowBrazil()
         });
         console.log(`👤 [START-CONVERSATION] Conversa ${conversation.id} atribuída ao atendente ${userAgent.name} (${userAgent.id})`);
       }
@@ -1565,8 +1566,8 @@ export function registerChatRoutes(app: Express): void {
       const newStatus = isFromMe ? conversation.status : (hasAssignedAgent ? conversation.status : 'new');
       
       await storage.updateChatConversation(conversation.id, {
-        updatedAt: new Date(),
-        lastMessageTime: new Date(),
+        updatedAt: nowBrazil(),
+        lastMessageTime: nowBrazil(),
         status: newStatus,
         unreadCount: 0
       });
@@ -1624,7 +1625,7 @@ export function registerChatRoutes(app: Express): void {
                   },
                   {
                     content: finalContent,
-                    timestamp: new Date()
+                    timestamp: nowBrazil()
                   },
                   aiSettings
                 ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
@@ -1648,7 +1649,7 @@ export function registerChatRoutes(app: Express): void {
                     },
                     {
                       content: finalContent,
-                      timestamp: new Date()
+                      timestamp: nowBrazil()
                     },
                     aiSettings
                   ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
@@ -1859,8 +1860,8 @@ export function registerChatRoutes(app: Express): void {
           customerPhone: normalizedPhone,
           status: 'new' as const,
           priority: 'normal' as const,
-          lastMessageTime: new Date(),
-          updatedAt: new Date()
+          lastMessageTime: nowBrazil(),
+          updatedAt: nowBrazil()
         });
         console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
 
@@ -1943,7 +1944,7 @@ export function registerChatRoutes(app: Express): void {
       }
       
       job.status = 'paused';
-      job.pausedAt = new Date();
+      job.pausedAt = nowBrazil();
       console.log(`⏸️ [BULK] Disparo pausado pelo usuário ${userId}`);
       
       res.json({ success: true, message: "Disparo pausado" });
@@ -2160,7 +2161,7 @@ export function registerChatRoutes(app: Express): void {
         sentCount: 0,
         successCount: 0,
         errorCount: 0,
-        startedAt: new Date()
+        startedAt: nowBrazil()
       };
       bulkMessageJobs.set(userId, job);
 
@@ -2532,7 +2533,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_" + Date.now()
           },
           message: {
-            conversation: "Teste de resposta do webhook GET - " + new Date().toLocaleTimeString('pt-BR')
+            conversation: "Teste de resposta do webhook GET - " + nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
           },
           pushName: "Teste WhatsApp"
         }
@@ -2570,7 +2571,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_" + Date.now()
           },
           message: {
-            conversation: "Teste de resposta do webhook - " + new Date().toLocaleTimeString('pt-BR')
+            conversation: "Teste de resposta do webhook - " + nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
           },
           pushName: "Teste WhatsApp"
         }
@@ -2613,7 +2614,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_adv_" + Date.now()
           },
           message: {
-            conversation: message + ` (${new Date().toLocaleTimeString('pt-BR')})`
+            conversation: message + ` (${nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`
           },
           pushName: fromMe ? "Sistema" : "Cliente Teste"
         }
@@ -2678,7 +2679,7 @@ export function registerChatRoutes(app: Express): void {
               id: `test_batch_${Date.now()}_${i}`
             },
             message: {
-              conversation: `Mensagem de teste #${i} - ${new Date().toLocaleTimeString('pt-BR')}`
+              conversation: `Mensagem de teste #${i} - ${nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
             },
             pushName: "Teste Batch"
           }
@@ -3018,7 +3019,7 @@ export function registerChatRoutes(app: Express): void {
         agentId,
         assignedAgentId: agentId,
         assignedAgentColor: agentColor,
-        lastAttendedAt: new Date(),
+        lastAttendedAt: nowBrazil(),
         status: 'assigned'
       });
 
@@ -3215,7 +3216,7 @@ export function registerChatRoutes(app: Express): void {
       const { startDate, endDate, agentId } = req.query;
       
       // Default: últimos 30 dias se não especificado
-      const now = new Date();
+      const now = nowBrazil();
       const defaultStartDate = new Date(now);
       defaultStartDate.setDate(defaultStartDate.getDate() - 30);
       
@@ -3345,7 +3346,7 @@ export function registerChatRoutes(app: Express): void {
         const agents = await storage.getChatAgents();
         const assignedAgent = agents.find(a => a.id === conversation.assignedAgentId);
         if (assignedAgent?.userId) {
-          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, new Date());
+          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, nowBrazil());
           console.log(`📊 [VIRTUAL-ATTENDANCE] Registrado atendimento: agente=${assignedAgent.userId}, conversa=${conversationId}`);
         }
       }
@@ -3487,7 +3488,7 @@ export function registerChatRoutes(app: Express): void {
             // Mesmo atendente - apenas atualizar lastAttendedAt
             await storage.updateChatConversation(conversation.id, {
               status: 'in-progress',
-              lastAttendedAt: new Date()
+              lastAttendedAt: nowBrazil()
             });
             
             console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atualizada pelo atendente ${userAgent.name}`);
@@ -3707,7 +3708,7 @@ export function registerChatRoutes(app: Express): void {
         agentId,
         assignedAgentId: agentId,
         assignedAgentColor: agentColor,
-        lastAttendedAt: new Date(),
+        lastAttendedAt: nowBrazil(),
         status: 'assigned'
       });
 
@@ -4457,7 +4458,7 @@ export function registerChatRoutes(app: Express): void {
             const mediaInfo = evolutionAPIService.extractMediaInfo(msg.message);
             let finalMediaUrl = mediaInfo.mediaUrl;
             const finalMessageType = mediaInfo.messageType || 'text';
-            const messageTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : new Date();
+            const messageTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : nowBrazil();
             
             if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
               try {
@@ -5190,7 +5191,7 @@ export function registerChatRoutes(app: Express): void {
         recentMessages: [{
           role: 'customer',
           content: message,
-          timestamp: new Date()
+          timestamp: nowBrazil()
         }]
       }, settings);
       

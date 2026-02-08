@@ -669,7 +669,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       pdf.text(`Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR', { 
         day: '2-digit', 
         month: 'long', 
-        year: 'numeric' 
+        year: 'numeric',
+        timeZone: 'America/Sao_Paulo'
       })}`, 20, finalY + 40);
     }
     
@@ -727,7 +728,7 @@ Segue o pedido da Honest Sucos:
 • Produtos: ${products.length} itens
 • Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod as keyof typeof PAYMENT_METHOD_LABELS]}
 ${paymentMethod === 'boleto' ? `• Prazo: ${boletoDays} dias` : ''}
-${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR')}` : ''}
+${deliveryDate ? `• Previsão de Entrega: ${deliveryDate.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
 
 🌿 Sucos naturais e saudáveis!
 
@@ -1478,7 +1479,8 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       {deliveryDate.toLocaleDateString('pt-BR', { 
                         day: '2-digit', 
                         month: 'long', 
-                        year: 'numeric' 
+                        year: 'numeric',
+                        timeZone: 'America/Sao_Paulo'
                       })}
                     </span>
                   </p>

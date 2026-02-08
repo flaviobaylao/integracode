@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import { chatOrderFormSchema, type ChatOrderForm } from "@shared/schema";
 import { nanoid } from "nanoid";
+import { nowBrazil, getBrazilDayOfWeek } from './brazilTimezone';
 
 export const ORDER_FORM_TEMPLATE = `📋 *FORMULÁRIO DE PEDIDO*
 
@@ -288,12 +289,12 @@ function getWeekdayFromDate(dateStr: string): string {
   
   if (lower.includes('hoje')) {
     const days = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-    return days[new Date().getDay()];
+    return days[getBrazilDayOfWeek()];
   }
   
   if (lower.includes('amanhã') || lower.includes('amanha')) {
     const days = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-    return days[(new Date().getDay() + 1) % 7];
+    return days[(getBrazilDayOfWeek() + 1) % 7];
   }
   
   return 'segunda';

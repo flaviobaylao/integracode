@@ -292,7 +292,8 @@ export default function WhatsAppIntegration() {
                         <span className="text-xs text-gray-500">
                           {new Date(message.sentAt).toLocaleTimeString('pt-BR', {
                             hour: '2-digit',
-                            minute: '2-digit'
+                            minute: '2-digit',
+                            timeZone: 'America/Sao_Paulo'
                           })}
                         </span>
                       </div>

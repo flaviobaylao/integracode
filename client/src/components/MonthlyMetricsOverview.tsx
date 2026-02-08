@@ -5,6 +5,7 @@ import { TrendingUp, MapPin, Calendar } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface SellerMonthlyMetrics {
   sellerId: string;
@@ -26,7 +27,7 @@ interface AdminDashboardMetrics {
 }
 
 export function MonthlyMetricsOverview() {
-  const now = new Date();
+  const now = nowBrazil();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
 
@@ -54,7 +55,8 @@ export function MonthlyMetricsOverview() {
 
   const monthName = new Date(year, month - 1).toLocaleDateString('pt-BR', { 
     month: 'long', 
-    year: 'numeric' 
+    year: 'numeric',
+    timeZone: 'America/Sao_Paulo'
   });
 
   const formatDistance = (meters: number) => {

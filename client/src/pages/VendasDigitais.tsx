@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -92,7 +93,7 @@ export default function VendasDigitais() {
   const [selectedDetailAgentId, setSelectedDetailAgentId] = useState<string | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   
-  const now = new Date();
+  const now = nowBrazil();
   const currentMonthStart = startOfMonth(now);
   const currentMonthEnd = endOfMonth(now);
   const previousMonthStart = startOfMonth(subMonths(now, 1));

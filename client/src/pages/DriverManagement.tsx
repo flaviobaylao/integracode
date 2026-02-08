@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -561,7 +562,7 @@ export default function DriverManagement() {
                               </div>
                             )}
                             <div className="text-xs">
-                              Criado em {new Date(driver.createdAt).toLocaleDateString('pt-BR')}
+                              Criado em {new Date(driver.createdAt).toLocaleDateString('pt-BR', { timeZone: BRAZIL_TZ })}
                             </div>
                           </div>
                         </div>

@@ -3,6 +3,7 @@ import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing, t
 import { db } from './db';
 import { customers } from '@shared/schema';
 import { eq, sql } from 'drizzle-orm';
+import { nowBrazil } from './brazilTimezone';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -996,7 +997,7 @@ export class OmieService {
       // Se não fornecer data, usar últimos 2 meses por padrão
       let effectiveDateFrom = dateFrom;
       if (!effectiveDateFrom) {
-        const twoMonthsAgo = new Date();
+        const twoMonthsAgo = nowBrazil();
         twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
         const day = String(twoMonthsAgo.getDate()).padStart(2, '0');
         const month = String(twoMonthsAgo.getMonth() + 1).padStart(2, '0');
@@ -1626,7 +1627,7 @@ export class OmieService {
       // Data do pedido
       const orderDate = order.cabecalho?.data_previsao ? 
         this.parseOmieDate(order.cabecalho.data_previsao) : 
-        new Date();
+        nowBrazil();
       
       // Valor total do pedido
       const totalValue = order.total_pedido?.valor_total_pedido || 
@@ -2251,7 +2252,7 @@ export class OmieService {
           
           if (conta.data_vencimento) {
             const vencimento = new Date(conta.data_vencimento);
-            const hoje = new Date();
+            const hoje = nowBrazil();
             const diffTime = hoje.getTime() - vencimento.getTime();
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             
@@ -2675,7 +2676,7 @@ export class OmieService {
       const cabecalho: any = {
         codigo_pedido_integracao: integrationCode,
         codigo_cliente: Number(omieClientCode),
-        data_previsao: new Date().toLocaleDateString('pt-BR'),
+        data_previsao: nowBrazil().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
         etapa: "50",
         numero_pedido: orderNumber.slice(0, 15),
         codigo_parcela: parcelaCode,
@@ -3061,7 +3062,7 @@ export class OmieService {
       console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with strict filters...`);
       
       // CRÍTICO: Data atual com horas zeradas para comparação correta de datas
-      const hoje = new Date();
+      const hoje = nowBrazil();
       hoje.setHours(0, 0, 0, 0);
       
       const debtorsMap = new Map();
@@ -4926,7 +4927,7 @@ export async function createOmieOrder(orderData: {
     const hotsiteCabecalho: any = {
       numero_pedido: orderData.orderNumber.slice(0, 15),
       codigo_cliente: Number(omieCustomerId),
-      data_previsao: new Date().toLocaleDateString('pt-BR'),
+      data_previsao: nowBrazil().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
       etapa: '50',
       codigo_parcela: parcelaCode,
       origem_pedido: 'CRM-HonestSucos'

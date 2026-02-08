@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
@@ -68,7 +69,7 @@ function getDateRecencyClass(dateString: string | null | undefined): string {
   
   try {
     const date = new Date(dateString);
-    const today = new Date();
+    const today = nowBrazil();
     const daysDiff = differenceInDays(today, date);
     
     if (daysDiff <= 7) {
@@ -348,7 +349,7 @@ export default function ActiveCustomers() {
 
   const handleRowClick = async (customerId: string) => {
     try {
-      const dateToUse = new Date().toISOString().split('T')[0];
+      const dateToUse = getBrazilDateISO();
       console.log('🔍 Abrindo card para customer:', customerId, 'data:', dateToUse);
       
       const response = await fetch(`/api/customers/${customerId}/sales-card/${dateToUse}`, {

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { MapPin, TrendingUp, Calendar } from 'lucide-react';
+import { formatDateBR } from '@/lib/brazilTimezone';
 
 interface DailyRouteOverview {
   sellerId: string;
@@ -115,7 +116,7 @@ export function DailyRoutesOverview() {
       {/* Tabela de vendedores */}
       <Card data-testid="card-sellers-routes">
         <CardHeader>
-          <CardTitle>Rotas do Dia - {new Date().toLocaleDateString('pt-BR')}</CardTitle>
+          <CardTitle>Rotas do Dia - {formatDateBR(new Date())}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">

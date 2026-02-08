@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,7 +54,7 @@ export default function TelemarketingRotaDoDia() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const isTelemarketing = user?.role === 'telemarketing';
   
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
   const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : '');
   const [selectedCard, setSelectedCard] = useState<any>(null);
   const [showCardModal, setShowCardModal] = useState(false);

@@ -11,6 +11,7 @@ import {
   BarChart3
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { getBrazilYear, getBrazilMonth } from '@/lib/brazilTimezone';
 
 interface RouteMetricsCardProps {
   sellerId: string;
@@ -21,8 +22,8 @@ interface RouteMetricsCardProps {
 
 export default function RouteMetricsCard({ 
   sellerId, 
-  year = new Date().getFullYear(), 
-  month = new Date().getMonth() + 1,
+  year = getBrazilYear(), 
+  month = getBrazilMonth(),
   showDetailed = false 
 }: RouteMetricsCardProps) {
   
@@ -154,7 +155,7 @@ export default function RouteMetricsCard({
                   <div className="flex-1">
                     <div className="flex items-center space-x-3">
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        {new Date(route.date).toLocaleDateString('pt-BR')}
+                        {new Date(route.date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                       </span>
                       <Badge variant={route.completionRate === 100 ? "default" : "outline"}>
                         {route.completedVisits}/{route.totalVisits} visitas
