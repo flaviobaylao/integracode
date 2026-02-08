@@ -19393,9 +19393,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('\n💰 [SYNC-FAST] SINCRONIZANDO FATURAMENTOS DO OMIE (modo otimizado)...\n');
 
-      billingSyncState.message = 'Pré-carregando caches (vendedores, pagamentos, etapas)...';
+      billingSyncState.message = 'Iniciando sincronização...';
 
-      const result = await omieService.syncAllOrders();
+      const result = await omieService.syncAllOrders((progress) => {
+        billingSyncState.message = progress.message;
+        billingSyncState.currentPage = progress.currentPage;
+        billingSyncState.totalPages = progress.totalPages;
+        billingSyncState.invoicesFound = progress.invoicesFound;
+        billingSyncState.invoicesProcessed = progress.invoicesProcessed;
+        billingSyncState.inserted = progress.inserted;
+        billingSyncState.updated = progress.updated;
+        billingSyncState.currentInvoice = progress.currentInvoice;
+      });
 
       billingSyncState.status = 'completed';
       billingSyncState.invoicesFound = result.totalProcessed + result.skipped;

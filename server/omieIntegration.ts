@@ -1244,7 +1244,16 @@ export class OmieService {
 
   // Método NOVO para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
   // OTIMIZADO: pré-carrega caches em bulk, usa transformação rápida sem API calls por pedido
-  async syncAllOrders(): Promise<{
+  async syncAllOrders(onProgress?: (progress: {
+    message: string;
+    currentPage: number;
+    totalPages: number;
+    invoicesFound: number;
+    invoicesProcessed: number;
+    inserted: number;
+    updated: number;
+    currentInvoice: string;
+  }) => void): Promise<{
     totalProcessed: number;
     imported: number;
     updated: number;
@@ -1259,19 +1268,21 @@ export class OmieService {
       // FASE 1: Pré-carregar todos os caches em paralelo (elimina N+1 API calls)
       console.log(`📦 [SYNC-FAST] FASE 1: Pré-carregando caches...`);
       const cacheStart = Date.now();
+      onProgress?.({ message: 'Pré-carregando caches (vendedores, pagamentos, etapas)...', currentPage: 0, totalPages: 0, invoicesFound: 0, invoicesProcessed: 0, inserted: 0, updated: 0, currentInvoice: '' });
       
       const [customersCache, sellersDbCache] = await Promise.all([
         this.loadCustomersCache(),
         this.loadSellersDbCache(),
         this.preloadAllSellersCache(),
         this.preloadPaymentMethodsCache(),
-        this.fetchStageNames(),
+        this.fetchStageNames().catch(e => { console.warn('⚠️ Erro ao carregar etapas (não crítico):', e.message); }),
       ]);
       
       console.log(`✅ [SYNC-FAST] Caches carregados em ${Date.now() - cacheStart}ms (customers=${customersCache.size}, sellersDB=${sellersDbCache.size}, sellersOmie=${this.sellersCache.size}, pagamentos=${this.paymentMethodsCache.size}, etapas=${this.stageNamesCache.size})`);
       
       // FASE 2: Buscar e processar pedidos com páginas grandes
       console.log(`📦 [SYNC-FAST] FASE 2: Buscando pedidos...`);
+      onProgress?.({ message: 'Caches carregados! Buscando pedidos do Omie...', currentPage: 0, totalPages: 0, invoicesFound: 0, invoicesProcessed: 0, inserted: 0, updated: 0, currentInvoice: '' });
       
       let totalProcessed = 0;
       let imported = 0;
@@ -1283,6 +1294,7 @@ export class OmieService {
       let page = 1;
       let hasMorePages = true;
       const PAGE_SIZE = 500;
+      let totalFound = 0;
       
       while (hasMorePages) {
         try {
@@ -1300,7 +1312,9 @@ export class OmieService {
             break;
           }
           
+          totalFound += orders.length;
           console.log(`📄 [SYNC-FAST] Página ${page}: ${orders.length} pedidos (API: ${Date.now() - pageStart}ms)`);
+          onProgress?.({ message: `Processando página ${page}... (${totalFound} pedidos encontrados)`, currentPage: page, totalPages: 0, invoicesFound: totalFound, invoicesProcessed: totalProcessed, inserted: imported, updated, currentInvoice: '' });
           
           // Transformar pedidos em lote (sem API calls - tudo via cache)
           const transformStart = Date.now();
@@ -1357,6 +1371,7 @@ export class OmieService {
           }
           
           console.log(`💾 [SYNC-FAST] Página ${page} salva (${Date.now() - saveStart}ms) - Parcial: ${totalProcessed} proc, ${imported} imp, ${updated} upd, ${skipped} rej`);
+          onProgress?.({ message: `Página ${page} processada (${totalProcessed} salvos, ${imported} novos, ${updated} atualizados)`, currentPage: page, totalPages: 0, invoicesFound: totalFound, invoicesProcessed: totalProcessed, inserted: imported, updated, currentInvoice: '' });
           
           page++;
           if (page > 200) {
