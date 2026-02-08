@@ -12260,6 +12260,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Forçar sincronização de etapas Omie para uma rota específica
+  app.post("/api/delivery-routes/:routeId/sync-omie-stages", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const triggeredBy = (req as any).currentUser?.email || 'system';
+      
+      console.log(`🔄 [SYNC-OMIE-STAGES] Forçando sincronização de etapas Omie para rota ${routeId}`);
+      
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, routeId))
+        .limit(1);
+      
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+      
+      const stops = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.routeId, routeId));
+      
+      const orderInfos: Array<{ orderId: number; billingId: string; customerName: string; invoiceNumber: string; stopId: string }> = [];
+      for (const stop of stops) {
+        if (stop.billingId) {
+          const billing = await db.select().from(billings)
+            .where(eq(billings.id, stop.billingId))
+            .limit(1);
+          if (billing.length > 0 && billing[0].omieOrderId) {
+            const orderId = parseInt(billing[0].omieOrderId);
+            if (!isNaN(orderId)) {
+              orderInfos.push({
+                orderId,
+                billingId: stop.billingId,
+                customerName: billing[0].customerFantasyName || stop.customerName || '',
+                invoiceNumber: billing[0].invoiceNumber || '',
+                stopId: stop.id,
+              });
+            }
+          }
+        }
+      }
+      
+      if (orderInfos.length === 0) {
+        console.log(`⚠️ [SYNC-OMIE-STAGES] Nenhum pedido Omie encontrado para esta rota`);
+        return res.json({ message: "Nenhum pedido Omie encontrado para sincronizar", results: [] });
+      }
+      
+      console.log(`📤 [SYNC-OMIE-STAGES] Sincronizando ${orderInfos.length} pedidos para "Em Rota" (20)...`);
+      console.log(`📤 [SYNC-OMIE-STAGES] Pedidos: ${JSON.stringify(orderInfos.map(o => ({ orderId: o.orderId, customer: o.customerName })))}`);
+      
+      const omieService = getOmieService(storage);
+      if (!omieService) {
+        return res.status(500).json({ message: "OmieService não configurado" });
+      }
+      
+      const pedidosParaAlterar = orderInfos.map(info => ({
+        codigoPedido: info.orderId,
+        novaEtapa: OmieService.STAGE_EM_ROTA
+      }));
+      
+      const resultado = await omieService.trocarEtapasPedidosEmLote(pedidosParaAlterar);
+      console.log(`✅ [SYNC-OMIE-STAGES] Resultado: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+      
+      for (const info of orderInfos) {
+        const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
+        await logOmieStageChange({
+          omieOrderId: info.orderId,
+          orderNumber: info.invoiceNumber,
+          customerName: info.customerName,
+          newStage: OmieService.STAGE_EM_ROTA,
+          trigger: 'send_to_driver',
+          triggerDetail: `Sincronização manual de etapas Omie`,
+          routeId,
+          stopId: info.stopId,
+          billingId: info.billingId,
+          driverEmail: route[0].driverEmail || undefined,
+          triggeredBy,
+          success: resultItem?.success ?? false,
+          errorMessage: resultItem?.success === false ? resultItem.message : undefined,
+          omieResponse: resultItem || null,
+        });
+      }
+      
+      res.json({
+        message: `Sincronização concluída: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`,
+        successCount: resultado.successCount,
+        errorCount: resultado.errorCount,
+        results: resultado.results,
+      });
+    } catch (error: any) {
+      console.error("Error syncing Omie stages:", error);
+      res.status(500).json({ message: "Erro ao sincronizar etapas Omie", error: error.message });
+    }
+  });
+
   // Enviar todas as rotas do dia para os motoristas
   // Também altera etapas das NFs no Omie para "Em Rota" (20)
   app.post("/api/delivery-routes/send-all-to-drivers", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {

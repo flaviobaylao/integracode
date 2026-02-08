@@ -469,6 +469,26 @@ export default function RoutesSummary() {
     }
   });
 
+  const syncOmieStagesMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/delivery-routes/${routeId}/sync-omie-stages`);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({
+        title: "Etapas Omie sincronizadas",
+        description: data.message || "Sincronização concluída",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao sincronizar etapas Omie",
+        description: error.message || "Não foi possível sincronizar",
+        variant: "destructive",
+      });
+    }
+  });
+
   const activeDrivers = drivers.filter(d => d.isActive);
 
   // Contar rotas pendentes de envio (status 'rota salva' ou 'pending')
@@ -875,6 +895,30 @@ export default function RoutesSummary() {
                     <>
                       <Send className="h-4 w-4 mr-2" />
                       📤 Enviar para Motorista
+                    </>
+                  )}
+                </Button>
+              )}
+              {selectedRouteData && selectedRouteData.status === 'rota_enviada' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    syncOmieStagesMutation.mutate(selectedRouteData.id);
+                  }}
+                  disabled={syncOmieStagesMutation.isPending}
+                  className="border-orange-400 text-orange-600 hover:bg-orange-50"
+                >
+                  {syncOmieStagesMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Sincronizando...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Atualizar Etapas Omie
                     </>
                   )}
                 </Button>

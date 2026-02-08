@@ -1,12 +1,15 @@
 import { evolutionAPIService } from './evolution-api-service';
 import { whatsappService } from './whatsapp-service';
 import cron from 'node-cron';
-import { getOmieService } from './omieIntegration';
+import { getOmieService, OmieService } from './omieIntegration';
 import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
 import { generateAndSaveAllReports } from './ai-reports-service';
 import { redistributeTimedOutConversations } from './chat-distribution-service';
+import { db } from './db';
+import { deliveryRoutes, deliveryRouteStops, billings, omieStageLogs } from '@shared/schema';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -485,12 +488,126 @@ cron.schedule('0 0 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
+// Sincronização automática de etapas Omie para rotas ativas (rota_enviada)
+// Executa a cada 10 minutos das 6h às 23h
+const STAGE_DESCRIPTIONS: Record<string, string> = {
+  '10': 'Pedido Incluído',
+  '20': 'Em Rota',
+  '50': 'Faturar',
+  '60': 'Faturado',
+  '70': 'Entregue',
+  '80': 'Aguardando Rota',
+};
+
+cron.schedule('*/10 6-23 * * *', async () => {
+  try {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    
+    const activeRoutes = await db.select().from(deliveryRoutes)
+      .where(and(
+        eq(deliveryRoutes.status, 'rota_enviada'),
+        sql`${deliveryRoutes.routeDate}::text = ${today}`
+      ));
+    
+    if (activeRoutes.length === 0) {
+      return;
+    }
+    
+    console.log(`🔄 [OMIE-STAGE-SYNC] Sincronizando etapas de ${activeRoutes.length} rota(s) ativa(s) para ${today}...`);
+    
+    const omieService = getOmieService(storage);
+    if (!omieService) {
+      console.log(`⚠️ [OMIE-STAGE-SYNC] OmieService não configurado`);
+      return;
+    }
+    
+    let totalSuccess = 0;
+    let totalErrors = 0;
+    let totalSkipped = 0;
+    
+    for (const route of activeRoutes) {
+      const stops = await db.select().from(deliveryRouteStops)
+        .where(and(
+          eq(deliveryRouteStops.routeId, route.id),
+          eq(deliveryRouteStops.status, 'pendente')
+        ));
+      
+      for (const stop of stops) {
+        if (!stop.billingId) continue;
+        
+        const billing = await db.select().from(billings)
+          .where(eq(billings.id, stop.billingId))
+          .limit(1);
+        
+        if (billing.length === 0 || !billing[0].omieOrderId) continue;
+        
+        const orderId = parseInt(billing[0].omieOrderId);
+        if (isNaN(orderId)) continue;
+        
+        // Check if already synced successfully for this route+stop
+        const existingLog = await db.select().from(omieStageLogs)
+          .where(and(
+            eq(omieStageLogs.omieOrderId, orderId),
+            eq(omieStageLogs.newStage, OmieService.STAGE_EM_ROTA),
+            eq(omieStageLogs.success, true)
+          ))
+          .limit(1);
+        
+        if (existingLog.length > 0) {
+          totalSkipped++;
+          continue;
+        }
+        
+        try {
+          const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_EM_ROTA);
+          
+          await db.insert(omieStageLogs).values({
+            omieOrderId: orderId,
+            orderNumber: billing[0].invoiceNumber || null,
+            customerName: billing[0].customerFantasyName || stop.customerName || null,
+            newStage: OmieService.STAGE_EM_ROTA,
+            stageDescription: STAGE_DESCRIPTIONS[OmieService.STAGE_EM_ROTA] || OmieService.STAGE_EM_ROTA,
+            trigger: 'auto_sync',
+            triggerDetail: `Sincronização automática a cada 10 min`,
+            routeId: route.id,
+            stopId: stop.id,
+            billingId: stop.billingId,
+            driverEmail: route.driverEmail || null,
+            triggeredBy: 'scheduler',
+            success: result.success,
+            errorMessage: result.success ? null : result.message,
+            omieResponse: result.data || null,
+          });
+          
+          if (result.success) {
+            totalSuccess++;
+          } else {
+            totalErrors++;
+          }
+        } catch (error: any) {
+          totalErrors++;
+          console.error(`❌ [OMIE-STAGE-SYNC] Erro pedido ${orderId}:`, error.message);
+        }
+      }
+    }
+    
+    if (totalSuccess > 0 || totalErrors > 0) {
+      console.log(`✅ [OMIE-STAGE-SYNC] Concluído: ${totalSuccess} sucesso, ${totalErrors} erros, ${totalSkipped} já sincronizados`);
+    }
+  } catch (error: any) {
+    console.error('❌ [OMIE-STAGE-SYNC] Erro na sincronização:', error.message);
+  }
+}, {
+  timezone: "America/Sao_Paulo"
+});
+
 console.log('✅ Agendador configurado:');
 console.log('   - Geração de relatórios de IA diariamente às 06:00h (UTC-3)');
 console.log('   - Geração de próximas 3 visitas para clientes ativos diariamente às 00:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (20+ min sem pedido/não-venda) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
+console.log('   - Sincronização de etapas Omie para rotas ativas a cada 10 minutos das 06:00h às 23:00h (UTC-3)');
 console.log('   ⚠️  Polling fallback WhatsApp DESATIVADO (Evolution API com bug no findChats)');
 console.log('');
 console.log('⚠️  Jobs desativados após migração para cards permanentes:');
