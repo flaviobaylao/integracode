@@ -19345,8 +19345,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sincronizar faturamentos do Omie para banco de dados (últimos 60 dias) com progresso
-  // Executa em background para permitir progresso em tempo real via SSE
+  // Sincronizar faturamentos do Omie - OTIMIZADO: usa syncAllOrders com caches pré-carregados
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
       if (billingSyncState.status === 'running') {
@@ -19367,284 +19366,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         inserted: 0,
         updated: 0,
         currentInvoice: '',
-        message: 'Iniciando sincronização...',
+        message: 'Iniciando sincronização otimizada...',
         startedAt: nowBrazil(),
         completedAt: null
       };
 
       res.status(202).json({ message: 'Sincronização iniciada em background. Acompanhe o progresso na tela.' });
 
-      console.log('\n💰 SINCRONIZANDO FATURAMENTOS DO OMIE (ÚLTIMOS 60 DIAS)...\n');
+      console.log('\n💰 [SYNC-FAST] SINCRONIZANDO FATURAMENTOS DO OMIE (modo otimizado)...\n');
 
-      const sixtyDaysAgo = nowBrazil();
-      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+      billingSyncState.message = 'Pré-carregando caches (vendedores, pagamentos, etapas)...';
 
-      const allBillings: any[] = [];
-      let page = 1;
-      let hasMorePages = true;
-
-      billingSyncState.message = 'Buscando notas fiscais do Omie...';
-
-      let pagesWithErrors = 0;
-      let consecutiveErrors = 0;
-      const maxRetries = 3;
-      const maxConsecutiveErrors = 3;
-      const delayBetweenPages = 2000;
-      const delayBetweenVendors = 500;
-      
-      let requestsThisMinute = 0;
-      let minuteStart = Date.now();
-      const maxRequestsPerMinute = 200;
-
-      const checkRateLimit = async () => {
-        const now = Date.now();
-        if (now - minuteStart >= 60000) {
-          minuteStart = now;
-          requestsThisMinute = 0;
-        }
-        
-        if (requestsThisMinute >= maxRequestsPerMinute) {
-          const waitTime = 60000 - (now - minuteStart) + 1000;
-          console.log(`⏳ Rate limit atingido (${requestsThisMinute}/${maxRequestsPerMinute}). Aguardando ${Math.ceil(waitTime/1000)}s...`);
-          billingSyncState.message = `Rate limit atingido. Aguardando ${Math.ceil(waitTime/1000)}s...`;
-          await new Promise(r => setTimeout(r, waitTime));
-          minuteStart = Date.now();
-          requestsThisMinute = 0;
-        }
-        
-        requestsThisMinute++;
-      };
-
-      while (hasMorePages && page <= 50) {
-        billingSyncState.currentPage = page;
-        billingSyncState.message = `Buscando página ${page}...`;
-        console.log(`📄 Buscando página ${page}...`);
-        
-        if (page > 1) {
-          await new Promise(r => setTimeout(r, delayBetweenPages));
-        }
-        
-        await checkRateLimit();
-        
-        let response;
-        let retryCount = 0;
-        
-        while (retryCount < maxRetries) {
-          try {
-            response = await omieService.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
-              pagina: page,
-              registros_por_pagina: 50,
-              apenas_importado_api: 'N',
-              ordenar_por: 'DATA',
-              ordem_decrescente: 'S'
-            });
-            consecutiveErrors = 0;
-            break;
-          } catch (pageError: any) {
-            retryCount++;
-            const errorMsg = pageError.message || '';
-            const isRateLimited = errorMsg.includes('429') || 
-              errorMsg.toLowerCase().includes('rate') || 
-              errorMsg.toLowerCase().includes('limit') ||
-              errorMsg.includes('MISUSE_API') ||
-              errorMsg.toLowerCase().includes('bloqueada') ||
-              errorMsg.toLowerCase().includes('consumo indevido');
-            
-            if (isRateLimited) {
-              const waitMatch = errorMsg.match(/(\d+)\s*segundos/);
-              const waitSeconds = waitMatch ? Math.min(parseInt(waitMatch[1], 10) + 5, 1200) : 60;
-              const waitMinutes = Math.ceil(waitSeconds / 60);
-              const waitStartTime = Date.now();
-              
-              console.log(`⚠️ Rate limit detectado na página ${page}. Aguardando ${waitSeconds}s (~${waitMinutes} min)...`);
-              billingSyncState.message = `⏳ API Omie bloqueada. Aguardando ${waitMinutes} min para continuar...`;
-              
-              const updateInterval = setInterval(() => {
-                const elapsed = Math.floor((Date.now() - waitStartTime) / 1000);
-                const remaining = Math.max(0, waitSeconds - elapsed);
-                const remainingMin = Math.ceil(remaining / 60);
-                billingSyncState.message = `⏳ API Omie bloqueada. Aguardando liberação (~${remainingMin} min restantes)...`;
-              }, 10000);
-              
-              await new Promise(r => setTimeout(r, waitSeconds * 1000));
-              clearInterval(updateInterval);
-              
-              billingSyncState.message = `Retomando sincronização após espera...`;
-              minuteStart = Date.now();
-              requestsThisMinute = 0;
-              retryCount--;
-              continue;
-            }
-            
-            console.log(`⚠️ Erro na página ${page}, tentativa ${retryCount}/${maxRetries}: ${pageError.message}`);
-            if (retryCount < maxRetries) {
-              await new Promise(r => setTimeout(r, 3000 * retryCount));
-            } else {
-              console.log(`❌ Página ${page} falhou após ${maxRetries} tentativas.`);
-              pagesWithErrors++;
-              consecutiveErrors++;
-              if (consecutiveErrors >= maxConsecutiveErrors) {
-                console.log(`❌ ${maxConsecutiveErrors} páginas consecutivas falharam. Salvando dados coletados...`);
-                hasMorePages = false;
-              }
-            }
-          }
-        }
-
-        if (!response) {
-          page++;
-          continue;
-        }
-
-        const invoices = response.nfCadastro || [];
-        console.log(`✅ Página ${page}: ${invoices.length} notas encontradas`);
-
-        for (const invoice of invoices) {
-          const invoiceNumber = invoice.ide?.nNF || '';
-          billingSyncState.currentInvoice = invoiceNumber;
-
-          const invoiceDate = invoice.ide?.dEmi;
-          if (!invoiceDate) {
-            continue;
-          }
-
-          const [dia, mes, ano] = invoiceDate.split('/');
-          const invoiceDateObj = new Date(`${ano}-${mes}-${dia}`);
-          
-          if (invoiceDateObj < sixtyDaysAgo) {
-            continue;
-          }
-
-          const notaCancelada = invoice.cancelamento?.cCancelado === 'S';
-          if (notaCancelada) {
-            continue;
-          }
-
-          const nfStageCode = invoice.nfProdServStatus?.cEtapa || invoice.cabecalho?.etapa || '';
-          let stageName = '';
-          
-          if (nfStageCode) {
-            const stageMap: Record<string, string> = {
-              '10': 'Pedido de Venda',
-              '20': 'Em Rota',
-              '50': 'Faturado',
-              '60': 'Faturado',
-              '70': 'Entregue',
-              '80': 'Aguardando Rota'
-            };
-            stageName = stageMap[nfStageCode] || `Etapa ${nfStageCode}`;
-          }
-
-          const vendorCode = invoice.titulos?.[0]?.nCodVendedor?.toString() || '';
-          let vendorName = '';
-          
-          if (vendorCode) {
-            try {
-              await checkRateLimit();
-              await new Promise(r => setTimeout(r, delayBetweenVendors));
-              const vendorData = await omieService.fetchVendorData(vendorCode);
-              vendorName = vendorData?.nome || vendorCode;
-            } catch (error: any) {
-              const errorMsg = error.message || '';
-              const isRateLimited = errorMsg.includes('429') || 
-                errorMsg.toLowerCase().includes('rate') ||
-                errorMsg.includes('MISUSE_API') ||
-                errorMsg.toLowerCase().includes('bloqueada') ||
-                errorMsg.toLowerCase().includes('consumo indevido');
-              if (isRateLimited) {
-                const waitMatch = errorMsg.match(/(\d+)\s*segundos/);
-                const waitSeconds = waitMatch ? Math.min(parseInt(waitMatch[1], 10) + 5, 1200) : 60;
-                const waitMinutes = Math.ceil(waitSeconds / 60);
-                
-                console.log(`⚠️ Rate limit em lookup de vendedor. Aguardando ${waitSeconds}s (~${waitMinutes} min)...`);
-                billingSyncState.message = `⏳ API Omie bloqueada. Aguardando ${waitMinutes} min...`;
-                await new Promise(r => setTimeout(r, waitSeconds * 1000));
-                billingSyncState.message = `Retomando sincronização...`;
-                minuteStart = Date.now();
-                requestsThisMinute = 0;
-              }
-              vendorName = vendorCode;
-            }
-          }
-
-          const pedidoId = invoice.compl?.nIdPedido;
-          
-          allBillings.push({
-            omieInvoiceId: invoice.compl?.nIdNF?.toString() || '',
-            invoiceNumber: invoiceNumber,
-            customerFantasyName: invoice.nfDestInt?.cRazao || '',
-            totalValue: invoice.total?.ICMSTot?.vNF || 0,
-            invoiceDate: invoiceDateObj,
-            vendorCode: vendorCode,
-            sellerName: vendorName,
-            stageName: stageName,
-            cfop: invoice.det?.[0]?.prod?.CFOP || '',
-            isCancelled: false,
-            omieOrderId: pedidoId?.toString() || '',
-            orderNumber: invoice.compl?.nPed || invoiceNumber || '',
-            orderDate: invoiceDateObj,
-            billingType: 'venda' as const
-          });
-
-          billingSyncState.invoicesFound = allBillings.length;
-        }
-
-        if (invoices.length < 50) {
-          hasMorePages = false;
-        }
-        
-        page++;
-      }
-
-      billingSyncState.totalPages = page - 1;
-      billingSyncState.message = `Salvando ${allBillings.length} faturamentos no banco...`;
-      console.log(`\n✅ Total de faturamentos coletados: ${allBillings.length}\n`);
-
-      let insertedCount = 0;
-      let updatedCount = 0;
-
-      for (let i = 0; i < allBillings.length; i++) {
-        const billing = allBillings[i];
-        billingSyncState.invoicesProcessed = i + 1;
-        billingSyncState.currentInvoice = billing.invoiceNumber;
-        billingSyncState.message = `Salvando NF ${billing.invoiceNumber} (${i + 1}/${allBillings.length})`;
-
-        try {
-          const existing = await db.select()
-            .from(billingsTable)
-            .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber))
-            .limit(1);
-
-          if (existing.length > 0) {
-            await db.update(billingsTable)
-              .set({
-                ...billing,
-                updatedAt: nowBrazil()
-              })
-              .where(eq(billingsTable.invoiceNumber, billing.invoiceNumber));
-            updatedCount++;
-            billingSyncState.updated = updatedCount;
-          } else {
-            await db.insert(billingsTable).values(billing);
-            insertedCount++;
-            billingSyncState.inserted = insertedCount;
-          }
-        } catch (error) {
-          console.error(`Erro ao processar faturamento ${billing.invoiceNumber}:`, error);
-        }
-      }
+      const result = await omieService.syncAllOrders();
 
       billingSyncState.status = 'completed';
-      const errorNote = pagesWithErrors > 0 ? ` (${pagesWithErrors} página(s) com erro no Omie)` : '';
-      billingSyncState.message = `Sincronização concluída! ${insertedCount} inseridos, ${updatedCount} atualizados.${errorNote}`;
+      billingSyncState.invoicesFound = result.totalProcessed + result.skipped;
+      billingSyncState.invoicesProcessed = result.totalProcessed;
+      billingSyncState.inserted = result.imported;
+      billingSyncState.updated = result.updated;
+      const rejectedNote = result.skipped > 0 ? ` (${result.skipped} rejeitados)` : '';
+      billingSyncState.message = `Sincronização concluída! ${result.imported} inseridos, ${result.updated} atualizados.${rejectedNote}`;
       billingSyncState.completedAt = nowBrazil();
 
-      console.log(`\n✅ Sincronização concluída!`);
-      console.log(`📥 Inseridos: ${insertedCount}`);
-      console.log(`🔄 Atualizados: ${updatedCount}`);
-      if (pagesWithErrors > 0) {
-        console.log(`⚠️ Páginas com erro: ${pagesWithErrors}\n`);
-      }
+      console.log(`\n✅ [SYNC-FAST] Sincronização concluída!`);
+      console.log(`📥 Inseridos: ${result.imported}`);
+      console.log(`🔄 Atualizados: ${result.updated}`);
+      console.log(`⏭️ Rejeitados: ${result.skipped}\n`);
 
     } catch (error: any) {
       billingSyncState.status = 'error';
