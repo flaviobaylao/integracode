@@ -11377,7 +11377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderNumber: billings.orderNumber,
             invoiceNumber: billings.invoiceNumber,
             customerFantasyName: billings.customerFantasyName,
-          }).from(billings).where(inArray(billings.id, allBillingIds));
+          }).from(billingsTable).where(inArray(billingsTable.id, allBillingIds));
           
           console.log(`📋 [OMIE-SYNC] Billings encontrados: ${billingsData.length}, com omieOrderId: ${billingsData.filter(b => b.omieOrderId).length}`);
           billingsData.forEach(b => {
@@ -12158,8 +12158,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderInfos: Array<{ orderId: number; billingId: string; customerName: string; orderNumber: string; stopId: string }> = [];
       for (const stop of stops) {
         if (stop.billingId) {
-          const billing = await db.select().from(billings)
-            .where(eq(billings.id, stop.billingId))
+          const billing = await db.select().from(billingsTable)
+            .where(eq(billingsTable.id, stop.billingId))
             .limit(1);
           if (billing.length > 0 && billing[0].omieOrderId) {
             const orderId = parseInt(billing[0].omieOrderId);
@@ -12282,8 +12282,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderInfos: Array<{ orderId: number; billingId: string; customerName: string; invoiceNumber: string; stopId: string }> = [];
       for (const stop of stops) {
         if (stop.billingId) {
-          const billing = await db.select().from(billings)
-            .where(eq(billings.id, stop.billingId))
+          const billing = await db.select().from(billingsTable)
+            .where(eq(billingsTable.id, stop.billingId))
             .limit(1);
           if (billing.length > 0 && billing[0].omieOrderId) {
             const orderId = parseInt(billing[0].omieOrderId);
@@ -12383,8 +12383,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         for (const stop of stops) {
           if (stop.billingId) {
-            const billing = await db.select().from(billings)
-              .where(eq(billings.id, stop.billingId))
+            const billing = await db.select().from(billingsTable)
+              .where(eq(billingsTable.id, stop.billingId))
               .limit(1);
             if (billing.length > 0 && billing[0].omieOrderId) {
               const orderId = parseInt(billing[0].omieOrderId);
@@ -12699,8 +12699,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes');
           } else {
             console.log(`✅ [DRIVER-CHECKOUT] OmieService inicializado com sucesso`);
-            const billing = await db.select().from(billings)
-              .where(eq(billings.id, stop[0].billingId!))
+            const billing = await db.select().from(billingsTable)
+              .where(eq(billingsTable.id, stop[0].billingId!))
               .limit(1);
             
             console.log(`📋 [DRIVER-CHECKOUT] Billing encontrado: ${billing.length > 0 ? 'SIM' : 'NÃO'}, omieOrderId: ${billing[0]?.omieOrderId || 'NENHUM'}`);
@@ -12864,8 +12864,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!omieService) {
             console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado');
           } else {
-            const billing = await db.select().from(billings)
-              .where(eq(billings.id, stop[0].billingId!))
+            const billing = await db.select().from(billingsTable)
+              .where(eq(billingsTable.id, stop[0].billingId!))
               .limit(1);
             
             if (billing.length > 0 && billing[0].omieOrderId) {
@@ -13003,8 +13003,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!omieService) {
             console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
           } else {
-            const billing = await db.select().from(billings)
-              .where(eq(billings.id, stop[0].billingId!))
+            const billing = await db.select().from(billingsTable)
+              .where(eq(billingsTable.id, stop[0].billingId!))
               .limit(1);
             
             if (billing.length > 0 && billing[0].omieOrderId) {
@@ -13112,8 +13112,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!omieService) {
             console.error('❌ [UPDATE-STOP-STATUS] OmieService não configurado');
           } else {
-            const billing = await db.select().from(billings)
-              .where(eq(billings.id, stop[0].billingId!))
+            const billing = await db.select().from(billingsTable)
+              .where(eq(billingsTable.id, stop[0].billingId!))
               .limit(1);
             
             if (billing.length > 0 && billing[0].omieOrderId) {
