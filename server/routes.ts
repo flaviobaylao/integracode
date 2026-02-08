@@ -11326,17 +11326,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sentToDriverAt: new Date()
           };
 
+          // Buscar orderNumber dos billings para cada parada
+          const billingIds = stops
+            .map((s: any) => s.billingId)
+            .filter((id: any) => id);
+          
+          const billingInfoMap: Record<string, { orderNumber: string; omieOrderId: string }> = {};
+          if (billingIds.length > 0) {
+            const billingsData = await db.select({
+              id: billingsTable.id,
+              orderNumber: billingsTable.orderNumber,
+              omieOrderId: billingsTable.omieOrderId,
+            }).from(billingsTable).where(inArray(billingsTable.id, billingIds));
+            
+            for (const b of billingsData) {
+              billingInfoMap[b.id] = {
+                orderNumber: b.orderNumber || '',
+                omieOrderId: b.omieOrderId || '',
+              };
+            }
+          }
+
           const stopsData = stops.map((stop: any, index: number) => ({
             salesCardId: stop.salesCardId,
             billingId: stop.billingId || null,
+            orderNumber: (stop.billingId && billingInfoMap[stop.billingId]?.orderNumber) || stop.orderNumber || null,
+            omieOrderId: (stop.billingId && billingInfoMap[stop.billingId]?.omieOrderId) || null,
             customerId: stop.customerId,
             customerName: stop.customerName,
             customerAddress: stop.customerAddress,
             customerLatitude: parseFloat(stop.latitude) || 0,
             customerLongitude: parseFloat(stop.longitude) || 0,
             stopOrder: index + 1,
-            estimatedArrival: stop.estimatedArrival || null,  // Keep as string or null - don't convert
-            estimatedDeparture: stop.estimatedDeparture || null, // Keep as string or null - don't convert
+            estimatedArrival: stop.estimatedArrival || null,
+            estimatedDeparture: stop.estimatedDeparture || null,
             estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
             distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
             isPriority: stop.isUrgent || false,
@@ -12260,58 +12283,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Forçar sincronização de etapas Omie para uma rota específica
-  app.post("/api/delivery-routes/:routeId/sync-omie-stages", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  // Sincronizar etapas Omie para TODAS as rotas de um dia - muda todos os pedidos para "Em Rota" (20)
+  app.post("/api/delivery-routes/sync-omie-stages-day", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const { routeId } = req.params;
+      const { date } = req.body;
       const triggeredBy = (req as any).currentUser?.email || 'system';
       
-      console.log(`🔄 [SYNC-OMIE-STAGES] Forçando sincronização de etapas Omie para rota ${routeId}`);
-      
-      const route = await db.select().from(deliveryRoutes)
-        .where(eq(deliveryRoutes.id, routeId))
-        .limit(1);
-      
-      if (route.length === 0) {
-        return res.status(404).json({ message: "Rota não encontrada" });
+      if (!date) {
+        return res.status(400).json({ message: "Data é obrigatória" });
       }
       
-      const stops = await db.select().from(deliveryRouteStops)
-        .where(eq(deliveryRouteStops.routeId, routeId));
+      console.log(`🔄 [SYNC-OMIE-DAY] Sincronizando etapas de TODAS as rotas do dia ${date} para "Em Rota" (20)`);
       
-      const orderInfos: Array<{ orderId: number; billingId: string; customerName: string; invoiceNumber: string; stopId: string }> = [];
-      for (const stop of stops) {
-        if (stop.billingId) {
-          const billing = await db.select().from(billingsTable)
-            .where(eq(billingsTable.id, stop.billingId))
-            .limit(1);
-          if (billing.length > 0 && billing[0].omieOrderId) {
-            const orderId = parseInt(billing[0].omieOrderId);
-            if (!isNaN(orderId)) {
-              orderInfos.push({
-                orderId,
-                billingId: stop.billingId,
-                customerName: billing[0].customerFantasyName || stop.customerName || '',
-                invoiceNumber: billing[0].invoiceNumber || '',
-                stopId: stop.id,
-              });
-            }
-          }
-        }
+      const routes = await db.select().from(deliveryRoutes)
+        .where(and(
+          sql`${deliveryRoutes.routeDate}::text = ${date}`,
+          inArray(deliveryRoutes.status, ['rota_salva', 'rota_enviada', 'em_andamento'])
+        ));
+      
+      if (routes.length === 0) {
+        return res.json({ message: "Nenhuma rota encontrada para esta data", successCount: 0, errorCount: 0, results: [] });
       }
       
-      if (orderInfos.length === 0) {
-        console.log(`⚠️ [SYNC-OMIE-STAGES] Nenhum pedido Omie encontrado para esta rota`);
-        return res.json({ message: "Nenhum pedido Omie encontrado para sincronizar", results: [] });
-      }
-      
-      console.log(`📤 [SYNC-OMIE-STAGES] Sincronizando ${orderInfos.length} pedidos para "Em Rota" (20)...`);
-      console.log(`📤 [SYNC-OMIE-STAGES] Pedidos: ${JSON.stringify(orderInfos.map(o => ({ orderId: o.orderId, customer: o.customerName })))}`);
+      console.log(`📋 [SYNC-OMIE-DAY] Encontradas ${routes.length} rotas para ${date}`);
       
       const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(500).json({ message: "OmieService não configurado" });
       }
+      
+      const allRouteIds = routes.map(r => r.id);
+      const allStops = await db.select().from(deliveryRouteStops)
+        .where(inArray(deliveryRouteStops.routeId, allRouteIds));
+      
+      const orderInfos: Array<{ orderId: number; orderNumber: string; customerName: string; stopId: string; routeId: string; billingId: string; driverEmail: string }> = [];
+      
+      for (const stop of allStops) {
+        let omieId = stop.omieOrderId ? parseInt(stop.omieOrderId) : NaN;
+        
+        if (isNaN(omieId) && stop.billingId) {
+          const billing = await db.select().from(billingsTable)
+            .where(eq(billingsTable.id, stop.billingId))
+            .limit(1);
+          if (billing.length > 0 && billing[0].omieOrderId) {
+            omieId = parseInt(billing[0].omieOrderId);
+            if (!isNaN(omieId)) {
+              await db.update(deliveryRouteStops)
+                .set({ 
+                  omieOrderId: billing[0].omieOrderId,
+                  orderNumber: billing[0].orderNumber || stop.orderNumber,
+                })
+                .where(eq(deliveryRouteStops.id, stop.id));
+            }
+          }
+        }
+        
+        if (!isNaN(omieId)) {
+          const route = routes.find(r => r.id === stop.routeId);
+          orderInfos.push({
+            orderId: omieId,
+            orderNumber: stop.orderNumber || '',
+            customerName: stop.customerName || '',
+            stopId: stop.id,
+            routeId: stop.routeId,
+            billingId: stop.billingId || '',
+            driverEmail: route?.driverEmail || '',
+          });
+        }
+      }
+      
+      if (orderInfos.length === 0) {
+        return res.json({ message: "Nenhum pedido Omie encontrado nas rotas", successCount: 0, errorCount: 0, results: [] });
+      }
+      
+      console.log(`📤 [SYNC-OMIE-DAY] Sincronizando ${orderInfos.length} pedidos para "Em Rota" (20)...`);
       
       const pedidosParaAlterar = orderInfos.map(info => ({
         codigoPedido: info.orderId,
@@ -12319,21 +12364,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       
       const resultado = await omieService.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-      console.log(`✅ [SYNC-OMIE-STAGES] Resultado: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+      console.log(`✅ [SYNC-OMIE-DAY] Resultado: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
       
       for (const info of orderInfos) {
         const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
         await logOmieStageChange({
           omieOrderId: info.orderId,
-          orderNumber: info.invoiceNumber,
+          orderNumber: info.orderNumber,
           customerName: info.customerName,
           newStage: OmieService.STAGE_EM_ROTA,
           trigger: 'send_to_driver',
-          triggerDetail: `Sincronização manual de etapas Omie`,
-          routeId,
+          triggerDetail: `Sincronização manual - todas as rotas do dia ${date}`,
+          routeId: info.routeId,
           stopId: info.stopId,
           billingId: info.billingId,
-          driverEmail: route[0].driverEmail || undefined,
+          driverEmail: info.driverEmail,
           triggeredBy,
           success: resultItem?.success ?? false,
           errorMessage: resultItem?.success === false ? resultItem.message : undefined,
@@ -12342,13 +12387,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       res.json({
-        message: `Sincronização concluída: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`,
+        message: `Sincronização concluída: ${resultado.successCount} sucesso, ${resultado.errorCount} erros de ${orderInfos.length} pedidos`,
         successCount: resultado.successCount,
         errorCount: resultado.errorCount,
+        totalOrders: orderInfos.length,
         results: resultado.results,
       });
     } catch (error: any) {
-      console.error("Error syncing Omie stages:", error);
+      console.error("Error syncing Omie stages for day:", error);
       res.status(500).json({ message: "Erro ao sincronizar etapas Omie", error: error.message });
     }
   });
@@ -12689,72 +12735,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
       
-      // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO para garantir execução
-      console.log(`📋 [DRIVER-CHECKOUT] billingId da parada: ${stop[0].billingId || 'NENHUM'}`);
-      if (stop[0].billingId) {
-        try {
-          console.log(`🔍 [DRIVER-CHECKOUT] Inicializando OmieService...`);
-          const omieService = getOmieService(storage);
-          if (!omieService) {
-            console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes');
-          } else {
-            console.log(`✅ [DRIVER-CHECKOUT] OmieService inicializado com sucesso`);
-            const billing = await db.select().from(billingsTable)
-              .where(eq(billingsTable.id, stop[0].billingId!))
-              .limit(1);
-            
-            console.log(`📋 [DRIVER-CHECKOUT] Billing encontrado: ${billing.length > 0 ? 'SIM' : 'NÃO'}, omieOrderId: ${billing[0]?.omieOrderId || 'NENHUM'}`);
-            
-            if (billing.length > 0 && billing[0].omieOrderId) {
-              const orderId = parseInt(billing[0].omieOrderId);
-              if (!isNaN(orderId)) {
-                console.log(`🔄 [DRIVER-CHECKOUT] Alterando pedido ${orderId} para etapa "Entregue" (${OmieService.STAGE_ENTREGUE}) no Omie...`);
-                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
-                console.log(`📋 [DRIVER-CHECKOUT] Resultado Omie: success=${result.success}, message=${result.message}`);
-                await logOmieStageChange({
-                  omieOrderId: orderId,
-                  orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
-                  previousStage: OmieService.STAGE_EM_ROTA,
-                  newStage: OmieService.STAGE_ENTREGUE,
-                  trigger: 'driver_checkout',
-                  triggerDetail: `Motorista confirmou entrega`,
-                  routeId: stop[0].routeId,
-                  stopId,
-                  billingId: stop[0].billingId!,
-                  driverEmail: userEmail,
-                  triggeredBy: userEmail,
-                  success: result.success,
-                  errorMessage: result.success ? undefined : result.message,
-                  omieResponse: result.data || null,
-                });
-                if (result.success) {
-                  console.log(`✅ [DRIVER-CHECKOUT] Etapa alterada para "Entregue" no Omie`);
-                } else {
-                  console.log(`⚠️ [DRIVER-CHECKOUT] Falha ao alterar etapa: ${result.message}`);
-                }
+      // Alterar etapa no Omie para "Entregue" (70) usando omieOrderId direto da parada
+      const stopOmieOrderId = stop[0].omieOrderId;
+      const stopOrderNumber = stop[0].orderNumber;
+      console.log(`📋 [DRIVER-CHECKOUT] Pedido: ${stopOrderNumber || 'N/A'}, omieOrderId: ${stopOmieOrderId || 'NENHUM'}`);
+      
+      if (stopOmieOrderId) {
+        const orderId = parseInt(stopOmieOrderId);
+        if (!isNaN(orderId)) {
+          try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado');
+            } else {
+              console.log(`🔄 [DRIVER-CHECKOUT] Alterando pedido ${stopOrderNumber || orderId} para "Entregue" (${OmieService.STAGE_ENTREGUE})...`);
+              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
+              console.log(`📋 [DRIVER-CHECKOUT] Resultado: success=${result.success}, message=${result.message}`);
+              await logOmieStageChange({
+                omieOrderId: orderId,
+                orderNumber: stopOrderNumber || undefined,
+                customerName: stop[0].customerName || undefined,
+                previousStage: OmieService.STAGE_EM_ROTA,
+                newStage: OmieService.STAGE_ENTREGUE,
+                trigger: 'driver_checkout',
+                triggerDetail: `Motorista confirmou entrega - Pedido ${stopOrderNumber || orderId}`,
+                routeId: stop[0].routeId,
+                stopId,
+                billingId: stop[0].billingId || undefined,
+                driverEmail: userEmail,
+                triggeredBy: userEmail,
+                success: result.success,
+                errorMessage: result.success ? undefined : result.message,
+                omieResponse: result.data || null,
+              });
+              if (result.success) {
+                console.log(`✅ [DRIVER-CHECKOUT] Etapa alterada para "Entregue" no Omie`);
+              } else {
+                console.log(`⚠️ [DRIVER-CHECKOUT] Falha ao alterar etapa: ${result.message}`);
               }
             }
+          } catch (error: any) {
+            console.error(`❌ [DRIVER-CHECKOUT] Erro ao alterar etapa no Omie:`, error?.message || error);
+            await logOmieStageChange({
+              omieOrderId: orderId,
+              orderNumber: stopOrderNumber || undefined,
+              customerName: stop[0].customerName || undefined,
+              newStage: OmieService.STAGE_ENTREGUE,
+              trigger: 'driver_checkout',
+              triggerDetail: `Erro na tentativa de alterar etapa`,
+              routeId: stop[0].routeId,
+              stopId,
+              billingId: stop[0].billingId || undefined,
+              driverEmail: userEmail,
+              triggeredBy: userEmail,
+              success: false,
+              errorMessage: error?.message || 'Erro desconhecido',
+            });
           }
-        } catch (error: any) {
-          console.error(`❌ [DRIVER-CHECKOUT] Erro ao alterar etapa no Omie:`, error?.message || error);
-          await logOmieStageChange({
-            omieOrderId: 0,
-            customerName: stop[0].customerName || undefined,
-            newStage: OmieService.STAGE_ENTREGUE,
-            trigger: 'driver_checkout',
-            triggerDetail: `Erro na tentativa de alterar etapa`,
-            routeId: stop[0].routeId,
-            stopId,
-            billingId: stop[0].billingId!,
-            driverEmail: userEmail,
-            triggeredBy: userEmail,
-            success: false,
-            errorMessage: error?.message || 'Erro desconhecido',
-          });
         }
       } else {
-        console.log(`⚠️ [DRIVER-CHECKOUT] Parada sem billingId - etapa Omie não será alterada`);
+        console.log(`⚠️ [DRIVER-CHECKOUT] Parada sem omieOrderId - etapa Omie não será alterada`);
       }
       
       // Verificar se todas as paradas da rota foram concluídas
@@ -12996,45 +13036,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
       
-      // Alterar etapa no Omie para "Aguardando Rota" (80) - SÍNCRONO
-      if (stop[0].billingId) {
-        try {
-          const omieService = getOmieService(storage);
-          if (!omieService) {
-            console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
-          } else {
-            const billing = await db.select().from(billingsTable)
-              .where(eq(billingsTable.id, stop[0].billingId!))
-              .limit(1);
-            
-            if (billing.length > 0 && billing[0].omieOrderId) {
-              const orderId = parseInt(billing[0].omieOrderId);
-              if (!isNaN(orderId)) {
-                console.log(`🔄 [RETURN-DELIVERY] Alterando pedido ${orderId} para "Aguardando Rota" no Omie...`);
-                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_AGUARDANDO_ROTA);
-                console.log(`📋 [RETURN-DELIVERY] Resultado: success=${result.success}, message=${result.message}`);
-                await logOmieStageChange({
-                  omieOrderId: orderId,
-                  orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
-                  previousStage: OmieService.STAGE_EM_ROTA,
-                  newStage: OmieService.STAGE_AGUARDANDO_ROTA,
-                  trigger: 'return_delivery',
-                  triggerDetail: `Devolução: ${reason.trim()}`,
-                  routeId: stop[0].routeId,
-                  stopId,
-                  billingId: stop[0].billingId!,
-                  driverEmail: userEmail,
-                  triggeredBy: userEmail,
-                  success: result.success,
-                  errorMessage: result.success ? undefined : result.message,
-                  omieResponse: result.data || null,
-                });
-              }
+      // Alterar etapa no Omie para "Aguardando Rota" (80) usando omieOrderId da parada
+      const returnStopOmieOrderId = stop[0].omieOrderId;
+      const returnStopOrderNumber = stop[0].orderNumber;
+      console.log(`📋 [RETURN-DELIVERY] Pedido: ${returnStopOrderNumber || 'N/A'}, omieOrderId: ${returnStopOmieOrderId || 'NENHUM'}`);
+      
+      if (returnStopOmieOrderId) {
+        const orderId = parseInt(returnStopOmieOrderId);
+        if (!isNaN(orderId)) {
+          try {
+            const omieService = getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
+            } else {
+              console.log(`🔄 [RETURN-DELIVERY] Alterando pedido ${returnStopOrderNumber || orderId} para "Aguardando Rota" (80)...`);
+              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_AGUARDANDO_ROTA);
+              console.log(`📋 [RETURN-DELIVERY] Resultado: success=${result.success}, message=${result.message}`);
+              await logOmieStageChange({
+                omieOrderId: orderId,
+                orderNumber: returnStopOrderNumber || undefined,
+                customerName: stop[0].customerName || undefined,
+                previousStage: OmieService.STAGE_EM_ROTA,
+                newStage: OmieService.STAGE_AGUARDANDO_ROTA,
+                trigger: 'return_delivery',
+                triggerDetail: `Devolução: ${reason.trim()} - Pedido ${returnStopOrderNumber || orderId}`,
+                routeId: stop[0].routeId,
+                stopId,
+                billingId: stop[0].billingId || undefined,
+                driverEmail: userEmail,
+                triggeredBy: userEmail,
+                success: result.success,
+                errorMessage: result.success ? undefined : result.message,
+                omieResponse: result.data || null,
+              });
             }
+          } catch (error: any) {
+            console.error(`❌ [RETURN-DELIVERY] Erro ao alterar etapa no Omie:`, error?.message || error);
           }
-        } catch (error: any) {
-          console.error(`❌ [RETURN-DELIVERY] Erro ao alterar etapa no Omie:`, error?.message || error);
         }
       }
       
@@ -13691,6 +13729,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveryWeekdays: any;
         receivingWeekdays: any;
         averageDeliveryTime: number;
+        orderNumber: string | null;
+        omieOrderId: string | null;
       }>(sql`
         SELECT DISTINCT ON (b.id)
           b.id,
@@ -13701,7 +13741,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.longitude as "customerLongitude",
           c.delivery_weekdays as "deliveryWeekdays",
           c.receiving_weekdays as "receivingWeekdays",
-          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime"
+          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
+          b.order_number as "orderNumber",
+          b.omie_order_id as "omieOrderId"
         FROM billings b
         LEFT JOIN customers c ON (
           c.id = CONCAT('omie-client-', b.omie_customer_code)
@@ -13761,7 +13803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: nanoid(),
         routeId,
         billingId,
-        salesCardId: null, // Será nulo para paradas adicionadas via billing
+        salesCardId: null,
         customerId: billing.customerId || '',
         customerName: billing.customerName,
         customerAddress: billing.customerAddress,
@@ -13770,6 +13812,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         estimatedDeparture: formatTime(departureTime),
         customerLatitude: billing.customerLatitude,
         customerLongitude: billing.customerLongitude,
+        orderNumber: billing.orderNumber || null,
+        omieOrderId: billing.omieOrderId || null,
       });
 
       // Atualizar status do billing para "Em Rota"

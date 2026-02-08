@@ -639,6 +639,8 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   routeId: varchar("route_id").notNull(),
   salesCardId: varchar("sales_card_id"), // Pode ser nulo quando adicionado via billing
   billingId: varchar("billing_id"), // ID do billing (nota fiscal) relacionado
+  orderNumber: varchar("order_number"), // Número do pedido no Omie (para display e identificação)
+  omieOrderId: varchar("omie_order_id"), // ID interno do pedido no Omie (codigo_pedido para API)
   customerId: varchar("customer_id").notNull(),
   customerName: varchar("customer_name").notNull(),
   customerAddress: text("customer_address").notNull(),

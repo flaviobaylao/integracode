@@ -30,6 +30,7 @@ interface DeliveryStop {
   completedAt: string | null;
   photos: string[] | null;
   notes: string | null;
+  orderNumber: string | null;
 }
 
 interface DeliveryRoute {
@@ -452,8 +453,13 @@ export default function RotaEntrega() {
                     </div>
                     
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <p className="font-bold text-lg">{delivery.customerName}</p>
+                        {delivery.orderNumber && (
+                          <Badge variant="outline" className="text-xs border-blue-300 text-blue-600">
+                            Pedido {delivery.orderNumber}
+                          </Badge>
+                        )}
                         {delivery.isPriority && (
                           <Badge variant="destructive" className="text-xs">Urgente</Badge>
                         )}

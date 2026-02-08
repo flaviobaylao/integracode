@@ -469,9 +469,9 @@ export default function RoutesSummary() {
     }
   });
 
-  const syncOmieStagesMutation = useMutation({
-    mutationFn: async (routeId: string) => {
-      return await apiRequest('POST', `/api/delivery-routes/${routeId}/sync-omie-stages`);
+  const syncOmieStagesDayMutation = useMutation({
+    mutationFn: async (date: string) => {
+      return await apiRequest('POST', `/api/delivery-routes/sync-omie-stages-day`, { date });
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
@@ -615,7 +615,7 @@ export default function RoutesSummary() {
           doc.setTextColor(...textColor);
           doc.setFontSize(8);
           doc.text(`Endereço: ${stop.customerAddress}`, 18, yPosition + 5);
-          doc.text(`Ordem: ${stop.stopOrder} | Status: ${stop.status.toUpperCase()}`, 18, yPosition + 9);
+          doc.text(`Ordem: ${stop.stopOrder} | Status: ${stop.status.toUpperCase()}${stop.orderNumber ? ` | Pedido: ${stop.orderNumber}` : ''}`, 18, yPosition + 9);
           
           yPosition += 15;
         });
@@ -707,6 +707,27 @@ export default function RoutesSummary() {
                     <>
                       <Send className="h-4 w-4 mr-2" />
                       📤 Enviar {pendingSendRoutes.length} Rota(s) para Motoristas
+                    </>
+                  )}
+                </Button>
+              )}
+              {routes.length > 0 && routes.some(r => ['rota_salva', 'rota_enviada', 'em_andamento'].includes(r.status)) && (
+                <Button
+                  variant="outline"
+                  onClick={() => syncOmieStagesDayMutation.mutate(selectedDate)}
+                  disabled={syncOmieStagesDayMutation.isPending}
+                  className="border-orange-400 text-orange-600 hover:bg-orange-50"
+                  data-testid="button-sync-omie-day"
+                >
+                  {syncOmieStagesDayMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Sincronizando Omie...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Atualizar Etapas Omie
                     </>
                   )}
                 </Button>
@@ -899,30 +920,6 @@ export default function RoutesSummary() {
                   )}
                 </Button>
               )}
-              {selectedRouteData && selectedRouteData.status === 'rota_enviada' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    syncOmieStagesMutation.mutate(selectedRouteData.id);
-                  }}
-                  disabled={syncOmieStagesMutation.isPending}
-                  className="border-orange-400 text-orange-600 hover:bg-orange-50"
-                >
-                  {syncOmieStagesMutation.isPending ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Sincronizando...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Atualizar Etapas Omie
-                    </>
-                  )}
-                </Button>
-              )}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button 
@@ -1037,6 +1034,9 @@ export default function RoutesSummary() {
                             <Popup>
                               <div className="text-xs font-medium max-w-xs">
                                 <div className="font-bold">{stop.stopOrder}. {stop.customerName}</div>
+                                {stop.orderNumber && (
+                                  <div className="text-blue-600 mt-0.5">Pedido: {stop.orderNumber}</div>
+                                )}
                                 <div className="text-gray-600 mt-1">{stop.customerAddress}</div>
                                 <div className="mt-2 flex items-center">
                                   {getDeliveryStatusBadge(stop.status)}
@@ -1074,6 +1074,11 @@ export default function RoutesSummary() {
                                     #{stop.stopOrder}
                                   </span>
                                   {stop.customerName}
+                                  {stop.orderNumber && (
+                                    <Badge variant="outline" className="ml-2 text-xs border-blue-300 text-blue-600">
+                                      Pedido {stop.orderNumber}
+                                    </Badge>
+                                  )}
                                   {stop.isPriority && (
                                     <Badge variant="destructive" className="ml-2 text-xs">
                                       URGENTE
