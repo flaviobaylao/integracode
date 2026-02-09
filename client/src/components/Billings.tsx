@@ -151,7 +151,7 @@ export default function Billings() {
       
       // Filtro por nome do cliente
       if (filters.customerName) {
-        const customerName = billing.customerFantasyName.toLowerCase();
+        const customerName = (billing.customerFantasyName || '').toLowerCase();
         const searchTerm = filters.customerName.toLowerCase();
         if (!customerName.includes(searchTerm)) return false;
       }
@@ -576,7 +576,7 @@ export default function Billings() {
                   <TableRow key={billing.id} data-testid={`row-billing-${billing.id}`}>
                     <TableCell className="font-medium">
                       <div>
-                        <p className="font-semibold">{billing.invoiceNumber}</p>
+                        <p className="font-semibold">{billing.invoiceNumber || '-'}</p>
                         <p className="text-sm text-gray-500">ID: {billing.omieInvoiceId}</p>
                       </div>
                     </TableCell>

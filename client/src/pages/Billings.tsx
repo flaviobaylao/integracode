@@ -222,7 +222,7 @@ export default function Billings() {
     // 1. Aplicar filtros
     let filtered = billingsArray.filter(billing => {
       // Invoice Number filter
-      if (filters.invoiceNumber && !billing.invoiceNumber.toLowerCase().includes(filters.invoiceNumber.toLowerCase())) {
+      if (filters.invoiceNumber && !(billing.invoiceNumber || '').toLowerCase().includes(filters.invoiceNumber.toLowerCase())) {
         return false;
       }
       
@@ -267,10 +267,10 @@ export default function Billings() {
         const aValue = a[sortField];
         const bValue = b[sortField];
         
-        // Handle undefined values
-        if (aValue === undefined && bValue === undefined) return 0;
-        if (aValue === undefined) return sortDirection === 'asc' ? 1 : -1;
-        if (bValue === undefined) return sortDirection === 'asc' ? -1 : 1;
+        // Handle undefined/null values
+        if ((aValue === undefined || aValue === null) && (bValue === undefined || bValue === null)) return 0;
+        if (aValue === undefined || aValue === null) return sortDirection === 'asc' ? 1 : -1;
+        if (bValue === undefined || bValue === null) return sortDirection === 'asc' ? -1 : 1;
         
         if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
