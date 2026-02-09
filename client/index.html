@@ -25,32 +25,19 @@
   <body>
     <div id="root"></div>
     
-    <!-- Script para Service Worker com cache-busting -->
     <script>
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js?v=20260209').then((registration) => {
+        var swRefreshing = false;
+        navigator.serviceWorker.register('/sw.js?v=19').then(function(registration) {
           console.log('✅ Service Worker registrado');
-          
-          setInterval(() => {
-            registration.update();
-          }, 30000);
-          
-          // Quando encontra uma atualização, recarrega
-          registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated') {
-                console.log('🔄 Nova versão detectada - Recarregando...');
-                window.location.reload();
-              }
-            });
-          });
+          setInterval(function() { registration.update(); }, 60000);
         });
-        
-        // Escuta mensagens do Service Worker
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          console.log('🔄 Service Worker atualizado - Recarregando...');
-          window.location.reload();
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          if (!swRefreshing) {
+            swRefreshing = true;
+            console.log('🔄 Service Worker atualizado');
+            window.location.reload();
+          }
         });
       }
     </script>
