@@ -16090,7 +16090,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND c.virtual_service = false
         )
         WHERE b.invoice_stage = 'Aguardando Rota'
-          AND b.invoice_number IS NOT NULL
           AND b.invoice_date IS NOT NULL
         ORDER BY match_type DESC, b.id
         LIMIT 100

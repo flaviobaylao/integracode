@@ -2981,7 +2981,6 @@ export class DatabaseStorage implements IStorage {
         OR b.omie_customer_code::text = c.cnpj
       )
       WHERE b.invoice_stage = 'Aguardando Rota'
-        AND b.invoice_number IS NOT NULL
         AND b.invoice_date IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
