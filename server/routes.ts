@@ -21900,62 +21900,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { status, sellerId } = req.query;
       
-      console.log('📋 GET /api/leads - User:', user?.email, 'Role:', user?.role);
+      const allLeads = await db.select().from(leads).orderBy(desc(leads.createdAt));
       
-      // Query usando SQL raw (funciona em produção, ao contrário do Drizzle ORM)
-      // Sem LIMIT para retornar todos os leads
-      let leadsData: any[] = [];
-      try {
-        const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
-        const rows = result.rows || [];
-        
-        // Mapear snake_case para camelCase
-        leadsData = rows.map((row: any) => ({
-          id: row.id,
-          fantasyName: row.fantasy_name,
-          latitude: row.latitude,
-          longitude: row.longitude,
-          contact: row.contact,
-          phone: row.phone,
-          photo: row.photo,
-          observation: row.observation,
-          status: row.status || 'pending',
-          temperature: row.temperature || 'cold',
-          createdBy: row.created_by,
-          createdByName: row.created_by_name,
-          assignedTo: row.assigned_to,
-          lastCheckInAt: row.last_check_in_at,
-          lastCheckOutAt: row.last_check_out_at,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        }));
-        
-        console.log('📋 [DB] Query SQL raw retornou', leadsData.length, 'leads');
-      } catch (dbError) {
-        console.error('❌ [DB] Erro na query de leads:', dbError);
-        return res.status(500).json({ 
-          message: 'Erro no banco de dados ao buscar leads', 
-          error: dbError instanceof Error ? dbError.message : String(dbError) 
-        });
-      }
+      let leadsData = allLeads.map((lead: any) => ({
+        id: lead.id,
+        fantasyName: lead.fantasyName,
+        latitude: lead.latitude,
+        longitude: lead.longitude,
+        contact: lead.contact,
+        phone: lead.phone,
+        photo: lead.photo,
+        observation: lead.observation,
+        status: lead.status || 'pending',
+        temperature: lead.temperature || 'cold',
+        createdBy: lead.createdBy,
+        createdByName: lead.createdByName,
+        assignedTo: lead.assignedTo,
+        lastCheckInAt: lead.lastCheckInAt,
+        lastCheckOutAt: lead.lastCheckOutAt,
+        createdAt: lead.createdAt,
+        updatedAt: lead.updatedAt,
+      }));
       
-      // Filtrar por status
       if (status) {
         leadsData = leadsData.filter((lead: any) => lead.status === status);
       }
       
-      // Filtrar leads disponíveis para um vendedor específico
       if (sellerId) {
         leadsData = leadsData.filter((lead: any) => 
           !lead.assignedTo || lead.assignedTo === sellerId
         );
       }
       
-      console.log('📋 Retornando', leadsData.length, 'leads após filtros');
       res.json(leadsData);
     } catch (error) {
       console.error('❌ Erro ao buscar leads:', error);
-      console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'N/A');
       res.status(500).json({ message: 'Erro ao buscar leads', error: error instanceof Error ? error.message : String(error) });
     }
   });
