@@ -18848,7 +18848,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/omie/test-cancellation/:invoiceNumber', async (req: any, res) => {
     try {
       const { invoiceNumber } = req.params;
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
@@ -18941,7 +18941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL (EXPANDIDO)...\n');
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
@@ -19135,7 +19135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL...\n');
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
@@ -19370,7 +19370,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }
@@ -19391,19 +19391,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(202).json({ message: 'Sincronização iniciada em background. Acompanhe o progresso na tela.' });
 
-      console.log('\n💰 [SYNC-FAST] SINCRONIZANDO FATURAMENTOS DO OMIE (modo otimizado)...\n');
+      console.log('\n💰 [SYNC-NF] SINCRONIZANDO NOTAS FISCAIS DO OMIE (modo otimizado)...\n');
 
-      billingSyncState.message = 'Iniciando sincronização...';
+      billingSyncState.message = 'Iniciando sincronização de notas fiscais...';
 
-      const result = await omieService.syncAllOrders((progress) => {
-        billingSyncState.message = progress.message;
-        billingSyncState.currentPage = progress.currentPage;
-        billingSyncState.totalPages = progress.totalPages;
-        billingSyncState.invoicesFound = progress.invoicesFound;
-        billingSyncState.invoicesProcessed = progress.invoicesProcessed;
-        billingSyncState.inserted = progress.inserted;
-        billingSyncState.updated = progress.updated;
-        billingSyncState.currentInvoice = progress.currentInvoice;
+      const result = await omieService.syncBillings({
+        onProgress: (progress) => {
+          billingSyncState.invoicesProcessed = progress.processed;
+          billingSyncState.invoicesFound = progress.total;
+          billingSyncState.message = `Processando notas fiscais... (${progress.processed} de ${progress.total || '?'})`;
+          billingSyncState.currentPage = Math.ceil(progress.processed / 50);
+        }
       });
 
       billingSyncState.status = 'completed';
@@ -19415,7 +19413,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.message = `Sincronização concluída! ${result.imported} inseridos, ${result.updated} atualizados.${rejectedNote}`;
       billingSyncState.completedAt = nowBrazil();
 
-      console.log(`\n✅ [SYNC-FAST] Sincronização concluída!`);
+      console.log(`\n✅ [SYNC-NF] Sincronização concluída!`);
       console.log(`📥 Inseridos: ${result.imported}`);
       console.log(`🔄 Atualizados: ${result.updated}`);
       console.log(`⏭️ Rejeitados: ${result.skipped}\n`);
@@ -19436,7 +19434,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'invoiceNumbers array é obrigatório' });
       }
 
-      const omieService = getOmieService();
+      const omieService = getOmieService(storage);
       if (!omieService) {
         return res.status(500).json({ message: 'Omie não configurado' });
       }

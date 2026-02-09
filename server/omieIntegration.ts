@@ -624,6 +624,14 @@ export class OmieService {
 
       const invoiceStage = this.stageNamesCache.get(etapa) || etapa || '';
 
+      if (!invoiceNumber) {
+        return null;
+      }
+      
+      if (!invoiceDate && orderDate) {
+        invoiceDate = orderDate;
+      }
+      
       if (invoiceDate && invoiceNumber) {
         const dataLimite = new Date(2025, 0, 1);
         if (invoiceDate < dataLimite) return null;
@@ -897,13 +905,13 @@ export class OmieService {
     if (!orderId) return null;
     
     try {
-      console.log(`🔍 Consultando pedido completo: ${orderId}`);
+      // Consultar pedido completo silenciosamente
       
       const response = await this.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
         codigo_pedido: parseInt(orderId)
       });
       
-      console.log(`✅ Pedido completo consultado: ${orderId}`);
+      // Pedido completo consultado
       return response;
     } catch (error) {
       console.log(`⚠️ Erro ao consultar pedido completo ${orderId}:`, error);
@@ -999,7 +1007,7 @@ export class OmieService {
       }
       
     } catch (error) {
-      console.log('⚠️ Erro ao carregar nomes das etapas:', error);
+      // API endpoint not available for this instance, using hardcoded fallback
       
       // MAPEAMENTO OFICIAL DAS ETAPAS DE NOTAS FISCAIS - HONEST SUCOS
       // ============================================================
@@ -1056,7 +1064,7 @@ export class OmieService {
     }
 
     try {
-      console.log(`🔍 Buscando etapa do pedido: ${pedidoId}`);
+      // Buscar etapa silenciosamente
       
       const response = await this.makeRequest('/produtos/pedidoetapas/', 'ListarEtapasPedido', {
         nPagina: 1,
@@ -1092,32 +1100,18 @@ export class OmieService {
       const cancelamentoInfo = etapasOrdenadas[0].cancelamento || { cCancelado: 'N' };
       const notaCancelada = cancelamentoInfo.cCancelado === 'S';
       
-      console.log(`📅 Etapas encontradas: ${etapas.length}, ordenando por data/hora do evento...`);
-      console.log(`📍 Etapa mais recente: ${ultimaEtapaCode} em ${ultimaEtapaData} às ${ultimaEtapaHora}`);
-      console.log(`🚫 Cancelamento: ${notaCancelada ? 'SIM' : 'NÃO'} (cCancelado=${cancelamentoInfo.cCancelado})`);
-      
-      // NOVO: Buscar dados de faturamento das etapas
+      // Buscar dados de faturamento das etapas
       let stageInvoiceData = null;
-      console.log(`🔍 DEBUG: Verificando faturamento em ${etapasOrdenadas.length} etapas...`);
       
       for (const etapa of etapasOrdenadas) {
-        console.log(`🔍 DEBUG: Etapa ${etapa.cEtapa} - faturamento:`, JSON.stringify(etapa.faturamento, null, 2));
-        
         if (etapa.faturamento && etapa.faturamento.cFaturado === 'S' && etapa.faturamento.cNumNFE) {
           stageInvoiceData = {
             omieInvoiceId: etapa.faturamento.cNumNFE || '',
             invoiceNumber: etapa.faturamento.cNumNFE || '',
             invoiceDate: etapa.faturamento.dDtFat ? this.parseOmieDate(etapa.faturamento.dDtFat) : null
           };
-          console.log(`📋 ✅ Dados de faturamento encontrados nas etapas: NF=${stageInvoiceData.invoiceNumber}, Data=${etapa.faturamento.dDtFat}`);
-          break; // Pegar o primeiro encontrado (mais recente com faturamento)
+          break;
         }
-      }
-      
-      if (!stageInvoiceData) {
-        console.log(`⚠️ Nenhum dado de faturamento encontrado nas etapas do pedido ${pedidoId}`);
-      } else {
-        console.log(`✅ SALVANDO dados de faturamento no cache: invoice_${pedidoId}`, stageInvoiceData);
       }
       
       // Armazenar código, data, hora e cancelamento no cache
@@ -1131,12 +1125,10 @@ export class OmieService {
       
       // Retornar nome da etapa
       const stageName = this.stageNamesCache.get(ultimaEtapaCode) || ultimaEtapaCode;
-      console.log(`📝 Etapa encontrada: ${ultimaEtapaCode} -> ${stageName}`);
       
-      // Armazenar dados de faturamento no cache também (usar um cache específico para isso)
+      // Armazenar dados de faturamento no cache
       if (stageInvoiceData) {
         this.stagesCache.set(`invoice_${pedidoId}`, stageInvoiceData);
-        console.log(`💾 Cache atualizado com dados de faturamento para pedido ${pedidoId}:`, stageInvoiceData);
       }
       
       return {
@@ -3702,8 +3694,13 @@ export class OmieService {
       
       console.log(`🔄 Iniciando sincronização de notas fiscais ${fullResync ? '(TODAS - sem filtro de data)' : '(apenas NF-e autorizadas)'}...`);
       
-      // Carregar cache de customers para evitar N+1 queries
-      const customersCache = await this.loadCustomersCache();
+      // Pré-carregar TODOS os caches em paralelo para eliminar N+1 API calls
+      console.log(`📦 [SYNC-NF] Pré-carregando caches...`);
+      const [customersCache, sellersDbCache] = await Promise.all([
+        this.loadCustomersCache(),
+        this.loadSellersDbCache(),
+        this.preloadAllSellersCache(),
+      ]);
       
       let totalProcessed = 0;
       let imported = 0;
@@ -3765,34 +3762,6 @@ export class OmieService {
               const omieInvoiceId = invoice.ide?.nIdNF?.toString() || invoice.ide?.nNF?.toString();
               const invoiceNumber = invoice.ide?.nNF || '';
               
-              // DEBUG: Capturar detalhes da NF 23369 para análise
-              if (invoiceNumber === '23369') {
-                console.log('\n🔍 DEBUG NF 23369 - ESTRUTURA COMPLETA:');
-                console.log('='.repeat(60));
-                console.log('📋 CAMPOS IDE (identificação):');
-                console.log('ide.dEmi:', invoice.ide?.dEmi);
-                console.log('ide.dSaiEnt:', invoice.ide?.dSaiEnt);
-                console.log('ide.dhEmi:', invoice.ide?.dhEmi);
-                console.log('ide.dhSaiEnt:', invoice.ide?.dhSaiEnt);
-                
-                console.log('\n📋 CAMPOS TITULOS (financeiro):');
-                if (invoice.titulos?.length > 0) {
-                  invoice.titulos.forEach((titulo: any, idx: number) => {
-                    console.log(`titulo[${idx}].dDtEmissao:`, titulo.dDtEmissao);
-                    console.log(`titulo[${idx}].dReg:`, titulo.dReg);
-                    console.log(`titulo[${idx}].dDtVencimento:`, titulo.dDtVencimento);
-                  });
-                }
-                
-                console.log('\n📋 CAMPOS INFO (meta-dados):');
-                console.log('info.dInc:', invoice.info?.dInc);
-                console.log('info.dAlt:', invoice.info?.dAlt);
-                
-                console.log('\n📋 TODOS OS CAMPOS DO INVOICE:');
-                console.log(JSON.stringify(invoice, null, 2));
-                console.log('='.repeat(60));
-              }
-              
               // Buscar data de faturamento - priorizar dEmi (data de emissão da nota fiscal)
               let invoiceDate = '';
               // Usar PRIMEIRO a data de emissão da nota fiscal (dEmi)
@@ -3822,12 +3791,10 @@ export class OmieService {
               if (!fullResync) {
                 const dataLimite = new Date(2025, 8, 1); // 01/09/2025 (mês 8 = setembro)
                 if (invoiceDateObj < dataLimite) {
-                  console.log(`⏭️ FILTRADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (antes de 01/09/2025)`);
-                  continue; // Rejeitar notas antes de setembro/2025
+                  continue;
                 }
-                console.log(`✅ APROVADO - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()} (≥ 01/09/2025)`);
               } else {
-                console.log(`📋 FULL RESYNC - NF ${invoiceNumber} emitida em ${invoiceDateObj.toLocaleDateString()}`);
+                // Full resync includes all dates
               }
               pageHasValidData = true;
               // Normalizar número da NF com padding de zeros (8 dígitos) para match com banco de dados
@@ -3837,14 +3804,13 @@ export class OmieService {
               // Extrair dados do cliente e vendedor diretamente da nota fiscal
               const clientCode = invoice.dest?.codigo_cliente_omie || invoice.nfDestInt?.nCodCli;
               
-              // Buscar nome fantasia do cliente
+              // Buscar nome fantasia do cliente via cache (sem API call)
               let customerFantasyName = 'Cliente não identificado';
               if (clientCode) {
-                try {
-                  const clientData = await this.getClientByCode(parseInt(clientCode.toString()));
-                  customerFantasyName = clientData?.nome_fantasia || clientData?.razao_social || invoice.nfDestInt?.cRazao || 'Cliente não identificado';
-                } catch (error: any) {
-                  console.log(`⚠️ Erro ao buscar dados do cliente ${clientCode}:`, error?.message || error);
+                const cachedCustomer = customersCache.get(clientCode.toString());
+                if (cachedCustomer) {
+                  customerFantasyName = cachedCustomer.fantasyName || cachedCustomer.name || cachedCustomer.companyName || invoice.nfDestInt?.cRazao || 'Cliente não identificado';
+                } else {
                   customerFantasyName = invoice.nfDestInt?.cRazao || invoice.dest?.xNome || 'Cliente não identificado';
                 }
               } else {
@@ -3853,26 +3819,21 @@ export class OmieService {
               
               const customerDocument = invoice.nfDestInt?.cnpj_cpf || invoice.dest?.CNPJ || invoice.dest?.CPF || '';
               
-              // Extrair vendedor dos títulos (se disponível)
+              // Extrair vendedor dos títulos (via cache, sem API call)
               let sellerId = '';
               let sellerName = '';
               if (invoice.titulos && invoice.titulos.length > 0) {
                 const firstTitle = invoice.titulos[0];
                 if (firstTitle.nCodVendedor) {
                   sellerId = firstTitle.nCodVendedor.toString();
-                  
-                  // Buscar nome do vendedor no storage
-                  try {
-                    const vendorUserId = `omie-vendor-${sellerId}`;
-                    const vendor = await this.storage.getUser(vendorUserId);
-                    if (vendor) {
-                      sellerName = `${vendor.firstName} ${vendor.lastName}`.trim();
-                      console.log(`✅ Vendedor encontrado: ${sellerName} (ID: ${sellerId})`);
-                    } else {
-                      console.log(`⚠️ Vendedor não encontrado no storage: ${vendorUserId}`);
+                  const cachedSeller = this.sellersCache.get(sellerId);
+                  if (cachedSeller) {
+                    sellerName = cachedSeller.name || '';
+                  } else {
+                    const dbSeller = sellersDbCache?.get(sellerId);
+                    if (dbSeller) {
+                      sellerName = `${dbSeller.firstName || ''} ${dbSeller.lastName || ''}`.trim();
                     }
-                  } catch (error) {
-                    console.log(`⚠️ Erro ao buscar vendedor ${sellerId}:`, error instanceof Error ? error.message : error);
                   }
                 }
               }
@@ -3960,7 +3921,7 @@ export class OmieService {
                   const dueDateParsed = this.parseBrazilianDate(firstTitle.dDtVencimento);
                   if (dueDateParsed && !isNaN(dueDateParsed.getTime())) {
                     dueDate = dueDateParsed;
-                    console.log(`✅ Due date extraído de titulos: ${dueDateParsed.toLocaleDateString()}`);
+
                   }
                 }
               }
@@ -3969,7 +3930,7 @@ export class OmieService {
               if (!dueDate && invoiceDateObj) {
                 dueDate = new Date(invoiceDateObj);
                 dueDate.setDate(dueDate.getDate() + 30);
-                console.log(`📅 Due date calculado (30 dias): ${dueDate.toLocaleDateString()}`);
+                // Due date calculado
               }
               
               // Extrair etapa do pedido relacionado e verificar cancelamento
@@ -3979,7 +3940,7 @@ export class OmieService {
               let orderNumber: string | null = null;
               let pedidoCompleto: any = null;
               
-              if (pedidoId) {
+              if (pedidoId && pedidoId !== '0' && pedidoId !== '') {
                 // Verificar cancelamento antes de buscar dados do pedido
                 if (this.syncCancelled) {
                   console.log('🛑 Cancelamento detectado no loop de notas - interrompendo');
@@ -3991,12 +3952,9 @@ export class OmieService {
                   pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
                   if (pedidoCompleto?.cabecalho?.numero_pedido) {
                     orderNumber = pedidoCompleto.cabecalho.numero_pedido.toString();
-                    console.log(`✅ Número do pedido extraído: ${orderNumber} (pedidoId: ${pedidoId})`);
                   }
                   
-                  // Verificar cancelamento após operação assíncrona
                   if (this.syncCancelled) {
-                    console.log('🛑 Cancelamento detectado após buscar pedido - interrompendo');
                     throw new Error('SYNC_CANCELLED');
                   }
                   
@@ -4004,15 +3962,13 @@ export class OmieService {
                   if (stageData) {
                     if (stageData.stageName) {
                       invoiceStage = stageData.stageName;
-                      console.log(`✅ Etapa extraída do pedido ${pedidoId}: ${invoiceStage}`);
                     }
                     
                     // Verificar se está cancelado
                     if (stageData.cancelled) {
                       isCancelled = true;
-                      console.log(`🚫 NF ${invoiceNumber} / Pedido ${pedidoId} está CANCELADO - pulando sincronização`);
                       skipped++;
-                      continue; // Pular notas canceladas
+                      continue;
                     }
                   }
                 } catch (error) {
@@ -4027,12 +3983,12 @@ export class OmieService {
               // Fallback: tentar extrair número do pedido do campo nPed
               if (!orderNumber && invoice.compl?.nPed) {
                 orderNumber = invoice.compl.nPed.toString();
-                console.log(`✅ Número do pedido extraído de nPed: ${orderNumber}`);
+                // Número do pedido extraído de nPed
               }
               
               // Verificação adicional: campo de cancelamento direto da NF
               if (invoice.cancelamento?.cCancelado === 'S') {
-                console.log(`🚫 NF ${invoiceNumber} possui flag de cancelamento direto - pulando sincronização`);
+                // NF cancelada diretamente
                 skipped++;
                 continue;
               }
