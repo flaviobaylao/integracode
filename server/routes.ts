@@ -21900,26 +21900,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { status, sellerId } = req.query;
       
-      const allLeads = await db.select().from(leads).orderBy(desc(leads.createdAt));
+      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC`);
+      const rows = result.rows || [];
       
-      let leadsData = allLeads.map((lead: any) => ({
-        id: lead.id,
-        fantasyName: lead.fantasyName,
-        latitude: lead.latitude,
-        longitude: lead.longitude,
-        contact: lead.contact,
-        phone: lead.phone,
-        photo: lead.photo,
-        observation: lead.observation,
-        status: lead.status || 'pending',
-        temperature: lead.temperature || 'cold',
-        createdBy: lead.createdBy,
-        createdByName: lead.createdByName,
-        assignedTo: lead.assignedTo,
-        lastCheckInAt: lead.lastCheckInAt,
-        lastCheckOutAt: lead.lastCheckOutAt,
-        createdAt: lead.createdAt,
-        updatedAt: lead.updatedAt,
+      let leadsData = rows.map((row: any) => ({
+        id: row.id,
+        fantasyName: row.fantasy_name || '',
+        latitude: String(row.latitude || '0'),
+        longitude: String(row.longitude || '0'),
+        contact: row.contact || '',
+        phone: row.phone || '',
+        photo: row.photo || null,
+        observation: row.observation || '',
+        status: row.status || 'pending',
+        temperature: row.temperature || 'cold',
+        createdBy: row.created_by || '',
+        createdByName: row.created_by_name || '',
+        assignedTo: row.assigned_to || null,
+        lastCheckInAt: row.last_check_in_at || null,
+        lastCheckOutAt: row.last_check_out_at || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       }));
       
       if (status) {
