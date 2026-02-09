@@ -28,13 +28,12 @@
     <!-- Script para Service Worker com cache-busting -->
     <script>
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js?v=20251115').then((registration) => {
+        navigator.serviceWorker.register('/sw.js?v=20260209').then((registration) => {
           console.log('✅ Service Worker registrado');
           
-          // Verifica por atualizações periodicamente
           setInterval(() => {
             registration.update();
-          }, 5000);
+          }, 30000);
           
           // Quando encontra uma atualização, recarrega
           registration.addEventListener('updatefound', () => {
