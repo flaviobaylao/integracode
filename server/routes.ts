@@ -519,6 +519,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(health);
   });
 
+  // Diagnostic endpoint to test storage methods in production
+  app.get('/api/diagnostic', async (req, res) => {
+    const results: any = { timestamp: new Date().toISOString(), env: process.env.NODE_ENV };
+    try {
+      const dbTest = await db.execute(sql`SELECT COUNT(*) as cnt FROM billings WHERE invoice_stage = 'Aguardando Rota'`);
+      results.dbTest = { ok: true, count: (dbTest.rows[0] as any)?.cnt };
+    } catch (e: any) { results.dbTest = { ok: false, error: e.message, stack: e.stack?.substring(0, 500) }; }
+    try {
+      const deliveries = await storage.getPendingDeliveries();
+      results.deliveries = { ok: true, count: deliveries.length };
+    } catch (e: any) { results.deliveries = { ok: false, error: e.message, stack: e.stack?.substring(0, 500) }; }
+    try {
+      const drivers = await storage.getDeliveryDrivers();
+      results.drivers = { ok: true, count: drivers.length };
+    } catch (e: any) { results.drivers = { ok: false, error: e.message, stack: e.stack?.substring(0, 500) }; }
+    try {
+      const blocked = await db.select().from(blockedOrders).where(eq(blockedOrders.status, 'blocked'));
+      results.blocked = { ok: true, count: blocked.length };
+    } catch (e: any) { results.blocked = { ok: false, error: e.message, stack: e.stack?.substring(0, 500) }; }
+    res.json(results);
+  });
+
   // Endpoint protegido para inicializar admin padrão (requer autenticação de admin)
   app.post('/api/setup-admin', authenticateAdmin, async (req, res) => {
     try {
