@@ -558,40 +558,40 @@ export default function Billings() {
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Página</p>
                     <p className="font-bold text-lg text-green-700 dark:text-green-400">
-                      {syncProgress.currentPage || '-'}
+                      {syncProgress.currentPage ? `${syncProgress.currentPage}${syncProgress.totalPages ? ` / ${syncProgress.totalPages}` : ''}` : '-'}
                     </p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">NFs Encontradas</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">NFs Processadas</p>
                     <p className="font-bold text-lg text-green-700 dark:text-green-400">
-                      {syncProgress.invoicesFound || 0}
+                      {(syncProgress.invoicesProcessed || 0).toLocaleString('pt-BR')}
                     </p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Inseridas</p>
                     <p className="font-bold text-lg text-blue-600 dark:text-blue-400">
-                      {syncProgress.inserted || 0}
+                      {(syncProgress.inserted || 0).toLocaleString('pt-BR')}
                     </p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Atualizadas</p>
                     <p className="font-bold text-lg text-orange-600 dark:text-orange-400">
-                      {syncProgress.updated || 0}
+                      {(syncProgress.updated || 0).toLocaleString('pt-BR')}
                     </p>
                   </div>
                 </div>
               )}
 
-              {syncProgress && syncProgress.invoicesFound > 0 && syncProgress.invoicesProcessed > 0 && (
+              {syncProgress && syncProgress.totalPages > 0 && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
-                    <span>Salvando no banco de dados...</span>
-                    <span>{syncProgress.invoicesProcessed} / {syncProgress.invoicesFound}</span>
+                    <span>Progresso da sincronização</span>
+                    <span>{syncProgress.currentPage || 0} / {syncProgress.totalPages} páginas</span>
                   </div>
                   <div className="h-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-green-500 transition-all duration-300" 
-                      style={{ width: `${Math.round((syncProgress.invoicesProcessed / syncProgress.invoicesFound) * 100)}%` }}
+                      style={{ width: `${Math.min(100, Math.round((syncProgress.currentPage / syncProgress.totalPages) * 100))}%` }}
                     />
                   </div>
                 </div>

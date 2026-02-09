@@ -3750,8 +3750,19 @@ export class OmieService {
           });
           
           const invoices = response.nfCadastro || [];
+          const totalPages = response.total_de_paginas || 1;
+          const totalRecords = response.total_de_registros || (totalPages * 50);
           console.log(`📊 Página ${page}: Encontradas ${invoices.length} notas fiscais - Processando...`);
           
+          options?.onProgress?.({ 
+            processed: totalProcessed, 
+            total: totalRecords, 
+            page, 
+            totalPages, 
+            imported, 
+            updated, 
+            message: `Processando página ${page} de ${totalPages}... (${totalProcessed} notas processadas)` 
+          });
           
           if (invoices.length === 0) {
             hasMorePages = false;
@@ -4021,10 +4032,7 @@ export class OmieService {
                 break;
               }
               
-              // Atualizar progresso a cada 5 notas processadas
               if (totalProcessed % 5 === 0 || totalProcessed === 1) {
-                const totalPages = response?.total_de_paginas || 1;
-                const totalRecords = response?.total_de_registros || (totalPages * 50);
                 options?.onProgress?.({ 
                   processed: totalProcessed, 
                   total: totalRecords, 
@@ -4032,7 +4040,7 @@ export class OmieService {
                   totalPages, 
                   imported, 
                   updated, 
-                  message: `Processando página ${page}... (${totalProcessed} de ${totalRecords} notas)` 
+                  message: `Processando página ${page} de ${totalPages}... (${totalProcessed} de ${totalRecords} notas)` 
                 });
               }
               
@@ -4046,42 +4054,41 @@ export class OmieService {
             }
           }
           
-          // Verificar se há mais páginas
-          const totalPages = response.total_de_paginas || 1;
           hasMorePages = page < totalPages && recordsProcessedThisSync < maxRecordsPerSync;
           page++;
           
-          // Verificar se esta página teve dados válidos
           if (!pageHasValidData) {
             pagesWithoutValidData++;
-            console.log(`⚠️ Página ${page-1} sem dados válidos (${pagesWithoutValidData}/${maxPagesWithoutData})`);
             
             if (pagesWithoutValidData >= maxPagesWithoutData) {
               console.log(`🛑 ${maxPagesWithoutData} páginas consecutivas sem dados válidos, parando sincronização...`);
+              options?.onProgress?.({ 
+                processed: totalProcessed, 
+                total: totalRecords, 
+                page: page - 1, 
+                totalPages, 
+                imported, 
+                updated, 
+                message: `Finalizando... ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
+              });
               hasMorePages = false;
               break;
             }
           } else {
-            pagesWithoutValidData = 0; // Reset contador
+            pagesWithoutValidData = 0;
           }
           
-          // Log de progresso
           console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
           
-          // Chamar callback de progresso ao fim da página
-          if (options?.onProgress) {
-            const totalPages = response.total_de_paginas || 1;
-            const totalRecords = response.total_de_registros || (totalPages * 50);
-            options.onProgress({ 
-              processed: totalProcessed, 
-              total: totalRecords, 
-              page: page - 1, 
-              totalPages, 
-              imported, 
-              updated, 
-              message: `Página ${page-1} concluída. ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
-            });
-          }
+          options?.onProgress?.({ 
+            processed: totalProcessed, 
+            total: totalRecords, 
+            page: page - 1, 
+            totalPages, 
+            imported, 
+            updated, 
+            message: `Página ${page-1} de ${totalPages} concluída. ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
+          });
           
         } catch (pageError) {
           console.error(`❌ Erro ao processar página ${page}:`, pageError);

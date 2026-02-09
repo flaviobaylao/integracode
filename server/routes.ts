@@ -19315,28 +19315,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/omie/sync-billings/progress', (req, res) => {
     try {
       res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.flushHeaders();
 
       const sendProgress = () => {
         try {
-          // Serialize dates properly for JSON
           const stateToSend = {
             ...billingSyncState,
             startedAt: billingSyncState.startedAt?.toISOString() || null,
             completedAt: billingSyncState.completedAt?.toISOString() || null
           };
-          res.write(`data: ${JSON.stringify(stateToSend)}\n\n`);
+          const written = res.write(`data: ${JSON.stringify(stateToSend)}\n\n`);
+          if (!written) {
+            console.log('SSE: backpressure detected, client may be slow');
+          }
         } catch (writeError) {
-          console.error('Error writing SSE progress:', writeError);
+          clearInterval(interval);
         }
       };
 
       sendProgress();
-      const interval = setInterval(sendProgress, 500);
+      const interval = setInterval(sendProgress, 1000);
 
       req.on('close', () => {
+        clearInterval(interval);
+      });
+
+      res.on('error', () => {
         clearInterval(interval);
       });
     } catch (error) {
