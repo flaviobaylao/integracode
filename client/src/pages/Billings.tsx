@@ -558,7 +558,7 @@ export default function Billings() {
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Página</p>
                     <p className="font-bold text-lg text-green-700 dark:text-green-400">
-                      {syncProgress.currentPage ? `${syncProgress.currentPage}${syncProgress.totalPages ? ` / ${syncProgress.totalPages}` : ''}` : '-'}
+                      {syncProgress.currentPage || '-'}
                     </p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">

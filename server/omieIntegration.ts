@@ -3718,7 +3718,8 @@ export class OmieService {
       const maxRecordsPerSync = 25000; // Processar até 25.000 notas por vez (~23.945 notas de 2025)
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados nos últimos 60 dias
+      const maxPagesWithoutData = 3; // Parar se 3 páginas consecutivas sem dados nos últimos 60 dias
+      let totalOldInvoicesSkipped = 0; // Contador de notas antigas ignoradas
       
       while (hasMorePages) {
         // Verificar se foi solicitado cancelamento
@@ -3756,12 +3757,12 @@ export class OmieService {
           
           options?.onProgress?.({ 
             processed: totalProcessed, 
-            total: totalRecords, 
+            total: totalProcessed + (invoices.length * 2), 
             page, 
-            totalPages, 
+            totalPages: 0, 
             imported, 
             updated, 
-            message: `Processando página ${page} de ${totalPages}... (${totalProcessed} notas processadas)` 
+            message: `Sincronizando últimos 60 dias - Página ${page}... (${totalProcessed} notas processadas)` 
           });
           
           if (invoices.length === 0) {
@@ -3808,6 +3809,7 @@ export class OmieService {
                 dataLimite.setDate(dataLimite.getDate() - 60);
                 dataLimite.setHours(0, 0, 0, 0);
                 if (invoiceDateObj < dataLimite) {
+                  totalOldInvoicesSkipped++;
                   continue;
                 }
               }
@@ -4054,22 +4056,23 @@ export class OmieService {
             }
           }
           
-          hasMorePages = page < totalPages && recordsProcessedThisSync < maxRecordsPerSync;
           page++;
           
+          // PARADA AGRESSIVA: Se página inteira não teve dados válidos (todos fora dos 60 dias)
           if (!pageHasValidData) {
             pagesWithoutValidData++;
+            console.log(`⏭️ Página ${page-1} sem dados dos últimos 60 dias (${pagesWithoutValidData}/${maxPagesWithoutData} consecutivas, ${totalOldInvoicesSkipped} notas antigas ignoradas)`);
             
             if (pagesWithoutValidData >= maxPagesWithoutData) {
-              console.log(`🛑 ${maxPagesWithoutData} páginas consecutivas sem dados válidos, parando sincronização...`);
+              console.log(`🛑 ${maxPagesWithoutData} páginas consecutivas sem dados dos últimos 60 dias - PARANDO sincronização`);
               options?.onProgress?.({ 
                 processed: totalProcessed, 
-                total: totalRecords, 
+                total: totalProcessed, 
                 page: page - 1, 
-                totalPages, 
+                totalPages: page - 1, 
                 imported, 
                 updated, 
-                message: `Finalizando... ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
+                message: `Concluído! ${totalProcessed} notas dos últimos 60 dias (${imported} novas, ${updated} atualizadas). ${totalOldInvoicesSkipped} notas antigas ignoradas.` 
               });
               hasMorePages = false;
               break;
@@ -4078,16 +4081,34 @@ export class OmieService {
             pagesWithoutValidData = 0;
           }
           
-          console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
+          // PARADA EXTRA: Se já ignoramos mais de 100 notas antigas, estamos além dos 60 dias
+          if (totalOldInvoicesSkipped > 100 && !fullResync) {
+            console.log(`🛑 Mais de 100 notas antigas ignoradas (${totalOldInvoicesSkipped}) - ultrapassamos janela de 60 dias, PARANDO`);
+            options?.onProgress?.({ 
+              processed: totalProcessed, 
+              total: totalProcessed, 
+              page: page - 1, 
+              totalPages: page - 1, 
+              imported, 
+              updated, 
+              message: `Concluído! ${totalProcessed} notas dos últimos 60 dias (${imported} novas, ${updated} atualizadas).` 
+            });
+            hasMorePages = false;
+            break;
+          }
+          
+          hasMorePages = recordsProcessedThisSync < maxRecordsPerSync;
+          
+          console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}, Antigas ignoradas: ${totalOldInvoicesSkipped}`);
           
           options?.onProgress?.({ 
             processed: totalProcessed, 
-            total: totalRecords, 
+            total: totalProcessed, 
             page: page - 1, 
-            totalPages, 
+            totalPages: 0, 
             imported, 
             updated, 
-            message: `Página ${page-1} de ${totalPages} concluída. ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
+            message: `Sincronizando últimos 60 dias - Página ${page-1} concluída. ${totalProcessed} notas (${imported} novas, ${updated} atualizadas)` 
           });
           
         } catch (pageError) {

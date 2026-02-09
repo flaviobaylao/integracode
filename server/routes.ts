@@ -19427,12 +19427,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await omieService.syncBillings({
         onProgress: (progress) => {
           billingSyncState.invoicesProcessed = progress.processed;
-          billingSyncState.invoicesFound = progress.total;
+          billingSyncState.invoicesFound = progress.processed;
           if (progress.page) billingSyncState.currentPage = progress.page;
-          if (progress.totalPages) billingSyncState.totalPages = progress.totalPages;
+          billingSyncState.totalPages = 0;
           if (progress.imported !== undefined) billingSyncState.inserted = progress.imported;
           if (progress.updated !== undefined) billingSyncState.updated = progress.updated;
-          billingSyncState.message = progress.message || `Processando notas fiscais... (${progress.processed} de ${progress.total || '?'})`;
+          billingSyncState.message = progress.message || `Sincronizando últimos 60 dias... (${progress.processed} notas processadas)`;
         }
       });
 
