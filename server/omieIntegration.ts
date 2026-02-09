@@ -624,15 +624,11 @@ export class OmieService {
 
       const invoiceStage = this.stageNamesCache.get(etapa) || etapa || '';
 
-      if (!invoiceNumber) {
-        return null;
-      }
-      
       if (!invoiceDate && orderDate) {
         invoiceDate = orderDate;
       }
       
-      if (invoiceDate && invoiceNumber) {
+      if (invoiceDate) {
         const dataLimite = new Date(2025, 0, 1);
         if (invoiceDate < dataLimite) return null;
       }
@@ -1306,6 +1302,7 @@ export class OmieService {
           
           totalFound += orders.length;
           console.log(`📄 [SYNC-FAST] Página ${page}: ${orders.length} pedidos (API: ${Date.now() - pageStart}ms)`);
+          
           onProgress?.({ message: `Processando página ${page}... (${totalFound} pedidos encontrados)`, currentPage: page, totalPages: 0, invoicesFound: totalFound, invoicesProcessed: totalProcessed, inserted: imported, updated, currentInvoice: '' });
           
           // Transformar pedidos em lote (sem API calls - tudo via cache)
@@ -1372,8 +1369,12 @@ export class OmieService {
           }
           
         } catch (error: any) {
-          console.error(`❌ [SYNC-FAST] Erro na página ${page}:`, error.message);
-          errors.push({ page, error: error.message });
+          if (error.message?.includes('Client-5113') || error.message?.includes('Não existem registros')) {
+            console.log(`📋 [SYNC-FAST] Fim dos registros na página ${page}`);
+          } else {
+            console.error(`❌ [SYNC-FAST] Erro na página ${page}:`, error.message);
+            errors.push({ page, error: error.message });
+          }
           hasMorePages = false;
         }
       }

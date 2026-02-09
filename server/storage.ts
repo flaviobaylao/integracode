@@ -330,8 +330,8 @@ export interface IStorage {
     averageValue: number;
     paymentMethods: Record<string, { count: number; total: number }>;
   }>;
-  upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing>;
-  saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
+  upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId?: string }): Promise<Billing>;
+  saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId?: string }): Promise<{
     success: boolean;
     billing?: Billing;
     reason?: string;
@@ -4426,7 +4426,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<Billing> {
+  async upsertBilling(billing: Partial<InsertBilling> & { omieInvoiceId?: string }): Promise<Billing> {
     // Verificar se já existe
     const existing = await this.getBillingByOmieId(billing.omieInvoiceId);
     
@@ -4439,7 +4439,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId: string }): Promise<{
+  async saveBillingIfValid(billing: Partial<InsertBilling> & { omieInvoiceId?: string }): Promise<{
     success: boolean;
     billing?: Billing;
     reason?: string;
@@ -4517,20 +4517,19 @@ export class DatabaseStorage implements IStorage {
         };
       }
       
-      // Validação 3: Verificar se tem número de nota fiscal
-      if (!billing.invoiceNumber || billing.invoiceNumber.trim() === '') {
-        const reason = 'Número da nota fiscal não informado';
-        return {
-          success: false,
-          reason,
-          action: 'skipped'
-        };
-      }
+      // Buscar registro existente por invoice number, omieInvoiceId, ou omieOrderId
+      let existing: Billing | undefined;
       
-      let existing = await this.getBillingByInvoiceNumber(billing.invoiceNumber!);
+      if (billing.invoiceNumber && billing.invoiceNumber.trim() !== '') {
+        existing = await this.getBillingByInvoiceNumber(billing.invoiceNumber);
+      }
       
       if (!existing && billing.omieInvoiceId) {
         existing = await this.getBillingByOmieId(billing.omieInvoiceId);
+      }
+      
+      if (!existing && (billing as any).omieOrderId) {
+        existing = await this.getBillingByOrderId((billing as any).omieOrderId);
       }
       
       let savedBilling: Billing;
