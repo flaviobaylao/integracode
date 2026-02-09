@@ -4037,18 +4037,48 @@ export class DatabaseStorage implements IStorage {
 
   // Billing operations
   async getBillings(sellerId?: string): Promise<Billing[]> {
-    const baseQuery = db.select().from(billings);
-    
-    // Filtrar notas canceladas e aplicar filtro de sellerId se fornecido
     const conditions = [eq(billings.isCancelled, false)];
     if (sellerId) {
       conditions.push(eq(billings.sellerId, sellerId));
     }
     
-    const result = await baseQuery
+    const result = await db.select({
+      id: billings.id,
+      omieInvoiceId: billings.omieInvoiceId,
+      invoiceNumber: billings.invoiceNumber,
+      customerFantasyName: billings.customerFantasyName,
+      billingType: billings.billingType,
+      totalValue: billings.totalValue,
+      invoiceDate: billings.invoiceDate,
+      sellerId: billings.sellerId,
+      sellerName: billings.sellerName,
+      paymentMethod: billings.paymentMethod,
+      dueDate: billings.dueDate,
+      omieCustomerCode: billings.omieCustomerCode,
+      customerDocument: billings.customerDocument,
+      invoiceStatus: billings.invoiceStatus,
+      createdAt: billings.createdAt,
+      updatedAt: billings.updatedAt,
+      cfop: billings.cfop,
+      invoiceStage: billings.invoiceStage,
+      omieOrderId: billings.omieOrderId,
+      orderNumber: billings.orderNumber,
+      orderDate: billings.orderDate,
+      vendorCode: billings.vendorCode,
+      stageName: billings.stageName,
+      isCancelled: billings.isCancelled,
+      isUrgent: billings.isUrgent,
+      exclusiveVehicle: billings.exclusiveVehicle,
+      vehicleTypes: billings.vehicleTypes,
+      deliveryWeekdays: billings.deliveryWeekdays,
+      deliveryTimeSlots: billings.deliveryTimeSlots,
+      deliverySaturdayTimeSlots: billings.deliverySaturdayTimeSlots,
+      omieInstanceId: billings.omieInstanceId,
+    })
+      .from(billings)
       .where(and(...conditions))
       .orderBy(desc(billings.invoiceDate));
-    return result;
+    return result as Billing[];
   }
 
   async getBilling(id: string): Promise<Billing | undefined> {
