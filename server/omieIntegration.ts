@@ -3718,7 +3718,7 @@ export class OmieService {
       const maxRecordsPerSync = 25000; // Processar até 25.000 notas por vez (~23.945 notas de 2025)
       let recordsProcessedThisSync = 0;
       let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 100; // Parar se 100 páginas consecutivas sem dados válidos de 2025
+      const maxPagesWithoutData = 5; // Parar se 5 páginas consecutivas sem dados nos últimos 60 dias
       
       while (hasMorePages) {
         // Verificar se foi solicitado cancelamento
@@ -3802,14 +3802,14 @@ export class OmieService {
                 continue;
               }
               
-              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes de 01/09/2025 (apenas quando NÃO é fullResync)
+              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes dos últimos 60 dias
               if (!fullResync) {
-                const dataLimite = new Date(2025, 8, 1); // 01/09/2025 (mês 8 = setembro)
+                const dataLimite = new Date();
+                dataLimite.setDate(dataLimite.getDate() - 60);
+                dataLimite.setHours(0, 0, 0, 0);
                 if (invoiceDateObj < dataLimite) {
                   continue;
                 }
-              } else {
-                // Full resync includes all dates
               }
               pageHasValidData = true;
               // Normalizar número da NF com padding de zeros (8 dígitos) para match com banco de dados
