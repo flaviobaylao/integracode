@@ -7903,11 +7903,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sales = await db.select({
           salesCardId: salesCards.id,
           status: salesCards.status,
-          totalValue: salesCards.totalValue
+          totalValue: salesCards.saleValue
         })
         .from(salesCards)
         .where(and(
-          inArray(salesCards.id, salesCardIds),
+          inArray(salesCards.id, salesCardIds as string[]),
           eq(salesCards.status, 'completed')
         ));
       }
@@ -7924,8 +7924,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const visitsWithTime = visits.filter(v => v.actualCheckIn && v.actualCheckOut);
       if (visitsWithTime.length > 0) {
         const totalTime = visitsWithTime.reduce((acc, visit) => {
-          const checkIn = new Date(visit.actualCheckIn);
-          const checkOut = new Date(visit.actualCheckOut);
+          const checkIn = new Date(visit.actualCheckIn!);
+          const checkOut = new Date(visit.actualCheckOut!);
           return acc + (checkOut.getTime() - checkIn.getTime());
         }, 0);
         averageVisitTime = Math.round(totalTime / (visitsWithTime.length * 60000)); // em minutos
