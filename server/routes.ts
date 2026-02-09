@@ -703,7 +703,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/auth/user', async (req: any, res) => {
     try {
-      console.log('👤 GET /api/auth/user - Verificando autenticação...');
       
       // Check for local admin session first
       if (req.session?.user?.claims?.sub) {

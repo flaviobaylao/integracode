@@ -16,11 +16,11 @@ interface User {
 }
 
 export function useAuth() {
-  const { data: user, isLoading, error, isError } = useQuery<User | null>({
+  const { data: user, isLoading, error, isError, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: async () => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
       try {
         const res = await fetch("/api/auth/user", {
@@ -30,7 +30,6 @@ export function useAuth() {
         
         clearTimeout(timeoutId);
         
-        // Se não autenticado, retorna null (não é erro, é estado válido)
         if (res.status === 401) {
           return null;
         }
@@ -43,23 +42,27 @@ export function useAuth() {
       } catch (err: any) {
         clearTimeout(timeoutId);
         
-        // Se for timeout ou erro de rede, lança erro para permitir retry
         if (err.name === 'AbortError') {
           console.warn('Auth check timeout, will retry...');
-          throw new Error('Auth check timeout - please check your connection');
+          throw new Error('Auth check timeout - verifique sua conexão');
+        }
+
+        if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+          console.warn('Network error during auth check, will retry...');
+          throw new Error('Erro de rede - verifique sua conexão');
         }
         
         throw err;
       }
     },
-    retry: 2, // Permite 2 retries para recuperar de erros temporários
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 3000), // Backoff exponencial
-    staleTime: 1000 * 30, // 30 segundos - permite revalidação mais frequente
-    gcTime: 1000 * 60 * 5, // 5 minutos
-    refetchOnWindowFocus: false,
+    retry: 4,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
+    staleTime: 1000 * 60,
+    gcTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: true,
     refetchOnMount: true,
-    refetchOnReconnect: true, // Revalida quando a conexão volta
-    networkMode: 'online', // Só tenta quando online
+    refetchOnReconnect: true,
+    networkMode: 'always',
   });
 
   return {
@@ -68,5 +71,6 @@ export function useAuth() {
     isError,
     error,
     isAuthenticated: !!user && !isError,
+    refetch,
   };
 }
