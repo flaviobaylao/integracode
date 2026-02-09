@@ -136,37 +136,29 @@ async function syncComplete(horario: string) {
 
     // 2. Sincronizar notas fiscais de 2025 (filtro por data de emissão)
     try {
-      console.log(`💰 [${horario}] Sincronizando notas fiscais de 2025...`);
+      console.log(`💰 [${horario}] Sincronizando pedidos dos últimos 60 dias...`);
       
-      // Atualizar status para "em progresso" antes de iniciar
       await storage.updateSyncStatus('omie_billings', { 
         status: 'in_progress', 
-        message: 'Sincronização automática iniciada...',
+        message: 'Sincronização automática de pedidos iniciada...',
         recordsProcessed: 0,
         currentProgress: 0
       });
       
-      const billingResult = await (omieService as any).syncBillings({
-        onProgress: async (progress: { processed: number, total: number }) => {
-          // Verificar se foi cancelado antes de atualizar
-          const syncStatus = omieService.getSyncStatus();
-          if (syncStatus.cancelled) {
-            console.log('🛑 [SYNC] Cancelamento detectado no callback de progresso - ignorando atualização');
-            return;
-          }
-          // Atualizar progresso em tempo real
-          storage.updateSyncStatus('omie_billings', { 
-            status: 'in_progress', 
-            recordsProcessed: progress.processed,
-            totalRecords: progress.total,
-            currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
-          });
-        }
+      const billingResult = await omieService.syncAllOrders((progress) => {
+        const syncStatus = omieService.getSyncStatus();
+        if (syncStatus.cancelled) return;
+        storage.updateSyncStatus('omie_billings', { 
+          status: 'in_progress', 
+          recordsProcessed: progress.invoicesProcessed,
+          totalRecords: progress.invoicesFound,
+          currentProgress: progress.totalPages > 0 ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0
+        });
       });
       
       results.billings = {
-        totalProcessed: billingResult.totalProcessed || billingResult.newBillings || 0,
-        imported: billingResult.imported || billingResult.newBillings || 0,
+        totalProcessed: billingResult.totalProcessed || 0,
+        imported: billingResult.imported || 0,
         updated: billingResult.updated || 0
       };
       

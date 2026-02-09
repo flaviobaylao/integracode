@@ -19420,24 +19420,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(202).json({ message: 'Sincronização iniciada em background. Acompanhe o progresso na tela.' });
 
-      console.log('\n💰 [SYNC-NF] SINCRONIZANDO NOTAS FISCAIS DO OMIE (modo otimizado)...\n');
+      console.log('\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DO OMIE (últimos 60 dias, com etapas)...\n');
 
-      billingSyncState.message = 'Iniciando sincronização de notas fiscais...';
+      billingSyncState.message = 'Iniciando sincronização de pedidos (últimos 60 dias)...';
 
-      const result = await omieService.syncBillings({
-        onProgress: (progress) => {
-          billingSyncState.invoicesProcessed = progress.processed;
-          billingSyncState.invoicesFound = progress.processed;
-          if (progress.page) billingSyncState.currentPage = progress.page;
-          billingSyncState.totalPages = 0;
-          if (progress.imported !== undefined) billingSyncState.inserted = progress.imported;
-          if (progress.updated !== undefined) billingSyncState.updated = progress.updated;
-          billingSyncState.message = progress.message || `Sincronizando últimos 60 dias... (${progress.processed} notas processadas)`;
-        }
+      const result = await omieService.syncAllOrders((progress) => {
+        billingSyncState.invoicesProcessed = progress.invoicesProcessed;
+        billingSyncState.invoicesFound = progress.invoicesFound;
+        billingSyncState.currentPage = progress.currentPage;
+        billingSyncState.totalPages = progress.totalPages;
+        billingSyncState.inserted = progress.inserted;
+        billingSyncState.updated = progress.updated;
+        billingSyncState.currentInvoice = progress.currentInvoice;
+        billingSyncState.message = progress.message || `Sincronizando últimos 60 dias... (${progress.invoicesProcessed} pedidos processados)`;
       });
 
       billingSyncState.status = 'completed';
-      billingSyncState.invoicesFound = result.totalProcessed + result.skipped;
+      billingSyncState.invoicesFound = result.totalProcessed;
       billingSyncState.invoicesProcessed = result.totalProcessed;
       billingSyncState.inserted = result.imported;
       billingSyncState.updated = result.updated;
@@ -19445,7 +19444,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.message = `Sincronização concluída! ${result.imported} inseridos, ${result.updated} atualizados.${rejectedNote}`;
       billingSyncState.completedAt = nowBrazil();
 
-      console.log(`\n✅ [SYNC-NF] Sincronização concluída!`);
+      console.log(`\n✅ [SYNC-PEDIDOS] Sincronização concluída!`);
       console.log(`📥 Inseridos: ${result.imported}`);
       console.log(`🔄 Atualizados: ${result.updated}`);
       console.log(`⏭️ Rejeitados: ${result.skipped}\n`);

@@ -1173,14 +1173,14 @@ export class OmieService {
   // Método para listar TODOS os pedidos (faturados e não faturados) com paginação
   async listOrders(page: number = 1, pageSize: number = 50, dateFrom: string = '', dateTo: string = ''): Promise<any> {
     try {
-      // Se não fornecer data, usar últimos 2 meses por padrão
+      // Se não fornecer data, usar últimos 60 dias por padrão
       let effectiveDateFrom = dateFrom;
       if (!effectiveDateFrom) {
-        const twoMonthsAgo = nowBrazil();
-        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-        const day = String(twoMonthsAgo.getDate()).padStart(2, '0');
-        const month = String(twoMonthsAgo.getMonth() + 1).padStart(2, '0');
-        const year = twoMonthsAgo.getFullYear();
+        const sixtyDaysAgo = nowBrazil();
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+        const day = String(sixtyDaysAgo.getDate()).padStart(2, '0');
+        const month = String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0');
+        const year = sixtyDaysAgo.getFullYear();
         effectiveDateFrom = `${day}/${month}/${year}`;
       }
       
