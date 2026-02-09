@@ -4507,6 +4507,10 @@ export class DatabaseStorage implements IStorage {
       let action: 'created' | 'updated';
       
       if (existing) {
+        // Preservar etapa existente se a nova etapa estiver vazia
+        if (!billing.invoiceStage && existing.invoiceStage) {
+          billing.invoiceStage = existing.invoiceStage;
+        }
         savedBilling = await this.updateBilling(existing.id, billing);
         action = 'updated';
       } else {

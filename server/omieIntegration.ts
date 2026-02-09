@@ -3668,7 +3668,7 @@ export class OmieService {
   // Método para sincronizar faturamentos/notas fiscais do Omie
   async syncBillings(options?: { 
     fullResync?: boolean;
-    onProgress?: (progress: { processed: number; total: number }) => void;
+    onProgress?: (progress: { processed: number; total: number; page?: number; totalPages?: number; imported?: number; updated?: number; message?: string }) => void;
   }): Promise<{
     totalProcessed: number;
     imported: number;
@@ -3696,11 +3696,15 @@ export class OmieService {
       
       // Pré-carregar TODOS os caches em paralelo para eliminar N+1 API calls
       console.log(`📦 [SYNC-NF] Pré-carregando caches...`);
+      options?.onProgress?.({ processed: 0, total: 0, message: 'Carregando dados de clientes e vendedores...' });
+      
       const [customersCache, sellersDbCache] = await Promise.all([
         this.loadCustomersCache(),
         this.loadSellersDbCache(),
         this.preloadAllSellersCache(),
       ]);
+      
+      options?.onProgress?.({ processed: 0, total: 0, message: 'Caches carregados! Buscando notas fiscais...' });
       
       let totalProcessed = 0;
       let imported = 0;
@@ -3933,64 +3937,37 @@ export class OmieService {
                 // Due date calculado
               }
               
-              // Extrair etapa do pedido relacionado e verificar cancelamento
+              // Extrair etapa e dados do pedido SEM chamadas individuais de API
+              // Os dados básicos da NF já são suficientes para a sincronização
               let invoiceStage = '';
-              let isCancelled = false;
               const pedidoId = invoice.compl?.nIdPedido?.toString();
               let orderNumber: string | null = null;
-              let pedidoCompleto: any = null;
               
-              if (pedidoId && pedidoId !== '0' && pedidoId !== '') {
-                // Verificar cancelamento antes de buscar dados do pedido
-                if (this.syncCancelled) {
-                  console.log('🛑 Cancelamento detectado no loop de notas - interrompendo');
-                  throw new Error('SYNC_CANCELLED');
-                }
-                
-                try {
-                  // Buscar pedido completo para extrair número do pedido
-                  pedidoCompleto = await this.fetchCompleteOrder(pedidoId);
-                  if (pedidoCompleto?.cabecalho?.numero_pedido) {
-                    orderNumber = pedidoCompleto.cabecalho.numero_pedido.toString();
-                  }
-                  
-                  if (this.syncCancelled) {
-                    throw new Error('SYNC_CANCELLED');
-                  }
-                  
-                  const stageData = await this.fetchPedidoStage(pedidoId);
-                  if (stageData) {
-                    if (stageData.stageName) {
-                      invoiceStage = stageData.stageName;
-                    }
-                    
-                    // Verificar se está cancelado
-                    if (stageData.cancelled) {
-                      isCancelled = true;
-                      skipped++;
-                      continue;
-                    }
-                  }
-                } catch (error) {
-                  // Se for cancelamento, propagar o erro
-                  if (error instanceof Error && error.message === 'SYNC_CANCELLED') {
-                    throw error;
-                  }
-                  console.log(`⚠️ Erro ao buscar dados do pedido ${pedidoId}:`, error instanceof Error ? error.message : error);
-                }
+              // Verificar cancelamento
+              if (this.syncCancelled) {
+                throw new Error('SYNC_CANCELLED');
               }
               
-              // Fallback: tentar extrair número do pedido do campo nPed
-              if (!orderNumber && invoice.compl?.nPed) {
-                orderNumber = invoice.compl.nPed.toString();
-                // Número do pedido extraído de nPed
-              }
-              
-              // Verificação adicional: campo de cancelamento direto da NF
+              // Verificação de cancelamento direto da NF
               if (invoice.cancelamento?.cCancelado === 'S') {
-                // NF cancelada diretamente
                 skipped++;
                 continue;
+              }
+              
+              // Extrair número do pedido diretamente dos dados da NF (sem API call)
+              if (invoice.compl?.nPed) {
+                orderNumber = invoice.compl.nPed.toString();
+              } else if (pedidoId && pedidoId !== '0') {
+                orderNumber = pedidoId;
+              }
+              
+              // Inferir etapa baseado nos dados disponíveis da NF (sem API call)
+              // NFs autorizadas com dados de faturamento tipicamente estão em etapa de faturamento
+              const situacaoNF = invoice.ide?.cStat?.toString();
+              if (situacaoNF === '100' || situacaoNF === '101') {
+                // NF autorizada - inferir etapa baseado em dados disponíveis
+                // Se existir no banco, preservar a etapa existente (será feito no saveBillingIfValid)
+                invoiceStage = ''; // Será preenchido pelo banco se já existir
               }
               
               const billingData = {
@@ -4044,9 +4021,19 @@ export class OmieService {
                 break;
               }
               
-              // Log a cada 10 notas processadas para acompanhamento
-              if (totalProcessed % 10 === 0) {
-                console.log(`📈 Processadas ${totalProcessed} notas fiscais...`);
+              // Atualizar progresso a cada 5 notas processadas
+              if (totalProcessed % 5 === 0 || totalProcessed === 1) {
+                const totalPages = response?.total_de_paginas || 1;
+                const totalRecords = response?.total_de_registros || (totalPages * 50);
+                options?.onProgress?.({ 
+                  processed: totalProcessed, 
+                  total: totalRecords, 
+                  page, 
+                  totalPages, 
+                  imported, 
+                  updated, 
+                  message: `Processando página ${page}... (${totalProcessed} de ${totalRecords} notas)` 
+                });
               }
               
             } catch (error) {
@@ -4081,11 +4068,19 @@ export class OmieService {
           // Log de progresso
           console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}`);
           
-          // Chamar callback de progresso se fornecido
+          // Chamar callback de progresso ao fim da página
           if (options?.onProgress) {
             const totalPages = response.total_de_paginas || 1;
             const totalRecords = response.total_de_registros || (totalPages * 50);
-            options.onProgress({ processed: totalProcessed, total: totalRecords });
+            options.onProgress({ 
+              processed: totalProcessed, 
+              total: totalRecords, 
+              page: page - 1, 
+              totalPages, 
+              imported, 
+              updated, 
+              message: `Página ${page-1} concluída. ${totalProcessed} notas processadas (${imported} novas, ${updated} atualizadas)` 
+            });
           }
           
         } catch (pageError) {

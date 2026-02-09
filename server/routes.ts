@@ -19399,8 +19399,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         onProgress: (progress) => {
           billingSyncState.invoicesProcessed = progress.processed;
           billingSyncState.invoicesFound = progress.total;
-          billingSyncState.message = `Processando notas fiscais... (${progress.processed} de ${progress.total || '?'})`;
-          billingSyncState.currentPage = Math.ceil(progress.processed / 50);
+          if (progress.page) billingSyncState.currentPage = progress.page;
+          if (progress.totalPages) billingSyncState.totalPages = progress.totalPages;
+          if (progress.imported !== undefined) billingSyncState.inserted = progress.imported;
+          if (progress.updated !== undefined) billingSyncState.updated = progress.updated;
+          billingSyncState.message = progress.message || `Processando notas fiscais... (${progress.processed} de ${progress.total || '?'})`;
         }
       });
 
