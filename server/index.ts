@@ -93,22 +93,49 @@ app.use((req, res, next) => {
     res.sendFile(path.join(distHotsitePath, "index.html"));
   });
   
+  app.get('/clear-cache', (_req, res) => {
+    res.set({
+      'Content-Type': 'text/html',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    });
+    res.send(`<!DOCTYPE html>
+<html><head><title>Limpando Cache</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#059669}
+.card{background:#fff;border-radius:16px;padding:32px;max-width:400px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+h1{color:#059669;font-size:1.5rem}#status{color:#333;margin:16px 0}#logs{background:#f3f4f6;border-radius:8px;padding:12px;text-align:left;font-size:13px;max-height:200px;overflow-y:auto}
+.log{padding:4px 0;border-bottom:1px solid #e5e7eb;color:#555}.spinner{display:inline-block;width:40px;height:40px;border:4px solid #d1fae5;border-top:4px solid #059669;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}</style></head>
+<body><div class="card"><h1>Limpando Cache</h1><div class="spinner" id="spinner"></div>
+<div id="status">Iniciando...</div><div id="logs"></div></div>
+<script>
+var logs=document.getElementById('logs'),st=document.getElementById('status'),sp=document.getElementById('spinner');
+function addLog(m){var d=document.createElement('div');d.className='log';d.textContent=m;logs.appendChild(d)}
+async function run(){try{
+if('serviceWorker' in navigator){var regs=await navigator.serviceWorker.getRegistrations();for(var r of regs){await r.unregister();addLog('Service Worker removido')}}
+if('caches' in window){var keys=await caches.keys();for(var k of keys){await caches.delete(k);addLog('Cache '+k+' removido')}}
+localStorage.clear();addLog('localStorage limpo');
+sessionStorage.clear();addLog('sessionStorage limpo');
+st.textContent='Limpeza concluida!';sp.style.display='none';
+addLog('Redirecionando em 2s...');
+setTimeout(function(){window.location.href='/?t='+Date.now()},2000);
+}catch(e){st.textContent='Erro: '+e.message;setTimeout(function(){window.location.href='/?t='+Date.now()},3000)}}
+run();
+</script></body></html>`);
+  });
+
   const server = await registerRoutes(app);
 
-  // Inicializar admin padrão se não existir (importante para primeira execução em produção)
   await initializeDefaultAdmin();
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    console.error(`🔥 [ERROR HANDLER] ${req.method} ${req.path}:`, err);
+    console.error(`\u{1F525} [ERROR HANDLER] ${req.method} ${req.path}:`, err);
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
