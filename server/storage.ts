@@ -2944,7 +2944,7 @@ export class DatabaseStorage implements IStorage {
     // Retornar dados dos billings com latitude/longitude dos clientes cadastrados
     // PRIORIDADE: fantasy_name é CRÍTICO - sempre deve retornar nome fantasia
     const result = await db.execute(sql`
-      SELECT 
+      SELECT DISTINCT ON (b.id)
         b.id,
         b.invoice_number as "invoiceNumber",
         b.omie_order_id as "omieOrderId",
@@ -2984,9 +2984,12 @@ export class DatabaseStorage implements IStorage {
         AND b.invoice_date IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
+          JOIN delivery_routes dr ON dr.id = drs.route_id
           WHERE drs.billing_id = b.id
+            AND drs.status NOT IN ('devolvida', 'cancelada', 'entregue')
+            AND dr.route_date >= CURRENT_DATE
         )
-      ORDER BY b.invoice_date DESC, b.customer_fantasy_name
+      ORDER BY b.id, b.invoice_date DESC, b.customer_fantasy_name
     `);
     
     // Mapear billings para deliveries com customerId genérico
