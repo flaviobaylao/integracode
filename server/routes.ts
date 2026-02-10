@@ -2177,7 +2177,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { entityType, entityId } = req.params;
       const user = req.currentUser;
-      const { notes, images, serviceType, nextContactDate: userNextContactDate } = req.body;
+      const { notes, images, serviceType, nextContactDate: userNextContactDate, temperature } = req.body;
 
       const validEntityTypes = ['customer', 'lead'];
       if (!validEntityTypes.includes(entityType)) {
@@ -2217,12 +2217,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             nextContactDate.setDate(nextContactDate.getDate() + 7);
           }
           
-          await db.execute(sql`
-            UPDATE leads 
-            SET next_contact_date = ${nextContactDate}, updated_at = NOW()
-            WHERE id = ${entityId}
-          `);
-          console.log(`📅 Data próximo contato definida para lead ${entityId}: ${nextContactDate.toISOString()}`);
+          const validTemperatures = ['cold', 'warm', 'hot', 'very_hot'];
+          if (temperature && validTemperatures.includes(temperature)) {
+            await db.execute(sql`
+              UPDATE leads 
+              SET next_contact_date = ${nextContactDate}, temperature = ${temperature}, updated_at = NOW()
+              WHERE id = ${entityId}
+            `);
+            console.log(`📅 Lead ${entityId}: próximo contato ${nextContactDate.toISOString()}, temperatura → ${temperature}`);
+          } else {
+            await db.execute(sql`
+              UPDATE leads 
+              SET next_contact_date = ${nextContactDate}, updated_at = NOW()
+              WHERE id = ${entityId}
+            `);
+            console.log(`📅 Data próximo contato definida para lead ${entityId}: ${nextContactDate.toISOString()}`);
+          }
         } catch (prospectionError) {
           console.error('Erro ao registrar prospecção:', prospectionError);
         }

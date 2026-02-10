@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar } from "lucide-react";
+import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 type ServiceType = 'debito_vencido' | 'venda' | 'prospecao';
@@ -65,6 +65,7 @@ export default function VirtualServiceLogModal({
   const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [nextContactDate, setNextContactDate] = useState<string>("");
+  const [temperature, setTemperature] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset serviceType when modal opens with a new defaultServiceType
@@ -81,20 +82,20 @@ export default function VirtualServiceLogModal({
   });
 
   const createLogMutation = useMutation({
-    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string }) => {
+    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string; temperature?: string }) => {
       return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
-      // Invalidate specific customer logs
       queryClient.invalidateQueries({ queryKey: [`/api/service-logs/${entityType}/${customerId}`] });
-      // Invalidate the batch query used by Active Customers list
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/customer"] });
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
       setNotes("");
       setImages([]);
       setServiceType(effectiveDefaultType);
       setNextContactDate("");
+      setTemperature("");
       setIsCreating(false);
       toast({
         title: "Atendimento registrado",
@@ -240,7 +241,8 @@ export default function VirtualServiceLogModal({
       notes, 
       images, 
       serviceType,
-      nextContactDate: nextContactDate || undefined
+      nextContactDate: nextContactDate || undefined,
+      temperature: temperature || undefined
     });
   };
 
@@ -250,6 +252,7 @@ export default function VirtualServiceLogModal({
     setImages([]);
     setServiceType(effectiveDefaultType);
     setNextContactDate("");
+    setTemperature("");
     onClose();
   };
 
@@ -367,6 +370,37 @@ export default function VirtualServiceLogModal({
                     />
                   </div>
                 </div>
+
+                {entityType === 'lead' && (
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      <Thermometer className="h-4 w-4" />
+                      Temperatura do Lead
+                    </Label>
+                    <div className="mt-2 flex gap-2 flex-wrap">
+                      {([
+                        { value: '', label: 'Manter atual', color: 'bg-gray-100 text-gray-600 border-gray-200' },
+                        { value: 'cold', label: 'Frio', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+                        { value: 'warm', label: 'Morno', color: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
+                        { value: 'hot', label: 'Quente', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+                        { value: 'very_hot', label: 'Muito Quente', color: 'bg-red-100 text-red-700 border-red-200' },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setTemperature(opt.value)}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border-2 text-sm transition-all ${
+                            temperature === opt.value
+                              ? `${opt.color} border-current font-medium shadow-sm`
+                              : 'border-gray-200 hover:border-gray-300 text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {entityType === 'lead' && (
                   <div>
