@@ -48,6 +48,8 @@ export default function LeadsManagement() {
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterNextContactFrom, setFilterNextContactFrom] = useState("");
+  const [filterNextContactTo, setFilterNextContactTo] = useState("");
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -337,9 +339,24 @@ export default function LeadsManagement() {
         }
       }
 
+      // Filtro por data do próximo contato
+      if (filterNextContactFrom || filterNextContactTo) {
+        if (!lead.nextContactDate) return false;
+        const contactDate = new Date(String(lead.nextContactDate));
+        if (filterNextContactFrom) {
+          const fromDate = new Date(filterNextContactFrom);
+          if (contactDate < fromDate) return false;
+        }
+        if (filterNextContactTo) {
+          const toDate = new Date(filterNextContactTo);
+          toDate.setHours(23, 59, 59, 999);
+          if (contactDate > toDate) return false;
+        }
+      }
+
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo]);
+  }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   const stats = {
     total: leads.length,
@@ -514,7 +531,27 @@ export default function LeadsManagement() {
               />
             </div>
           </div>
-          {(filterName || filterSellerId || filterDateFrom || filterDateTo) && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+            <div>
+              <Label htmlFor="filter-next-contact-from">Próx. Contato De</Label>
+              <Input
+                id="filter-next-contact-from"
+                type="date"
+                value={filterNextContactFrom}
+                onChange={(e) => setFilterNextContactFrom(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="filter-next-contact-to">Próx. Contato Até</Label>
+              <Input
+                id="filter-next-contact-to"
+                type="date"
+                value={filterNextContactTo}
+                onChange={(e) => setFilterNextContactTo(e.target.value)}
+              />
+            </div>
+          </div>
+          {(filterName || filterSellerId || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -524,6 +561,8 @@ export default function LeadsManagement() {
                 setFilterSellerId("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
+                setFilterNextContactFrom("");
+                setFilterNextContactTo("");
               }}
               data-testid="button-clear-filters"
             >
