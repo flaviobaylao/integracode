@@ -10596,6 +10596,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/deliveries/reports/detailed", async (req, res) => {
+    try {
+      const { startDate, endDate, driver, status } = req.query;
+      if (!startDate || !endDate) {
+        return res.status(400).json({ message: "startDate and endDate are required" });
+      }
+      const records = await storage.getDeliveryReportDetailed(
+        startDate as string, 
+        endDate as string, 
+        driver as string, 
+        status as string
+      );
+      res.json(records);
+    } catch (error) {
+      console.error("Error fetching detailed delivery report:", error);
+      res.status(500).json({ message: "Failed to fetch detailed delivery report" });
+    }
+  });
+
+  app.get("/api/deliveries/reports/drivers-list", async (req, res) => {
+    try {
+      const result = await db.execute(sql`
+        SELECT DISTINCT driver_name FROM delivery_routes 
+        WHERE driver_name IS NOT NULL AND driver_name != ''
+        ORDER BY driver_name
+      `);
+      res.json(result.rows.map((r: any) => r.driver_name));
+    } catch (error) {
+      console.error("Error fetching drivers list:", error);
+      res.status(500).json({ message: "Failed to fetch drivers list" });
+    }
+  });
+
   // Relatórios de entregas
   app.get("/api/deliveries/reports", async (req, res) => {
     try {

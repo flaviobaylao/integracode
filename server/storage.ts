@@ -243,6 +243,7 @@ export interface IStorage {
   getAllDeliveries(): Promise<any[]>;
   getDeliveryReport(period: string, startDate?: string, endDate?: string): Promise<any>;
   getDeliveryReportComparison(period: string): Promise<any>;
+  getDeliveryReportDetailed(startDate: string, endDate: string, driverFilter?: string, statusFilter?: string): Promise<any[]>;
   getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
@@ -4832,12 +4833,62 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDeliveryReportComparison(period: string): Promise<any> {
-    // Implementação simplificada para comparação
     return {
       totalDeliveries: 0,
       successRate: 0,
       failed: 0
     };
+  }
+
+  async getDeliveryReportDetailed(startDate: string, endDate: string, driverFilter?: string, statusFilter?: string): Promise<any[]> {
+    const conditions = [
+      sql`dr.route_date >= ${startDate}`,
+      sql`dr.route_date <= ${endDate}`,
+    ];
+    if (driverFilter && driverFilter !== "all") {
+      conditions.push(sql`dr.driver_name = ${driverFilter}`);
+    }
+    if (statusFilter && statusFilter !== "all") {
+      conditions.push(sql`drs.status = ${statusFilter}`);
+    }
+    const whereClause = sql.join(conditions, sql` AND `);
+
+    const result = await db.execute(sql`
+      SELECT 
+        drs.order_number,
+        drs.customer_name,
+        dr.driver_name,
+        dr.route_date,
+        drs.status,
+        drs.check_in_time AT TIME ZONE 'America/Sao_Paulo' as check_in_time,
+        drs.check_out_time AT TIME ZONE 'America/Sao_Paulo' as check_out_time,
+        drs.completed_at AT TIME ZONE 'America/Sao_Paulo' as completed_at,
+        drs.notes,
+        dr.route_name,
+        drs.stop_order,
+        b.invoice_number,
+        b.invoice_stage
+      FROM delivery_route_stops drs
+      JOIN delivery_routes dr ON dr.id = drs.route_id
+      LEFT JOIN billings b ON b.id = drs.billing_id
+      WHERE ${whereClause}
+      ORDER BY dr.route_date DESC, dr.driver_name, drs.stop_order
+    `);
+
+    return result.rows.map((row: any) => ({
+      orderNumber: row.order_number || row.invoice_number || '-',
+      customerName: row.customer_name,
+      driverName: row.driver_name || 'Não atribuído',
+      routeDate: row.route_date,
+      status: row.status,
+      checkInTime: row.check_in_time,
+      checkOutTime: row.check_out_time,
+      completedAt: row.completed_at,
+      notes: row.notes,
+      routeName: row.route_name,
+      invoiceStage: row.invoice_stage,
+      delivered: ['efetuada', 'entregue'].includes(row.status),
+    }));
   }
 
   async getDeliveryDriverStats(): Promise<any> {
