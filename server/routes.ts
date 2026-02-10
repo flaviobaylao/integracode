@@ -21941,7 +21941,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // DEBUG: Endpoint de teste sem autenticação - usando Drizzle ORM
   app.get('/api/leads-debug', async (req: any, res) => {
     try {
-      const rows = await db.select().from(leads).orderBy(desc(leads.createdAt));
+      const rows = await db.select({
+        id: leads.id,
+        fantasyName: leads.fantasyName,
+        latitude: leads.latitude,
+        longitude: leads.longitude,
+        contact: leads.contact,
+        phone: leads.phone,
+        observation: leads.observation,
+        status: leads.status,
+        temperature: leads.temperature,
+        createdBy: leads.createdBy,
+        createdByName: leads.createdByName,
+        assignedTo: leads.assignedTo,
+        lastCheckInAt: leads.lastCheckInAt,
+        lastCheckOutAt: leads.lastCheckOutAt,
+        nextContactDate: leads.nextContactDate,
+        createdAt: leads.createdAt,
+        updatedAt: leads.updatedAt,
+        hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
+      }).from(leads).orderBy(desc(leads.createdAt));
       
       const leadsData = rows.map((row: any) => ({
         id: row.id || '',
@@ -21950,7 +21969,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         longitude: String(row.longitude || '0'),
         contact: row.contact || '',
         phone: row.phone || '',
-        photo: row.photo || null,
+        photo: null,
+        hasPhoto: row.hasPhoto || false,
         observation: row.observation || '',
         status: row.status || 'pending',
         temperature: row.temperature || 'cold',
@@ -21979,7 +21999,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('📋 [LEADS] Buscando leads... user:', user?.email);
       
-      const rows = await db.select().from(leads).orderBy(desc(leads.createdAt));
+      const rows = await db.select({
+        id: leads.id,
+        fantasyName: leads.fantasyName,
+        latitude: leads.latitude,
+        longitude: leads.longitude,
+        contact: leads.contact,
+        phone: leads.phone,
+        observation: leads.observation,
+        status: leads.status,
+        temperature: leads.temperature,
+        createdBy: leads.createdBy,
+        createdByName: leads.createdByName,
+        assignedTo: leads.assignedTo,
+        lastCheckInAt: leads.lastCheckInAt,
+        lastCheckOutAt: leads.lastCheckOutAt,
+        nextContactDate: leads.nextContactDate,
+        createdAt: leads.createdAt,
+        updatedAt: leads.updatedAt,
+        hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
+      }).from(leads).orderBy(desc(leads.createdAt));
       
       console.log('📋 [LEADS] Leads encontrados:', rows.length);
       
@@ -21990,7 +22029,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         longitude: String(row.longitude || '0'),
         contact: row.contact || '',
         phone: row.phone || '',
-        photo: row.photo || null,
+        photo: null,
+        hasPhoto: row.hasPhoto || false,
         observation: row.observation || '',
         status: row.status || 'pending',
         temperature: row.temperature || 'cold',
