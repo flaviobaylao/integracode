@@ -4846,7 +4846,7 @@ export class DatabaseStorage implements IStorage {
       sql`dr.route_date <= ${endDate}`,
     ];
     if (driverFilter && driverFilter !== "all") {
-      conditions.push(sql`dr.driver_name = ${driverFilter}`);
+      conditions.push(sql`(dr.driver_name = ${driverFilter} OR dr.driver_email = ${driverFilter})`);
     }
     if (statusFilter && statusFilter !== "all") {
       conditions.push(sql`drs.status = ${statusFilter}`);
@@ -4857,7 +4857,8 @@ export class DatabaseStorage implements IStorage {
       SELECT 
         drs.order_number,
         drs.customer_name,
-        dr.driver_name,
+        COALESCE(NULLIF(dr.driver_name, ''), INITCAP(SPLIT_PART(dr.driver_email, '@', 1)), 'Não atribuído') as driver_name,
+        dr.driver_email,
         dr.route_date,
         drs.status,
         drs.check_in_time AT TIME ZONE 'America/Sao_Paulo' as check_in_time,
@@ -4878,7 +4879,7 @@ export class DatabaseStorage implements IStorage {
     return result.rows.map((row: any) => ({
       orderNumber: row.order_number || row.invoice_number || '-',
       customerName: row.customer_name,
-      driverName: row.driver_name || 'Não atribuído',
+      driverName: row.driver_name,
       routeDate: row.route_date,
       status: row.status,
       checkInTime: row.check_in_time,

@@ -101,7 +101,7 @@ export default function DeliveryReports() {
     enabled: Boolean(startDate && endDate),
   });
 
-  const { data: driversList = [] } = useQuery<string[]>({
+  const { data: driversList = [] } = useQuery<Array<{label: string; value: string}>>({
     queryKey: ['/api/deliveries/reports/drivers-list'],
   });
 
@@ -201,8 +201,8 @@ export default function DeliveryReports() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  {driversList.map((name) => (
-                    <SelectItem key={name} value={name}>{name}</SelectItem>
+                  {driversList.map((d) => (
+                    <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

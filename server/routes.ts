@@ -10618,11 +10618,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/deliveries/reports/drivers-list", async (req, res) => {
     try {
       const result = await db.execute(sql`
-        SELECT DISTINCT driver_name FROM delivery_routes 
-        WHERE driver_name IS NOT NULL AND driver_name != ''
-        ORDER BY driver_name
+        SELECT DISTINCT 
+          COALESCE(NULLIF(driver_name, ''), INITCAP(SPLIT_PART(driver_email, '@', 1))) as label,
+          COALESCE(NULLIF(driver_email, ''), driver_name) as value
+        FROM delivery_routes 
+        WHERE (driver_name IS NOT NULL AND driver_name != '') 
+           OR (driver_email IS NOT NULL AND driver_email != '')
+        ORDER BY label
       `);
-      res.json(result.rows.map((r: any) => r.driver_name));
+      res.json(result.rows.map((r: any) => ({ label: r.label, value: r.value })));
     } catch (error) {
       console.error("Error fetching drivers list:", error);
       res.status(500).json({ message: "Failed to fetch drivers list" });
