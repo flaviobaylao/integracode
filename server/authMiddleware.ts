@@ -102,22 +102,36 @@ export const checkSellerAccess = (req: Request, res: Response, next: NextFunctio
 export const authenticateAdmin = async (req: Request, res: Response, next: NextFunction) => {
   try {
     let userId: string | null = null;
+    let userEmail: string | null = null;
     
-    // Verificar sessão local primeiro (para admin Flavio)
-    if ((req.session as any)?.user?.claims?.sub) {
-      userId = (req.session as any).user.claims.sub;
+    // Verificar userId armazenado diretamente na sessão (forma mais comum - login local)
+    if ((req.session as any)?.userId) {
+      userId = (req.session as any).userId;
+      userEmail = (req.session as any)?.userEmail;
     }
-    // Verificar autenticação Replit
+    // Verificar sessão local com claims (para admin Flavio)
+    else if ((req.session as any)?.user?.claims?.sub) {
+      userId = (req.session as any).user.claims.sub;
+      userEmail = (req.session as any).user.claims.email;
+    }
+    // Verificar autenticação Replit com Passport
     else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
       userId = (req.user as any).claims.sub;
+      userEmail = (req.user as any).claims.email;
     }
     
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     
-    // Verificar se o usuário existe no banco e é admin
-    const user = await storage.getUser(userId);
+    // Verificar se o usuário existe no banco - primeiro por ID
+    let user = await storage.getUser(userId);
+    
+    // Se não encontrou por ID e temos email, buscar por email
+    if (!user && userEmail) {
+      user = await storage.getUserByEmail(userEmail);
+    }
+    
     if (!user || !user.isActive || user.role !== 'admin') {
       return res.status(403).json({ message: "Admin access required" });
     }
