@@ -21907,47 +21907,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // DEBUG: Endpoint de teste sem autenticação - usando SQL raw simples
   app.get('/api/leads-debug', async (req: any, res) => {
-    console.log('🔍 [LEADS-DEBUG] Requisição recebida!');
-    
     try {
-      console.log('🔍 [LEADS-DEBUG] Executando query...');
-      // Testando LIMIT 10 (minimal)
-      const result = await db.execute(sql`SELECT * FROM leads ORDER BY created_at DESC LIMIT 10`);
-      console.log('🔍 [LEADS-DEBUG] Query executada, rows:', result.rows?.length);
+      const result = await db.execute(sql`
+        SELECT id, fantasy_name, 
+               CAST(latitude AS TEXT) as latitude, 
+               CAST(longitude AS TEXT) as longitude, 
+               contact, phone, photo,
+               observation, status, temperature, created_by, created_by_name,
+               assigned_to, 
+               CAST(last_check_in_at AS TEXT) as last_check_in_at, 
+               CAST(last_check_out_at AS TEXT) as last_check_out_at, 
+               CAST(created_at AS TEXT) as created_at, 
+               CAST(updated_at AS TEXT) as updated_at,
+               CAST(next_contact_date AS TEXT) as next_contact_date
+        FROM leads 
+        ORDER BY created_at DESC
+      `);
       const rows = result.rows || [];
       
-      // Mapear snake_case para camelCase no JavaScript
-      const leadsData = rows.map((row: any) => ({
-        id: row.id,
-        fantasyName: row.fantasy_name || '',
-        latitude: String(row.latitude || '0'),
-        longitude: String(row.longitude || '0'),
-        contact: row.contact || '',
-        phone: row.phone || '',
-        photo: row.photo || null,
-        observation: row.observation || '',
-        status: row.status || 'pending',
-        temperature: row.temperature || null,
-        createdBy: row.created_by || '',
-        createdByName: row.created_by_name || null,
-        assignedTo: row.assigned_to || null,
-        lastCheckInAt: row.last_check_in_at || null,
-        lastCheckOutAt: row.last_check_out_at || null,
-        createdAt: row.created_at ? String(row.created_at) : null,
-        updatedAt: row.updated_at ? String(row.updated_at) : null,
-      }));
+      let leadsData: any[] = [];
+      let errors: string[] = [];
+      for (const row of rows as any[]) {
+        try {
+          leadsData.push({
+            id: row.id || '',
+            fantasyName: row.fantasy_name || '',
+            latitude: row.latitude || '0',
+            longitude: row.longitude || '0',
+            contact: row.contact || '',
+            phone: row.phone || '',
+            photo: row.photo || null,
+            observation: row.observation || '',
+            status: row.status || 'pending',
+            temperature: row.temperature || 'cold',
+            createdBy: row.created_by || '',
+            createdByName: row.created_by_name || '',
+            assignedTo: row.assigned_to || null,
+            lastCheckInAt: row.last_check_in_at || null,
+            lastCheckOutAt: row.last_check_out_at || null,
+            nextContactDate: row.next_contact_date || null,
+            createdAt: row.created_at || null,
+            updatedAt: row.updated_at || null,
+          });
+        } catch (rowError: any) {
+          errors.push(`Row ${row?.id}: ${rowError?.message}`);
+        }
+      }
       
-      console.log('🔍 [LEADS-DEBUG] Enviando resposta...');
-      const response = { success: true, count: leadsData.length, leads: leadsData };
-      const jsonStr = JSON.stringify(response);
-      console.log('🔍 [LEADS-DEBUG] JSON size:', jsonStr.length);
-      
-      res.setHeader('Content-Type', 'application/json');
-      res.send(jsonStr);
-      console.log('🔍 [LEADS-DEBUG] Resposta enviada!');
+      res.json({ success: true, count: leadsData.length, errors, leads: leadsData });
     } catch (error: any) {
       console.error('❌ [LEADS-DEBUG] Erro:', error);
-      res.status(500).json({ success: false, error: error?.message || String(error) });
+      res.status(500).json({ success: false, error: error?.message || String(error), stack: error?.stack });
     }
   });
   
@@ -22018,9 +22028,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('📋 [LEADS] Retornando', leadsData.length, 'leads');
       res.json(leadsData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Erro ao buscar leads:', error);
-      res.status(500).json({ message: 'Erro ao buscar leads', error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ 
+        message: 'Erro ao buscar leads', 
+        error: error?.message || String(error),
+        stack: error?.stack?.split('\n').slice(0, 5)
+      });
     }
   });
   

@@ -337,6 +337,9 @@ export default function LeadsManagement() {
         <div className="flex flex-col items-center justify-center h-64 gap-4">
           <div className="text-red-500 text-lg font-semibold">Erro ao carregar leads</div>
           <div className="text-gray-500 text-sm">{(error as any)?.message || 'Erro desconhecido'}</div>
+          <pre className="text-xs text-gray-400 max-w-xl overflow-auto bg-gray-100 p-2 rounded">
+            {JSON.stringify({ name: (error as any)?.name, status: (error as any)?.status, stack: (error as any)?.stack?.split?.('\n')?.slice(0, 3) }, null, 2)}
+          </pre>
           <Button onClick={() => refetch()} variant="outline">
             Tentar novamente
           </Button>
