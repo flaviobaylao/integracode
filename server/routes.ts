@@ -21905,6 +21905,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // DIAGNOSTIC: Simple ping to verify route registration
+  app.get('/api/ping', async (req: any, res) => {
+    try {
+      const dbResult = await db.execute(sql`SELECT COUNT(*) as cnt FROM leads`);
+      const count = (dbResult.rows[0] as any)?.cnt || 0;
+      res.json({ ok: true, time: new Date().toISOString(), leadsCount: count });
+    } catch (e: any) {
+      res.json({ ok: false, error: e?.message, stack: e?.stack?.split('\n').slice(0, 3) });
+    }
+  });
+
   // DEBUG: Endpoint de teste sem autenticação - usando SQL raw simples
   app.get('/api/leads-debug', async (req: any, res) => {
     try {
