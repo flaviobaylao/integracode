@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -274,6 +275,33 @@ export default function LeadsManagement() {
     very_hot: "Muito Quente"
   };
 
+  const exportToExcel = () => {
+    const data = filteredLeads.map((lead) => ({
+      "Nome": lead.fantasyName || "",
+      "Contato": lead.contact || "",
+      "Telefone": lead.phone || "",
+      "Latitude": lead.latitude ? parseFloat(lead.latitude.toString()).toFixed(6) : "",
+      "Longitude": lead.longitude ? parseFloat(lead.longitude.toString()).toFixed(6) : "",
+      "Status": statusLabels[lead.status] || lead.status,
+      "Temperatura": temperatureLabels[lead.temperature || ""] || "",
+      "Observação": lead.observation || "",
+      "Atribuído a": lead.assignedTo || "",
+      "Criado por": lead.createdByName || "",
+      "Próximo Contato": lead.nextContactDate ? formatInTimeZone(new Date(String(lead.nextContactDate)), "America/Sao_Paulo", "dd/MM/yyyy", { locale: ptBR }) : "",
+      "Criado em": lead.createdAt ? formatInTimeZone(new Date(String(lead.createdAt)), "America/Sao_Paulo", "dd/MM/yyyy HH:mm", { locale: ptBR }) : "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    ws["!cols"] = [
+      { wch: 30 }, { wch: 25 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
+      { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 20 }, { wch: 20 },
+      { wch: 16 }, { wch: 18 },
+    ];
+    XLSX.writeFile(wb, `leads_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    toast({ title: "Exportação concluída", description: `${data.length} leads exportados com sucesso.` });
+  };
+
   const temperatureColors: Record<string, string> = {
     cold: "bg-blue-500",
     warm: "bg-yellow-500",
@@ -360,6 +388,14 @@ export default function LeadsManagement() {
         </div>
         <div className="flex items-center gap-2">
           <BackToDashboardButton />
+          <Button
+            variant="outline"
+            onClick={exportToExcel}
+            disabled={filteredLeads.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Exportar Excel
+          </Button>
           {(isAdmin || isVendedor) && (
             <Button
               onClick={() => setIsCreating(true)}
