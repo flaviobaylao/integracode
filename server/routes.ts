@@ -13787,6 +13787,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         averageDeliveryTime: number;
         orderNumber: string | null;
         omieOrderId: string | null;
+        omieCustomerCode: string | null;
       }>(sql`
         SELECT DISTINCT ON (b.id)
           b.id,
@@ -13800,7 +13801,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.receiving_weekdays as "receivingWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
           b.order_number as "orderNumber",
-          b.omie_order_id as "omieOrderId"
+          b.omie_order_id as "omieOrderId",
+          b.omie_customer_code as "omieCustomerCode"
         FROM billings b
         LEFT JOIN customers c ON (
           c.id = CONCAT('omie-client-', b.omie_customer_code)
@@ -13815,11 +13817,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const billing = billingsResult.rows[0];
-      const lat = parseFloat(billing.customerLatitude) || 0;
-      const lng = parseFloat(billing.customerLongitude) || 0;
+      let customerName = billing.customerName;
+      let customerAddress = billing.customerAddress;
+      let customerId = billing.customerId;
+      let lat = parseFloat(billing.customerLatitude) || 0;
+      let lng = parseFloat(billing.customerLongitude) || 0;
+
+      if ((!customerName || customerName === 'Cliente não encontrado' || !lat || !lng) && billing.omieCustomerCode) {
+        console.log(`🔍 [ADD-STOP] Cliente não encontrado localmente. Buscando no Omie pelo código ${billing.omieCustomerCode}...`);
+        try {
+          const omieService = getOmieService(storage);
+          if (omieService) {
+            const omieClient = await omieService.getClientByCode(parseInt(billing.omieCustomerCode));
+            if (omieClient) {
+              customerName = omieClient.nome_fantasia || omieClient.razao_social || customerName;
+              const omieAddress = [omieClient.endereco, omieClient.endereco_numero, omieClient.bairro, omieClient.cidade, omieClient.estado].filter(Boolean).join(', ');
+              if (omieAddress) customerAddress = omieAddress;
+              customerId = `omie-client-${billing.omieCustomerCode}`;
+
+              const converted = omieService.convertClientToSystemFormat(omieClient);
+              if (converted.latitude && converted.longitude) {
+                lat = parseFloat(String(converted.latitude)) || 0;
+                lng = parseFloat(String(converted.longitude)) || 0;
+              }
+
+              console.log(`✅ [ADD-STOP] Cliente encontrado no Omie: ${customerName}`);
+
+              await db.update(billingsTable)
+                .set({ customerFantasyName: customerName, customerDocument: omieClient.cnpj_cpf || '' })
+                .where(eq(billingsTable.omieCustomerCode, billing.omieCustomerCode));
+              console.log(`📝 [ADD-STOP] Billings com omie_customer_code=${billing.omieCustomerCode} atualizados com nome correto`);
+            }
+          }
+        } catch (omieError: any) {
+          console.warn(`⚠️ [ADD-STOP] Falha ao buscar cliente no Omie: ${omieError.message}`);
+        }
+      }
 
       if (!lat || !lng) {
-        console.log(`⚠️ [ADD-STOP] Cliente sem coordenadas GPS: ${billing.customerName}. Usando posição padrão.`);
+        console.log(`⚠️ [ADD-STOP] Cliente sem coordenadas GPS: ${customerName}. Usando posição padrão.`);
       }
 
       // Buscar a ordem máxima de parada
@@ -13861,9 +13897,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         routeId,
         billingId,
         salesCardId: null,
-        customerId: billing.customerId || '',
-        customerName: billing.customerName,
-        customerAddress: billing.customerAddress,
+        customerId: customerId || '',
+        customerName: customerName || 'Cliente',
+        customerAddress: customerAddress || '',
         stopOrder: nextOrder,
         estimatedArrival: formatTime(arrivalTime),
         estimatedDeparture: formatTime(departureTime),
