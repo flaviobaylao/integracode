@@ -13779,6 +13779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invoiceNumber: string;
         customerName: string;
         customerAddress: string;
+        customerId: string;
         customerLatitude: string;
         customerLongitude: string;
         deliveryWeekdays: any;
@@ -13792,8 +13793,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           b.invoice_number as "invoiceNumber",
           COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
-          c.latitude as "customerLatitude",
-          c.longitude as "customerLongitude",
+          COALESCE(c.id, '') as "customerId",
+          COALESCE(CAST(c.latitude AS TEXT), '0') as "customerLatitude",
+          COALESCE(CAST(c.longitude AS TEXT), '0') as "customerLongitude",
           c.delivery_weekdays as "deliveryWeekdays",
           c.receiving_weekdays as "receivingWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
@@ -13813,11 +13815,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const billing = billingsResult.rows[0];
-      const lat = parseFloat(billing.customerLatitude);
-      const lng = parseFloat(billing.customerLongitude);
+      const lat = parseFloat(billing.customerLatitude) || 0;
+      const lng = parseFloat(billing.customerLongitude) || 0;
 
-      if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-        return res.status(422).json({ message: "Coordenadas GPS ausentes para este cliente" });
+      if (!lat || !lng) {
+        console.log(`⚠️ [ADD-STOP] Cliente sem coordenadas GPS: ${billing.customerName}. Usando posição padrão.`);
       }
 
       // Buscar a ordem máxima de parada
@@ -13865,8 +13867,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stopOrder: nextOrder,
         estimatedArrival: formatTime(arrivalTime),
         estimatedDeparture: formatTime(departureTime),
-        customerLatitude: billing.customerLatitude,
-        customerLongitude: billing.customerLongitude,
+        customerLatitude: String(lat),
+        customerLongitude: String(lng),
         orderNumber: billing.orderNumber || null,
         omieOrderId: billing.omieOrderId || null,
       });
