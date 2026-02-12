@@ -22092,6 +22092,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: row.updatedAt ? String(row.updatedAt) : null,
       }));
       
+      if (user.role === 'telemarketing') {
+        leadsData = leadsData.filter((lead: any) => lead.createdBy === user.id);
+      }
+
       if (statusFilter) {
         leadsData = leadsData.filter((lead: any) => lead.status === statusFilter);
       }
@@ -22143,17 +22147,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       
-      // Verificar permissão (admin/coordinator/administrative/vendedor podem criar)
-      if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user.role)) {
+      if (!['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(user.role)) {
         return res.status(403).json({ 
-          message: 'Acesso negado. Apenas usuários administrativos e vendedores podem criar leads.' 
+          message: 'Acesso negado. Apenas usuários administrativos, vendedores e telemarketing podem criar leads.' 
         });
       }
       
       const leadData = req.body;
       
-      // Se vendedor está criando, atribua automaticamente a si mesmo se não houver assignedTo
-      if (user.role === 'vendedor' && !leadData.assignedTo) {
+      if ((user.role === 'vendedor' || user.role === 'telemarketing') && !leadData.assignedTo) {
         leadData.assignedTo = user.id;
       }
       
