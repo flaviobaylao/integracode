@@ -1050,19 +1050,40 @@ export default function ActiveCustomers() {
                 </div>
               ) : (
                 <>
-                {/* Container com barra de rolagem horizontal no topo usando rotação */}
+                {/* Barra de rolagem horizontal no topo */}
+                <div
+                  ref={(el) => {
+                    if (el) {
+                      const tableContainer = el.nextElementSibling as HTMLDivElement;
+                      if (tableContainer) {
+                        const inner = el.querySelector('div') as HTMLDivElement;
+                        const syncFromTop = () => { tableContainer.scrollLeft = el.scrollLeft; };
+                        const syncFromTable = () => { el.scrollLeft = tableContainer.scrollLeft; };
+                        el.addEventListener('scroll', syncFromTop);
+                        tableContainer.addEventListener('scroll', syncFromTable);
+                        const updateWidth = () => {
+                          if (inner) inner.style.width = `${tableContainer.scrollWidth}px`;
+                        };
+                        updateWidth();
+                        const observer = new ResizeObserver(updateWidth);
+                        observer.observe(tableContainer);
+                      }
+                    }
+                  }}
+                  className="overflow-x-auto"
+                  style={{ overflowY: 'hidden', height: '16px' }}
+                >
+                  <div style={{ height: '1px' }}></div>
+                </div>
                 <div 
                   className="overflow-x-auto" 
                   style={{ 
-                    maxHeight: 'calc(100vh - 280px)',
+                    maxHeight: 'calc(100vh - 300px)',
                     overflowY: 'auto',
-                    direction: 'rtl',
-                    transform: 'rotateX(180deg)'
                   }}
                 >
-                <div style={{ direction: 'ltr', transform: 'rotateX(180deg)' }}>
                   <Table className="min-w-[1800px]">
-                    <TableHeader className="sticky top-0 bg-background z-10">
+                    <TableHeader className="sticky top-0 bg-background z-10" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
                       <TableRow>
                         <TableHead className="min-w-[60px]">Status</TableHead>
                         <TableHead className="min-w-[120px]">CPF/CNPJ</TableHead>
@@ -1270,7 +1291,6 @@ export default function ActiveCustomers() {
                       )}
                     </TableBody>
                   </Table>
-                </div>
                 </div>
                 </>
               )}
