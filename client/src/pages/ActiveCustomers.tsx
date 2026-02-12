@@ -485,6 +485,11 @@ export default function ActiveCustomers() {
     queryKey: ["/api/service-logs/last/customer"],
   });
 
+  // Query para vendedores ativos (filtro)
+  const { data: activeUsers = [] } = useQuery<Array<{ id: string; firstName: string; lastName: string; role: string; isActive: boolean }>>({
+    queryKey: ["/api/users"],
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
@@ -626,17 +631,11 @@ export default function ActiveCustomers() {
     });
   };
 
-  // Obter lista única de vendedores
-  const sellers = Array.from(
-    new Map(
-      activeCustomers
-        .filter(ac => ac.customer?.sellerId)
-        .map(ac => [
-          ac.customer?.sellerId,
-          { id: ac.customer?.sellerId, name: ac.customer?.sellerName || `Vendedor ${ac.customer?.sellerId?.slice(0, 4)}` }
-        ])
-    ).values()
-  ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // Obter lista de vendedores ativos do sistema
+  const sellers = activeUsers
+    .filter(u => u.isActive && u.role === 'vendedor')
+    .map(u => ({ id: u.id, name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}` }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // Obter lista única de dias de rota
   const daysOfRoute = Array.from(
