@@ -253,6 +253,7 @@ export default function LeadsManagement() {
 
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
   const isVendedor = currentUser?.role === 'vendedor';
+  const isTelemarketing = currentUser?.role === 'telemarketing';
 
   const statusLabels: Record<string, string> = {
     pending: "Pendente",
@@ -413,7 +414,7 @@ export default function LeadsManagement() {
             <Download className="h-4 w-4 mr-2" />
             Exportar Excel
           </Button>
-          {(isAdmin || isVendedor) && (
+          {(isAdmin || isVendedor || isTelemarketing) && (
             <Button
               onClick={() => setIsCreating(true)}
               data-testid="button-create-lead"
