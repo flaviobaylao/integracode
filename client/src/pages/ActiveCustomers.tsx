@@ -631,9 +631,9 @@ export default function ActiveCustomers() {
     });
   };
 
-  // Obter lista de vendedores ativos do sistema
+  // Obter lista de vendedores e telemarketing ativos do sistema
   const sellers = activeUsers
-    .filter(u => u.isActive && u.role === 'vendedor')
+    .filter(u => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))
     .map(u => ({ id: u.id, name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}` }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
