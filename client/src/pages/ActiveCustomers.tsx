@@ -593,11 +593,35 @@ export default function ActiveCustomers() {
   };
 
   const handleExportContacts = () => {
-    const dataToExport = filteredCustomers.map((ac) => ({
-      'Nome Fantasia': ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || '',
-      'Telefone': ac.customer?.phone || '',
-      'Vendedor': ac.customer?.sellerName || ''
-    }));
+    const dataToExport = filteredCustomers.map((ac) => {
+      const prev = ac.previousMonthTotal || 0;
+      const curr = ac.currentMonthTotal || 0;
+      let variacao = '-';
+      if (prev === 0 && curr > 0) variacao = '+100%';
+      else if (prev > 0) variacao = `${(((curr - prev) / prev) * 100).toFixed(0)}%`;
+
+      const lastLog = ac.customer?.id ? lastServiceLogs[ac.customer.id] : null;
+
+      return {
+        'Status': ac.matchStatus === 'matched' ? 'Encontrado' : 'Não encontrado',
+        'CPF/CNPJ': ac.document || '',
+        'Nome': ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || '',
+        'Bairro': ac.customer?.neighborhood || '',
+        'Telefone': ac.customer?.phone || '',
+        'Vendedor': ac.customer?.sellerName || '',
+        'Tipo': ac.customer?.virtualService ? 'Virtual' : 'Presencial',
+        'Dia da Rota': ac.customer?.weekdays ? formatWeekdays(ac.customer.weekdays) : '',
+        'Periodicidade': ac.customer?.visitPeriodicity === 'semanal' ? 'Semanal' : ac.customer?.visitPeriodicity === 'quinzenal' ? 'Quinzenal' : ac.customer?.visitPeriodicity === 'mensal' ? 'Mensal' : ac.customer?.visitPeriodicity || '',
+        'Positivado': ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO',
+        'Mês Anterior': prev > 0 ? prev.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
+        'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
+        'Variação': variacao,
+        'Última Atividade': ac.customer?.lastActivityDate ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR }) : '',
+        'Último Atend. Virtual': lastLog ? format(new Date(lastLog.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '',
+        'Atendente Virtual': lastLog?.attendant || '',
+        'Próximas Visitas': ac.nextThreeVisits.length > 0 ? ac.nextThreeVisits.sort((a, b) => a.date.localeCompare(b.date)).map(v => { try { const [y, m, d] = v.date.split('-'); return `${d}/${m}`; } catch { return ''; } }).filter(Boolean).join(', ') : '',
+      };
+    });
 
     if (dataToExport.length === 0) {
       toast({
@@ -608,13 +632,12 @@ export default function ActiveCustomers() {
       return;
     }
 
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Bairro', 'Telefone', 'Vendedor', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
-      ['Nome Fantasia', 'Telefone', 'Vendedor'].join(';'),
-      ...dataToExport.map(row => [
-        `"${(row['Nome Fantasia'] || '').replace(/"/g, '""')}"`,
-        `"${(row['Telefone'] || '').replace(/"/g, '""')}"`,
-        `"${(row['Vendedor'] || '').replace(/"/g, '""')}"`
-      ].join(';'))
+      headers.join(';'),
+      ...dataToExport.map(row =>
+        headers.map(h => `"${(String((row as any)[h]) || '').replace(/"/g, '""')}"`).join(';')
+      )
     ].join('\n');
 
     const BOM = '\uFEFF';
