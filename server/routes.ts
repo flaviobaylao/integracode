@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
-import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService } from "./omieIntegration";
+import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -371,6 +371,9 @@ async function resolveRouteStops(
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+
+  // Auto-resolve default Omie instance ID for env-var-based service
+  await resolveDefaultInstanceId(storage);
 
   // Configure Evolution API for WhatsApp
   const evolutionBaseUrl = process.env.EVOLUTION_API_BASE_URL;

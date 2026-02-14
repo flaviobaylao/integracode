@@ -4545,6 +4545,10 @@ export class DatabaseStorage implements IStorage {
         if (!billing.invoiceStage && existing.invoiceStage) {
           billing.invoiceStage = existing.invoiceStage;
         }
+        // Preservar omieInstanceId existente se o novo estiver vazio
+        if (!billing.omieInstanceId && existing.omieInstanceId) {
+          billing.omieInstanceId = existing.omieInstanceId;
+        }
         savedBilling = await this.updateBilling(existing.id, billing);
         action = 'updated';
       } else {

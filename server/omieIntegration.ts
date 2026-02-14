@@ -4845,6 +4845,8 @@ export class OmieService {
 // Singleton instance - configuração será feita via variáveis de ambiente
 let omieService: OmieService | null = null;
 
+let _cachedDefaultInstanceId: string | null | undefined = undefined;
+
 export function getOmieService(storage?: any): OmieService | null {
   if (!process.env.OMIE_APP_KEY || !process.env.OMIE_APP_SECRET) {
     return null;
@@ -4853,7 +4855,23 @@ export function getOmieService(storage?: any): OmieService | null {
   return new OmieService({
     appKey: process.env.OMIE_APP_KEY,
     appSecret: process.env.OMIE_APP_SECRET,
-  }, storage);
+  }, storage, _cachedDefaultInstanceId || undefined);
+}
+
+export async function resolveDefaultInstanceId(storage: any): Promise<void> {
+  try {
+    const instances = await storage.getOmieInstances();
+    const envKey = process.env.OMIE_APP_KEY;
+    if (envKey && instances?.length > 0) {
+      const match = instances.find((i: any) => i.appKey === envKey);
+      if (match) {
+        _cachedDefaultInstanceId = match.id;
+        console.log(`✅ Default OmieService vinculado à instância: ${match.name} (${match.id})`);
+      }
+    }
+  } catch (e) {
+    console.error('⚠️ Erro ao resolver instância padrão:', e);
+  }
 }
 
 export async function getOmieServiceForInstance(storage: any, instanceId: string): Promise<OmieService | null> {
