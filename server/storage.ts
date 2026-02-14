@@ -2973,7 +2973,8 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.delivery_saturday_time_slots, '[]'::jsonb) as "deliverySaturdayTimeSlots",
         COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
         c.id as "customerId",
-        c.weekdays as "customerWeekdays"
+        c.weekdays as "customerWeekdays",
+        b.omie_instance_id as "omieInstanceId"
       FROM billings b
       LEFT JOIN customers c ON (
         b.omie_customer_code::text = c.omie_client_code
@@ -3034,7 +3035,8 @@ export class DatabaseStorage implements IStorage {
         receivingWeekdays: this.parseJsonField(row.receivingWeekdays, []),
         deliveryWeekdays: calculatedDeliveryDays.length > 0 ? calculatedDeliveryDays : this.parseJsonField(row.deliveryWeekdays, []),
         deliveryTimeSlots: this.parseJsonField(row.deliveryTimeSlots, []),
-        deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, [])
+        deliverySaturdayTimeSlots: this.parseJsonField(row.deliverySaturdayTimeSlots, []),
+        omieInstanceId: row.omieInstanceId || null,
       };
     });
   }

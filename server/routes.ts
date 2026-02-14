@@ -110,6 +110,38 @@ async function logOmieStageChange(params: {
   }
 }
 
+async function getOmieServiceForBilling(storage: any, billingId: string): Promise<OmieService | null> {
+  try {
+    const [billing] = await db.select({ omieInstanceId: billingsTable.omieInstanceId }).from(billingsTable).where(eq(billingsTable.id, billingId)).limit(1);
+    if (billing?.omieInstanceId) {
+      const svc = await getOmieServiceForInstance(storage, billing.omieInstanceId);
+      if (svc) return svc;
+    }
+    return getOmieService(storage);
+  } catch {
+    return getOmieService(storage);
+  }
+}
+
+async function getOmieServicesGroupedByInstance(storage: any, billingIds: string[]): Promise<Map<string, { service: OmieService; billingIds: string[] }>> {
+  const grouped = new Map<string, { service: OmieService; billingIds: string[] }>();
+  const billingsData = await db.select({ id: billingsTable.id, omieInstanceId: billingsTable.omieInstanceId }).from(billingsTable).where(inArray(billingsTable.id, billingIds));
+  
+  for (const b of billingsData) {
+    const key = b.omieInstanceId || '__default__';
+    if (!grouped.has(key)) {
+      let svc: OmieService | null = null;
+      if (b.omieInstanceId) {
+        svc = await getOmieServiceForInstance(storage, b.omieInstanceId);
+      }
+      if (!svc) svc = getOmieService(storage);
+      if (svc) grouped.set(key, { service: svc, billingIds: [] });
+    }
+    grouped.get(key)?.billingIds.push(b.id);
+  }
+  return grouped;
+}
+
 // Configurar multer para upload de arquivos
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -8087,43 +8119,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results.errors.push(`Clientes: ${error.message}`);
       }
 
-      // 2. Sincronizar pedidos/faturamentos (TODOS os períodos)
+      // 2. Sincronizar pedidos/faturamentos (TODOS os períodos) - Iterar todas as instâncias ativas
       try {
-        console.log('💰 Sincronizando pedidos e faturamentos...');
-        const billingResult = await omieService.syncAllOrders();
+        console.log('💰 Sincronizando pedidos e faturamentos (todas as instâncias)...');
+        
+        const billingInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+        const hasBillingInstances = billingInstances.length > 0;
+        
+        const billingSvcs: Array<{ svc: OmieService; name: string }> = [];
+        if (hasBillingInstances) {
+          for (const inst of billingInstances) {
+            billingSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+          }
+        } else {
+          billingSvcs.push({ svc: omieService, name: 'Padrão (env vars)' });
+        }
+        
+        let billingTotalProcessed = 0;
+        let billingTotalImported = 0;
+        let billingTotalUpdated = 0;
+        const billingErrors: string[] = [];
+        
+        for (const { svc, name } of billingSvcs) {
+          try {
+            console.log(`📡 Sincronizando faturamentos da instância: ${name}`);
+            const billingResult = await svc.syncAllOrders();
+            billingTotalProcessed += billingResult.totalProcessed || 0;
+            billingTotalImported += billingResult.imported || 0;
+            billingTotalUpdated += billingResult.updated || 0;
+            if (billingResult.errors?.length) billingErrors.push(...billingResult.errors);
+            console.log(`✅ Faturamentos instância ${name}: ${billingResult.totalProcessed || 0} processados`);
+          } catch (instErr: any) {
+            console.error(`❌ Erro na sincronização de faturamentos (instância ${name}):`, instErr);
+            billingErrors.push(`${name}: ${instErr.message}`);
+          }
+        }
+        
         results.billings = {
-          totalProcessed: billingResult.totalProcessed || 0,
-          imported: billingResult.imported || 0,
-          updated: billingResult.updated || 0,
-          errors: billingResult.errors || []
+          totalProcessed: billingTotalProcessed,
+          imported: billingTotalImported,
+          updated: billingTotalUpdated,
+          errors: billingErrors
         };
-        console.log('✅ Faturamentos sincronizados:', results.billings);
+        console.log('✅ Faturamentos sincronizados (todas as instâncias):', results.billings);
       } catch (error: any) {
         console.error('❌ Erro na sincronização de faturamentos:', error);
         results.errors.push(`Faturamentos: ${error.message}`);
       }
 
-      // 3. Sincronizar débitos vencidos
+      // 3. Sincronizar débitos vencidos - Iterar todas as instâncias ativas
       try {
-        console.log('⏰ Sincronizando débitos vencidos...');
-        const overdueData = await omieService.getOverdueDebts();
+        console.log('⏰ Sincronizando débitos vencidos (todas as instâncias)...');
         
-        // PROTEÇÃO: Só salvar se a sincronização foi bem-sucedida
-        if (overdueData.success) {
-          // Passar omieInstanceId para tagear os débitos por instância
-          await storage.syncOverdueDebts(overdueData.debts, false, omieService.omieInstanceId);
-          
-          results.overdueDebts = {
-            totalClients: overdueData.totalClients || 0,
-            totalAmount: overdueData.totalAmount || 0,
-            debts: overdueData.debts ? overdueData.debts.length : 0
-          };
-          console.log('✅ Débitos vencidos sincronizados e salvos no banco:', results.overdueDebts);
+        const debtInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+        const hasDebtInstances = debtInstances.length > 0;
+        
+        const debtSvcs: Array<{ svc: OmieService; name: string }> = [];
+        if (hasDebtInstances) {
+          for (const inst of debtInstances) {
+            debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+          }
         } else {
-          console.error(`❌ Sincronização de débitos falhou: ${overdueData.errorMessage}`);
-          results.errors.push(`Débitos: ${overdueData.errorMessage || 'Erro na API Omie'}`);
-          results.overdueDebts = { totalClients: 0, totalAmount: 0, debts: 0, preserved: true };
+          debtSvcs.push({ svc: omieService, name: 'Padrão (env vars)' });
         }
+        
+        let debtTotalClients = 0;
+        let debtTotalAmount = 0;
+        let debtTotalDebts = 0;
+        
+        for (const { svc, name } of debtSvcs) {
+          try {
+            console.log(`📡 Sincronizando débitos da instância: ${name}`);
+            const overdueData = await svc.getOverdueDebts();
+            
+            if (overdueData.success) {
+              await storage.syncOverdueDebts(overdueData.debts, false, svc.omieInstanceId);
+              debtTotalClients += overdueData.totalClients || 0;
+              debtTotalAmount += overdueData.totalAmount || 0;
+              debtTotalDebts += overdueData.debts ? overdueData.debts.length : 0;
+              console.log(`✅ Débitos instância ${name}: ${overdueData.debts?.length || 0} débitos`);
+            } else {
+              console.error(`❌ Sincronização de débitos falhou (instância ${name}): ${overdueData.errorMessage}`);
+              results.errors.push(`Débitos (${name}): ${overdueData.errorMessage || 'Erro na API Omie'}`);
+            }
+          } catch (instErr: any) {
+            console.error(`❌ Erro na sincronização de débitos (instância ${name}):`, instErr);
+            results.errors.push(`Débitos (${name}): ${instErr.message}`);
+          }
+        }
+        
+        results.overdueDebts = {
+          totalClients: debtTotalClients,
+          totalAmount: debtTotalAmount,
+          debts: debtTotalDebts
+        };
+        console.log('✅ Débitos vencidos sincronizados (todas as instâncias):', results.overdueDebts);
       } catch (error: any) {
         console.error('❌ Erro na sincronização de débitos:', error);
         results.errors.push(`Débitos: ${error.message}`);
@@ -8188,45 +8278,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sincronizar TODAS as notas fiscais do Omie
+  // Sincronizar TODAS as notas fiscais do Omie (todas as instâncias ativas)
   app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({
-          message: 'Integração Omie não configurada'
-        });
+      const activeInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+      const hasInstances = activeInstances.length > 0;
+      
+      if (!hasInstances) {
+        const defaultService = getOmieService(storage);
+        if (!defaultService) {
+          return res.status(503).json({
+            message: 'Integração Omie não configurada'
+          });
+        }
       }
       
-      console.log(`🔄 Iniciando sincronização de TODAS as notas fiscais do Omie...`);
+      console.log(`🔄 Iniciando sincronização de TODAS as notas fiscais do Omie (${hasInstances ? activeInstances.length + ' instâncias' : 'env vars padrão'})...`);
       
-      // Inicia o processo de sincronização em background
       (async () => {
         try {
           await storage.updateSyncStatus('omie_billings', { 
             status: 'in_progress', 
-            message: 'Iniciando sincronização total de faturamentos...',
+            message: `Iniciando sincronização total de faturamentos (${hasInstances ? activeInstances.length + ' instâncias' : '1 instância padrão'})...`,
             recordsProcessed: 0,
             currentProgress: 0
           });
           
-          await (omieService as any).syncBillings({ 
-            fullResync: true,
-            onProgress: (progress: any) => {
-              storage.updateSyncStatus('omie_billings', { 
-                status: 'in_progress', 
-                recordsProcessed: progress.processed,
-                totalRecords: progress.total,
-                currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
-              });
+          const servicesToSync: Array<{ service: OmieService; name: string }> = [];
+          if (hasInstances) {
+            for (const inst of activeInstances) {
+              servicesToSync.push({ service: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
             }
-          });
+          } else {
+            servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
+          }
+          
+          let totalProcessed = 0;
+          for (let i = 0; i < servicesToSync.length; i++) {
+            const { service, name } = servicesToSync[i];
+            console.log(`📡 [${i + 1}/${servicesToSync.length}] Sincronizando instância: ${name}`);
+            
+            await storage.updateSyncStatus('omie_billings', { 
+              status: 'in_progress', 
+              message: `Sincronizando instância ${name} (${i + 1}/${servicesToSync.length})...`,
+              recordsProcessed: totalProcessed,
+              currentProgress: Math.round((i / servicesToSync.length) * 100)
+            });
+            
+            await (service as any).syncBillings({ 
+              fullResync: true,
+              onProgress: (progress: any) => {
+                storage.updateSyncStatus('omie_billings', { 
+                  status: 'in_progress', 
+                  recordsProcessed: totalProcessed + (progress.processed || 0),
+                  totalRecords: progress.total,
+                  currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
+                });
+              }
+            });
+            
+            totalProcessed += (service as any).lastSyncProcessed || 0;
+            console.log(`✅ Instância ${name} concluída`);
+          }
           
           await storage.updateSyncStatus('omie_billings', { 
             status: 'success', 
-            message: 'Sincronização total concluída com sucesso',
+            message: `Sincronização total concluída com sucesso (${servicesToSync.length} instância(s))`,
             lastFinishedAt: nowBrazil(),
-            currentProgress: 100
+            currentProgress: 100,
+            recordsProcessed: totalProcessed
           });
         } catch (error: any) {
           console.error('Erro na sincronização total:', error);
@@ -8237,7 +8357,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       })();
 
-      res.json({ message: 'Sincronização total iniciada em segundo plano' });
+      res.json({ message: `Sincronização total iniciada em segundo plano (${hasInstances ? activeInstances.length + ' instâncias' : '1 instância padrão'})` });
     } catch (error: any) {
       console.error('Erro ao iniciar sincronização total:', error);
       res.status(500).json({ 
@@ -8250,21 +8370,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // SINCRONIZAÇÃO TOTAL - Limpa todos os faturamentos e reimporta do Omie (sem filtro de data)
   // Executa em BACKGROUND para evitar timeout do browser
+  // Itera todas as instâncias Omie ativas
   app.post('/api/billings/full-sync', authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({
-          message: 'Integração Omie não configurada'
-        });
+      const activeInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+      const hasInstances = activeInstances.length > 0;
+      
+      if (!hasInstances) {
+        const defaultService = getOmieService(storage);
+        if (!defaultService) {
+          return res.status(503).json({
+            message: 'Integração Omie não configurada'
+          });
+        }
       }
       
-      console.log(`🔄 SINCRONIZAÇÃO TOTAL: Iniciando em background...`);
+      console.log(`🔄 SINCRONIZAÇÃO TOTAL: Iniciando em background (${hasInstances ? activeInstances.length + ' instâncias' : 'env vars padrão'})...`);
       
       // Marcar como "em andamento" imediatamente
       await storage.updateSyncStatus('omie_billings', { 
         status: 'in_progress', 
-        message: 'Sincronização total em andamento...',
+        message: `Sincronização total em andamento (${hasInstances ? activeInstances.length + ' instâncias' : '1 instância padrão'})...`,
         recordsProcessed: 0,
         currentProgress: 0
       });
@@ -8272,7 +8398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Retornar resposta imediatamente (202 Accepted) para evitar timeout
       res.status(202).json({
         success: true,
-        message: 'Sincronização total iniciada em background. Acompanhe o progresso pelo status de sincronização.',
+        message: `Sincronização total iniciada em background (${hasInstances ? activeInstances.length + ' instâncias' : '1 instância padrão'}). Acompanhe o progresso pelo status de sincronização.`,
         status: 'in_progress'
       });
       
@@ -8280,26 +8406,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       setImmediate(async () => {
         try {
           console.log(`🔄 SINCRONIZAÇÃO TOTAL: Executando em background...`);
-          // Note: Using any to bypass type check for progress callback
-          const result = await (omieService as any).syncBillings({ 
-            fullResync: true,
-            onProgress: (progress: any) => {
-              storage.updateSyncStatus('omie_billings', {
-                status: 'in_progress',
-                recordsProcessed: progress.processed,
-                totalRecords: progress.total,
-                currentProgress: Math.round((progress.processed / (progress.total || 1)) * 100)
-              });
-            }
-          });
           
-          console.log('✅ Sincronização TOTAL de faturamentos concluída:', result);
+          const servicesToSync: Array<{ service: OmieService; name: string }> = [];
+          if (hasInstances) {
+            for (const inst of activeInstances) {
+              servicesToSync.push({ service: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+            }
+          } else {
+            servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
+          }
+          
+          let totalImported = 0;
+          let totalUpdated = 0;
+          let totalProcessed = 0;
+          
+          for (let i = 0; i < servicesToSync.length; i++) {
+            const { service, name } = servicesToSync[i];
+            console.log(`📡 [${i + 1}/${servicesToSync.length}] FULL-SYNC instância: ${name}`);
+            
+            await storage.updateSyncStatus('omie_billings', { 
+              status: 'in_progress', 
+              message: `Full-sync instância ${name} (${i + 1}/${servicesToSync.length})...`,
+              recordsProcessed: totalProcessed,
+              currentProgress: Math.round((i / servicesToSync.length) * 100)
+            });
+            
+            const result = await (service as any).syncBillings({ 
+              fullResync: true,
+              onProgress: (progress: any) => {
+                storage.updateSyncStatus('omie_billings', {
+                  status: 'in_progress',
+                  recordsProcessed: totalProcessed + (progress.processed || 0),
+                  totalRecords: progress.total,
+                  currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
+                });
+              }
+            });
+            
+            totalImported += result.imported || 0;
+            totalUpdated += result.updated || 0;
+            totalProcessed += result.totalProcessed || 0;
+            console.log(`✅ Full-sync instância ${name} concluída: ${result.imported || 0} importados, ${result.updated || 0} atualizados`);
+          }
+          
+          console.log(`✅ Sincronização TOTAL de faturamentos concluída (${servicesToSync.length} instância(s)): ${totalImported} importados, ${totalUpdated} atualizados`);
           
           // Atualizar status para sucesso
           await storage.updateSyncStatus('omie_billings', { 
             status: 'success', 
-            message: `Concluído: ${result.imported || 0} importados, ${result.updated || 0} atualizados`,
-            recordsProcessed: result.totalProcessed || 0,
+            message: `Concluído (${servicesToSync.length} instância(s)): ${totalImported} importados, ${totalUpdated} atualizados`,
+            recordsProcessed: totalProcessed,
             currentProgress: 100,
             lastFinishedAt: nowBrazil()
           });
@@ -8621,7 +8777,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sincronizar faturamentos do Omie por período
+  // Sincronizar faturamentos do Omie por período (todas as instâncias ativas)
   app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
       const { startDate, endDate } = req.body;
@@ -8632,28 +8788,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({
-          message: 'Integração Omie não configurada'
-        });
+      const activeInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+      const hasInstances = activeInstances.length > 0;
+      
+      if (!hasInstances) {
+        const defaultService = getOmieService(storage);
+        if (!defaultService) {
+          return res.status(503).json({
+            message: 'Integração Omie não configurada'
+          });
+        }
       }
       
-      console.log(`🔄 Iniciando sincronização de faturamentos de ${startDate} até ${endDate}...`);
+      console.log(`🔄 Iniciando sincronização de faturamentos de ${startDate} até ${endDate} (${hasInstances ? activeInstances.length + ' instâncias' : 'env vars padrão'})...`);
       
-      const result = await omieService.syncBillingsInRange(startDate, endDate);
+      const servicesToSync: Array<{ service: OmieService; name: string }> = [];
+      if (hasInstances) {
+        for (const inst of activeInstances) {
+          servicesToSync.push({ service: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+        }
+      } else {
+        servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
+      }
       
-      console.log('✅ Sincronização de faturamentos concluída:', result);
+      let totalInserted = 0;
+      let totalUpdated = 0;
+      let totalCount = 0;
+      const instanceResults: any[] = [];
+      
+      for (const { service, name } of servicesToSync) {
+        console.log(`📡 Sincronizando faturamentos da instância: ${name}`);
+        const result = await service.syncBillingsInRange(startDate, endDate);
+        totalInserted += result.inserted || 0;
+        totalUpdated += result.updated || 0;
+        totalCount += result.total || 0;
+        instanceResults.push({ instance: name, ...result });
+        console.log(`✅ Instância ${name}: ${result.inserted || 0} inseridos, ${result.updated || 0} atualizados`);
+      }
+      
+      const aggregatedResult = {
+        total: totalCount,
+        inserted: totalInserted,
+        updated: totalUpdated,
+        instances: instanceResults
+      };
+      
+      console.log('✅ Sincronização de faturamentos concluída:', aggregatedResult);
       
       // Save sync status
       await saveSyncStatus(
         'omie_billings',
         'success',
-        result.total || 0,
-        `${result.inserted || 0} inseridos, ${result.updated || 0} atualizados`
+        totalCount,
+        `${totalInserted} inseridos, ${totalUpdated} atualizados (${servicesToSync.length} instância(s))`
       );
       
-      res.json(result);
+      res.json(aggregatedResult);
       
     } catch (error: any) {
       console.error('❌ Erro na sincronização de faturamentos:', error);
@@ -11476,15 +11666,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`📤 [OMIE-SYNC] Atualizando ${ordersToUpdate.length} pedidos para etapa "Em Rota" (20)...`);
             console.log(`📤 [OMIE-SYNC] Pedidos: ${JSON.stringify(ordersToUpdate.map(o => o.codigoPedido))}`);
             
-            const omie = getOmieService(storage);
-            if (omie) {
-              const resultado = await omie.trocarEtapasPedidosEmLote(
-                ordersToUpdate.map(o => ({ codigoPedido: o.codigoPedido, novaEtapa: o.novaEtapa }))
-              );
-              console.log(`✅ [OMIE-SYNC] Etapas atualizadas: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+            const instanceGroups = await getOmieServicesGroupedByInstance(storage, allBillingIds);
+            const triggeredBy = (req as any).currentUser?.email || 'system';
+            
+            for (const [instanceKey, group] of instanceGroups) {
+              const instanceOrders = ordersToUpdate.filter(o => group.billingIds.includes(o.billingId));
+              if (instanceOrders.length === 0) continue;
               
-              const triggeredBy = (req as any).currentUser?.email || 'system';
-              for (const orderInfo of ordersToUpdate) {
+              console.log(`📤 [OMIE-SYNC] Instance ${instanceKey}: ${instanceOrders.length} pedidos`);
+              const resultado = await group.service.trocarEtapasPedidosEmLote(
+                instanceOrders.map(o => ({ codigoPedido: o.codigoPedido, novaEtapa: o.novaEtapa }))
+              );
+              console.log(`✅ [OMIE-SYNC] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+              
+              for (const orderInfo of instanceOrders) {
                 const resultItem = resultado.results.find(r => r.codigoPedido === orderInfo.codigoPedido);
                 await logOmieStageChange({
                   omieOrderId: orderInfo.codigoPedido,
@@ -11500,8 +11695,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   omieResponse: resultItem || null,
                 });
               }
-            } else {
-              console.error(`❌ [OMIE-SYNC] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes`);
             }
           } else {
             console.log(`⚠️ [OMIE-SYNC] Nenhum billing com omieOrderId válido encontrado`);
@@ -12021,13 +12214,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         
         try {
-          const omie = getOmieService(storage);
-          if (omie) {
-            omieResult = await omie.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-            console.log(`✅ [FORCE-OMIE-SYNC] Resultado: ${omieResult.successCount} sucesso, ${omieResult.errorCount} erros`);
-          } else {
-            omieResult = { error: "Omie não configurado" };
+          const billingIdsForSync = billingsWithOmieId.map((b: any) => b.billingId);
+          const instanceGroups = await getOmieServicesGroupedByInstance(storage, billingIdsForSync);
+          let totalSuccess = 0, totalErrors = 0;
+          const allResults: any[] = [];
+          
+          for (const [instanceKey, group] of instanceGroups) {
+            const instancePedidos = pedidosParaAlterar.filter((_: any, i: number) => 
+              group.billingIds.includes(billingsWithOmieId[i]?.billingId)
+            );
+            if (instancePedidos.length === 0) continue;
+            
+            const resultado = await group.service.trocarEtapasPedidosEmLote(instancePedidos);
+            totalSuccess += resultado.successCount;
+            totalErrors += resultado.errorCount;
+            allResults.push(...(resultado.results || []));
           }
+          omieResult = { successCount: totalSuccess, errorCount: totalErrors, results: allResults };
+          console.log(`✅ [FORCE-OMIE-SYNC] Resultado: ${totalSuccess} sucesso, ${totalErrors} erros`);
         } catch (omieError: any) {
           omieResult = { error: omieError.message };
           console.error(`❌ [FORCE-OMIE-SYNC] Erro:`, omieError);
@@ -12261,22 +12465,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🔄 [SEND-ROUTE] Alterando ${orderInfos.length} pedidos para etapa "Em Rota" no Omie...`);
         
         try {
-          console.log(`🔍 [SEND-ROUTE] Inicializando OmieService...`);
-          const omieService = getOmieService(storage);
-          if (!omieService) {
-            console.error('❌ [SEND-ROUTE] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes');
-          } else {
-            console.log(`✅ [SEND-ROUTE] OmieService inicializado com sucesso`);
-            const pedidosParaAlterar = orderInfos.map(info => ({
+          console.log(`🔍 [SEND-ROUTE] Inicializando OmieService por instância...`);
+          const billingIdsForSync = orderInfos.map(info => info.billingId);
+          const instanceGroups = await getOmieServicesGroupedByInstance(storage, billingIdsForSync);
+          
+          for (const [instanceKey, group] of instanceGroups) {
+            const instanceInfos = orderInfos.filter(info => group.billingIds.includes(info.billingId));
+            if (instanceInfos.length === 0) continue;
+            
+            const pedidosParaAlterar = instanceInfos.map(info => ({
               codigoPedido: info.orderId,
               novaEtapa: OmieService.STAGE_EM_ROTA
             }));
             
-            console.log(`📋 [SEND-ROUTE] Pedidos para alterar: ${JSON.stringify(pedidosParaAlterar.map(p => p.codigoPedido))}`);
-            const resultado = await omieService.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-            console.log(`✅ [SEND-ROUTE] Etapas alteradas no Omie: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+            console.log(`📋 [SEND-ROUTE] Instance ${instanceKey}: ${pedidosParaAlterar.length} pedidos`);
+            const resultado = await group.service.trocarEtapasPedidosEmLote(pedidosParaAlterar);
+            console.log(`✅ [SEND-ROUTE] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
             
-            for (const info of orderInfos) {
+            for (const info of instanceInfos) {
               const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
               await logOmieStageChange({
                 omieOrderId: info.orderId,
@@ -12362,11 +12568,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📋 [SYNC-OMIE-DAY] Encontradas ${routes.length} rotas para ${date}`);
       
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(500).json({ message: "OmieService não configurado" });
-      }
-      
       const allRouteIds = routes.map(r => r.id);
       const allStops = await db.select().from(deliveryRouteStops)
         .where(inArray(deliveryRouteStops.routeId, allRouteIds));
@@ -12413,40 +12614,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📤 [SYNC-OMIE-DAY] Sincronizando ${orderInfos.length} pedidos para "Em Rota" (20)...`);
       
-      const pedidosParaAlterar = orderInfos.map(info => ({
-        codigoPedido: info.orderId,
-        novaEtapa: OmieService.STAGE_EM_ROTA
-      }));
+      const billingIdsForSync = orderInfos.filter(i => i.billingId).map(i => i.billingId);
+      const instanceGroups = billingIdsForSync.length > 0 
+        ? await getOmieServicesGroupedByInstance(storage, billingIdsForSync)
+        : new Map();
       
-      const resultado = await omieService.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-      console.log(`✅ [SYNC-OMIE-DAY] Resultado: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+      let totalSuccess = 0, totalErrors = 0;
+      const allResults: any[] = [];
       
-      for (const info of orderInfos) {
-        const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
-        await logOmieStageChange({
-          omieOrderId: info.orderId,
-          orderNumber: info.orderNumber,
-          customerName: info.customerName,
-          newStage: OmieService.STAGE_EM_ROTA,
-          trigger: 'send_to_driver',
-          triggerDetail: `Sincronização manual - todas as rotas do dia ${date}`,
-          routeId: info.routeId,
-          stopId: info.stopId,
-          billingId: info.billingId,
-          driverEmail: info.driverEmail,
-          triggeredBy,
-          success: resultItem?.success ?? false,
-          errorMessage: resultItem?.success === false ? resultItem.message : undefined,
-          omieResponse: resultItem || null,
-        });
+      for (const [instanceKey, group] of instanceGroups) {
+        const instanceInfos = orderInfos.filter(info => group.billingIds.includes(info.billingId));
+        if (instanceInfos.length === 0) continue;
+        
+        const pedidosParaAlterar = instanceInfos.map(info => ({
+          codigoPedido: info.orderId,
+          novaEtapa: OmieService.STAGE_EM_ROTA
+        }));
+        
+        const resultado = await group.service.trocarEtapasPedidosEmLote(pedidosParaAlterar);
+        totalSuccess += resultado.successCount;
+        totalErrors += resultado.errorCount;
+        allResults.push(...(resultado.results || []));
+        
+        for (const info of instanceInfos) {
+          const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
+          await logOmieStageChange({
+            omieOrderId: info.orderId,
+            orderNumber: info.orderNumber,
+            customerName: info.customerName,
+            newStage: OmieService.STAGE_EM_ROTA,
+            trigger: 'send_to_driver',
+            triggerDetail: `Sincronização manual - todas as rotas do dia ${date}`,
+            routeId: info.routeId,
+            stopId: info.stopId,
+            billingId: info.billingId,
+            driverEmail: info.driverEmail,
+            triggeredBy,
+            success: resultItem?.success ?? false,
+            errorMessage: resultItem?.success === false ? resultItem.message : undefined,
+            omieResponse: resultItem || null,
+          });
+        }
       }
+      console.log(`✅ [SYNC-OMIE-DAY] Resultado total: ${totalSuccess} sucesso, ${totalErrors} erros`);
       
       res.json({
-        message: `Sincronização concluída: ${resultado.successCount} sucesso, ${resultado.errorCount} erros de ${orderInfos.length} pedidos`,
-        successCount: resultado.successCount,
-        errorCount: resultado.errorCount,
+        message: `Sincronização concluída: ${totalSuccess} sucesso, ${totalErrors} erros de ${orderInfos.length} pedidos`,
+        successCount: totalSuccess,
+        errorCount: totalErrors,
         totalOrders: orderInfos.length,
-        results: resultado.results,
+        results: allResults,
       });
     } catch (error: any) {
       console.error("Error syncing Omie stages for day:", error);
@@ -12521,20 +12738,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🔄 [SEND-ALL-ROUTES] Alterando ${allOrderInfos.length} pedidos para etapa "Em Rota" no Omie...`);
         
         try {
-          const omieService = getOmieService(storage);
-          if (!omieService) {
-            console.error('❌ [SEND-ALL-ROUTES] OmieService não configurado - OMIE_APP_KEY ou OMIE_APP_SECRET ausentes');
-          } else {
-            const pedidosParaAlterar = allOrderInfos.map(info => ({
+          const billingIdsForSync = allOrderInfos.filter(i => i.billingId).map(i => i.billingId);
+          const instanceGroups = billingIdsForSync.length > 0
+            ? await getOmieServicesGroupedByInstance(storage, billingIdsForSync)
+            : new Map();
+          
+          for (const [instanceKey, group] of instanceGroups) {
+            const instanceInfos = allOrderInfos.filter(info => group.billingIds.includes(info.billingId));
+            if (instanceInfos.length === 0) continue;
+            
+            const pedidosParaAlterar = instanceInfos.map(info => ({
               codigoPedido: info.orderId,
               novaEtapa: OmieService.STAGE_EM_ROTA
             }));
             
-            console.log(`📋 [SEND-ALL-ROUTES] Pedidos: ${JSON.stringify(pedidosParaAlterar.map(p => p.codigoPedido))}`);
-            const resultado = await omieService.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-            console.log(`✅ [SEND-ALL-ROUTES] Etapas alteradas no Omie: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
+            console.log(`📋 [SEND-ALL-ROUTES] Instance ${instanceKey}: ${pedidosParaAlterar.length} pedidos`);
+            const resultado = await group.service.trocarEtapasPedidosEmLote(pedidosParaAlterar);
+            console.log(`✅ [SEND-ALL-ROUTES] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
             
-            for (const info of allOrderInfos) {
+            for (const info of instanceInfos) {
               const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
               await logOmieStageChange({
                 omieOrderId: info.orderId,
@@ -12799,7 +13021,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const orderId = parseInt(stopOmieOrderId);
         if (!isNaN(orderId)) {
           try {
-            const omieService = getOmieService(storage);
+            const omieService = stop[0].billingId 
+              ? await getOmieServiceForBilling(storage, stop[0].billingId)
+              : getOmieService(storage);
             if (!omieService) {
               console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado');
             } else {
@@ -12955,7 +13179,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO
       if (stop[0].billingId) {
         try {
-          const omieService = getOmieService(storage);
+          const omieService = await getOmieServiceForBilling(storage, stop[0].billingId!);
           if (!omieService) {
             console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado');
           } else {
@@ -13100,7 +13324,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const orderId = parseInt(returnStopOmieOrderId);
         if (!isNaN(orderId)) {
           try {
-            const omieService = getOmieService(storage);
+            const omieService = stop[0].billingId
+              ? await getOmieServiceForBilling(storage, stop[0].billingId)
+              : getOmieService(storage);
             if (!omieService) {
               console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
             } else {
@@ -13201,7 +13427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Se for devolução, alterar etapa no Omie para "Aguardando Rota" (80) - SÍNCRONO
       if (status === 'devolvida' && stop[0].billingId) {
         try {
-          const omieService = getOmieService(storage);
+          const omieService = await getOmieServiceForBilling(storage, stop[0].billingId!);
           if (!omieService) {
             console.error('❌ [UPDATE-STOP-STATUS] OmieService não configurado');
           } else {

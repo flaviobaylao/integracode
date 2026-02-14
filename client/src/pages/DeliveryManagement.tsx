@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import {
   Dialog,
   DialogContent,
@@ -100,6 +101,7 @@ interface DeliveryOrder {
   receivingWeekdays: string[];  // Dias de recebimento (configurado manualmente) - USADO PARA ROTEIRIZAÇÃO
   deliveryTimeSlots: string[];
   deliverySaturdayTimeSlots: string[];
+  omieInstanceId?: string | null;
 }
 
 interface VehicleConfig {
@@ -917,6 +919,7 @@ export default function DeliveryManagement() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             <span className="font-medium">{order.customerName}</span>
+                            <OmieInstanceBadge instanceId={order.omieInstanceId} />
                             {(order.customerCpf || order.customerCnpj) && (
                               <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">
                                 {order.customerCpf || order.customerCnpj}
@@ -1621,7 +1624,7 @@ export default function DeliveryManagement() {
                       <div className="space-y-2">
                         {routePlan.unassignedOrders.map((order) => (
                           <div key={order.id} className="text-sm border-l-2 border-red-300 pl-3 py-1">
-                            {order.customerName} - {order.customerAddress}
+                            {order.customerName} <OmieInstanceBadge instanceId={order.omieInstanceId} /> - {order.customerAddress}
                             {order.exclusiveVehicle && (
                               <Badge variant="outline" className="ml-2 text-xs">
                                 Requer: {order.vehicleTypes.join(', ')}
@@ -1737,7 +1740,7 @@ export default function DeliveryManagement() {
                       handleAddPedido(order.id);
                     }}
                   >
-                    <div className="font-medium text-sm">{order.customerName}</div>
+                    <div className="font-medium text-sm flex items-center gap-1">{order.customerName} <OmieInstanceBadge instanceId={order.omieInstanceId} /></div>
                     <div className="text-xs text-muted-foreground mt-1">{order.customerAddress}</div>
                     <div className="text-xs text-blue-600 mt-2">
                       R$ {(Number(order.saleValue) || 0).toFixed(2)}
