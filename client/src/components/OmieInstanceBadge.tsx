@@ -17,7 +17,7 @@ interface OmieInstanceBadgeProps {
 
 export default function OmieInstanceBadge({ instanceId, size = "sm" }: OmieInstanceBadgeProps) {
   const { data: instances } = useQuery<OmieInstance[]>({
-    queryKey: ["/api/omie/instances"],
+    queryKey: ["/api/omie/instances/public"],
     staleTime: 5 * 60 * 1000,
   });
 

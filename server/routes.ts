@@ -15960,6 +15960,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isDefault: z.boolean().optional(),
   });
 
+  // Lista pública de instâncias Omie (todos autenticados) - apenas dados para badges
+  app.get('/api/omie/instances/public', authenticateUser, async (req: any, res) => {
+    try {
+      const instances = await storage.getOmieInstances();
+      res.json(instances.map((i: any) => ({
+        id: i.id,
+        name: i.name,
+        displayName: i.displayName,
+        tagColor: i.tagColor,
+        isActive: i.isActive,
+        isDefault: i.isDefault,
+      })));
+    } catch (error: any) {
+      console.error('Erro ao listar instâncias Omie (public):', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Lista todas as instâncias Omie (Admin apenas) - secrets mascarados
   app.get('/api/omie/instances', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {

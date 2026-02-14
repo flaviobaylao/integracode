@@ -60,8 +60,18 @@ interface BillingFilters {
   invoiceNumber?: string;
   cfop?: string;
   invoiceStage?: string;
+  omieInstanceId?: string;
   page: number;
   pageSize: number;
+}
+
+interface OmieInstancePublic {
+  id: string;
+  name: string;
+  displayName: string;
+  tagColor: string;
+  isActive: boolean;
+  isDefault: boolean;
 }
 
 // Função para converter código CFOP para nome amigável
@@ -258,6 +268,11 @@ export default function Billings() {
         return false;
       }
       
+      // Instance filter
+      if (filters.omieInstanceId && billing.omieInstanceId !== filters.omieInstanceId) {
+        return false;
+      }
+      
       return true;
     });
     
@@ -316,6 +331,12 @@ export default function Billings() {
   const { data: sellers } = useQuery({
     queryKey: ['/api/billings/sellers'],
     queryFn: () => fetch('/api/billings/sellers').then(res => res.json())
+  });
+
+  // Query para buscar instâncias Omie (para filtro e badges)
+  const { data: omieInstances } = useQuery<OmieInstancePublic[]>({
+    queryKey: ['/api/omie/instances/public'],
+    staleTime: 5 * 60 * 1000,
   });
 
   // Mutation para sincronização de faturamentos do Omie
@@ -771,6 +792,31 @@ export default function Billings() {
                 </SelectContent>
               </Select>
             </div>
+
+            {omieInstances && omieInstances.length > 0 && (
+              <div className="space-y-2">
+                <Label>Instância Omie</Label>
+                <Select 
+                  value={filters.omieInstanceId || 'all'}
+                  onValueChange={(value) => handleFilterChange('omieInstanceId', value === 'all' ? undefined : value)}
+                >
+                  <SelectTrigger data-testid="filter-omie-instance">
+                    <SelectValue placeholder="Selecionar Instância" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
+                    {omieInstances.map((instance) => (
+                      <SelectItem key={instance.id} value={instance.id}>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: instance.tagColor }} />
+                          {instance.displayName}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             
             <div className="space-y-2">
               <Label>Itens por página</Label>
