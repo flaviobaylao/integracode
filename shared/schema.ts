@@ -2512,3 +2512,255 @@ export const insertOmieStageLogSchema = createInsertSchema(omieStageLogs).omit({
 export type OmieStageLog = typeof omieStageLogs.$inferSelect;
 export type InsertOmieStageLog = z.infer<typeof insertOmieStageLogSchema>;
 
+// ============================================================================
+// NF-e (NOTA FISCAL ELETRÔNICA) MODULE
+// ============================================================================
+
+export const fiscalScenarios = pgTable("fiscal_scenarios", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  operationType: varchar("operation_type").notNull(),
+  stateScope: varchar("state_scope").notNull(),
+  cfop: varchar("cfop").notNull(),
+  csosn: varchar("csosn"),
+  cstIcms: varchar("cst_icms"),
+  cstPis: varchar("cst_pis"),
+  cstCofins: varchar("cst_cofins"),
+  aliqIcms: decimal("aliq_icms", { precision: 5, scale: 2 }),
+  aliqPis: decimal("aliq_pis", { precision: 5, scale: 4 }),
+  aliqCofins: decimal("aliq_cofins", { precision: 5, scale: 4 }),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertFiscalScenarioSchema = createInsertSchema(fiscalScenarios).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type FiscalScenario = typeof fiscalScenarios.$inferSelect;
+export type InsertFiscalScenario = z.infer<typeof insertFiscalScenarioSchema>;
+
+export const digitalCertificates = pgTable("digital_certificates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyName: varchar("company_name").notNull(),
+  cnpj: varchar("cnpj").notNull(),
+  serialNumber: varchar("serial_number"),
+  issuer: varchar("issuer"),
+  validFrom: timestamp("valid_from"),
+  validUntil: timestamp("valid_until"),
+  certificateType: varchar("certificate_type").notNull().default('A1'),
+  storageKey: varchar("storage_key").notNull(),
+  isActive: boolean("is_active").default(true),
+  uploadedBy: varchar("uploaded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const digitalCertificatesRelations = relations(digitalCertificates, ({ one }) => ({
+  uploader: one(users, {
+    fields: [digitalCertificates.uploadedBy],
+    references: [users.id],
+  }),
+}));
+
+export const insertDigitalCertificateSchema = createInsertSchema(digitalCertificates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type DigitalCertificate = typeof digitalCertificates.$inferSelect;
+export type InsertDigitalCertificate = z.infer<typeof insertDigitalCertificateSchema>;
+
+export const fiscalInvoices = pgTable("fiscal_invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceNumber: integer("invoice_number"),
+  series: varchar("series").default('1'),
+  accessKey: varchar("access_key"),
+  protocolNumber: varchar("protocol_number"),
+  status: varchar("status").notNull().default('draft'),
+  operationType: varchar("operation_type").notNull().default('saida'),
+  fiscalScenarioId: varchar("fiscal_scenario_id"),
+  certificateId: varchar("certificate_id"),
+  customerId: varchar("customer_id"),
+  customerName: varchar("customer_name"),
+  customerCnpjCpf: varchar("customer_cnpj_cpf"),
+  customerIe: varchar("customer_ie"),
+  customerAddress: text("customer_address"),
+  natureOfOperation: varchar("nature_of_operation"),
+  cfop: varchar("cfop"),
+  totalProducts: decimal("total_products", { precision: 12, scale: 2 }).default('0'),
+  totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default('0'),
+  totalFreight: decimal("total_freight", { precision: 12, scale: 2 }).default('0'),
+  totalInsurance: decimal("total_insurance", { precision: 12, scale: 2 }).default('0'),
+  totalOtherExpenses: decimal("total_other_expenses", { precision: 12, scale: 2 }).default('0'),
+  totalIcms: decimal("total_icms", { precision: 12, scale: 2 }).default('0'),
+  totalPis: decimal("total_pis", { precision: 12, scale: 2 }).default('0'),
+  totalCofins: decimal("total_cofins", { precision: 12, scale: 2 }).default('0'),
+  totalIpi: decimal("total_ipi", { precision: 12, scale: 2 }).default('0'),
+  totalInvoice: decimal("total_invoice", { precision: 12, scale: 2 }).default('0'),
+  paymentMethod: varchar("payment_method").default('a_prazo'),
+  notes: text("notes"),
+  emissionDate: timestamp("emission_date"),
+  authorizationDate: timestamp("authorization_date"),
+  cancellationDate: timestamp("cancellation_date"),
+  xmlEnvio: text("xml_envio"),
+  xmlRetorno: text("xml_retorno"),
+  xmlAutorizacao: text("xml_autorizacao"),
+  danfePdfUrl: varchar("danfe_pdf_url"),
+  environment: varchar("environment").notNull().default('homologacao'),
+  omieInstanceId: varchar("omie_instance_id"),
+  salesCardId: varchar("sales_card_id"),
+  orderHistoryId: varchar("order_history_id"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_fiscal_invoices_status").on(table.status),
+  index("idx_fiscal_invoices_customer").on(table.customerId),
+  index("idx_fiscal_invoices_number").on(table.invoiceNumber),
+  index("idx_fiscal_invoices_access_key").on(table.accessKey),
+  index("idx_fiscal_invoices_emission").on(table.emissionDate),
+  index("idx_fiscal_invoices_created").on(table.createdAt),
+]);
+
+export const fiscalInvoicesRelations = relations(fiscalInvoices, ({ one, many }) => ({
+  fiscalScenario: one(fiscalScenarios, {
+    fields: [fiscalInvoices.fiscalScenarioId],
+    references: [fiscalScenarios.id],
+  }),
+  certificate: one(digitalCertificates, {
+    fields: [fiscalInvoices.certificateId],
+    references: [digitalCertificates.id],
+  }),
+  customer: one(customers, {
+    fields: [fiscalInvoices.customerId],
+    references: [customers.id],
+  }),
+  items: many(fiscalInvoiceItems),
+  events: many(fiscalInvoiceEvents),
+}));
+
+export const insertFiscalInvoiceSchema = createInsertSchema(fiscalInvoices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type FiscalInvoice = typeof fiscalInvoices.$inferSelect;
+export type InsertFiscalInvoice = z.infer<typeof insertFiscalInvoiceSchema>;
+
+export const fiscalInvoiceItems = pgTable("fiscal_invoice_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  itemNumber: integer("item_number").notNull(),
+  productId: varchar("product_id"),
+  productCode: varchar("product_code"),
+  productName: varchar("product_name").notNull(),
+  ncm: varchar("ncm"),
+  cest: varchar("cest"),
+  cfop: varchar("cfop"),
+  unit: varchar("unit").notNull().default('UN'),
+  quantity: decimal("quantity", { precision: 12, scale: 4 }).notNull(),
+  unitPrice: decimal("unit_price", { precision: 12, scale: 4 }).notNull(),
+  totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
+  discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
+  cstIcms: varchar("cst_icms"),
+  baseIcms: decimal("base_icms", { precision: 12, scale: 2 }).default('0'),
+  aliqIcms: decimal("aliq_icms", { precision: 5, scale: 2 }).default('0'),
+  valorIcms: decimal("valor_icms", { precision: 12, scale: 2 }).default('0'),
+  cstPis: varchar("cst_pis"),
+  basePis: decimal("base_pis", { precision: 12, scale: 2 }).default('0'),
+  aliqPis: decimal("aliq_pis", { precision: 5, scale: 4 }).default('0'),
+  valorPis: decimal("valor_pis", { precision: 12, scale: 2 }).default('0'),
+  cstCofins: varchar("cst_cofins"),
+  baseCofins: decimal("base_cofins", { precision: 12, scale: 2 }).default('0'),
+  aliqCofins: decimal("aliq_cofins", { precision: 5, scale: 4 }).default('0'),
+  valorCofins: decimal("valor_cofins", { precision: 12, scale: 2 }).default('0'),
+  cstIpi: varchar("cst_ipi"),
+  baseIpi: decimal("base_ipi", { precision: 12, scale: 2 }).default('0'),
+  aliqIpi: decimal("aliq_ipi", { precision: 5, scale: 2 }).default('0'),
+  valorIpi: decimal("valor_ipi", { precision: 12, scale: 2 }).default('0'),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_fiscal_invoice_items_invoice").on(table.invoiceId),
+]);
+
+export const fiscalInvoiceItemsRelations = relations(fiscalInvoiceItems, ({ one }) => ({
+  invoice: one(fiscalInvoices, {
+    fields: [fiscalInvoiceItems.invoiceId],
+    references: [fiscalInvoices.id],
+  }),
+}));
+
+export const insertFiscalInvoiceItemSchema = createInsertSchema(fiscalInvoiceItems).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FiscalInvoiceItem = typeof fiscalInvoiceItems.$inferSelect;
+export type InsertFiscalInvoiceItem = z.infer<typeof insertFiscalInvoiceItemSchema>;
+
+export const fiscalInvoiceEvents = pgTable("fiscal_invoice_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  eventType: varchar("event_type").notNull(),
+  eventSequence: integer("event_sequence").default(1),
+  protocolNumber: varchar("protocol_number"),
+  status: varchar("status").notNull(),
+  description: text("description"),
+  xmlRequest: text("xml_request"),
+  xmlResponse: text("xml_response"),
+  errorCode: varchar("error_code"),
+  errorMessage: text("error_message"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_fiscal_invoice_events_invoice").on(table.invoiceId),
+  index("idx_fiscal_invoice_events_type").on(table.eventType),
+]);
+
+export const fiscalInvoiceEventsRelations = relations(fiscalInvoiceEvents, ({ one }) => ({
+  invoice: one(fiscalInvoices, {
+    fields: [fiscalInvoiceEvents.invoiceId],
+    references: [fiscalInvoices.id],
+  }),
+}));
+
+export const insertFiscalInvoiceEventSchema = createInsertSchema(fiscalInvoiceEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FiscalInvoiceEvent = typeof fiscalInvoiceEvents.$inferSelect;
+export type InsertFiscalInvoiceEvent = z.infer<typeof insertFiscalInvoiceEventSchema>;
+
+export const fiscalBackups = pgTable("fiscal_backups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  backupType: varchar("backup_type").notNull(),
+  referenceId: varchar("reference_id"),
+  referenceKey: varchar("reference_key"),
+  storageKey: varchar("storage_key").notNull(),
+  fileSize: integer("file_size"),
+  checksum: varchar("checksum"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"),
+}, (table) => [
+  index("idx_fiscal_backups_type").on(table.backupType),
+  index("idx_fiscal_backups_reference").on(table.referenceId),
+  index("idx_fiscal_backups_created").on(table.createdAt),
+]);
+
+export const insertFiscalBackupSchema = createInsertSchema(fiscalBackups).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FiscalBackup = typeof fiscalBackups.$inferSelect;
+export type InsertFiscalBackup = z.infer<typeof insertFiscalBackupSchema>;
+
