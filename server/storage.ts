@@ -118,11 +118,29 @@ import {
   AGENT_COLORS,
   virtualAttendanceStats,
   omieInstances,
+  fiscalScenarios,
+  digitalCertificates,
+  fiscalInvoices,
+  fiscalInvoiceItems,
+  fiscalInvoiceEvents,
+  fiscalBackups,
   type PhonebookContact,
   type InsertPhonebookContact,
   type VirtualAttendanceStat,
   type OmieInstance,
   type InsertOmieInstance,
+  type FiscalScenario,
+  type InsertFiscalScenario,
+  type DigitalCertificate,
+  type InsertDigitalCertificate,
+  type FiscalInvoice,
+  type InsertFiscalInvoice,
+  type FiscalInvoiceItem,
+  type InsertFiscalInvoiceItem,
+  type FiscalInvoiceEvent,
+  type InsertFiscalInvoiceEvent,
+  type FiscalBackup,
+  type InsertFiscalBackup,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -496,6 +514,43 @@ export interface IStorage {
   updateOmieInstance(id: string, data: Partial<InsertOmieInstance>): Promise<OmieInstance>;
   deleteOmieInstance(id: string): Promise<void>;
   setDefaultOmieInstance(id: string): Promise<OmieInstance>;
+
+  // Fiscal Scenarios
+  getFiscalScenarios(): Promise<FiscalScenario[]>;
+  getFiscalScenario(id: string): Promise<FiscalScenario | undefined>;
+  createFiscalScenario(data: InsertFiscalScenario): Promise<FiscalScenario>;
+  updateFiscalScenario(id: string, data: Partial<InsertFiscalScenario>): Promise<FiscalScenario>;
+  deleteFiscalScenario(id: string): Promise<void>;
+
+  // Digital Certificates
+  getDigitalCertificates(): Promise<DigitalCertificate[]>;
+  getDigitalCertificate(id: string): Promise<DigitalCertificate | undefined>;
+  createDigitalCertificate(data: InsertDigitalCertificate): Promise<DigitalCertificate>;
+  updateDigitalCertificate(id: string, data: Partial<InsertDigitalCertificate>): Promise<DigitalCertificate>;
+  deleteDigitalCertificate(id: string): Promise<void>;
+
+  // Fiscal Invoices
+  getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]>;
+  getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
+  getNextInvoiceNumber(series?: string): Promise<number>;
+  createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice>;
+  updateFiscalInvoice(id: string, data: Partial<InsertFiscalInvoice>): Promise<FiscalInvoice>;
+  deleteFiscalInvoice(id: string): Promise<void>;
+
+  // Fiscal Invoice Items
+  getFiscalInvoiceItems(invoiceId: string): Promise<FiscalInvoiceItem[]>;
+  createFiscalInvoiceItem(data: InsertFiscalInvoiceItem): Promise<FiscalInvoiceItem>;
+  updateFiscalInvoiceItem(id: string, data: Partial<InsertFiscalInvoiceItem>): Promise<FiscalInvoiceItem>;
+  deleteFiscalInvoiceItem(id: string): Promise<void>;
+  deleteFiscalInvoiceItems(invoiceId: string): Promise<void>;
+
+  // Fiscal Invoice Events
+  getFiscalInvoiceEvents(invoiceId: string): Promise<FiscalInvoiceEvent[]>;
+  createFiscalInvoiceEvent(data: InsertFiscalInvoiceEvent): Promise<FiscalInvoiceEvent>;
+
+  // Fiscal Backups
+  getFiscalBackups(filters?: { backupType?: string; referenceId?: string }): Promise<FiscalBackup[]>;
+  createFiscalBackup(data: InsertFiscalBackup): Promise<FiscalBackup>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7674,6 +7729,183 @@ export class DatabaseStorage implements IStorage {
       .where(eq(omieInstances.id, id))
       .returning();
     return instance;
+  }
+
+  // ============================================================================
+  // FISCAL SCENARIOS
+  // ============================================================================
+
+  async getFiscalScenarios(): Promise<FiscalScenario[]> {
+    return db.select().from(fiscalScenarios).orderBy(asc(fiscalScenarios.name));
+  }
+
+  async getFiscalScenario(id: string): Promise<FiscalScenario | undefined> {
+    const [scenario] = await db.select().from(fiscalScenarios).where(eq(fiscalScenarios.id, id));
+    return scenario;
+  }
+
+  async createFiscalScenario(data: InsertFiscalScenario): Promise<FiscalScenario> {
+    const [scenario] = await db.insert(fiscalScenarios).values(data).returning();
+    return scenario;
+  }
+
+  async updateFiscalScenario(id: string, data: Partial<InsertFiscalScenario>): Promise<FiscalScenario> {
+    const [scenario] = await db.update(fiscalScenarios)
+      .set({ ...data, updatedAt: nowBrazil() })
+      .where(eq(fiscalScenarios.id, id))
+      .returning();
+    return scenario;
+  }
+
+  async deleteFiscalScenario(id: string): Promise<void> {
+    await db.delete(fiscalScenarios).where(eq(fiscalScenarios.id, id));
+  }
+
+  // ============================================================================
+  // DIGITAL CERTIFICATES
+  // ============================================================================
+
+  async getDigitalCertificates(): Promise<DigitalCertificate[]> {
+    return db.select().from(digitalCertificates).orderBy(desc(digitalCertificates.createdAt));
+  }
+
+  async getDigitalCertificate(id: string): Promise<DigitalCertificate | undefined> {
+    const [cert] = await db.select().from(digitalCertificates).where(eq(digitalCertificates.id, id));
+    return cert;
+  }
+
+  async createDigitalCertificate(data: InsertDigitalCertificate): Promise<DigitalCertificate> {
+    const [cert] = await db.insert(digitalCertificates).values(data).returning();
+    return cert;
+  }
+
+  async updateDigitalCertificate(id: string, data: Partial<InsertDigitalCertificate>): Promise<DigitalCertificate> {
+    const [cert] = await db.update(digitalCertificates)
+      .set({ ...data, updatedAt: nowBrazil() })
+      .where(eq(digitalCertificates.id, id))
+      .returning();
+    return cert;
+  }
+
+  async deleteDigitalCertificate(id: string): Promise<void> {
+    await db.delete(digitalCertificates).where(eq(digitalCertificates.id, id));
+  }
+
+  // ============================================================================
+  // FISCAL INVOICES
+  // ============================================================================
+
+  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(fiscalInvoices.status, filters.status));
+    if (filters?.customerId) conditions.push(eq(fiscalInvoices.customerId, filters.customerId));
+    if (filters?.environment) conditions.push(eq(fiscalInvoices.environment, filters.environment));
+
+    if (conditions.length > 0) {
+      return db.select().from(fiscalInvoices)
+        .where(and(...conditions))
+        .orderBy(desc(fiscalInvoices.createdAt));
+    }
+    return db.select().from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt));
+  }
+
+  async getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined> {
+    const [invoice] = await db.select().from(fiscalInvoices).where(eq(fiscalInvoices.id, id));
+    return invoice;
+  }
+
+  async getNextInvoiceNumber(series: string = '1'): Promise<number> {
+    const result = await db.select({ maxNum: sql<number>`COALESCE(MAX(invoice_number), 0)` })
+      .from(fiscalInvoices)
+      .where(eq(fiscalInvoices.series, series));
+    return (result[0]?.maxNum || 0) + 1;
+  }
+
+  async createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice> {
+    const [invoice] = await db.insert(fiscalInvoices).values(data).returning();
+    return invoice;
+  }
+
+  async updateFiscalInvoice(id: string, data: Partial<InsertFiscalInvoice>): Promise<FiscalInvoice> {
+    const [invoice] = await db.update(fiscalInvoices)
+      .set({ ...data, updatedAt: nowBrazil() })
+      .where(eq(fiscalInvoices.id, id))
+      .returning();
+    return invoice;
+  }
+
+  async deleteFiscalInvoice(id: string): Promise<void> {
+    await db.delete(fiscalInvoiceItems).where(eq(fiscalInvoiceItems.invoiceId, id));
+    await db.delete(fiscalInvoiceEvents).where(eq(fiscalInvoiceEvents.invoiceId, id));
+    await db.delete(fiscalInvoices).where(eq(fiscalInvoices.id, id));
+  }
+
+  // ============================================================================
+  // FISCAL INVOICE ITEMS
+  // ============================================================================
+
+  async getFiscalInvoiceItems(invoiceId: string): Promise<FiscalInvoiceItem[]> {
+    return db.select().from(fiscalInvoiceItems)
+      .where(eq(fiscalInvoiceItems.invoiceId, invoiceId))
+      .orderBy(asc(fiscalInvoiceItems.itemNumber));
+  }
+
+  async createFiscalInvoiceItem(data: InsertFiscalInvoiceItem): Promise<FiscalInvoiceItem> {
+    const [item] = await db.insert(fiscalInvoiceItems).values(data).returning();
+    return item;
+  }
+
+  async updateFiscalInvoiceItem(id: string, data: Partial<InsertFiscalInvoiceItem>): Promise<FiscalInvoiceItem> {
+    const [item] = await db.update(fiscalInvoiceItems)
+      .set(data)
+      .where(eq(fiscalInvoiceItems.id, id))
+      .returning();
+    return item;
+  }
+
+  async deleteFiscalInvoiceItem(id: string): Promise<void> {
+    await db.delete(fiscalInvoiceItems).where(eq(fiscalInvoiceItems.id, id));
+  }
+
+  async deleteFiscalInvoiceItems(invoiceId: string): Promise<void> {
+    await db.delete(fiscalInvoiceItems).where(eq(fiscalInvoiceItems.invoiceId, invoiceId));
+  }
+
+  // ============================================================================
+  // FISCAL INVOICE EVENTS
+  // ============================================================================
+
+  async getFiscalInvoiceEvents(invoiceId: string): Promise<FiscalInvoiceEvent[]> {
+    return db.select().from(fiscalInvoiceEvents)
+      .where(eq(fiscalInvoiceEvents.invoiceId, invoiceId))
+      .orderBy(desc(fiscalInvoiceEvents.createdAt));
+  }
+
+  async createFiscalInvoiceEvent(data: InsertFiscalInvoiceEvent): Promise<FiscalInvoiceEvent> {
+    const [event] = await db.insert(fiscalInvoiceEvents).values(data).returning();
+    return event;
+  }
+
+  // ============================================================================
+  // FISCAL BACKUPS
+  // ============================================================================
+
+  async getFiscalBackups(filters?: { backupType?: string; referenceId?: string }): Promise<FiscalBackup[]> {
+    const conditions = [];
+    if (filters?.backupType) conditions.push(eq(fiscalBackups.backupType, filters.backupType));
+    if (filters?.referenceId) conditions.push(eq(fiscalBackups.referenceId, filters.referenceId));
+
+    if (conditions.length > 0) {
+      return db.select().from(fiscalBackups)
+        .where(and(...conditions))
+        .orderBy(desc(fiscalBackups.createdAt));
+    }
+    return db.select().from(fiscalBackups).orderBy(desc(fiscalBackups.createdAt));
+  }
+
+  async createFiscalBackup(data: InsertFiscalBackup): Promise<FiscalBackup> {
+    const [backup] = await db.insert(fiscalBackups).values(data).returning();
+    return backup;
   }
 }
 

@@ -63,6 +63,7 @@ import VendasDigitais from "@/pages/VendasDigitais";
 import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
 import OmieInstances from "@/pages/OmieInstances";
 import OmieStageLogs from "@/pages/OmieStageLogs";
+import FiscalInvoices from "@/pages/FiscalInvoices";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error, refetch } = useAuth();
@@ -224,6 +225,7 @@ function Router() {
           <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
+          <Route path="/fiscal-invoices" component={FiscalInvoices} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}

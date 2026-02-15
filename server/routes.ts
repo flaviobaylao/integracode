@@ -23689,6 +23689,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerSdrRoutes } = await import('./sdr-routes.js');
   registerSdrRoutes(app);
 
+  // Registrar rotas do módulo NF-e (Faturamento Fiscal)
+  const { registerNfeRoutes } = await import('./nfe-routes.js');
+  registerNfeRoutes(app);
+
   const httpServer = createServer(app);
 
   return httpServer;

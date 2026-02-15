@@ -51,6 +51,16 @@
 - **Virtual Service Logging**: Attendants can log virtual customer service interactions via a modal accessible from the Active Customers page (FileText icon for virtual customers). Features include: written notes, image attachments (JPEG, PNG, GIF, WebP up to 5MB), automatic attendant tracking (server-side from authenticated user), and full history view. Each log has a **service type categorization** with three options: Débito Vencido (red badge), Venda (green badge), or Prospecção (blue badge). Data stored in `virtual_service_logs` table with authenticated CRUD API endpoints. **Lead Service Logging**: Clicking on a lead in the Leads Management page opens the same service logging modal with Prospecção pre-selected. Logs for leads are stored with `entity_type='lead'` to distinguish from customer logs. **Last Service Display**: Both Active Customers and Leads Management pages display the date and attendant name of the last virtual service interaction for each entity in a dedicated column.
 - **Virtual Attendance Statistics**: Chat Center includes an "Atendimentos" tab showing virtual attendance statistics per agent and date. Features include date range filtering, summary cards per attendant, total counts, and detailed breakdown table. Data is automatically logged when conversations are finalized by human agents. Stored in `virtual_attendance_stats` table with unique constraint per (conversationId, agentId, serviceDate).
 - **Omie Stage Transition Logging**: All order stage transitions in Omie are logged to the `omie_stage_logs` table, recording order ID, customer name, previous/new stage, trigger type (send_to_driver, driver_checkout, complete_delivery, return_delivery), success/error status, driver email, and Omie API response. Viewable at `/admin/omie-stage-logs` with filters by trigger type, success status, and date range.
+- **NF-e Emission Module**: Complete fiscal invoice (Nota Fiscal Eletrônica) management system at `/fiscal-invoices`. Features include:
+  - **Fiscal Scenarios**: Pre-configured CFOP codes for venda/troca/amostra/bonificação operations, both dentro and fora do estado. 10 default scenarios seeded.
+  - **Digital Certificate Management**: Secure storage and management of A1 certificates for SEFAZ integration.
+  - **Invoice CRUD**: Full lifecycle management (draft → authorized → cancelled) with item-level detail, tax calculations (ICMS, PIS, COFINS, IPI).
+  - **SEFAZ Integration**: Uses `node-nfe-nfce` library with JDK dependency. Currently supports homologação (test) mode with simulated SEFAZ responses. Production mode ready for certificate configuration.
+  - **Event Timeline**: Complete audit trail of all invoice operations (creation, emission, authorization, cancellation).
+  - **Backup System**: SHA-256 checksummed backups of invoice data (XML, items, events) stored with versioning.
+  - **Database Tables**: `fiscal_scenarios`, `digital_certificates`, `fiscal_invoices`, `fiscal_invoice_items`, `fiscal_invoice_events`, `fiscal_backups` with proper indexes.
+  - **API Routes**: Separate route file (`server/nfe-routes.ts`) with admin-only access for sensitive operations.
+  - **Architecture**: Designed as future replacement for Omie invoicing. All dates use Brasília timezone (America/Sao_Paulo, UTC-3).
 
 # External Dependencies
 
