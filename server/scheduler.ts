@@ -1,7 +1,7 @@
 import { evolutionAPIService } from './evolution-api-service';
 import { whatsappService } from './whatsapp-service';
 import cron from 'node-cron';
-import { getOmieService } from './omieIntegration';
+import { getOmieService, getOmieServiceForInstance } from './omieIntegration';
 import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
@@ -100,119 +100,127 @@ cron.schedule('*/2 * * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
-// Função para sincronização completa (Clientes + Faturamentos + Débitos Vencidos)
+// Função para sincronização completa (Clientes + Faturamentos + Débitos Vencidos) - Multi-instância
 async function syncComplete(horario: string) {
-  console.log(`🔄 [${horario}] Iniciando sincronização completa automática...`);
+  console.log(`🔄 [${horario}] Iniciando sincronização completa automática (multi-instância)...`);
   
   try {
-    const omieService = getOmieService(storage);
-    if (!omieService) {
-      console.error(`❌ [${horario}] Serviço Omie não configurado para sincronização automática`);
-      return;
+    const instances = await storage.getOmieInstances();
+    const activeInstances = instances.filter((i: any) => i.isActive && i.appKey && i.appSecret);
+
+    if (activeInstances.length === 0) {
+      const fallback = getOmieService(storage);
+      if (!fallback) {
+        console.error(`❌ [${horario}] Nenhuma instância Omie configurada para sincronização automática`);
+        return;
+      }
+      activeInstances.push({ id: fallback.omieInstanceId || 'default', name: 'Default' });
     }
 
-    const results = {
-      clients: null as any,
-      billings: null as any,
-      overdueDebts: null as any,
+    console.log(`🏢 [${horario}] ${activeInstances.length} instância(s) ativa(s): ${activeInstances.map((i: any) => i.name).join(', ')}`);
+
+    const globalResults = {
+      clients: { totalProcessed: 0, imported: 0, updated: 0 },
+      billings: { totalProcessed: 0, imported: 0, updated: 0 },
+      overdueDebts: { totalClients: 0, totalAmount: 0 },
       errors: [] as string[]
     };
 
-    // 1. Sincronizar clientes ativos
-    try {
-      console.log(`📋 [${horario}] Sincronizando clientes ativos...`);
-      const clientResult = await omieService.syncAllClients();
-      results.clients = {
-        totalProcessed: clientResult.totalProcessed || 0,
-        imported: clientResult.imported || 0,
-        updated: clientResult.updated || 0
-      };
-      console.log(`✅ [${horario}] Clientes: ${results.clients.totalProcessed} processados`);
-    } catch (error: any) {
-      const errorMsg = `Erro ao sincronizar clientes: ${error.message}`;
-      results.errors.push(errorMsg);
-      console.error(`❌ [${horario}] ${errorMsg}`);
-    }
+    for (const inst of activeInstances) {
+      const label = inst.name || inst.id;
+      console.log(`\n🏢 [${horario}] Sincronizando instância: ${label}...`);
 
-    // 2. Sincronizar notas fiscais de 2025 (filtro por data de emissão)
-    try {
-      console.log(`💰 [${horario}] Sincronizando pedidos dos últimos 60 dias...`);
-      
-      await storage.updateSyncStatus('omie_billings', { 
-        status: 'in_progress', 
-        message: 'Sincronização automática de pedidos iniciada...',
-        recordsProcessed: 0,
-        currentProgress: 0
-      });
-      
-      const billingResult = await omieService.syncAllOrders((progress) => {
-        const syncStatus = omieService.getSyncStatus();
-        if (syncStatus.cancelled) return;
-        storage.updateSyncStatus('omie_billings', { 
+      let svc: any;
+      try {
+        svc = await getOmieServiceForInstance(storage, inst.id);
+        if (!svc) {
+          console.log(`⚠️ [${horario}] Instância ${label} sem credenciais válidas, pulando...`);
+          continue;
+        }
+      } catch (e: any) {
+        globalResults.errors.push(`Erro ao criar serviço para ${label}: ${e.message}`);
+        continue;
+      }
+
+      // 1. Sincronizar clientes ativos
+      try {
+        console.log(`📋 [${horario}] [${label}] Sincronizando clientes ativos...`);
+        const clientResult = await svc.syncAllClients();
+        globalResults.clients.totalProcessed += clientResult.totalProcessed || 0;
+        globalResults.clients.imported += clientResult.imported || 0;
+        globalResults.clients.updated += clientResult.updated || 0;
+        console.log(`✅ [${horario}] [${label}] Clientes: ${clientResult.totalProcessed || 0} processados`);
+      } catch (error: any) {
+        const errorMsg = `[${label}] Erro ao sincronizar clientes: ${error.message}`;
+        globalResults.errors.push(errorMsg);
+        console.error(`❌ [${horario}] ${errorMsg}`);
+      }
+
+      // 2. Sincronizar notas fiscais dos últimos 60 dias
+      try {
+        console.log(`💰 [${horario}] [${label}] Sincronizando pedidos dos últimos 60 dias...`);
+        
+        await storage.updateSyncStatus('omie_billings', { 
           status: 'in_progress', 
-          recordsProcessed: progress.invoicesProcessed,
-          totalRecords: progress.invoicesFound,
-          currentProgress: progress.totalPages > 0 ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0
+          message: `[${label}] Sincronização automática de pedidos iniciada...`,
+          recordsProcessed: 0,
+          currentProgress: 0
         });
-      });
-      
-      results.billings = {
-        totalProcessed: billingResult.totalProcessed || 0,
-        imported: billingResult.imported || 0,
-        updated: billingResult.updated || 0
-      };
-      
-      // Atualizar status para "sucesso" ao concluir
-      await storage.updateSyncStatus('omie_billings', { 
-        status: 'success', 
-        message: `${results.billings.imported} importados, ${results.billings.updated} atualizados`,
-        recordsProcessed: results.billings.totalProcessed,
-        currentProgress: 100,
-        lastFinishedAt: nowBrazil()
-      });
-      
-      console.log(`✅ [${horario}] Notas fiscais: ${results.billings.totalProcessed} processadas`);
-    } catch (error: any) {
-      const errorMsg = `Erro ao sincronizar notas fiscais: ${error.message}`;
-      results.errors.push(errorMsg);
-      console.error(`❌ [${horario}] ${errorMsg}`);
-      
-      // Atualizar status para "erro"
-      await storage.updateSyncStatus('omie_billings', { 
-        status: 'error', 
-        message: errorMsg
-      });
+        
+        const billingResult = await svc.syncAllOrders((progress: any) => {
+          const syncStatus = svc.getSyncStatus();
+          if (syncStatus.cancelled) return;
+          storage.updateSyncStatus('omie_billings', { 
+            status: 'in_progress', 
+            message: `[${label}] ${progress.invoicesProcessed} processados`,
+            recordsProcessed: progress.invoicesProcessed,
+            totalRecords: progress.invoicesFound,
+            currentProgress: progress.totalPages > 0 ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0
+          });
+        });
+        
+        globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
+        globalResults.billings.imported += billingResult.imported || 0;
+        globalResults.billings.updated += billingResult.updated || 0;
+        
+        console.log(`✅ [${horario}] [${label}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
+      } catch (error: any) {
+        const errorMsg = `[${label}] Erro ao sincronizar notas fiscais: ${error.message}`;
+        globalResults.errors.push(errorMsg);
+        console.error(`❌ [${horario}] ${errorMsg}`);
+      }
+
+      // 3. Sincronizar débitos vencidos
+      try {
+        console.log(`📊 [${horario}] [${label}] Sincronizando débitos vencidos...`);
+        const debtResult = await svc.getOverdueDebts();
+        await storage.syncOverdueDebts(debtResult.debts);
+        globalResults.overdueDebts.totalClients += debtResult.totalClients || 0;
+        globalResults.overdueDebts.totalAmount += debtResult.totalAmount || 0;
+        console.log(`✅ [${horario}] [${label}] Débitos: ${debtResult.totalClients} clientes, R$ ${debtResult.totalAmount.toFixed(2)}`);
+      } catch (error: any) {
+        const errorMsg = `[${label}] Erro ao sincronizar débitos vencidos: ${error.message}`;
+        globalResults.errors.push(errorMsg);
+        console.error(`❌ [${horario}] ${errorMsg}`);
+      }
     }
 
-    // 3. Sincronizar débitos vencidos
-    try {
-      console.log(`📊 [${horario}] Sincronizando débitos vencidos...`);
-      const debtResult = await omieService.getOverdueDebts();
-      await storage.syncOverdueDebts(debtResult.debts);
-      results.overdueDebts = {
-        totalClients: debtResult.totalClients,
-        totalAmount: debtResult.totalAmount
-      };
-      console.log(`✅ [${horario}] Débitos: ${debtResult.totalClients} clientes, R$ ${debtResult.totalAmount.toFixed(2)}`);
-    } catch (error: any) {
-      const errorMsg = `Erro ao sincronizar débitos vencidos: ${error.message}`;
-      results.errors.push(errorMsg);
-      console.error(`❌ [${horario}] ${errorMsg}`);
-    }
+    // Atualizar status final
+    await storage.updateSyncStatus('omie_billings', { 
+      status: globalResults.errors.some(e => e.includes('notas fiscais')) ? 'error' : 'success', 
+      message: `${globalResults.billings.imported} importados, ${globalResults.billings.updated} atualizados (${activeInstances.length} instâncias)`,
+      recordsProcessed: globalResults.billings.totalProcessed,
+      currentProgress: 100,
+      lastFinishedAt: nowBrazil()
+    });
 
     // Resumo da sincronização
-    console.log(`✨ [${horario}] Sincronização completa concluída:`);
-    if (results.clients) {
-      console.log(`   - Clientes: ${results.clients.totalProcessed} processados (${results.clients.imported} novos, ${results.clients.updated} atualizados)`);
-    }
-    if (results.billings) {
-      console.log(`   - Faturamentos: ${results.billings.totalProcessed} processados (${results.billings.imported} novos, ${results.billings.updated} atualizados)`);
-    }
-    if (results.overdueDebts) {
-      console.log(`   - Débitos: ${results.overdueDebts.totalClients} clientes, Total R$ ${results.overdueDebts.totalAmount.toFixed(2)}`);
-    }
-    if (results.errors.length > 0) {
-      console.log(`   ⚠️ ${results.errors.length} erro(s) encontrado(s)`);
+    console.log(`\n✨ [${horario}] Sincronização multi-instância concluída (${activeInstances.length} instâncias):`);
+    console.log(`   - Clientes: ${globalResults.clients.totalProcessed} processados (${globalResults.clients.imported} novos, ${globalResults.clients.updated} atualizados)`);
+    console.log(`   - Faturamentos: ${globalResults.billings.totalProcessed} processados (${globalResults.billings.imported} novos, ${globalResults.billings.updated} atualizados)`);
+    console.log(`   - Débitos: ${globalResults.overdueDebts.totalClients} clientes, Total R$ ${globalResults.overdueDebts.totalAmount.toFixed(2)}`);
+    if (globalResults.errors.length > 0) {
+      console.log(`   ⚠️ ${globalResults.errors.length} erro(s) encontrado(s)`);
     }
     
   } catch (error) {

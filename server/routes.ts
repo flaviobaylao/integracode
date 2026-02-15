@@ -10541,29 +10541,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Endpoint para forçar re-sync completo das notas fiscais com etapas corretas
   app.post('/api/omie/force-resync-billings', async (req, res) => {
     try {
-      console.log('🔄 Iniciando re-sync forçado das notas fiscais...');
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ message: 'Serviço Omie não configurado' });
-      }
+      console.log('🔄 Iniciando re-sync forçado das notas fiscais (multi-instância)...');
+      
+      const instances = await storage.getOmieInstances();
+      const activeInstances = instances.filter((i: any) => i.isActive && i.appKey && i.appSecret);
 
-      // Limpar estado da sincronização
       await db.delete(syncStates).where(eq(syncStates.syncType, 'billings'));
       console.log('🗑️ Estado de sincronização limpo');
 
-      // Limpar caches
-      (omieService as any).stagesCache.clear();
-      (omieService as any).stageNamesCache.clear();
-      console.log('🧹 Caches limpos');
-
-      // Executar sincronização
-      const result = await (omieService as any).syncBillings();
+      let totalProcessed = 0;
       
-      console.log(`✅ Re-sync concluído: ${result.newBillings} notas processadas`);
+      if (activeInstances.length > 0) {
+        for (const inst of activeInstances) {
+          const label = inst.name || inst.id;
+          try {
+            const svc = await getOmieServiceForInstance(storage, inst.id);
+            if (!svc) continue;
+            (svc as any).stagesCache?.clear();
+            (svc as any).stageNamesCache?.clear();
+            const result = await (svc as any).syncBillings();
+            totalProcessed += result.newBillings || 0;
+            console.log(`✅ [${label}] Re-sync: ${result.newBillings} notas processadas`);
+          } catch (instErr: any) {
+            console.error(`❌ [${label}] Erro no re-sync:`, instErr.message);
+          }
+        }
+      } else {
+        const fallback = getOmieService(storage);
+        if (!fallback) {
+          return res.status(503).json({ message: 'Nenhuma instância Omie configurada' });
+        }
+        (fallback as any).stagesCache?.clear();
+        (fallback as any).stageNamesCache?.clear();
+        const result = await (fallback as any).syncBillings();
+        totalProcessed += result.newBillings || 0;
+      }
+      
+      const instCount = activeInstances.length || 1;
+      console.log(`✅ Re-sync concluído: ${totalProcessed} notas processadas (${instCount} instância(s))`);
       res.json({ 
         success: true, 
-        message: `Re-sync concluído com sucesso. ${result.newBillings} notas processadas.`,
-        processed: result.newBillings
+        message: `Re-sync concluído com sucesso. ${totalProcessed} notas processadas (${instCount} instância(s)).`,
+        processed: totalProcessed
       });
 
     } catch (error: any) {
@@ -19718,7 +19737,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sincronizar faturamentos do Omie - OTIMIZADO: usa syncAllOrders com caches pré-carregados
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
-      // Auto-reset if stuck for more than 10 minutes
       if (billingSyncState.status === 'running' && billingSyncState.startedAt) {
         const elapsed = Date.now() - billingSyncState.startedAt.getTime();
         if (elapsed > 10 * 60 * 1000) {
@@ -19730,9 +19748,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
       }
 
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(500).json({ message: 'Omie não configurado' });
+      const instances = await storage.getOmieInstances();
+      const activeInstances = instances.filter((i: any) => i.isActive && i.appKey && i.appSecret);
+
+      if (activeInstances.length === 0) {
+        const fallback = getOmieService(storage);
+        if (!fallback) {
+          return res.status(500).json({ message: 'Nenhuma instância Omie configurada' });
+        }
+        activeInstances.push({ id: fallback.omieInstanceId, name: 'Default', appKey: fallback['appKey'], appSecret: fallback['appSecret'] });
       }
 
       billingSyncState = {
@@ -19744,41 +19768,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         inserted: 0,
         updated: 0,
         currentInvoice: '',
-        message: 'Iniciando sincronização otimizada...',
+        message: `Iniciando sincronização de ${activeInstances.length} instância(s)...`,
         startedAt: nowBrazil(),
         completedAt: null
       };
 
-      res.status(202).json({ message: 'Sincronização iniciada em background. Acompanhe o progresso na tela.' });
+      res.status(202).json({ message: `Sincronização de ${activeInstances.length} instância(s) iniciada em background.` });
 
-      console.log('\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DO OMIE (últimos 60 dias, com etapas)...\n');
+      console.log(`\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DE ${activeInstances.length} INSTÂNCIA(S) OMIE (últimos 60 dias)...\n`);
 
-      billingSyncState.message = 'Iniciando sincronização de pedidos (últimos 60 dias)...';
+      const totals = { totalProcessed: 0, imported: 0, updated: 0, skipped: 0 };
 
-      const result = await omieService.syncAllOrders((progress) => {
-        billingSyncState.invoicesProcessed = progress.invoicesProcessed;
-        billingSyncState.invoicesFound = progress.invoicesFound;
-        billingSyncState.currentPage = progress.currentPage;
-        billingSyncState.totalPages = progress.totalPages;
-        billingSyncState.inserted = progress.inserted;
-        billingSyncState.updated = progress.updated;
-        billingSyncState.currentInvoice = progress.currentInvoice;
-        billingSyncState.message = progress.message || `Sincronizando últimos 60 dias... (${progress.invoicesProcessed} pedidos processados)`;
-      });
+      for (let idx = 0; idx < activeInstances.length; idx++) {
+        const inst = activeInstances[idx];
+        const instanceLabel = inst.name || inst.id;
+        console.log(`\n🏢 [SYNC-PEDIDOS] Instância ${idx + 1}/${activeInstances.length}: ${instanceLabel}`);
+        billingSyncState.message = `[${instanceLabel}] Sincronizando pedidos (${idx + 1}/${activeInstances.length})...`;
+
+        try {
+          const svc = await getOmieServiceForInstance(storage, inst.id);
+          if (!svc) {
+            console.log(`⚠️ [SYNC-PEDIDOS] Instância ${instanceLabel} sem credenciais válidas, pulando...`);
+            continue;
+          }
+
+          const result = await svc.syncAllOrders((progress) => {
+            billingSyncState.invoicesProcessed = totals.totalProcessed + progress.invoicesProcessed;
+            billingSyncState.invoicesFound = totals.totalProcessed + progress.invoicesFound;
+            billingSyncState.currentPage = progress.currentPage;
+            billingSyncState.totalPages = progress.totalPages;
+            billingSyncState.inserted = totals.imported + progress.inserted;
+            billingSyncState.updated = totals.updated + progress.updated;
+            billingSyncState.currentInvoice = progress.currentInvoice;
+            billingSyncState.message = `[${instanceLabel}] ${progress.message || `${progress.invoicesProcessed} pedidos processados`} (${idx + 1}/${activeInstances.length})`;
+          });
+
+          totals.totalProcessed += result.totalProcessed || 0;
+          totals.imported += result.imported || 0;
+          totals.updated += result.updated || 0;
+          totals.skipped += result.skipped || 0;
+
+          console.log(`✅ [SYNC-PEDIDOS] ${instanceLabel}: ${result.totalProcessed} processados, ${result.imported} inseridos, ${result.updated} atualizados`);
+        } catch (instError: any) {
+          console.error(`❌ [SYNC-PEDIDOS] Erro na instância ${instanceLabel}:`, instError.message);
+        }
+      }
 
       billingSyncState.status = 'completed';
-      billingSyncState.invoicesFound = result.totalProcessed;
-      billingSyncState.invoicesProcessed = result.totalProcessed;
-      billingSyncState.inserted = result.imported;
-      billingSyncState.updated = result.updated;
-      const rejectedNote = result.skipped > 0 ? ` (${result.skipped} rejeitados)` : '';
-      billingSyncState.message = `Sincronização concluída! ${result.imported} inseridos, ${result.updated} atualizados.${rejectedNote}`;
+      billingSyncState.invoicesFound = totals.totalProcessed;
+      billingSyncState.invoicesProcessed = totals.totalProcessed;
+      billingSyncState.inserted = totals.imported;
+      billingSyncState.updated = totals.updated;
+      const rejectedNote = totals.skipped > 0 ? ` (${totals.skipped} rejeitados)` : '';
+      billingSyncState.message = `Sincronização de ${activeInstances.length} instância(s) concluída! ${totals.imported} inseridos, ${totals.updated} atualizados.${rejectedNote}`;
       billingSyncState.completedAt = nowBrazil();
 
-      console.log(`\n✅ [SYNC-PEDIDOS] Sincronização concluída!`);
-      console.log(`📥 Inseridos: ${result.imported}`);
-      console.log(`🔄 Atualizados: ${result.updated}`);
-      console.log(`⏭️ Rejeitados: ${result.skipped}\n`);
+      console.log(`\n✅ [SYNC-PEDIDOS] Sincronização multi-instância concluída!`);
+      console.log(`📥 Total inseridos: ${totals.imported}`);
+      console.log(`🔄 Total atualizados: ${totals.updated}`);
+      console.log(`⏭️ Total rejeitados: ${totals.skipped}\n`);
 
     } catch (error: any) {
       billingSyncState.status = 'error';
