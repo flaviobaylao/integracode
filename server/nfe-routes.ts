@@ -172,7 +172,8 @@ export function registerNfeRoutes(app: Express) {
       }
 
       const password = req.body.password;
-      console.log(`[CERT-UPLOAD] File received: ${file.originalname}, size: ${file.size} bytes, password provided: ${!!password}, password length: ${password?.length || 0}`);
+      const passHex = password ? Buffer.from(password).toString('hex') : 'empty';
+      console.log(`[CERT-UPLOAD] File received: ${file.originalname}, size: ${file.size} bytes, password provided: ${!!password}, password length: ${password?.length || 0}, passHex: ${passHex}`);
       if (!password) {
         return res.status(400).json({ message: 'Senha do certificado é obrigatória' });
       }
@@ -185,7 +186,7 @@ export function registerNfeRoutes(app: Express) {
         const passFile = path.join(os.tmpdir(), `pass_${crypto.randomUUID()}.txt`);
         fs.writeFileSync(passFile, password, { mode: 0o600 });
 
-        function tryOpenSSL(cmd: string): { success: boolean; output: string; error: string } {
+        const tryOpenSSL = (cmd: string): { success: boolean; output: string; error: string } => {
           try {
             const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000 });
             return { success: true, output, error: '' };
@@ -193,82 +194,59 @@ export function registerNfeRoutes(app: Express) {
             const errOutput = String(e.stdout || '') + String(e.stderr || '') + String(e.message || '');
             return { success: false, output: '', error: errOutput };
           }
-        }
+        };
 
         console.log(`[CERT-UPLOAD] Attempting OpenSSL pkcs12 extraction...`);
 
+        const escapedPass = password.replace(/'/g, "'\\''");
+
+        const attempts = [
+          { label: 'legacy+file', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy 2>&1` },
+          { label: 'legacy+pass', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin 'pass:${escapedPass}' -legacy 2>&1` },
+          { label: 'nolegacy+file', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" 2>&1` },
+          { label: 'nolegacy+pass', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin 'pass:${escapedPass}' 2>&1` },
+          { label: 'legacy+nodes+file', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy -nodes 2>&1` },
+          { label: 'legacy+nomacver', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy -nomacver 2>&1` },
+          { label: 'nolegacy+nomacver', cmd: `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -nomacver 2>&1` },
+        ];
+
         let certText = '';
-        let legacyFlag = '';
+        let successLabel = '';
 
-        const attempt1 = tryOpenSSL(`openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy 2>&1`);
-        if (attempt1.success && attempt1.output.includes('BEGIN CERTIFICATE')) {
-          certText = attempt1.output;
-          legacyFlag = '-legacy';
-          console.log(`[CERT-UPLOAD] Success with -legacy flag`);
-        } else {
-          console.log(`[CERT-UPLOAD] -legacy attempt result: success=${attempt1.success}, hasCert=${attempt1.output.includes('BEGIN CERTIFICATE')}, error=${attempt1.error.substring(0, 200)}`);
-          const isPasswordError1 = attempt1.error.toLowerCase().includes('mac verify') || attempt1.error.toLowerCase().includes('invalid password');
-
-          if (isPasswordError1) {
-            try { fs.unlinkSync(passFile); } catch {}
-            try { fs.unlinkSync(tmpFile); } catch {}
-            return res.status(400).json({ message: 'Senha do certificado incorreta' });
+        for (const attempt of attempts) {
+          const result = tryOpenSSL(attempt.cmd);
+          console.log(`[CERT-UPLOAD] ${attempt.label}: success=${result.success}, hasCert=${result.output.includes('BEGIN CERTIFICATE')}, error=${result.error.substring(0, 150)}`);
+          if (result.success && result.output.includes('BEGIN CERTIFICATE')) {
+            certText = result.output;
+            successLabel = attempt.label;
+            console.log(`[CERT-UPLOAD] SUCCESS with ${attempt.label}`);
+            break;
           }
-
-          const attempt2 = tryOpenSSL(`openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" 2>&1`);
-          if (attempt2.success && attempt2.output.includes('BEGIN CERTIFICATE')) {
-            certText = attempt2.output;
-            legacyFlag = '';
-            console.log(`[CERT-UPLOAD] Success without -legacy flag`);
-          } else {
-            console.log(`[CERT-UPLOAD] non-legacy attempt result: success=${attempt2.success}, hasCert=${attempt2.output.includes('BEGIN CERTIFICATE')}, error=${attempt2.error.substring(0, 200)}`);
-            const isPasswordError2 = attempt2.error.toLowerCase().includes('mac verify') || attempt2.error.toLowerCase().includes('invalid password');
-
-            if (isPasswordError2) {
-              try { fs.unlinkSync(passFile); } catch {}
-              try { fs.unlinkSync(tmpFile); } catch {}
-              return res.status(400).json({ message: 'Senha do certificado incorreta' });
-            }
-
-            const attempt3 = tryOpenSSL(`openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy -nodes 2>&1`);
-            if (attempt3.success && attempt3.output.includes('BEGIN CERTIFICATE')) {
-              certText = attempt3.output;
-              legacyFlag = '-legacy -nodes';
-              console.log(`[CERT-UPLOAD] Success with -legacy -nodes flags`);
-            } else {
-              console.error(`[CERT-UPLOAD] All OpenSSL attempts failed`);
-              console.error(`[CERT-UPLOAD] Attempt1 error: ${attempt1.error.substring(0, 300)}`);
-              console.error(`[CERT-UPLOAD] Attempt2 error: ${attempt2.error.substring(0, 300)}`);
-              console.error(`[CERT-UPLOAD] Attempt3 error: ${attempt3.error.substring(0, 300)}`);
-              try { fs.unlinkSync(passFile); } catch {}
-              try { fs.unlinkSync(tmpFile); } catch {}
-              return res.status(400).json({ message: 'Não foi possível ler o certificado. Verifique se o arquivo PFX/P12 e a senha estão corretos.' });
-            }
+          if (!result.success && result.output.includes('BEGIN CERTIFICATE')) {
+            certText = result.output;
+            successLabel = attempt.label;
+            console.log(`[CERT-UPLOAD] SUCCESS (non-zero exit but got cert) with ${attempt.label}`);
+            break;
           }
         }
 
         if (!certText || !certText.includes('BEGIN CERTIFICATE')) {
           try { fs.unlinkSync(passFile); } catch {}
           try { fs.unlinkSync(tmpFile); } catch {}
-          return res.status(400).json({ message: 'Nenhum certificado encontrado no arquivo PFX' });
+          console.error(`[CERT-UPLOAD] All ${attempts.length} attempts failed`);
+          return res.status(400).json({ message: 'Não foi possível ler o certificado. Verifique se o arquivo PFX/P12 e a senha estão corretos.' });
         }
 
         let certDetails = '';
-        const detailCmd = `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" ${legacyFlag} 2>/dev/null | openssl x509 -noout -subject -issuer -serial -dates 2>/dev/null`;
-        const detailResult = tryOpenSSL(detailCmd);
-        if (detailResult.success) {
-          certDetails = detailResult.output;
-        } else {
-          const pemMatch = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-          if (pemMatch) {
-            const pemFile = path.join(os.tmpdir(), `pem_${crypto.randomUUID()}.pem`);
-            fs.writeFileSync(pemFile, pemMatch[0]);
-            const pemResult = tryOpenSSL(`openssl x509 -in "${pemFile}" -noout -subject -issuer -serial -dates 2>&1`);
-            if (pemResult.success) {
-              certDetails = pemResult.output;
-            }
-            try { fs.unlinkSync(pemFile); } catch {}
+        const pemMatch = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+        if (pemMatch) {
+          const pemFile = path.join(os.tmpdir(), `pem_${crypto.randomUUID()}.pem`);
+          fs.writeFileSync(pemFile, pemMatch[0]);
+          const pemResult = tryOpenSSL(`openssl x509 -in "${pemFile}" -noout -subject -issuer -serial -dates 2>&1`);
+          if (pemResult.success) {
+            certDetails = pemResult.output;
           }
+          try { fs.unlinkSync(pemFile); } catch {}
         }
         try { fs.unlinkSync(passFile); } catch {}
 
