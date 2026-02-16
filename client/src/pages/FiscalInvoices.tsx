@@ -143,8 +143,18 @@ export default function FiscalInvoices() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showCertDialog, setShowCertDialog] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [cancelJustification, setCancelJustification] = useState('');
+  const [newCert, setNewCert] = useState({
+    companyName: '',
+    cnpj: '',
+    serialNumber: '',
+    issuer: '',
+    validFrom: '',
+    validUntil: '',
+    certificateType: 'A1',
+  });
   const [newInvoice, setNewInvoice] = useState({
     customerName: '',
     customerCnpjCpf: '',
@@ -241,6 +251,40 @@ export default function FiscalInvoices() {
       toast({ title: 'Erro ao excluir NF-e', description: err.message, variant: 'destructive' });
     },
   });
+
+  const createCertMutation = useMutation({
+    mutationFn: (data: any) => apiRequest('POST', '/api/digital-certificates', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/digital-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/fiscal-dashboard'] });
+      setShowCertDialog(false);
+      setNewCert({ companyName: '', cnpj: '', serialNumber: '', issuer: '', validFrom: '', validUntil: '', certificateType: 'A1' });
+      toast({ title: 'Certificado cadastrado', description: 'Certificado digital cadastrado com sucesso.' });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao cadastrar certificado', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  const deleteCertMutation = useMutation({
+    mutationFn: (id: string) => apiRequest('DELETE', `/api/digital-certificates/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/digital-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/fiscal-dashboard'] });
+      toast({ title: 'Certificado excluído', description: 'Certificado digital excluído com sucesso.' });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao excluir certificado', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  function handleCreateCert() {
+    if (!newCert.companyName || !newCert.cnpj) {
+      toast({ title: 'Campos obrigatórios', description: 'Preencha o nome da empresa e o CNPJ.', variant: 'destructive' });
+      return;
+    }
+    createCertMutation.mutate(newCert);
+  }
 
   function resetNewInvoice() {
     setNewInvoice({
@@ -538,15 +582,23 @@ export default function FiscalInvoices() {
         {/* Tab: Certificados Digitais */}
         <TabsContent value="certificates" className="space-y-4">
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-lg flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5" />
                 Certificados Digitais
               </CardTitle>
+              <Button size="sm" onClick={() => setShowCertDialog(true)}>
+                <Plus className="h-4 w-4 mr-1" /> Novo Certificado
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               {!certificates?.length ? (
-                <div className="text-center py-8 text-muted-foreground">Nenhum certificado digital cadastrado</div>
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>Nenhum certificado digital cadastrado</p>
+                  <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowCertDialog(true)}>
+                    <Plus className="h-4 w-4 mr-1" /> Cadastrar Certificado
+                  </Button>
+                </div>
               ) : (
                 <Table>
                   <TableHeader>
@@ -557,6 +609,7 @@ export default function FiscalInvoices() {
                       <TableHead>Emissor</TableHead>
                       <TableHead>Validade</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="w-16">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -582,6 +635,11 @@ export default function FiscalInvoices() {
                           ) : (
                             <Badge variant="secondary">Inativo</Badge>
                           )}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => { if (confirm('Tem certeza que deseja excluir este certificado?')) deleteCertMutation.mutate(cert.id); }}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -900,6 +958,69 @@ export default function FiscalInvoices() {
             >
               {cancelMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirmar Cancelamento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Certificate Dialog */}
+      <Dialog open={showCertDialog} onOpenChange={(open) => { setShowCertDialog(open); if (!open) setNewCert({ companyName: '', cnpj: '', serialNumber: '', issuer: '', validFrom: '', validUntil: '', certificateType: 'A1' }); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5" /> Novo Certificado Digital
+            </DialogTitle>
+            <DialogDescription>Cadastre os dados do certificado digital A1 para emissão de NF-e.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Nome da Empresa *</Label>
+                <Input value={newCert.companyName} onChange={e => setNewCert(p => ({ ...p, companyName: e.target.value }))} placeholder="Razão social" />
+              </div>
+              <div>
+                <Label>CNPJ *</Label>
+                <Input value={newCert.cnpj} onChange={e => setNewCert(p => ({ ...p, cnpj: e.target.value }))} placeholder="00.000.000/0001-00" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Número de Série</Label>
+                <Input value={newCert.serialNumber} onChange={e => setNewCert(p => ({ ...p, serialNumber: e.target.value }))} placeholder="Número serial do certificado" />
+              </div>
+              <div>
+                <Label>Emissor</Label>
+                <Input value={newCert.issuer} onChange={e => setNewCert(p => ({ ...p, issuer: e.target.value }))} placeholder="AC emissora" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Válido de</Label>
+                <Input type="date" value={newCert.validFrom} onChange={e => setNewCert(p => ({ ...p, validFrom: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Válido até</Label>
+                <Input type="date" value={newCert.validUntil} onChange={e => setNewCert(p => ({ ...p, validUntil: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>Tipo de Certificado</Label>
+              <Select value={newCert.certificateType} onValueChange={v => setNewCert(p => ({ ...p, certificateType: v }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="A1">A1 (Arquivo digital)</SelectItem>
+                  <SelectItem value="A3">A3 (Token/Cartão)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCertDialog(false)}>Cancelar</Button>
+            <Button onClick={handleCreateCert} disabled={createCertMutation.isPending}>
+              {createCertMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Cadastrar Certificado
             </Button>
           </DialogFooter>
         </DialogContent>
